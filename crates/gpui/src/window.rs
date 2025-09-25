@@ -4023,6 +4023,8 @@ impl Window {
                 let any_action = action.as_any();
                 if action_type == any_action.type_id() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                    cx.platform.on_action_triggered(action);
+
                     listener(any_action, DispatchPhase::Bubble, self, cx);
 
                     if !cx.propagate_event {
@@ -4040,6 +4042,7 @@ impl Window {
             for listener in global_listeners.iter().rev() {
                 cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
 
+                cx.platform.on_action_triggered(action);
                 listener(action.as_any(), DispatchPhase::Bubble, cx);
                 if !cx.propagate_event {
                     break;

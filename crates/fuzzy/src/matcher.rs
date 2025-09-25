@@ -1,5 +1,5 @@
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
 };
@@ -27,7 +27,7 @@ pub struct Matcher<'a> {
 
 pub trait MatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool;
-    fn to_string(&self) -> Cow<'_, str>;
+    fn candidate_chars(&self) -> impl Iterator<Item = char>;
 }
 
 impl<'a> Matcher<'a> {
@@ -83,7 +83,7 @@ impl<'a> Matcher<'a> {
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
             extra_lowercase_chars.clear();
-            for (i, c) in candidate.borrow().to_string().chars().enumerate() {
+            for (i, c) in candidate.borrow().candidate_chars().enumerate() {
                 candidate_chars.push(c);
                 let mut char_lowercased = c.to_lowercase().collect::<Vec<_>>();
                 if char_lowercased.len() > 1 {
@@ -202,8 +202,6 @@ impl<'a> Matcher<'a> {
         cur_score: f64,
         extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
-        use std::path::MAIN_SEPARATOR;
-
         if query_idx == self.query.len() {
             return 1.0;
         }
@@ -245,17 +243,11 @@ impl<'a> Matcher<'a> {
                     None => continue,
                 }
             };
-            let is_path_sep = path_char == MAIN_SEPARATOR;
+            let is_path_sep = path_char == '/';
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j_regular;
             }
-
-            #[cfg(not(target_os = "windows"))]
-            let need_to_score =
-                query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\');
-            // `query_char == '\\'` breaks `test_match_path_entries` on Windows, `\` is only used as a path separator on Windows.
-            #[cfg(target_os = "windows")]
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
                 let curr = match prefix.get(j_regular) {
@@ -270,7 +262,7 @@ impl<'a> Matcher<'a> {
                         None => path[j_regular - 1 - prefix.len()],
                     };
 
-                    if last == MAIN_SEPARATOR {
+                    if last == '/' {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -291,7 +283,7 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == MAIN_SEPARATOR) && self.query[query_idx] != curr {
+                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
                     char_score *= 0.001;
                 }
 
@@ -348,13 +340,12 @@ impl<'a> Matcher<'a> {
 
 #[cfg(test)]
 mod tests {
+    use util::rel_path::{RelPath, rel_path};
+
     use crate::{PathMatch, PathMatchCandidate};
 
     use super::*;
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::sync::Arc;
 
     #[test]
     fn test_get_last_positions() {
@@ -376,7 +367,6 @@ mod tests {
         assert_eq!(matcher.last_positions, vec![0, 3, 4, 8]);
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
     fn test_match_path_entries() {
         let paths = vec![
@@ -388,9 +378,9 @@ mod tests {
             "alphabravocharlie",
             "AlphaBravoCharlie",
             "thisisatestdir",
-            "/////ThisIsATestDir",
-            "/this/is/a/test/dir",
-            "/test/tiatd",
+            "ThisIsATestDir",
+            "this/is/a/test/dir",
+            "test/tiatd",
         ];
 
         assert_eq!(
@@ -404,63 +394,15 @@ mod tests {
         );
         assert_eq!(
             match_single_path_query("t/i/a/t/d", false, &paths),
-            vec![("/this/is/a/test/dir", vec![1, 5, 6, 8, 9, 10, 11, 15, 16]),]
+            vec![("this/is/a/test/dir", vec![0, 4, 5, 7, 8, 9, 10, 14, 15]),]
         );
 
         assert_eq!(
             match_single_path_query("tiatd", false, &paths),
             vec![
-                ("/test/tiatd", vec![6, 7, 8, 9, 10]),
-                ("/this/is/a/test/dir", vec![1, 6, 9, 11, 16]),
-                ("/////ThisIsATestDir", vec![5, 9, 11, 12, 16]),
-                ("thisisatestdir", vec![0, 2, 6, 7, 11]),
-            ]
-        );
-    }
-
-    /// todo(windows)
-    /// Now, on Windows, users can only use the backslash as a path separator.
-    /// I do want to support both the backslash and the forward slash as path separators on Windows.
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn test_match_path_entries() {
-        let paths = vec![
-            "",
-            "a",
-            "ab",
-            "abC",
-            "abcd",
-            "alphabravocharlie",
-            "AlphaBravoCharlie",
-            "thisisatestdir",
-            "\\\\\\\\\\ThisIsATestDir",
-            "\\this\\is\\a\\test\\dir",
-            "\\test\\tiatd",
-        ];
-
-        assert_eq!(
-            match_single_path_query("abc", false, &paths),
-            vec![
-                ("abC", vec![0, 1, 2]),
-                ("abcd", vec![0, 1, 2]),
-                ("AlphaBravoCharlie", vec![0, 5, 10]),
-                ("alphabravocharlie", vec![4, 5, 10]),
-            ]
-        );
-        assert_eq!(
-            match_single_path_query("t\\i\\a\\t\\d", false, &paths),
-            vec![(
-                "\\this\\is\\a\\test\\dir",
-                vec![1, 5, 6, 8, 9, 10, 11, 15, 16]
-            ),]
-        );
-
-        assert_eq!(
-            match_single_path_query("tiatd", false, &paths),
-            vec![
-                ("\\test\\tiatd", vec![6, 7, 8, 9, 10]),
-                ("\\this\\is\\a\\test\\dir", vec![1, 6, 9, 11, 16]),
-                ("\\\\\\\\\\ThisIsATestDir", vec![5, 9, 11, 12, 16]),
+                ("test/tiatd", vec![5, 6, 7, 8, 9]),
+                ("ThisIsATestDir", vec![0, 4, 6, 7, 11]),
+                ("this/is/a/test/dir", vec![0, 5, 8, 10, 15]),
                 ("thisisatestdir", vec![0, 2, 6, 7, 11]),
             ]
         );
@@ -491,7 +433,7 @@ mod tests {
             "aαbβ/cγdδ",
             "αβγδ/bcde",
             "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f",
-            "/d/🆒/h",
+            "d/🆒/h",
         ];
         assert_eq!("1️⃣".len(), 7);
         assert_eq!(
@@ -602,9 +544,9 @@ mod tests {
         let query = query.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 
-        let path_arcs: Vec<Arc<Path>> = paths
+        let path_arcs: Vec<Arc<RelPath>> = paths
             .iter()
-            .map(|path| Arc::from(PathBuf::from(path)))
+            .map(|path| Arc::from(rel_path(path)))
             .collect::<Vec<_>>();
         let mut path_entries = Vec::new();
         for (i, path) in paths.iter().enumerate() {
@@ -632,8 +574,8 @@ mod tests {
                 score,
                 worktree_id: 0,
                 positions: positions.clone(),
-                path: Arc::from(candidate.path),
-                path_prefix: "".into(),
+                path: candidate.path.into(),
+                path_prefix: RelPath::empty().into(),
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },
@@ -647,7 +589,7 @@ mod tests {
                     paths
                         .iter()
                         .copied()
-                        .find(|p| result.path.as_ref() == Path::new(p))
+                        .find(|p| result.path.as_ref() == rel_path(p))
                         .unwrap(),
                     result.positions,
                 )

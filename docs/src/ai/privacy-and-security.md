@@ -8,7 +8,7 @@ We believe in opt-in data sharing as the default in building AI products, rather
 
 As an open-source product, we believe in maximal transparency, and invite you to examine our codebase. If you find issues, we encourage you to share them with us.
 
-It is entirely possible to use Zed without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
+It is entirely possible to use Zed, including Zed's AI capabilities, without sharing any data with us and without authenticating into the product. We're happy to always support this desired use pattern.
 
 ## Documentation
 

@@ -195,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e33b9f4bd34d342b6f80b7156d3a37a04aeec16313f264001e52d6a9118600"
+checksum = "3aaa2bd05a2401887945f8bfd70026e90bc3cf96c62ab9eba2779835bf21dc60"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -486,7 +486,6 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
- "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -892,6 +891,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -8680,7 +8680,6 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -12094,7 +12093,6 @@ dependencies = [
  "markdown",
  "node_runtime",
  "parking_lot",
- "pathdiff",
  "paths",
  "postage",
  "prettier",
@@ -12147,7 +12145,6 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
- "indexmap 2.9.0",
  "language",
  "menu",
  "pretty_assertions",
@@ -14500,6 +14497,35 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+]
+
+[[package]]
+name = "settings_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "client",
+ "command_palette_hooks",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "menu",
+ "node_runtime",
+ "paths",
+ "project",
+ "serde",
+ "session",
+ "settings",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -17654,6 +17680,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "perf",
  "picker",
  "project",
  "project_panel",
@@ -20253,6 +20280,7 @@ dependencies = [
  "session",
  "settings",
  "settings_profile_selector",
+ "settings_ui",
  "shellexpand 2.1.2",
  "smol",
  "snippet_provider",
@@ -20643,6 +20671,7 @@ dependencies = [
  "anyhow",
  "clap",
  "client",
+ "cloud_llm_client",
  "cloud_zeta2_prompt",
  "debug_adapter_extension",
  "edit_prediction_context",

@@ -666,9 +666,7 @@ pub(crate) fn find_url(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
-        return None;
-    };
+    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot()).ok()?;
 
     let offset = position.to_offset(&snapshot);
     let mut token_start = offset;
@@ -1847,6 +1845,44 @@ mod tests {
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 
         // No highlight
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
+        });
+
+        // Does not open the directory
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
+    }
+
+    #[gpui::test]
+    async fn test_hover_unicode(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            You can't open ˇ\"🤩\" because it's an emoji.
+        "});
+
+        // File does not exist
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't open ˇ\"🤩\" because it's an emoji.
+        "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+
+        // No highlight, does not panic...
         cx.update_editor(|editor, window, cx| {
             assert!(
                 editor

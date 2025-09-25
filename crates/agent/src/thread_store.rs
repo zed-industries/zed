@@ -10,6 +10,7 @@ use assistant_tool::{Tool, ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
@@ -39,7 +40,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 use zed_env_vars::ZED_STATELESS;
 
@@ -85,8 +86,8 @@ const RULES_FILE_NAMES: [&str; 9] = [
     "GEMINI.md",
 ];
 
-pub fn init(cx: &mut App) {
-    ThreadsDatabase::init(cx);
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
+    ThreadsDatabase::init(fs, cx);
 }
 
 /// A system prompt shared by all threads created by this ThreadStore
@@ -234,7 +235,7 @@ impl ThreadStore {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == Path::new(name))
+                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
                 }) {
                     self.enqueue_system_prompt_reload();
                 }
@@ -327,7 +328,7 @@ impl ThreadStore {
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
-        let root_name = tree.root_name().into();
+        let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
 
         let mut context = WorktreeContext {
@@ -367,7 +368,7 @@ impl ThreadStore {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(name)
+                    .entry_for_path(RelPath::new(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -869,13 +870,13 @@ impl ThreadsDatabase {
         GlobalThreadsDatabase::global(cx).0.clone()
     }
 
-    fn init(cx: &mut App) {
+    fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let executor = cx.background_executor().clone();
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
                 let threads_dir = paths::data_dir().join("threads");
-                async move { ThreadsDatabase::new(threads_dir, executor) }
+                async move { ThreadsDatabase::new(fs, threads_dir, executor).await }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -884,13 +885,17 @@ impl ThreadsDatabase {
         cx.set_global(GlobalThreadsDatabase(database_future));
     }
 
-    pub fn new(threads_dir: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
-        std::fs::create_dir_all(&threads_dir)?;
+    pub async fn new(
+        fs: Arc<dyn Fs>,
+        threads_dir: PathBuf,
+        executor: BackgroundExecutor,
+    ) -> Result<Self> {
+        fs.create_dir(&threads_dir).await?;
 
         let sqlite_path = threads_dir.join("threads.db");
         let mdb_path = threads_dir.join("threads-db.1.mdb");
 
-        let needs_migration_from_heed = mdb_path.exists();
+        let needs_migration_from_heed = fs.is_file(&mdb_path).await;
 
         let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
@@ -932,7 +937,14 @@ impl ThreadsDatabase {
                 .spawn(async move {
                     log::info!("Starting threads.db migration");
                     Self::migrate_from_heed(&mdb_path, db_connection, executor_clone)?;
-                    std::fs::remove_dir_all(mdb_path)?;
+                    fs.remove_dir(
+                        &mdb_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await?;
                     log::info!("threads.db migrated to sqlite");
                     Ok::<(), anyhow::Error>(())
                 })

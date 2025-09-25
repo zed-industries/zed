@@ -71,6 +71,7 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
+use util::rel_path::RelPath;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
@@ -1653,7 +1654,7 @@ fn open_project_debug_tasks_file(
 
 fn open_local_file(
     workspace: &mut Workspace,
-    settings_relative_path: &'static Path,
+    settings_relative_path: &'static RelPath,
     initial_contents: Cow<'static, str>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -1969,7 +1970,7 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -2749,7 +2750,7 @@ mod tests {
         fn assert_project_panel_selection(
             workspace: &Workspace,
             expected_worktree_path: &Path,
-            expected_entry_path: &Path,
+            expected_entry_path: &RelPath,
             cx: &App,
         ) {
             let project_panel = [
@@ -2797,7 +2798,7 @@ mod tests {
             assert_project_panel_selection(
                 workspace,
                 Path::new(path!("/dir1")),
-                Path::new("a.txt"),
+                rel_path("a.txt"),
                 cx,
             );
             assert_eq!(
@@ -2835,7 +2836,7 @@ mod tests {
             assert_project_panel_selection(
                 workspace,
                 Path::new(path!("/dir2/b.txt")),
-                Path::new(""),
+                rel_path(""),
                 cx,
             );
             let worktree_roots = workspace
@@ -2884,7 +2885,7 @@ mod tests {
             assert_project_panel_selection(
                 workspace,
                 Path::new(path!("/dir3")),
-                Path::new("c.txt"),
+                rel_path("c.txt"),
                 cx,
             );
             let worktree_roots = workspace
@@ -2930,12 +2931,7 @@ mod tests {
             .await;
         cx.read(|cx| {
             let workspace = workspace.read(cx);
-            assert_project_panel_selection(
-                workspace,
-                Path::new(path!("/d.txt")),
-                Path::new(""),
-                cx,
-            );
+            assert_project_panel_selection(workspace, Path::new(path!("/d.txt")), rel_path(""), cx);
             let worktree_roots = workspace
                 .worktrees(cx)
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
@@ -3061,9 +3057,7 @@ mod tests {
                 .zip(paths_to_open.iter())
                 .map(|(i, path)| {
                     match i {
-                        Some(Ok(i)) => {
-                            Some(i.project_path(cx).map(|p| p.path.display().to_string()))
-                        }
+                        Some(Ok(i)) => Some(i.project_path(cx).map(|p| p.path)),
                         Some(Err(e)) => panic!("Excluded file {path:?} failed to open: {e:?}"),
                         None => None,
                     }
@@ -3076,8 +3070,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(path!(".git/HEAD").to_string()),
-                Some(path!("excluded_dir/file").to_string()),
+                Some(rel_path(".git/HEAD").into()),
+                Some(rel_path("excluded_dir/file").into()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );
@@ -3096,14 +3090,12 @@ mod tests {
                         i.project_path(cx)
                             .expect("all excluded files that got open should have a path")
                             .path
-                            .display()
-                            .to_string()
                     })
                     .collect::<Vec<_>>();
                 opened_buffer_paths.sort();
                 assert_eq!(
                     opened_buffer_paths,
-                    vec![path!(".git/HEAD").to_string(), path!("excluded_dir/file").to_string()],
+                    vec![rel_path(".git/HEAD").into(), rel_path("excluded_dir/file").into()],
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
@@ -3296,7 +3288,7 @@ mod tests {
                     cx,
                 );
                 workspace.open_path(
-                    (worktree.read(cx).id(), "the-new-name.rs"),
+                    (worktree.read(cx).id(), rel_path("the-new-name.rs")),
                     None,
                     true,
                     window,
@@ -4828,7 +4820,8 @@ mod tests {
         // 5. Critical: Verify .zed is actually excluded from worktree
         let worktree = cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap());
 
-        let has_zed_entry = cx.update(|cx| worktree.read(cx).entry_for_path(".zed").is_some());
+        let has_zed_entry =
+            cx.update(|cx| worktree.read(cx).entry_for_path(rel_path(".zed")).is_some());
 
         eprintln!(
             "Is .zed directory visible in worktree after exclusion: {}",

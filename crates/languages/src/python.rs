@@ -24,6 +24,7 @@ use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
 use util::fs::{make_file_executable, remove_matching};
+use util::rel_path::RelPath;
 
 use parking_lot::Mutex;
 use std::str::FromStr;
@@ -52,9 +53,9 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         for path in path.ancestors().take(depth) {
-            let p = path.join("pyproject.toml");
+            let p = path.join(RelPath::new("pyproject.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 return Some(path.into());
             }
@@ -679,7 +680,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| Arc::from("".as_ref()));
+                    .unwrap_or_else(|| RelPath::empty().into());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
@@ -1012,7 +1013,7 @@ impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Arc<Path>,
+        subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -1024,7 +1025,6 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
 
-        debug_assert!(subroot_relative_path.is_relative());
         // `.ancestors()` will yield at least one path, so in case of empty `subroot_relative_path`, we'll just use
         // worktree root as the workspace directory.
         config.workspace_directories = Some(

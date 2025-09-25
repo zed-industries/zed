@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 use text::{Anchor, OffsetRangeExt as _};
 use util::markdown::MarkdownCodeBlock;
+use util::rel_path::RelPath;
 use util::{ResultExt as _, post_inc};
 
 pub const RULES_ICON: IconName = IconName::Reader;
@@ -242,7 +243,7 @@ pub struct DirectoryContext {
 #[derive(Debug, Clone)]
 pub struct DirectoryContextDescendant {
     /// Path within the directory.
-    pub rel_path: Arc<Path>,
+    pub rel_path: Arc<RelPath>,
     pub fenced_codeblock: SharedString,
 }
 
@@ -968,7 +969,7 @@ pub fn load_context(
     })
 }
 
-fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<Arc<RelPath>> {
     let mut files = Vec::new();
 
     for entry in worktree.child_entries(path) {

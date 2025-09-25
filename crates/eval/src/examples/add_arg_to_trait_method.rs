@@ -1,8 +1,7 @@
-use std::path::Path;
-
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use async_trait::async_trait;
+use util::rel_path::RelPath;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
 
@@ -68,7 +67,7 @@ impl Example for AddArgToTraitMethod {
 
         for tool_name in add_ignored_window_paths {
             let path_str = format!("crates/assistant_tools/src/{}.rs", tool_name);
-            let edits = edits.get(Path::new(&path_str));
+            let edits = edits.get(RelPath::new(&path_str).unwrap());
 
             let ignored = edits.is_some_and(|edits| {
                 edits.has_added_line("        _window: Option<gpui::AnyWindowHandle>,\n")
@@ -86,7 +85,8 @@ impl Example for AddArgToTraitMethod {
 
         // Adds unignored argument to `batch_tool`
 
-        let batch_tool_edits = edits.get(Path::new("crates/assistant_tools/src/batch_tool.rs"));
+        let batch_tool_edits =
+            edits.get(RelPath::new("crates/assistant_tools/src/batch_tool.rs").unwrap());
 
         cx.assert(
             batch_tool_edits.is_some_and(|edits| {

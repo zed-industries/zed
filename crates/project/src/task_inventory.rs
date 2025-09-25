@@ -4,7 +4,7 @@ use std::{
     borrow::Cow,
     cmp::{self, Reverse},
     collections::hash_map,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -25,7 +25,7 @@ use task::{
     VariableName,
 };
 use text::{BufferId, Point, ToPoint};
-use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
+use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
@@ -76,7 +76,7 @@ impl InventoryContents for DebugScenario {
 #[derive(Debug)]
 struct InventoryFor<T> {
     global: HashMap<PathBuf, Vec<T>>,
-    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<T>>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<RelPath>, Vec<T>>>,
 }
 
 impl<T: InventoryContents> InventoryFor<T> {
@@ -95,7 +95,7 @@ impl<T: InventoryContents> InventoryFor<T> {
                 (
                     TaskSourceKind::Worktree {
                         id: worktree,
-                        directory_in_worktree: directory.to_path_buf(),
+                        directory_in_worktree: directory.clone(),
                         id_base: Cow::Owned(format!(
                             "local worktree {} from directory {directory:?}",
                             T::LABEL
@@ -138,7 +138,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        directory_in_worktree: PathBuf,
+        directory_in_worktree: Arc<RelPath>,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -228,7 +228,7 @@ impl TaskSourceKind {
                 id_base,
                 directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", directory_in_worktree.display())
+                format!("{id_base}_{id}_{}", directory_in_worktree.as_str())
             }
             Self::Language { name } => format!("language_{name}"),
             Self::Lsp {
@@ -653,7 +653,7 @@ impl Inventory {
                     path: match location {
                         TaskSettingsLocation::Global(path) => path.to_owned(),
                         TaskSettingsLocation::Worktree(settings_location) => {
-                            settings_location.path.join(task_file_name())
+                            settings_location.path.as_std_path().join(task_file_name())
                         }
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
@@ -701,7 +701,8 @@ impl Inventory {
                         ..
                     } = kind
                     {
-                        *id != location.worktree_id || directory_in_worktree != location.path
+                        *id != location.worktree_id
+                            || directory_in_worktree.as_ref() != location.path
                     } else {
                         true
                     }
@@ -729,9 +730,10 @@ impl Inventory {
                 return Err(InvalidSettingsError::Debug {
                     path: match location {
                         TaskSettingsLocation::Global(path) => path.to_owned(),
-                        TaskSettingsLocation::Worktree(settings_location) => {
-                            settings_location.path.join(debug_task_file_name())
-                        }
+                        TaskSettingsLocation::Worktree(settings_location) => settings_location
+                            .path
+                            .as_std_path()
+                            .join(debug_task_file_name()),
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
                 });
@@ -969,6 +971,7 @@ impl BasicContextProvider {
         Self { worktree_store }
     }
 }
+
 impl ContextProvider for BasicContextProvider {
     fn build_context(
         &self,
@@ -991,10 +994,7 @@ impl ContextProvider for BasicContextProvider {
             symbol.text[range].to_string()
         });
 
-        let current_file = buffer
-            .file()
-            .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx).to_sanitized_string());
+        let current_file = buffer.file().and_then(|file| file.as_local());
         let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
         let row = row + 1;
         let column = column + 1;
@@ -1013,44 +1013,43 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_root_dir =
-            buffer
-                .file()
-                .map(|file| file.worktree_id(cx))
-                .and_then(|worktree_id| {
-                    self.worktree_store
-                        .read(cx)
-                        .worktree_for_id(worktree_id, cx)
-                        .and_then(|worktree| worktree.read(cx).root_dir())
-                });
-        if let Some(worktree_path) = worktree_root_dir {
+        let worktree = buffer
+            .file()
+            .map(|file| file.worktree_id(cx))
+            .and_then(|worktree_id| {
+                self.worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+            });
+
+        if let Some(worktree) = worktree {
+            let worktree = worktree.read(cx);
+            let path_style = worktree.path_style();
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree_path.to_sanitized_string(),
+                worktree.abs_path().to_string_lossy().to_string(),
             );
-            if let Some(full_path) = current_file.as_ref() {
-                let relative_path = pathdiff::diff_paths(full_path, worktree_path);
-                if let Some(relative_file) = relative_path {
+            if let Some(current_file) = current_file.as_ref() {
+                let relative_path = current_file.path();
+                task_variables.insert(
+                    VariableName::RelativeFile,
+                    relative_path.display(path_style).to_string(),
+                );
+                if let Some(relative_dir) = relative_path.parent() {
                     task_variables.insert(
-                        VariableName::RelativeFile,
-                        relative_file.to_sanitized_string(),
+                        VariableName::RelativeDir,
+                        if relative_dir.is_empty() {
+                            String::from(".")
+                        } else {
+                            relative_dir.display(path_style).to_string()
+                        },
                     );
-                    if let Some(relative_dir) = relative_file.parent() {
-                        task_variables.insert(
-                            VariableName::RelativeDir,
-                            if relative_dir.as_os_str().is_empty() {
-                                String::from(".")
-                            } else {
-                                relative_dir.to_sanitized_string()
-                            },
-                        );
-                    }
                 }
             }
         }
 
-        if let Some(path_as_string) = current_file {
-            let path = Path::new(&path_as_string);
+        if let Some(current_file) = current_file {
+            let path = current_file.abs_path(cx);
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                 task_variables.insert(VariableName::Filename, String::from(filename));
             }
@@ -1063,7 +1062,7 @@ impl ContextProvider for BasicContextProvider {
                 task_variables.insert(VariableName::Dirname, dirname.into());
             }
 
-            task_variables.insert(VariableName::File, path_as_string);
+            task_variables.insert(VariableName::File, path.to_string_lossy().to_string());
         }
 
         Task::ready(Ok(task_variables))
@@ -1096,6 +1095,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use settings::SettingsLocation;
+    use std::path::Path;
+    use util::rel_path::rel_path;
 
     use crate::task_store::TaskStore;
 
@@ -1181,7 +1182,7 @@ mod tests {
         let worktree_id = WorktreeId::from_usize(0);
         let local_worktree_location = SettingsLocation {
             worktree_id,
-            path: Path::new("foo"),
+            path: RelPath::new("foo").unwrap(),
         };
         inventory.update(cx, |inventory, _| {
             inventory
@@ -1427,7 +1428,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    directory_in_worktree: PathBuf::from(".zed"),
+                    directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
@@ -1435,7 +1436,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    directory_in_worktree: PathBuf::from(".zed"),
+                    directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_1".to_string(),
@@ -1445,7 +1446,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    directory_in_worktree: PathBuf::from(".zed"),
+                    directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
@@ -1453,7 +1454,7 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    directory_in_worktree: PathBuf::from(".zed"),
+                    directory_in_worktree: rel_path(".zed").into(),
                     id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_2".to_string(),
@@ -1475,7 +1476,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_1,
-                        path: Path::new(".zed"),
+                        path: RelPath::new(".zed").unwrap(),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
@@ -1486,7 +1487,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_2,
-                        path: Path::new(".zed"),
+                        path: RelPath::new(".zed").unwrap(),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),

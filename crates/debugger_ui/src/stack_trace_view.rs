@@ -181,7 +181,7 @@ impl StackTraceView {
 
                 let project_path = ProjectPath {
                     worktree_id: worktree.read_with(cx, |tree, _| tree.id())?,
-                    path: relative_path.into(),
+                    path: relative_path,
                 };
 
                 if let Some(buffer) = this

@@ -1412,7 +1412,7 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    "line_height": "comfortable",
+    "line_height": "standard",
     // Activate the python virtual environment, if one is found, in the
     // terminal's working directory (as resolved by the working_directory
     // setting). Set this to "off" to disable this behavior.
@@ -1432,7 +1432,7 @@
       //
       // The shell running in the terminal needs to be configured to emit the title.
       // Example: `echo -e "\e]2;New Title\007";`
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     // Scrollbar-related settings
     "scrollbar": {
