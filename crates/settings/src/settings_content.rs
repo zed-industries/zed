@@ -235,13 +235,17 @@ pub enum BaseKeymapContent {
 }
 
 /// Position of window control buttons on Linux.
+///
+/// Valid values: "left" or "right"
+/// - "left": Window controls on the left side (macOS style)
+/// - "right": Window controls on the right side (Windows style)
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowControlsPosition {
     /// Window controls on the left side (macOS style)
-    #[default]
     Left,
     /// Window controls on the right side (Windows style)
+    #[default]
     Right,
 }
 
@@ -278,7 +282,7 @@ pub struct TitleBarSettingsContent {
     pub show_menus: Option<bool>,
     /// Position of window control buttons (minimize, maximize, close) on Linux.
     ///
-    /// Default: left
+    /// Default: right
     pub window_controls_position: Option<WindowControlsPosition>,
 }
 
