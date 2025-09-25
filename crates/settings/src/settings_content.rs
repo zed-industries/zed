@@ -870,6 +870,12 @@ impl From<bool> for SaturatingBool {
     }
 }
 
+impl From<SaturatingBool> for bool {
+    fn from(value: SaturatingBool) -> bool {
+        value.0
+    }
+}
+
 impl merge_from::MergeFrom for SaturatingBool {
     fn merge_from(&mut self, other: &Self) {
         self.0 |= other.0

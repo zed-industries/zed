@@ -217,6 +217,7 @@ pub enum ShowScrollbar {
     Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
+// todo() -> combine with CursorShape
 pub enum CursorShapeContent {
     /// Cursor is a block like `█`.
     #[default]
