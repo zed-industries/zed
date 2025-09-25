@@ -1503,7 +1503,7 @@ mod tests {
 
         send.await.unwrap();
         let uri = MentionUri::File {
-            abs_path: path!("file:///a/b.md").into(),
+            abs_path: path!("/a/b.md").into(),
         }
         .to_uri();
         acp_thread.read_with(cx, |thread, cx| {
