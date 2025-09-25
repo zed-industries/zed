@@ -2030,7 +2030,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
@@ -2083,7 +2083,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
@@ -2139,7 +2139,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(
-            panel.edit_state.is_some(),
+            panel.state.edit_state.is_some(),
             "Edit state should not be None after conflicting file rename"
         );
         panel.cancel(&menu::Cancel, window, cx);
@@ -3036,7 +3036,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
             let project = panel.project.read(cx);
             let worktree = project.visible_worktrees(cx).next().unwrap();
             let root_entry = worktree.read(cx).root_entry().unwrap();
-            panel.selection = Some(SelectedEntry {
+            panel.state.selection = Some(SelectedEntry {
                 worktree_id: worktree.read(cx).id(),
                 entry_id: root_entry.id,
             });
@@ -3045,7 +3045,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
         assert!(
-            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            panel.read_with(cx, |panel, _| panel.state.edit_state.is_none()),
             "Rename should be blocked when hide_root=true with single worktree"
         );
     }
@@ -3074,14 +3074,14 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
 
         #[cfg(target_os = "windows")]
         assert!(
-            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            panel.read_with(cx, |panel, _| panel.state.edit_state.is_none()),
             "Rename should be blocked on Windows even with multiple worktrees"
         );
 
         #[cfg(not(target_os = "windows"))]
         {
             assert!(
-                panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
+                panel.read_with(cx, |panel, _| panel.state.edit_state.is_some()),
                 "Rename should work with multiple worktrees on non-Windows when hide_root=true"
             );
             panel.update_in(cx, |panel, window, cx| {
@@ -3172,7 +3172,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
             let drag = DraggedSelection {
-                active_selection: this.selection.unwrap(),
+                active_selection: this.state.selection.unwrap(),
                 marked_selections: this.marked_entries.clone().into(),
             };
             let target_entry = this
@@ -3310,10 +3310,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3343,10 +3343,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3366,10 +3366,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3395,10 +3395,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -3418,10 +3418,10 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         let drag = DraggedSelection {
             active_selection: SelectedEntry {
-                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
-                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+                worktree_id: panel.state.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.state.selection.as_ref().unwrap().entry_id),
             },
-            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+            marked_selections: Arc::new([*panel.state.selection.as_ref().unwrap()]),
         };
         let target_entry = panel
             .project
@@ -5632,7 +5632,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     panel.update(cx, |panel, _| {
         assert!(
-            panel.selection.is_none(),
+            panel.state.selection.is_none(),
             "Should have no selection initially"
         );
     });
@@ -5682,7 +5682,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 
     // Test 2: Create new directory when no entry is selected
     panel.update(cx, |panel, _| {
-        panel.selection = None;
+        panel.state.selection = None;
     });
 
     panel.update_in(cx, |panel, window, cx| {
@@ -6545,7 +6545,7 @@ fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestCont
             let worktree = worktree.read(cx);
             if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                panel.selection = Some(crate::SelectedEntry {
+                panel.state.selection = Some(crate::SelectedEntry {
                     worktree_id: worktree.id(),
                     entry_id,
                 });
@@ -6570,7 +6570,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
                 if !panel.marked_entries.contains(&entry) {
                     panel.marked_entries.push(entry);
                 }
-                panel.selection = Some(entry);
+                panel.state.selection = Some(entry);
                 return;
             }
         }
