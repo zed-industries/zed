@@ -633,7 +633,7 @@ impl SettingsStore {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
-                        .join(RelPath::new(task_file_name()).unwrap())
+                        .join(RelPath::unix(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -643,7 +643,7 @@ impl SettingsStore {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
                     path: directory_path
-                        .join(RelPath::new(task_file_name()).unwrap())
+                        .join(RelPath::unix(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -698,7 +698,8 @@ impl SettingsStore {
                             v.insert((editorconfig_contents.to_owned(), None));
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
-                                path: directory_path.join(RelPath::new(EDITORCONFIG_NAME).unwrap()),
+                                path: directory_path
+                                    .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                             });
                         }
                     },
@@ -716,7 +717,7 @@ impl SettingsStore {
                                     return Err(InvalidSettingsError::Editorconfig {
                                         message: e.to_string(),
                                         path: directory_path
-                                            .join(RelPath::new(EDITORCONFIG_NAME).unwrap()),
+                                            .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                                     });
                                 }
                             }

@@ -425,7 +425,7 @@ impl ExtensionImports for WasmState {
                 let location = location.as_ref().and_then(|location| {
                     Some(::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: RelPath::new(&location.path).ok()?,
+                        path: RelPath::unix(&location.path).ok()?,
                     })
                 });
 

@@ -726,7 +726,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .config
             .get("cwd")
             .and_then(|cwd| {
-                RelPath::from_std_path(
+                RelPath::new(
                     cwd.as_str()
                         .map(Path::new)?
                         .strip_prefix(delegate.worktree_root_path())
@@ -740,7 +740,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
-                base_path,
+                base_path.into_arc(),
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )

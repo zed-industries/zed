@@ -307,7 +307,7 @@ impl Zeta2Inspector {
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
-                                title: RelPath::new("Cursor Excerpt").unwrap().into(),
+                                title: RelPath::unix("Cursor Excerpt").unwrap().into(),
                                 path_style,
                                 worktree_id,
                             });
@@ -341,7 +341,7 @@ impl Zeta2Inspector {
                                     .path_for_entry(snippet.declaration.project_entry_id(), cx);
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
-                                    title: RelPath::new(&format!(
+                                    title: RelPath::unix(&format!(
                                         "{} (Score density: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
