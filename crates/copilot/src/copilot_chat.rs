@@ -371,7 +371,7 @@ impl From<ResponsesApiEvent> for ResponseEvent {
         let choices = responses_event.output.into_iter().enumerate().map(|(index, output)| {
             let content = output.content.iter()
                 .filter_map(|c| c.text.as_ref())
-                .cloned()
+                .map(|s| s.as_str())
                 .collect::<Vec<_>>()
                 .join("");
 
@@ -985,8 +985,8 @@ async fn stream_completion(
         // Use standard Chat Completions API format
         serde_json::to_string(&request)?
     };
-    let request = request_builder.body(AsyncBody::from(json))?;
-    let mut response = client.send(request).await?;
+    let http_request = request_builder.body(AsyncBody::from(json))?;
+    let mut response = client.send(http_request).await?;
 
     if !response.status().is_success() {
         let mut body = Vec::new();
