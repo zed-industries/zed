@@ -117,19 +117,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     user_store.clone(),
                     cx,
                 );
-            } else if provider == EditPredictionProvider::Ollama {
-                if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
-                    provider.update(cx, |provider, cx| {
-                        provider.refresh_models(cx);
-                    });
-                }
-                assign_edit_prediction_providers(
-                    &editors,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    cx,
-                );
             }
         }
     })
@@ -326,51 +313,9 @@ mod tests {
     use super::*;
     use crate::zed::tests::init_test;
     use editor::{Editor, MultiBuffer};
-    use fs::Fs;
     use gpui::TestAppContext;
     use language::Buffer;
-    use settings::{OllamaAvailableModel, update_settings_file};
-
-    #[gpui::test]
-    async fn test_assign_edit_prediction_provider_with_no_ollama_models(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-
-        cx.update(|cx| {
-            <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
-        });
-
-        let buffer = cx.new(|cx| Buffer::local("test content", cx));
-        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let (editor, cx) =
-            cx.add_window_view(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
-
-        cx.update(|_window, cx| {
-            let fs = <dyn Fs>::global(cx);
-            update_settings_file(fs, cx, |settings, _cx| {
-                if settings.language_models.is_none() {
-                    settings.language_models = Some(Default::default());
-                }
-                let language_models = settings.language_models.as_mut().unwrap();
-                if language_models.ollama.is_none() {
-                    language_models.ollama = Some(Default::default());
-                }
-                let ollama_settings = language_models.ollama.as_mut().unwrap();
-                ollama_settings.api_url = Some("http://localhost:11434".to_string());
-                ollama_settings.available_models = Some(vec![]);
-            });
-        });
-
-        editor.update_in(cx, |editor, window, cx| {
-            assign_edit_prediction_provider(
-                editor,
-                language::language_settings::EditPredictionProvider::Ollama,
-                &app_state.client,
-                app_state.user_store.clone(),
-                window,
-                cx,
-            )
-        })
-    }
+    use settings::OllamaAvailableModel;
 
     #[gpui::test]
     async fn test_ollama_provider_authentication_on_init(cx: &mut TestAppContext) {
