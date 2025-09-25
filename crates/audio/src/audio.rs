@@ -114,10 +114,10 @@ impl Audio {
         );
 
         if self.output_handle.is_none() {
-            self.output_handle = Some(
-                OutputStreamBuilder::open_default_stream()
-                    .context("Could not open default output stream")?,
-            );
+            let output_handle = OutputStreamBuilder::open_default_stream()
+                .context("Could not open default output stream")?;
+            info!("Output stream: {:?}", output_handle);
+            self.output_handle = Some(output_handle);
             if let Some(output_handle) = &self.output_handle {
                 let (mixer, source) = rodio::mixer::mixer(CHANNEL_COUNT, SAMPLE_RATE);
                 // or the mixer will end immediately as its empty.
