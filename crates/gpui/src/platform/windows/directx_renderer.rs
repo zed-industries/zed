@@ -613,7 +613,6 @@ impl DirectXRenderer {
                 factory.CreateRenderingParams().unwrap().cast().unwrap();
             FontInfo {
                 gamma_ratios: Self::get_gamma_ratios(render_params.GetGamma()),
-
                 grayscale_enhanced_contrast: render_params.GetGrayscaleEnhancedContrast(),
             }
         })

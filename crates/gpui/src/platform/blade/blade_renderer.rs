@@ -1020,12 +1020,14 @@ impl RenderingParameters {
             .unwrap_or(1);
         let gamma = env::var("ZED_FONTS_GAMMA")
             .ok()
-            .unwrap_or(1.8)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.8_f32)
             .clamp(1.0, 2.2);
         let gamma_ratios = Self::get_gamma_ratios(gamma);
         let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
             .ok()
-            .unwrap_or(1.0)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0_f32)
             .max(0.0);
 
         Self {
