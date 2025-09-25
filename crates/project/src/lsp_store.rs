@@ -3284,7 +3284,9 @@ impl LocalLspStore {
                     let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
+                        RelPath::from_std_path(&literal_prefix, path_style)
+                            .ok()?
+                            .into_arc(),
                         relative.to_string_lossy().to_string(),
                     ))
                 }
@@ -3300,7 +3302,9 @@ impl LocalLspStore {
                     literal_prefix.push(glob_literal_prefix(Path::new(&rp.pattern)));
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
+                        RelPath::from_std_path(&literal_prefix, path_style)
+                            .ok()?
+                            .into_arc(),
                         rp.pattern.clone(),
                     ))
                 }
@@ -7939,8 +7943,8 @@ impl LspStore {
                     RelPath::from_std_path(
                         abs_path.strip_prefix(worktree_root)?,
                         PathStyle::local(),
-                    )
-                    .context("failed to create relative path")?
+                    )?
+                    .into_arc()
                 };
                 (worktree, relative_path)
             };

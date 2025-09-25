@@ -1495,7 +1495,9 @@ impl ProjectPanel {
         } else {
             filename.trim_start_matches('/')
         };
-        let filename = RelPath::from_std_path(filename.as_ref(), path_style).ok()?;
+        let filename = RelPath::from_std_path(filename.as_ref(), path_style)
+            .ok()?
+            .into_arc();
 
         edit_state.is_dir =
             edit_state.is_dir || (edit_state.is_new_entry() && filename_indicates_dir);

@@ -348,7 +348,7 @@ impl MarksState {
                         .log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     })
                 })
                 .next();

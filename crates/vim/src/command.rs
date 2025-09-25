@@ -309,7 +309,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Ok(project_path) = RelPath::from_std_path(Path::new(&action.filename), path_style)
                 .map(|path| ProjectPath {
                     worktree_id: worktree.read(cx).id(),
-                    path,
+                    path: path.into_arc(),
                 })
             else {
                 // TODO implement save_as with absolute path
@@ -379,7 +379,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: path.into_arc(),
             };
 
             let direction = if action.vertical {
@@ -479,7 +479,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: path.into_arc(),
             };
 
             let _ = workspace.update(cx, |workspace, cx| {

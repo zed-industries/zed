@@ -148,7 +148,7 @@ impl FromStr for CursorPosition {
             ));
         }
 
-        let path = RelPath::from_std_path(Path::new(&parts[0]), PathStyle::local())?;
+        let path = RelPath::from_std_path(Path::new(&parts[0]), PathStyle::local())?.into_arc();
         let line: u32 = parts[1]
             .parse()
             .map_err(|_| anyhow!("Invalid line number: '{}'", parts[1]))?;

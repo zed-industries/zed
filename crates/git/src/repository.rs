@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::io::prelude::*;
 use std::process::{ExitStatus, Stdio};
@@ -2084,7 +2085,7 @@ impl RepoPath {
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
         let rel_path = RelPath::from_std_path(path, path_style)?;
-        Ok(rel_path.into())
+        Ok(Self(rel_path.as_ref().into()))
     }
 }
 
@@ -2096,6 +2097,12 @@ pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
 impl From<&RelPath> for RepoPath {
     fn from(value: &RelPath) -> Self {
         RepoPath(value.into())
+    }
+}
+
+impl<'a> From<Cow<'a, RelPath>> for RepoPath {
+    fn from(value: Cow<'a, RelPath>) -> Self {
+        value.as_ref().into()
     }
 }
 

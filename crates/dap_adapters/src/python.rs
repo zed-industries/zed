@@ -740,7 +740,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
-                base_path,
+                base_path.into_arc(),
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )

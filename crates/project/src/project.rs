@@ -4243,19 +4243,11 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![];
         if let Ok(path) = RelPath::from_std_path(Path::new(path), self.path_style(cx)) {
-            candidates.push(path);
-        }
-
-        if let Some(file) = buffer.read(cx).file()
-            && let Some(dir) = file.path().parent()
-        {
-            if let Some(joined) = self
-                .path_style(cx)
-                .join(&*dir.display(self.path_style(cx)), path)
-                && let Some(joined) =
-                    RelPath::from_std_path(Path::new(&joined), self.path_style(cx)).ok()
+            candidates.push(path.into_arc());
+            if let Some(file) = buffer.read(cx).file()
+                && let Some(dir) = file.path().parent()
             {
-                candidates.push(joined);
+                candidates.push(dir.join(path.as_ref()))
             }
         }
 
@@ -4474,7 +4466,7 @@ impl Project {
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     });
                 }
             }
@@ -4486,7 +4478,7 @@ impl Project {
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     });
                 }
             }

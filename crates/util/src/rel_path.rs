@@ -2,7 +2,7 @@ use crate::paths::{PathStyle, is_absolute};
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     ffi::OsStr,
     fmt,
     ops::Deref,
@@ -37,36 +37,48 @@ impl RelPath {
     }
 
     #[track_caller]
-    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Arc<Self>> {
+    pub fn from_std_path<'a>(path: &'a Path, path_style: PathStyle) -> Result<Cow<'a, Self>> {
         let path = path.to_str().context("non utf-8 path")?;
+        let path = path.trim_start_matches("./");
         let mut string = Cow::Borrowed(path);
 
         if is_absolute(&string, path_style) {
             return Err(anyhow!("absolute path not allowed: {path:?}"));
         }
 
-        if path_style == PathStyle::Windows {
+        if path_style == PathStyle::Windows && path.contains('\\') {
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
 
-        let mut this = RelPathBuf::new();
-        for component in unsafe { Self::new_unchecked(string.as_ref()) }.components() {
-            match component {
-                "" => {}
-                "." => {}
-                ".." => {
-                    if !this.pop() {
-                        return Err(anyhow!("path is not relative: {string:?}"));
+        let mut result = match string {
+            Cow::Borrowed(string) => Cow::Borrowed(unsafe { Self::new_unchecked(string) }),
+            Cow::Owned(string) => Cow::Owned(RelPathBuf(string)),
+        };
+
+        if result
+            .components()
+            .any(|component| component == "" || component == "." || component == "..")
+        {
+            let mut normalized = RelPathBuf::new();
+            for component in result.components() {
+                match component {
+                    "" => {}
+                    "." => {}
+                    ".." => {
+                        if !normalized.pop() {
+                            return Err(anyhow!("path is not relative: {result:?}"));
+                        }
                     }
+                    other => normalized.push(RelPath::new(other)?),
                 }
-                other => this.push(RelPath::new(other)?),
             }
+            result = Cow::Owned(normalized)
         }
 
-        Ok(this.into())
+        Ok(result)
     }
 
-    pub unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
+    unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
         unsafe { &*(s.as_ref() as *const str as *const Self) }
     }
 
@@ -115,7 +127,7 @@ impl RelPath {
         false
     }
 
-    pub fn strip_prefix(&self, other: &Self) -> Result<&Self> {
+    pub fn strip_prefix<'a>(&'a self, other: &Self) -> Result<&'a Self> {
         if other.is_empty() {
             return Ok(self);
         }
@@ -188,6 +200,10 @@ impl RelPath {
         &self.0
     }
 
+    pub fn into_arc(&self) -> Arc<Self> {
+        Arc::from(self)
+    }
+
     pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
         match style {
             PathStyle::Posix => Cow::Borrowed(&self.0),
@@ -205,6 +221,20 @@ impl RelPath {
 
     pub fn as_std_path(&self) -> &Path {
         Path::new(&self.0)
+    }
+}
+
+impl ToOwned for RelPath {
+    type Owned = RelPathBuf;
+
+    fn to_owned(&self) -> Self::Owned {
+        self.to_rel_path_buf()
+    }
+}
+
+impl Borrow<RelPath> for RelPathBuf {
+    fn borrow(&self) -> &RelPath {
+        self.as_rel_path()
     }
 }
 
@@ -296,6 +326,12 @@ impl Deref for RelPathBuf {
 impl AsRef<Path> for RelPath {
     fn as_ref(&self) -> &Path {
         Path::new(&self.0)
+    }
+}
+
+impl<'a> From<&'a RelPath> for Cow<'a, RelPath> {
+    fn from(value: &'a RelPath) -> Self {
+        Self::Borrowed(value)
     }
 }
 
@@ -401,7 +437,7 @@ mod tests {
         assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::local()).is_err());
         assert_eq!(
             RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
-            Arc::from(rel_path("foo"))
+            rel_path("foo").into()
         );
     }
 

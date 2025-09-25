@@ -1561,6 +1561,7 @@ impl LocalWorktree {
                     PathStyle::local(),
                 )
                 .ok()
+                .map(|path| path.into_arc())
             })
             .collect::<Vec<_>>();
 
@@ -3815,7 +3816,7 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path: Arc<RelPath> = if let Ok(path) =
+                let relative_path = if let Ok(path) =
                     abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::from_std_path(path, PathStyle::local())
                 {
@@ -3864,7 +3865,7 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                relative_paths.push(relative_path);
+                relative_paths.push(relative_path.into_arc());
                 true
             }
         });
@@ -4650,7 +4651,9 @@ impl BackgroundScanner {
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state.insert_git_repository(
-                        RelPath::from_std_path(relative, PathStyle::local()).unwrap(),
+                        RelPath::from_std_path(relative, PathStyle::local())
+                            .unwrap()
+                            .into_arc(),
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     );
