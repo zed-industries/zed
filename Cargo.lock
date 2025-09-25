@@ -12149,6 +12149,7 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
+ "rayon",
  "schemars 1.0.1",
  "search",
  "serde",

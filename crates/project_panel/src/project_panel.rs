@@ -17,13 +17,14 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
-    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, BackgroundExecutor, Bounds, ClipboardItem,
+    Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
+    uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -34,6 +35,7 @@ use project::{
     project_settings::GoToDiagnosticSeverityFilter,
 };
 use project_panel_settings::ProjectPanelSettings;
+use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -2025,7 +2027,7 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        project::sort_worktree_entries(&mut siblings);
+        sort_worktree_entries(&mut siblings);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -3080,6 +3082,7 @@ impl ProjectPanel {
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
         self.update_visible_entries_task = cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
             let new_state = cx
                 .background_spawn(async move {
                     for worktree_snapshot in visible_worktrees {
@@ -3266,8 +3269,8 @@ impl ProjectPanel {
                             entry_iter.advance();
                         }
 
-                        project::sort_worktree_entries(&mut visible_worktree_entries);
-
+                        let visible_worktree_entries =
+                            par_sort_worktree_entries(visible_worktree_entries);
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
                             entries: visible_worktree_entries,
@@ -5883,6 +5886,24 @@ impl ClipboardEntry {
             ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),
         }
     }
+}
+
+fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
+    let entry_a = lhs.as_ref();
+    let entry_b = rhs.as_ref();
+    compare_paths(
+        (entry_a.path.as_std_path(), entry_a.is_file()),
+        (entry_b.path.as_std_path(), entry_b.is_file()),
+    )
+}
+
+fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
+    entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
+}
+
+fn par_sort_worktree_entries<T: AsRef<Entry> + Send + Clone>(mut entries: Vec<T>) -> Vec<T> {
+    entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
+    entries
 }
 
 #[cfg(test)]

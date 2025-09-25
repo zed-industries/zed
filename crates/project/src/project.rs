@@ -5539,17 +5539,6 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
-    entries.sort_by(|entry_a, entry_b| {
-        let entry_a = entry_a.as_ref();
-        let entry_b = entry_b.as_ref();
-        compare_paths(
-            (entry_a.path.as_std_path(), entry_a.is_file()),
-            (entry_b.path.as_std_path(), entry_b.is_file()),
-        )
-    });
-}
-
 fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {
     match level {
         proto::language_server_prompt_request::Level::Info(_) => gpui::PromptLevel::Info,
