@@ -1036,4 +1036,60 @@ fn calculate(a: i32, b: i32) -> i32 {
             }
         });
     }
+
+    #[gpui::test]
+    async fn test_partial_accept_edit_prediction(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
+
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
+        fake_http_client.set_generate_response("hello world");
+
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
+        });
+
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
+        });
+
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+        });
+
+        editor_cx.set_state("let x = ˇ;");
+
+        let buffer = editor_cx.multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
+        let cursor_position = editor_cx.buffer_snapshot().anchor_after(8);
+
+        provider.update(cx, |provider, cx| {
+            provider.refresh(None, buffer, cursor_position, false, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            editor.refresh_edit_prediction(false, true, window, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        editor_cx.update_editor(|editor, window, cx| {
+            assert!(editor.has_active_edit_prediction());
+            assert_eq!(editor.display_text(cx), "let x = hello world;");
+            assert_eq!(editor.text(cx), "let x = ;");
+
+            // Accept partial completion - should accept first word
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+
+            assert_eq!(editor.text(cx), "let x = hello;");
+        });
+    }
 }

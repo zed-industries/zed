@@ -10,18 +10,16 @@ use gpui::{
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     pulsating_between,
 };
-
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
-use settings::{AllLanguageModelSettingsContent, OllamaSettingsContent};
-
 use paths;
 use project::DisableAiSettings;
 use regex::Regex;
+use settings::{AllLanguageModelSettingsContent, OllamaSettingsContent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     sync::{Arc, LazyLock},
