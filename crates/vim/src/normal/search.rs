@@ -1227,4 +1227,31 @@ mod test {
 
         cx.assert_state("ˇhello hello hello hello", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_regular_search_highlights_cleared_after_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, false).await;
+
+        cx.cx.set_state("ˇhello hello hello hello");
+        cx.run_until_parked();
+        
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+    
+        cx.simulate_keystrokes("hello");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty());
+        });
+
+        cx.simulate_keystroke("escape");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, _cx| {
+            let has_search_highlights = editor.has_background_highlights::<editor::items::BufferSearchHighlights>();
+            assert!(!has_search_highlights);
+        });
+    }
 }
