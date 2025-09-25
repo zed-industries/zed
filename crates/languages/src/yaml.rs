@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe, merge_json_value_into};
+use util::{ResultExt, maybe, merge_json_value_into, rel_path::RelPath};
 
 const SERVER_PATH: &str = "node_modules/yaml-language-server/bin/yaml-language-server";
 
@@ -141,7 +141,7 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Result<Value> {
         let location = SettingsLocation {
             worktree_id: delegate.worktree_id(),
-            path: delegate.worktree_root_path(),
+            path: RelPath::empty(),
         };
 
         let tab_size = cx.update(|cx| {

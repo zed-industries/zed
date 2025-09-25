@@ -195,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00e33b9f4bd34d342b6f80b7156d3a37a04aeec16313f264001e52d6a9118600"
+checksum = "3aaa2bd05a2401887945f8bfd70026e90bc3cf96c62ab9eba2779835bf21dc60"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -486,7 +486,6 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
- "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -892,6 +891,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -1405,6 +1405,7 @@ dependencies = [
  "async-tar",
  "collections",
  "crossbeam",
+ "denoise",
  "gpui",
  "libwebrtc",
  "log",
@@ -2727,7 +2728,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2756,7 +2757,7 @@ dependencies = [
  "maybe-owned",
  "rustix 1.0.7",
  "rustix-linux-procfs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -5486,7 +5487,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "976dd42dc7e85965fe702eb8164f21f450704bdde31faefd6471dba214cb594e"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5853,7 +5854,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6241,7 +6242,7 @@ checksum = "94e7099f6313ecacbe1256e8ff9d617b75d1bcb16a6fddef94866d225a01a14a"
 dependencies = [
  "io-lifetimes",
  "rustix 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7086,6 +7087,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "postage",
+ "pretty_assertions",
  "profiling",
  "rand 0.9.1",
  "raw-window-handle",
@@ -8143,7 +8145,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8216,7 +8218,7 @@ checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
 dependencies = [
  "hermit-abi 0.5.0",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8704,7 +8706,6 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -12118,7 +12119,6 @@ dependencies = [
  "markdown",
  "node_runtime",
  "parking_lot",
- "pathdiff",
  "paths",
  "postage",
  "prettier",
@@ -12171,7 +12171,6 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
- "indexmap 2.9.0",
  "language",
  "menu",
  "pretty_assertions",
@@ -12585,7 +12584,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13425,7 +13424,7 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.21.1"
-source = "git+https://github.com/RustAudio/rodio?branch=better_wav_output#82514bd1f2c6cfd9a1a885019b26a8ffea75bc5c"
+source = "git+https://github.com/RustAudio/rodio#e2074c6c2acf07b57cf717e076bdda7a9ac6e70b"
 dependencies = [
  "cpal",
  "dasp_sample",
@@ -13667,7 +13666,7 @@ dependencies = [
  "errno 0.3.11",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13680,7 +13679,7 @@ dependencies = [
  "errno 0.3.11",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13802,7 +13801,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -14487,6 +14486,7 @@ dependencies = [
  "serde_with",
  "settings_macros",
  "smallvec",
+ "strum 0.27.1",
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
@@ -14524,6 +14524,36 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+]
+
+[[package]]
+name = "settings_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "client",
+ "command_palette_hooks",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "menu",
+ "node_runtime",
+ "paths",
+ "project",
+ "serde",
+ "session",
+ "settings",
+ "strum 0.27.1",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15156,7 +15186,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -15849,7 +15879,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes",
  "rustix 0.38.44",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -16031,7 +16061,7 @@ dependencies = [
  "getrandom 0.3.2",
  "once_cell",
  "rustix 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16065,6 +16095,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "libc",
+ "log",
  "rand 0.9.1",
  "regex",
  "release_channel",
@@ -17522,6 +17553,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "pretty_assertions",
  "rand 0.9.1",
  "regex",
  "rust-embed",
@@ -17679,6 +17711,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "perf",
  "picker",
  "project",
  "project_panel",
@@ -18612,7 +18645,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -19324,7 +19357,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.9.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -19716,7 +19749,6 @@ dependencies = [
  "nix 0.29.0",
  "nix 0.30.1",
  "nom 7.1.3",
- "num",
  "num-bigint",
  "num-bigint-dig",
  "num-complex",
@@ -20279,6 +20311,7 @@ dependencies = [
  "session",
  "settings",
  "settings_profile_selector",
+ "settings_ui",
  "shellexpand 2.1.2",
  "smol",
  "snippet_provider",
@@ -20607,6 +20640,7 @@ dependencies = [
  "arrayvec",
  "chrono",
  "client",
+ "clock",
  "cloud_llm_client",
  "cloud_zeta2_prompt",
  "edit_prediction",
@@ -20617,9 +20651,12 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "lsp",
+ "pretty_assertions",
  "project",
  "release_channel",
  "serde_json",
+ "settings",
  "thiserror 2.0.12",
  "util",
  "uuid",
@@ -20635,6 +20672,7 @@ dependencies = [
  "chrono",
  "clap",
  "client",
+ "cloud_llm_client",
  "collections",
  "edit_prediction_context",
  "editor",
@@ -20665,6 +20703,7 @@ dependencies = [
  "anyhow",
  "clap",
  "client",
+ "cloud_llm_client",
  "cloud_zeta2_prompt",
  "debug_adapter_extension",
  "edit_prediction_context",

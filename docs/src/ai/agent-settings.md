@@ -6,14 +6,13 @@ Learn about all the settings you can customize in Zed's Agent Panel.
 
 ### Default Model {#default-model}
 
-If you're using [Zed's hosted LLM service](./plans-and-usage.md), it sets `claude-sonnet-4` as the default model.
-But if you're not subscribed to it or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-sonnet-4` as the default model for agentic work (agent panel, inline assistant) and `gpt-5-nano` as the default "fast" model (thread summarization, git commit messages). If you're not subscribed or want to change these defaults, you can manually edit the `default_model` object in your settings:
 
 ```json
 {
   "agent": {
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "openai",
       "model": "gpt-4o"
     }
   }
@@ -22,7 +21,7 @@ But if you're not subscribed to it or simply just want to change it, you can do 
 
 ### Feature-specific Models {#feature-specific-models}
 
-Assign distinct and specific models for the following AI-powered features in Zed:
+You can assign distinct and specific models for the following AI-powered features:
 
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
@@ -63,7 +62,7 @@ When configured, the inline assist UI will surface controls to cycle between the
 The models you specify here are always used in _addition_ to your [default model](#default-model).
 
 For example, the following configuration will generate two outputs for every assist.
-One with Claude Sonnet 4 (the default model), and one with GPT-4o.
+One with Claude Sonnet 4 (the default model), and one with GPT-5-mini.
 
 ```json
 {
@@ -75,7 +74,7 @@ One with Claude Sonnet 4 (the default model), and one with GPT-4o.
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-4o"
+        "model": "gpt-4-mini"
       }
     ]
   }
@@ -196,8 +195,6 @@ It is set to `4` by default, and the max number of lines is always double of the
   }
 }
 ```
-
-> This setting is currently available only in Preview.
 
 ### Modifier to Send
 

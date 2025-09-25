@@ -28,14 +28,15 @@ paths.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-settings_macros = { path = "../settings_macros" }
 serde_json_lenient.workspace = true
-serde_repr.workspace = true
+serde_json.workspace = true
 serde_path_to_error.workspace = true
+serde_repr.workspace = true
 serde_with.workspace = true
+serde.workspace = true
+settings_macros = { path = "../settings_macros" }
 smallvec.workspace = true
+strum.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
@@ -45,6 +46,7 @@ zlog.workspace = true
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

@@ -65,7 +65,7 @@ impl Example for CodeBlockCitations {
                                 thread
                                     .project()
                                     .read(cx)
-                                    .find_project_path(path_range.path, cx)
+                                    .find_project_path(path_range.path.as_ref(), cx)
                             })
                             .ok()
                             .flatten();

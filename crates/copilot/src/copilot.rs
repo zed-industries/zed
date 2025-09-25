@@ -40,6 +40,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
+use util::rel_path::RelPath;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -963,8 +964,7 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
             .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+            .map_or(RelPath::empty().into(), |file| file.path().clone());
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
@@ -975,7 +975,7 @@ impl Copilot {
                         tab_size: tab_size.into(),
                         indent_size: 1,
                         insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
+                        relative_path: relative_path.to_proto(),
                         position: point_to_lsp(position),
                         version: version.try_into().unwrap(),
                     },
@@ -1194,7 +1194,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::path;
+    use util::{path, paths::PathStyle, rel_path::rel_path};
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1258,7 +1258,7 @@ mod tests {
             buffer.file_updated(
                 Arc::new(File {
                     abs_path: path!("/root/child/buffer-1").into(),
-                    path: Path::new("child/buffer-1").into(),
+                    path: rel_path("child/buffer-1").into(),
                 }),
                 cx,
             )
@@ -1355,7 +1355,7 @@ mod tests {
 
     struct File {
         abs_path: PathBuf,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
     }
 
     impl language::File for File {
@@ -1369,15 +1369,19 @@ mod tests {
             }
         }
 
-        fn path(&self) -> &Arc<Path> {
+        fn path(&self) -> &Arc<RelPath> {
             &self.path
+        }
+
+        fn path_style(&self, _: &App) -> PathStyle {
+            PathStyle::local()
         }
 
         fn full_path(&self, _: &App) -> PathBuf {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
             unimplemented!()
         }
 

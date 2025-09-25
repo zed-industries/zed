@@ -438,7 +438,7 @@ fn worktree_root(
             if !root_entry.is_dir() {
                 return None;
             }
-            worktree.absolutize(&root_entry.path).ok()
+            Some(worktree.absolutize(&root_entry.path))
         })
 }
 

@@ -6,7 +6,6 @@ mod settings_content;
 mod settings_file;
 mod settings_json;
 mod settings_store;
-mod settings_ui_core;
 mod vscode_import;
 
 pub use settings_content::*;
@@ -25,9 +24,9 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation, SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
+    SettingsStore,
 };
-pub use settings_ui_core::*;
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
