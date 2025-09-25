@@ -497,6 +497,30 @@ mod tests {
 
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
+        let empty_response = serde_json::json!({"models": []});
+        fake_http_client.set_response("/api/tags", empty_response.to_string());
+
+        let language_provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
+            provider
+        });
+
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
+        });
+
+        cx.background_executor.run_until_parked();
+
+        provider.read_with(cx, |provider, cx| {
+            assert_eq!(provider.available_models(cx).len(), 0);
+        });
+
         let models_response = serde_json::json!({
             "models": [
                 {
@@ -549,23 +573,12 @@ mod tests {
 
         fake_http_client.set_response("/api/show", capabilities.to_string());
 
-        let language_provider = cx.update(|cx| {
-            let provider =
-                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
-            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
-            provider
-        });
-
         language_provider.update(cx, |provider, cx| {
             provider.authenticate(cx).detach();
         });
 
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
+        provider.update(cx, |provider, cx| {
+            provider.refresh_models(cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -609,74 +622,6 @@ mod tests {
         provider.read_with(cx, |provider, cx| {
             let models = provider.available_models(cx);
             assert_eq!(models.len(), 0);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_refresh_models(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-
-        let empty_response = serde_json::json!({"models": []});
-        fake_http_client.set_response("/api/tags", empty_response.to_string());
-
-        let _provider = cx.update(|cx| {
-            let provider =
-                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
-            OllamaLanguageModelProvider::set_global(provider, cx);
-        });
-
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:7b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
-
-        cx.background_executor.run_until_parked();
-
-        provider.read_with(cx, |provider, cx| {
-            assert_eq!(provider.available_models(cx).len(), 0);
-        });
-
-        let models_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "qwen2.5-coder:7b",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "abc123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "qwen2",
-                        "families": ["qwen2"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", models_response.to_string());
-
-        let capabilities = serde_json::json!({
-            "capabilities": ["tools", "thinking"]
-        });
-
-        fake_http_client.set_response("/api/show", capabilities.to_string());
-
-        provider.update(cx, |provider, cx| {
-            provider.refresh_models(cx);
-        });
-
-        cx.background_executor.run_until_parked();
-
-        provider.read_with(cx, |provider, cx| {
-            let models = provider.available_models(cx);
-            assert_eq!(models.len(), 1);
-            assert_eq!(models[0].name, "qwen2.5-coder:7b");
         });
     }
 
