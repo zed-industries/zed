@@ -384,6 +384,7 @@ search = { path = "crates/search" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
