@@ -8391,6 +8391,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_schema_store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "extension",
+ "gpui",
+ "language",
+ "paths",
+ "project",
+ "schemars 1.0.1",
+ "serde",
+ "serde_json",
+ "settings",
+ "snippet_provider",
+ "task",
+ "theme",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8477,6 +8499,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "itertools 0.14.0",
+ "json_schema_store",
  "language",
  "log",
  "menu",
@@ -8794,17 +8817,16 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
- "dap",
  "futures 0.3.31",
  "gpui",
  "http_client",
  "itertools 0.14.0",
+ "json_schema_store",
  "language",
  "log",
  "lsp",
  "node_runtime",
  "parking_lot",
- "paths",
  "pet",
  "pet-conda",
  "pet-core",
@@ -8817,7 +8839,6 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -8825,7 +8846,6 @@ dependencies = [
  "sha2",
  "shlex",
  "smol",
- "snippet_provider",
  "task",
  "tempfile",
  "text",
@@ -13043,6 +13063,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "json_schema_store",
  "language",
  "language_extension",
  "language_model",
@@ -14810,6 +14831,7 @@ dependencies = [
  "paths",
  "schemars 1.0.1",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "snippet",
  "util",
@@ -20240,6 +20262,7 @@ dependencies = [
  "install_cli",
  "itertools 0.14.0",
  "journal",
+ "json_schema_store",
  "keymap_editor",
  "language",
  "language_extension",

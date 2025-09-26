@@ -181,25 +181,27 @@ macro_rules! time {
 #[macro_export]
 macro_rules! scoped {
     ($parent:expr => $name:expr) => {{
-        let parent = $parent;
-        let name = $name;
-        let mut scope = parent.scope;
-        let mut index = 1; // always have crate/module name
-        while index < scope.len() && !scope[index].is_empty() {
-            index += 1;
-        }
-        if index >= scope.len() {
-            #[cfg(debug_assertions)]
-            {
-                unreachable!("Scope overflow trying to add scope... ignoring scope");
-            }
-        }
-        scope[index] = name;
-        $crate::Logger { scope }
+        $crate::scoped_logger($parent, $name)
     }};
     ($name:expr) => {
         $crate::scoped!($crate::default_logger!() => $name)
     };
+}
+
+pub const fn scoped_logger(parent: Logger, name: &'static str) -> Logger {
+    let mut scope = parent.scope;
+    let mut index = 1; // always have crate/module name
+    while index < scope.len() && !scope[index].is_empty() {
+        index += 1;
+    }
+    if index >= scope.len() {
+        #[cfg(debug_assertions)]
+        {
+            panic!("Scope overflow trying to add scope... ignoring scope");
+        }
+    }
+    scope[index] = name;
+    Logger { scope }
 }
 
 #[macro_export]

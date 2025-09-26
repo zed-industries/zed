@@ -1,0 +1,41 @@
+[package]
+name = "json_schema_store"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/json_schema_store.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+dap.workspace = true
+extension.workspace = true
+gpui.workspace = true
+language.workspace = true
+paths.workspace = true
+project.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+settings.workspace = true
+snippet_provider.workspace = true
+task.workspace = true
+theme.workspace = true
+util.workspace = true
+workspace-hack.workspace = true
+
+
+
+# Uncomment other workspace dependencies as needed
+# assistant.workspace = true
+# client.workspace = true
+# project.workspace = true
+# settings.workspace = true
