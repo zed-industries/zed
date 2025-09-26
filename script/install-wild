@@ -22,8 +22,23 @@ ARCH="$(uname -m)"
 WILD_REPO="${WILD_REPO:-https://github.com/davidlattimore/wild}"
 WILD_PACKAGE="wild-linker-${WILD_VERSION}-${ARCH}-unknown-linux-gnu"
 WILD_URL="${WILD_URL:-$WILD_REPO}/releases/download/$WILD_VERSION/${WILD_PACKAGE}.tar.gz"
+DEST_DIR=/usr/local/bin
 
 echo "Downloading from $WILD_URL"
 curl -fsSL --output - "$WILD_URL" \
-    | $SUDO tar -C /usr/local/bin --strip-components=1 --no-overwrite-dir -xzf - \
+    | $SUDO tar -C ${DEST_DIR} --strip-components=1 --no-overwrite-dir -xzf - \
     "${WILD_PACKAGE}/wild"
+
+cat <<EOF
+Wild is installed to ${DEST_DIR}/wild
+
+To make it your default, add or merge these lines into your ~/.cargo/config.toml:
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+EOF
