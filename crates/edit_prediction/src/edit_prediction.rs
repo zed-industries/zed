@@ -22,9 +22,9 @@ pub enum EditPrediction {
         edits: Vec<(Range<language::Anchor>, String)>,
         edit_preview: Option<language::EditPreview>,
     },
-    Jump {
+    JumpOut {
         path: Arc<Path>,
-        cursor_position: language::Anchor,
+        offset: usize,
     },
 }
 

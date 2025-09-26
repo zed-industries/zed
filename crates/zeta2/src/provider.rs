@@ -206,14 +206,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 
         let prediction = match prediction {
             BufferEditPrediction::Local { prediction } => prediction,
-            BufferEditPrediction::Jump {
-                path,
-                cursor_position,
-            } => {
-                return Some(edit_prediction::EditPrediction::Jump {
-                    path,
-                    cursor_position,
-                });
+            BufferEditPrediction::Jump { path, offset } => {
+                return Some(edit_prediction::EditPrediction::JumpOut { path, offset });
             }
         };
 

@@ -260,7 +260,7 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
                 EditPrediction::Edit { .. } => {
                     // This is expected for non-Zed providers
                 }
-                EditPrediction::Move { .. } => {
+                EditPrediction::Move { .. } | EditPrediction::JumpOut { .. } => {
                     panic!(
                         "Non-Zed providers should not show Move predictions (jump functionality)"
                     );

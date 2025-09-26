@@ -631,6 +631,11 @@ enum EditPrediction {
         target: Anchor,
         snapshot: BufferSnapshot,
     },
+    // todo! rename me
+    JumpOut {
+        path: Arc<Path>,
+        offset: usize,
+    },
 }
 
 struct EditPredictionState {
@@ -7486,6 +7491,9 @@ impl Editor {
 
                 cx.notify();
             }
+            EditPrediction::JumpOut { .. } => {
+                todo!()
+            }
         }
 
         self.edit_prediction_requires_modifier_in_indent_conflict = false;
@@ -7557,6 +7565,9 @@ impl Editor {
                 } else {
                     self.accept_edit_prediction(&Default::default(), window, cx);
                 }
+            }
+            EditPrediction::JumpOut { .. } => {
+                todo!()
             }
         }
     }
@@ -7864,14 +7875,27 @@ impl Editor {
         }
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
-        let edit_prediction::EditPrediction::Local {
-            id: completion_id,
-            edits,
-            edit_preview,
-        } = edit_prediction
-        else {
-            todo!("jump")
+
+        let (completion_id, edits, edit_preview) = match edit_prediction {
+            edit_prediction::EditPrediction::Local {
+                id,
+                edits,
+                edit_preview,
+            } => (id, edits, edit_preview),
+            edit_prediction::EditPrediction::JumpOut { path, offset } => {
+                self.take_active_edit_prediction(cx);
+                self.active_edit_prediction = Some(EditPredictionState {
+                    inlay_ids: vec![],
+                    completion: EditPrediction::JumpOut { path, offset },
+                    // todo!?
+                    completion_id: None,
+                    invalidation_range: Anchor::min()..Anchor::min(),
+                });
+                cx.notify();
+                return None;
+            }
         };
+
         let edits = edits
             .into_iter()
             .flat_map(|(range, new_text)| {
@@ -8655,6 +8679,7 @@ impl Editor {
                 window,
                 cx,
             ),
+            EditPrediction::JumpOut { .. } => todo!(),
         }
     }
 
@@ -9280,6 +9305,10 @@ impl Editor {
                                     }
                                 }
                                 EditPrediction::Edit { .. } => Icon::new(provider_icon),
+                                EditPrediction::JumpOut { .. } => {
+                                    // TODO [zeta2] custom icon for external jump?
+                                    Icon::new(provider_icon)
+                                }
                             }))
                             .child(
                                 h_flex()
@@ -9482,6 +9511,10 @@ impl Editor {
                         )
                         .child(Label::new("Jump to Edit")),
                 )
+            }
+
+            EditPrediction::JumpOut { .. } => {
+                todo!()
             }
 
             EditPrediction::Edit {
