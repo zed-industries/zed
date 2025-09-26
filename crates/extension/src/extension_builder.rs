@@ -151,7 +151,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_std_command("cargo")
+        let status = util::command::new_std_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -159,13 +159,10 @@ impl ExtensionBuilder {
             // WASI builds do not work with sccache and just stuck, so disable it.
             .env("RUSTC_WRAPPER", "")
             .current_dir(extension_dir)
-            .output()
+            .status()
             .context("failed to run `cargo`")?;
-        if !output.status.success() {
-            bail!(
-                "failed to build extension {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+        if !status.success() {
+            bail!("failed to build extension",);
         }
 
         log::info!(
@@ -248,7 +245,7 @@ impl ExtensionBuilder {
         let scanner_path = src_path.join("scanner.c");
 
         log::info!("compiling {grammar_name} parser");
-        let clang_output = util::command::new_std_command(&clang_path)
+        let clang_status = util::command::new_std_command(&clang_path)
             .args(["-fPIC", "-shared", "-Os"])
             .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
             .arg("-o")
@@ -257,15 +254,11 @@ impl ExtensionBuilder {
             .arg(&src_path)
             .arg(&parser_path)
             .args(scanner_path.exists().then_some(scanner_path))
-            .output()
+            .status()
             .context("failed to run clang")?;
 
-        if !clang_output.status.success() {
-            bail!(
-                "failed to compile {} parser with clang: {}",
-                grammar_name,
-                String::from_utf8_lossy(&clang_output.stderr),
-            );
+        if !clang_status.success() {
+            bail!("failed to compile {} parser with clang", grammar_name,);
         }
 
         Ok(())
