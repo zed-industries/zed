@@ -232,7 +232,7 @@ impl Model {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Request {
     pub intent: bool,
     pub n: usize,
@@ -354,6 +354,9 @@ pub struct ResponsesApiStreamEvent {
     pub item_id: Option<String>,
     pub output_index: Option<usize>,
     pub content_index: Option<usize>,
+    // Tool call fields
+    pub tool_call_id: Option<String>,
+    pub tool: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -405,6 +408,25 @@ impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
                 } else {
                     None
                 }
+            }
+            "response.content_part.added" => {
+                // Handle initial content part creation
+                let choice = ResponseChoice {
+                    index: 0,
+                    finish_reason: None,
+                    delta: Some(ResponseDelta {
+                        content: Some("".to_string()), // Empty content for initial part
+                        role: Some(Role::Assistant),
+                        tool_calls: vec![],
+                    }),
+                    message: None,
+                };
+
+                Some(ResponseEvent {
+                    choices: vec![choice],
+                    id: event.item_id.unwrap_or_else(|| "unknown".to_string()),
+                    usage: None,
+                })
             }
             "response.output_text.done" => {
                 // Convert completed text event to ResponseEvent
@@ -459,6 +481,41 @@ impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
                         choices,
                         id: response.id,
                         usage: response.usage,
+                    })
+                } else {
+                    None
+                }
+            }
+            "response.tool_call.delta" => {
+                // Handle tool call streaming
+                if let Some(tool_call_id) = event.tool_call_id {
+                    let tool_call = ToolCallChunk {
+                        id: Some(tool_call_id.clone()),
+                        r#type: Some("function".to_string()),
+                        function: Some(ToolCallFunctionChunk {
+                            name: event.tool.as_ref()
+                                .and_then(|t| t.get("name"))
+                                .and_then(|n| n.as_str())
+                                .map(|s| s.to_string()),
+                            arguments: event.delta.clone(),
+                        }),
+                    };
+
+                    let choice = ResponseChoice {
+                        index: 0,
+                        finish_reason: None,
+                        delta: Some(ResponseDelta {
+                            content: None,
+                            role: Some(Role::Assistant),
+                            tool_calls: vec![tool_call],
+                        }),
+                        message: None,
+                    };
+
+                    Some(ResponseEvent {
+                        choices: vec![choice],
+                        id: tool_call_id,
+                        usage: None,
                     })
                 } else {
                     None
@@ -863,6 +920,33 @@ async fn stream_completion(
     request: Request,
     is_user_initiated: bool,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+    const MAX_RETRIES: usize = 3;
+
+    for attempt in 0..MAX_RETRIES {
+        match stream_completion_inner(client.clone(), api_key.clone(), completion_url.clone(), request.clone(), is_user_initiated).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                if attempt == MAX_RETRIES - 1 {
+                    return Err(e);
+                }
+                // Wait before retrying (exponential backoff)
+                let delay = std::time::Duration::from_millis(100 * (1 << attempt));
+                tokio::time::sleep(delay).await;
+                log::warn!("Retrying stream completion after error (attempt {}/{}): {}", attempt + 1, MAX_RETRIES, e);
+            }
+        }
+    }
+
+    unreachable!()
+}
+
+async fn stream_completion_inner(
+    client: Arc<dyn HttpClient>,
+    api_key: String,
+    completion_url: Arc<str>,
+    request: Request,
+    is_user_initiated: bool,
+) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
       ChatMessage::User { content }
       | ChatMessage::Assistant { content, .. }
@@ -1029,17 +1113,21 @@ async fn stream_completion(
 
         // Create Responses API compatible request
         // Note: GPT-5 Codex doesn't support temperature and some other parameters
-        let responses_request = json!({
+        let mut responses_request = json!({
             "model": request.model,
             "instructions": instructions,
             "input": input,
             "stream": request.stream
         });
 
-        // Add optional parameters if they have non-default values
-        if request.temperature != 1.0 {
-            // Only add temperature if it's different from default and model supports it
-            // For now, skip temperature for GPT-5 Codex as it's not supported
+        // Add tools if present
+        if !request.tools.is_empty() {
+            responses_request["tools"] = json!(request.tools);
+        }
+
+        // Add tool_choice if present
+        if let Some(tool_choice) = request.tool_choice {
+            responses_request["tool_choice"] = json!(tool_choice);
         }
 
         serde_json::to_string(&responses_request)?
