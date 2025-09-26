@@ -6270,6 +6270,7 @@ dependencies = [
  "bitflags 2.9.0",
  "core-foundation 0.10.0",
  "fsevent-sys 3.1.0",
+ "log",
  "parking_lot",
  "tempfile",
  "workspace-hack",
