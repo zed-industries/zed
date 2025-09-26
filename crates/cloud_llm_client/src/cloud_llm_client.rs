@@ -144,6 +144,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    XAi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
