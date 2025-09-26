@@ -59,7 +59,11 @@ use ui::{
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
 };
-use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
+use util::{
+    ResultExt, TakeUntilExt, TryFutureExt, maybe,
+    paths::{compare_paths, compare_rel_paths},
+    rel_path::RelPath,
+};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -1998,10 +2002,9 @@ impl ProjectPanel {
                     worktree.entry_for_id(a.entry_id),
                     worktree.entry_for_id(b.entry_id),
                 ) {
-                    (Some(a), Some(b)) => compare_paths(
-                        (a.path.as_std_path(), a.is_file()),
-                        (b.path.as_std_path(), b.is_file()),
-                    ),
+                    (Some(a), Some(b)) => {
+                        compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
+                    }
                     _ => cmp::Ordering::Equal,
                 }
             })
@@ -5889,9 +5892,9 @@ impl ClipboardEntry {
 fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
     let entry_a = lhs.as_ref();
     let entry_b = rhs.as_ref();
-    compare_paths(
-        (entry_a.path.as_std_path(), entry_a.is_file()),
-        (entry_b.path.as_std_path(), entry_b.is_file()),
+    compare_rel_paths(
+        (&entry_a.path, entry_a.is_file()),
+        (&entry_b.path, entry_b.is_file()),
     )
 }
 

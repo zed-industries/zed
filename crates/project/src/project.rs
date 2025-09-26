@@ -121,7 +121,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
-    paths::{PathStyle, SanitizedPath, compare_paths, is_absolute},
+    paths::{PathStyle, SanitizedPath, compare_paths, compare_rel_paths, is_absolute},
     rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -4041,10 +4041,7 @@ impl Project {
             (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => compare_paths(
-                (a.path().as_std_path(), true),
-                (b.path().as_std_path(), true),
-            ),
+            (Some(a), Some(b)) => compare_rel_paths((&a.path(), true), (&b.path(), true)),
         });
         for buffer in buffers {
             tx.send_blocking(buffer.clone()).unwrap()
