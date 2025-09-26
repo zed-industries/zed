@@ -473,6 +473,7 @@ fn keystroke_text(
     if modifiers.alt {
         match (platform_style, vim_mode) {
             (PlatformStyle::Mac, false) => text.push_str("Option"),
+            (PlatformStyle::Mac, true) => text.push_str("option"),
             (PlatformStyle::Linux | PlatformStyle::Windows, false) => text.push_str("Alt"),
             (_, true) => text.push_str("alt"),
         }
