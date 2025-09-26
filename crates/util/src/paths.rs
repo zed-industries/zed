@@ -801,14 +801,14 @@ pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
 ) -> Ordering {
-    let mut components_a = path_a.components().peekable();
-    let mut components_b = path_b.components().peekable();
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
 
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
-                let a_is_file = a_is_file && components_a.peek().is_none();
-                let b_is_file = b_is_file && components_b.peek().is_none();
+                let a_is_file = a_is_file && components_a.rest().is_empty();
+                let b_is_file = b_is_file && components_b.rest().is_empty();
 
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
                     let path_a = unsafe { RelPath::new_unchecked(component_a) };
