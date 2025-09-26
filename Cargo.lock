@@ -5171,6 +5171,7 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
+ "hashbrown 0.15.3",
  "indoc",
  "itertools 0.14.0",
  "language",

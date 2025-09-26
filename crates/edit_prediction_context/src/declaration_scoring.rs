@@ -11,7 +11,7 @@ use crate::{
     Declaration, EditPredictionExcerpt, EditPredictionExcerptText, Identifier,
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
-    text_similarity::{IdentifierOccurrences, jaccard_similarity, weighted_overlap_coefficient},
+    text_similarity::{Occurrences, jaccard_similarity, weighted_overlap_coefficient},
 };
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
@@ -65,13 +65,12 @@ pub fn scored_snippets(
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
 ) -> Vec<ScoredSnippet> {
-    let containing_range_identifier_occurrences =
-        IdentifierOccurrences::within_string(&excerpt_text.body);
+    let containing_range_identifier_occurrences = Occurrences::within_string(&excerpt_text.body);
     let cursor_point = cursor_offset.to_point(&current_buffer);
 
     let start_point = Point::new(cursor_point.row.saturating_sub(2), 0);
     let end_point = Point::new(cursor_point.row + 1, 0);
-    let adjacent_identifier_occurrences = IdentifierOccurrences::within_string(
+    let adjacent_identifier_occurrences = Occurrences::within_string(
         &current_buffer
             .text_for_range(start_point..end_point)
             .collect::<String>(),
@@ -187,8 +186,8 @@ fn score_snippet(
     declaration_line_distance_rank: usize,
     same_file_declaration_count: usize,
     declaration_count: usize,
-    containing_range_identifier_occurrences: &IdentifierOccurrences,
-    adjacent_identifier_occurrences: &IdentifierOccurrences,
+    containing_range_identifier_occurrences: &Occurrences,
+    adjacent_identifier_occurrences: &Occurrences,
     cursor: Point,
     current_buffer: &BufferSnapshot,
 ) -> Option<ScoredSnippet> {
@@ -208,9 +207,8 @@ fn score_snippet(
         .min()
         .unwrap();
 
-    let item_source_occurrences = IdentifierOccurrences::within_string(&declaration.item_text().0);
-    let item_signature_occurrences =
-        IdentifierOccurrences::within_string(&declaration.signature_text().0);
+    let item_source_occurrences = Occurrences::within_string(&declaration.item_text().0);
+    let item_signature_occurrences = Occurrences::within_string(&declaration.signature_text().0);
     let containing_range_vs_item_jaccard = jaccard_similarity(
         containing_range_identifier_occurrences,
         &item_source_occurrences,
