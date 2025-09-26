@@ -111,9 +111,9 @@ impl WorktreeList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
-    fn handle_worktree_from_default_on_window(
+    fn handle_new_worktree(
         &mut self,
-        _: &WorktreeFromDefaultOnWindow,
+        replace_current_window: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -130,34 +130,7 @@ impl WorktreeList {
             }
             picker.delegate.create_worktree(
                 entry.worktree.name(),
-                true,
-                Some(default_branch.into()),
-                window,
-                cx,
-            );
-        })
-    }
-
-    fn handle_worktree_from_default(
-        &mut self,
-        _: &WorktreeFromDefault,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            let ix = picker.delegate.selected_index();
-            let Some(entry) = picker.delegate.matches.get(ix) else {
-                return;
-            };
-            let Some(default_branch) = picker.delegate.default_branch.clone() else {
-                return;
-            };
-            if !entry.is_new {
-                return;
-            }
-            picker.delegate.create_worktree(
-                entry.worktree.name(),
-                false,
+                replace_current_window,
                 Some(default_branch.into()),
                 window,
                 cx,
@@ -180,8 +153,12 @@ impl Render for WorktreeList {
             .key_context("GitWorktreeSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
-            .on_action(cx.listener(Self::handle_worktree_from_default))
-            .on_action(cx.listener(Self::handle_worktree_from_default_on_window))
+            .on_action(cx.listener(|this, _: &WorktreeFromDefault, w, cx| {
+                this.handle_new_worktree(false, w, cx)
+            }))
+            .on_action(cx.listener(|this, _: &WorktreeFromDefaultOnWindow, w, cx| {
+                this.handle_new_worktree(true, w, cx)
+            }))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -431,10 +408,8 @@ impl PickerDelegate for WorktreeListDelegate {
             return;
         };
         if entry.is_new {
-            // We handle worktree creation logic
             self.create_worktree(&entry.worktree.name(), secondary, None, window, cx);
         } else {
-            // If secondary click, we open on a new window
             self.open_worktree(&entry.worktree.path, secondary, window, cx);
         }
 
