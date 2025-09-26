@@ -1,11 +1,12 @@
 //! # settings_ui
 mod components;
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
-    point, px, size, uniform_list,
+    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
@@ -15,7 +16,7 @@ use std::{
     collections::HashMap,
     ops::Range,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::{Divider, DropdownMenu, ListItem, Switch, prelude::*};
 use util::{paths::PathStyle, rel_path::RelPath};
@@ -307,10 +308,12 @@ pub struct SettingsWindow {
     files: Vec<SettingsFile>,
     current_file: SettingsFile,
     pages: Vec<SettingsPage>,
-    search: Entity<Editor>,
+    search_bar: Entity<Editor>,
+    search_task: Option<Task<()>>,
     navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
+    search_matches: Vec<Vec<bool>>,
 }
 
 #[derive(PartialEq, Debug)]
@@ -421,11 +424,27 @@ impl SettingsFile {
 impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let current_file = SettingsFile::User;
-        let search = cx.new(|cx| {
+        let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Search settings…", window, cx);
             editor
         });
+
+        cx.subscribe(&search_bar, |this, _, event: &EditorEvent, cx| {
+            let EditorEvent::Edited { transaction_id: _ } = event else {
+                return;
+            };
+
+            this.update_matches(cx);
+        })
+        .detach();
+
+        cx.observe_global_in::<SettingsStore>(window, move |this, _, cx| {
+            this.fetch_files(cx);
+            cx.notify();
+        })
+        .detach();
+
         let mut this = Self {
             files: vec![],
             current_file: current_file,
@@ -433,16 +452,14 @@ impl SettingsWindow {
             navbar_entries: vec![],
             navbar_entry: 0,
             list_handle: UniformListScrollHandle::default(),
-            search,
+            search_bar,
+            search_task: None,
+            search_matches: vec![],
         };
-        cx.observe_global_in::<SettingsStore>(window, move |this, _, cx| {
-            this.fetch_files(cx);
-            cx.notify();
-        })
-        .detach();
-        this.fetch_files(cx);
 
+        this.fetch_files(cx);
         this.build_ui(cx);
+
         this
     }
 
@@ -461,32 +478,127 @@ impl SettingsWindow {
     }
 
     fn build_navbar(&mut self) {
-        self.navbar_entries = self
-            .pages
-            .iter()
-            .flat_map(|page| {
-                std::iter::once(NavBarEntry {
-                    title: page.title,
-                    is_root: true,
-                })
-                .chain(
-                    page.expanded
-                        .then(|| {
-                            page.section_headers().map(|h| NavBarEntry {
-                                title: h,
-                                is_root: false,
-                            })
-                        })
-                        .into_iter()
-                        .flatten(),
-                )
+        let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
+        for (page_index, page) in self.pages.iter().enumerate() {
+            if !self.search_matches[page_index]
+                .iter()
+                .any(|is_match| *is_match)
+            {
+                continue;
+            }
+            navbar_entries.push(NavBarEntry {
+                title: page.title,
+                is_root: true,
+            });
+            if !page.expanded {
+                continue;
+            }
+
+            for (item_index, item) in page.items.iter().enumerate() {
+                let SettingsPageItem::SectionHeader(title) = item else {
+                    continue;
+                };
+                if !self.search_matches[page_index][item_index] {
+                    continue;
+                }
+
+                navbar_entries.push(NavBarEntry {
+                    title,
+                    is_root: false,
+                });
+            }
+        }
+        self.navbar_entries = navbar_entries;
+    }
+
+    fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.search_task.take();
+        let query = self.search_bar.read(cx).text(cx);
+        if query.is_empty() {
+            for page in &mut self.search_matches {
+                page.fill(true);
+            }
+            return;
+        }
+
+        struct ItemKey {
+            page_index: usize,
+            header_index: usize,
+            item_index: usize,
+        }
+        let mut key_lut: Vec<ItemKey> = vec![];
+        let mut candidates = Vec::default();
+
+        for (page_index, page) in self.pages.iter().enumerate() {
+            let mut header_index = 0;
+            for (item_index, item) in page.items.iter().enumerate() {
+                let key_index = key_lut.len();
+                match item {
+                    SettingsPageItem::SettingItem(item) => {
+                        candidates.push(StringMatchCandidate::new(key_index, item.title));
+                        candidates.push(StringMatchCandidate::new(key_index, item.description));
+                    }
+                    SettingsPageItem::SectionHeader(header) => {
+                        candidates.push(StringMatchCandidate::new(key_index, header));
+                        header_index = item_index;
+                    }
+                }
+                key_lut.push(ItemKey {
+                    page_index,
+                    header_index,
+                    item_index,
+                });
+            }
+        }
+        let atomic_bool = AtomicBool::new(false);
+
+        self.search_task = Some(cx.spawn(async move |this, cx| {
+            let string_matches = fuzzy::match_strings(
+                candidates.as_slice(),
+                &query,
+                false,
+                false,
+                candidates.len(),
+                &atomic_bool,
+                cx.background_executor().clone(),
+            );
+            let string_matches = string_matches.await;
+
+            this.update(cx, |this, cx| {
+                for page in &mut this.search_matches {
+                    page.fill(false);
+                }
+
+                for string_match in string_matches {
+                    let ItemKey {
+                        page_index,
+                        header_index,
+                        item_index,
+                    } = key_lut[string_match.candidate_id];
+                    let page = &mut this.search_matches[page_index];
+                    page[header_index] = true;
+                    page[item_index] = true;
+                }
+                this.build_navbar();
+                this.navbar_entry = 0;
+                cx.notify()
             })
-            .collect();
+            .ok();
+        }));
     }
 
     fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
         self.pages = self.current_file.pages();
+        self.search_matches = self
+            .pages
+            .iter()
+            .map(|page| vec![true; page.items.len()])
+            .collect::<Vec<_>>();
         self.build_navbar();
+
+        if !self.search_bar.read(cx).is_empty(cx) {
+            self.update_matches(cx);
+        }
 
         cx.notify();
     }
@@ -544,7 +656,7 @@ impl SettingsWindow {
             .border_1()
             .border_color(cx.theme().colors().border)
             .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
-            .child(self.search.clone())
+            .child(self.search_bar.clone())
     }
 
     fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
@@ -819,6 +931,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use gpui::TestAppContext;
 
     impl SettingsWindow {
         fn navbar(&self) -> &[NavBarEntry] {
@@ -896,10 +1009,12 @@ mod test {
             files: Vec::default(),
             current_file: crate::SettingsFile::User,
             pages,
-            search: cx.new(|cx| Editor::single_line(window, cx)),
+            search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.unwrap(),
             navbar_entries: Vec::default(),
             list_handle: UniformListScrollHandle::default(),
+            search_matches: Vec::default(),
+            search_task: None,
         };
 
         settings_window.build_navbar();

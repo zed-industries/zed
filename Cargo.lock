@@ -14536,6 +14536,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
+ "fuzzy",
  "gpui",
  "language",
  "menu",
