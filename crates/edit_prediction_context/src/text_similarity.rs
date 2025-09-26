@@ -1,5 +1,9 @@
+use hashbrown::HashTable;
 use regex::Regex;
-use std::{collections::HashMap, sync::LazyLock};
+use std::{
+    hash::{Hash, Hasher as _},
+    sync::LazyLock,
+};
 
 use crate::reference::Reference;
 
@@ -14,47 +18,74 @@ use crate::reference::Reference;
 
 static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
 
-// TODO: use &str or Cow<str> keys?
-#[derive(Debug)]
-pub struct IdentifierOccurrences {
-    identifier_to_count: HashMap<String, usize>,
+/// Multiset of text occurrences for text similarity that only stores hashes and counts.
+#[derive(Debug, Default)]
+pub struct Occurrences {
+    table: HashTable<OccurrenceEntry>,
     total_count: usize,
 }
 
-impl IdentifierOccurrences {
-    pub fn within_string(code: &str) -> Self {
-        Self::from_iterator(IDENTIFIER_REGEX.find_iter(code).map(|mat| mat.as_str()))
+#[derive(Debug)]
+struct OccurrenceEntry {
+    hash: u64,
+    count: usize,
+}
+
+impl Occurrences {
+    pub fn within_string(text: &str) -> Self {
+        Self::from_identifiers(IDENTIFIER_REGEX.find_iter(text).map(|mat| mat.as_str()))
     }
 
     #[allow(dead_code)]
     pub fn within_references(references: &[Reference]) -> Self {
-        Self::from_iterator(
+        Self::from_identifiers(
             references
                 .iter()
                 .map(|reference| reference.identifier.name.as_ref()),
         )
     }
 
-    pub fn from_iterator<'a>(identifier_iterator: impl Iterator<Item = &'a str>) -> Self {
-        let mut identifier_to_count = HashMap::new();
-        let mut total_count = 0;
-        for identifier in identifier_iterator {
-            // TODO: Score matches that match case higher?
-            //
-            // TODO: Also include unsplit identifier?
+    pub fn from_identifiers<'a>(identifiers: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut this = Self::default();
+        // TODO: Score matches that match case higher?
+        //
+        // TODO: Also include unsplit identifier?
+        for identifier in identifiers {
             for identifier_part in split_identifier(identifier) {
-                identifier_to_count
-                    .entry(identifier_part.to_lowercase())
-                    .and_modify(|count| *count += 1)
-                    .or_insert(1);
-                total_count += 1;
+                this.add_hash(fx_hash(&identifier_part.to_lowercase()));
             }
         }
-        IdentifierOccurrences {
-            identifier_to_count,
-            total_count,
-        }
+        this
     }
+
+    fn add_hash(&mut self, hash: u64) {
+        self.table
+            .entry(
+                hash,
+                |entry: &OccurrenceEntry| entry.hash == hash,
+                |entry| entry.hash,
+            )
+            .and_modify(|entry| entry.count += 1)
+            .or_insert(OccurrenceEntry { hash, count: 1 });
+        self.total_count += 1;
+    }
+
+    fn contains_hash(&self, hash: u64) -> bool {
+        self.get_count(hash) != 0
+    }
+
+    fn get_count(&self, hash: u64) -> usize {
+        self.table
+            .find(hash, |entry| entry.hash == hash)
+            .map(|entry| entry.count)
+            .unwrap_or(0)
+    }
+}
+
+pub fn fx_hash<T: Hash + ?Sized>(data: &T) -> u64 {
+    let mut hasher = collections::FxHasher::default();
+    data.hash(&mut hasher);
+    hasher.finish()
 }
 
 // Splits camelcase / snakecase / kebabcase / pascalcase
@@ -115,54 +146,49 @@ fn split_identifier(identifier: &str) -> Vec<&str> {
     parts.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
-pub fn jaccard_similarity<'a>(
-    mut set_a: &'a IdentifierOccurrences,
-    mut set_b: &'a IdentifierOccurrences,
-) -> f32 {
-    if set_a.identifier_to_count.len() > set_b.identifier_to_count.len() {
+pub fn jaccard_similarity<'a>(mut set_a: &'a Occurrences, mut set_b: &'a Occurrences) -> f32 {
+    if set_a.table.len() > set_b.table.len() {
         std::mem::swap(&mut set_a, &mut set_b);
     }
     let intersection = set_a
-        .identifier_to_count
-        .keys()
-        .filter(|key| set_b.identifier_to_count.contains_key(*key))
+        .table
+        .iter()
+        .filter(|entry| set_b.contains_hash(entry.hash))
         .count();
-    let union = set_a.identifier_to_count.len() + set_b.identifier_to_count.len() - intersection;
+    let union = set_a.table.len() + set_b.table.len() - intersection;
     intersection as f32 / union as f32
 }
 
 // TODO
 #[allow(dead_code)]
-pub fn overlap_coefficient<'a>(
-    mut set_a: &'a IdentifierOccurrences,
-    mut set_b: &'a IdentifierOccurrences,
-) -> f32 {
-    if set_a.identifier_to_count.len() > set_b.identifier_to_count.len() {
+pub fn overlap_coefficient<'a>(mut set_a: &'a Occurrences, mut set_b: &'a Occurrences) -> f32 {
+    if set_a.table.len() > set_b.table.len() {
         std::mem::swap(&mut set_a, &mut set_b);
     }
     let intersection = set_a
-        .identifier_to_count
-        .keys()
-        .filter(|key| set_b.identifier_to_count.contains_key(*key))
+        .table
+        .iter()
+        .filter(|entry| set_b.contains_hash(entry.hash))
         .count();
-    intersection as f32 / set_a.identifier_to_count.len() as f32
+    intersection as f32 / set_a.table.len() as f32
 }
 
 // TODO
 #[allow(dead_code)]
 pub fn weighted_jaccard_similarity<'a>(
-    mut set_a: &'a IdentifierOccurrences,
-    mut set_b: &'a IdentifierOccurrences,
+    mut set_a: &'a Occurrences,
+    mut set_b: &'a Occurrences,
 ) -> f32 {
-    if set_a.identifier_to_count.len() > set_b.identifier_to_count.len() {
+    if set_a.table.len() > set_b.table.len() {
         std::mem::swap(&mut set_a, &mut set_b);
     }
 
     let mut numerator = 0;
     let mut denominator_a = 0;
     let mut used_count_b = 0;
-    for (symbol, count_a) in set_a.identifier_to_count.iter() {
-        let count_b = set_b.identifier_to_count.get(symbol).unwrap_or(&0);
+    for entry_a in set_a.table.iter() {
+        let count_a = entry_a.count;
+        let count_b = set_b.get_count(entry_a.hash);
         numerator += count_a.min(count_b);
         denominator_a += count_a.max(count_b);
         used_count_b += count_b;
@@ -177,16 +203,17 @@ pub fn weighted_jaccard_similarity<'a>(
 }
 
 pub fn weighted_overlap_coefficient<'a>(
-    mut set_a: &'a IdentifierOccurrences,
-    mut set_b: &'a IdentifierOccurrences,
+    mut set_a: &'a Occurrences,
+    mut set_b: &'a Occurrences,
 ) -> f32 {
-    if set_a.identifier_to_count.len() > set_b.identifier_to_count.len() {
+    if set_a.table.len() > set_b.table.len() {
         std::mem::swap(&mut set_a, &mut set_b);
     }
 
     let mut numerator = 0;
-    for (symbol, count_a) in set_a.identifier_to_count.iter() {
-        let count_b = set_b.identifier_to_count.get(symbol).unwrap_or(&0);
+    for entry_a in set_a.table.iter() {
+        let count_a = entry_a.count;
+        let count_b = set_b.get_count(entry_a.hash);
         numerator += count_a.min(count_b);
     }
 
@@ -215,12 +242,12 @@ mod test {
     fn test_similarity_functions() {
         // 10 identifier parts, 8 unique
         // Repeats: 2 "outline", 2 "items"
-        let set_a = IdentifierOccurrences::within_string(
+        let set_a = Occurrences::within_string(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         );
         // 14 identifier parts, 11 unique
         // Repeats: 2 "outline", 2 "language", 2 "tree"
-        let set_b = IdentifierOccurrences::within_string(
+        let set_b = Occurrences::within_string(
             "pub fn query_outline_items(language: &Language, tree: &Tree, source: &str) -> Vec<OutlineItem> {",
         );
 

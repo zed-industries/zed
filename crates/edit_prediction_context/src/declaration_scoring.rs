@@ -1,4 +1,4 @@
-use cloud_llm_client::predict_edits_v3::ScoreComponents;
+use cloud_llm_client::predict_edits_v3::DeclarationScoreComponents;
 use itertools::Itertools as _;
 use language::BufferSnapshot;
 use ordered_float::OrderedFloat;
@@ -8,76 +8,67 @@ use strum::EnumIter;
 use text::{Point, ToPoint};
 
 use crate::{
-    Declaration, EditPredictionExcerpt, EditPredictionExcerptText, Identifier,
+    Declaration, EditPredictionExcerpt, Identifier,
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
-    text_similarity::{IdentifierOccurrences, jaccard_similarity, weighted_overlap_coefficient},
+    text_similarity::{Occurrences, jaccard_similarity, weighted_overlap_coefficient},
 };
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
 
 #[derive(Clone, Debug)]
-pub struct ScoredSnippet {
+pub struct ScoredDeclaration {
     pub identifier: Identifier,
     pub declaration: Declaration,
-    pub score_components: ScoreComponents,
-    pub scores: Scores,
+    pub score_components: DeclarationScoreComponents,
+    pub scores: DeclarationScores,
 }
 
 #[derive(EnumIter, Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum SnippetStyle {
+pub enum DeclarationStyle {
     Signature,
     Declaration,
 }
 
-impl ScoredSnippet {
-    /// Returns the score for this snippet with the specified style.
-    pub fn score(&self, style: SnippetStyle) -> f32 {
+impl ScoredDeclaration {
+    /// Returns the score for this declaration with the specified style.
+    pub fn score(&self, style: DeclarationStyle) -> f32 {
         match style {
-            SnippetStyle::Signature => self.scores.signature,
-            SnippetStyle::Declaration => self.scores.declaration,
+            DeclarationStyle::Signature => self.scores.signature,
+            DeclarationStyle::Declaration => self.scores.declaration,
         }
     }
 
-    pub fn size(&self, style: SnippetStyle) -> usize {
+    pub fn size(&self, style: DeclarationStyle) -> usize {
         match &self.declaration {
             Declaration::File { declaration, .. } => match style {
-                SnippetStyle::Signature => declaration.signature_range.len(),
-                SnippetStyle::Declaration => declaration.text.len(),
+                DeclarationStyle::Signature => declaration.signature_range.len(),
+                DeclarationStyle::Declaration => declaration.text.len(),
             },
             Declaration::Buffer { declaration, .. } => match style {
-                SnippetStyle::Signature => declaration.signature_range.len(),
-                SnippetStyle::Declaration => declaration.item_range.len(),
+                DeclarationStyle::Signature => declaration.signature_range.len(),
+                DeclarationStyle::Declaration => declaration.item_range.len(),
             },
         }
     }
 
-    pub fn score_density(&self, style: SnippetStyle) -> f32 {
+    pub fn score_density(&self, style: DeclarationStyle) -> f32 {
         self.score(style) / (self.size(style)) as f32
     }
 }
 
-pub fn scored_snippets(
+pub fn scored_declarations(
     index: &SyntaxIndexState,
     excerpt: &EditPredictionExcerpt,
-    excerpt_text: &EditPredictionExcerptText,
+    excerpt_occurrences: &Occurrences,
+    adjacent_occurrences: &Occurrences,
     identifier_to_references: HashMap<Identifier, Vec<Reference>>,
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
-) -> Vec<ScoredSnippet> {
-    let containing_range_identifier_occurrences =
-        IdentifierOccurrences::within_string(&excerpt_text.body);
+) -> Vec<ScoredDeclaration> {
     let cursor_point = cursor_offset.to_point(&current_buffer);
 
-    let start_point = Point::new(cursor_point.row.saturating_sub(2), 0);
-    let end_point = Point::new(cursor_point.row + 1, 0);
-    let adjacent_identifier_occurrences = IdentifierOccurrences::within_string(
-        &current_buffer
-            .text_for_range(start_point..end_point)
-            .collect::<String>(),
-    );
-
-    let mut snippets = identifier_to_references
+    let mut declarations = identifier_to_references
         .into_iter()
         .flat_map(|(identifier, references)| {
             let declarations =
@@ -137,7 +128,7 @@ pub fn scored_snippets(
                     )| {
                         let same_file_declaration_count = index.file_declaration_count(declaration);
 
-                        score_snippet(
+                        score_declaration(
                             &identifier,
                             &references,
                             declaration.clone(),
@@ -146,8 +137,8 @@ pub fn scored_snippets(
                             declaration_line_distance_rank,
                             same_file_declaration_count,
                             declaration_count,
-                            &containing_range_identifier_occurrences,
-                            &adjacent_identifier_occurrences,
+                            &excerpt_occurrences,
+                            &adjacent_occurrences,
                             cursor_point,
                             current_buffer,
                         )
@@ -158,14 +149,14 @@ pub fn scored_snippets(
         .flatten()
         .collect::<Vec<_>>();
 
-    snippets.sort_unstable_by_key(|snippet| {
-        let score_density = snippet
-            .score_density(SnippetStyle::Declaration)
-            .max(snippet.score_density(SnippetStyle::Signature));
+    declarations.sort_unstable_by_key(|declaration| {
+        let score_density = declaration
+            .score_density(DeclarationStyle::Declaration)
+            .max(declaration.score_density(DeclarationStyle::Signature));
         Reverse(OrderedFloat(score_density))
     });
 
-    snippets
+    declarations
 }
 
 fn range_intersection<T: Ord + Clone>(a: &Range<T>, b: &Range<T>) -> Option<Range<T>> {
@@ -178,7 +169,7 @@ fn range_intersection<T: Ord + Clone>(a: &Range<T>, b: &Range<T>) -> Option<Rang
     }
 }
 
-fn score_snippet(
+fn score_declaration(
     identifier: &Identifier,
     references: &[Reference],
     declaration: Declaration,
@@ -187,11 +178,11 @@ fn score_snippet(
     declaration_line_distance_rank: usize,
     same_file_declaration_count: usize,
     declaration_count: usize,
-    containing_range_identifier_occurrences: &IdentifierOccurrences,
-    adjacent_identifier_occurrences: &IdentifierOccurrences,
+    excerpt_occurrences: &Occurrences,
+    adjacent_occurrences: &Occurrences,
     cursor: Point,
     current_buffer: &BufferSnapshot,
-) -> Option<ScoredSnippet> {
+) -> Option<ScoredDeclaration> {
     let is_referenced_nearby = references
         .iter()
         .any(|r| r.region == ReferenceRegion::Nearby);
@@ -208,37 +199,27 @@ fn score_snippet(
         .min()
         .unwrap();
 
-    let item_source_occurrences = IdentifierOccurrences::within_string(&declaration.item_text().0);
-    let item_signature_occurrences =
-        IdentifierOccurrences::within_string(&declaration.signature_text().0);
-    let containing_range_vs_item_jaccard = jaccard_similarity(
-        containing_range_identifier_occurrences,
-        &item_source_occurrences,
-    );
-    let containing_range_vs_signature_jaccard = jaccard_similarity(
-        containing_range_identifier_occurrences,
-        &item_signature_occurrences,
-    );
+    let item_source_occurrences = Occurrences::within_string(&declaration.item_text().0);
+    let item_signature_occurrences = Occurrences::within_string(&declaration.signature_text().0);
+    let excerpt_vs_item_jaccard = jaccard_similarity(excerpt_occurrences, &item_source_occurrences);
+    let excerpt_vs_signature_jaccard =
+        jaccard_similarity(excerpt_occurrences, &item_signature_occurrences);
     let adjacent_vs_item_jaccard =
-        jaccard_similarity(adjacent_identifier_occurrences, &item_source_occurrences);
+        jaccard_similarity(adjacent_occurrences, &item_source_occurrences);
     let adjacent_vs_signature_jaccard =
-        jaccard_similarity(adjacent_identifier_occurrences, &item_signature_occurrences);
+        jaccard_similarity(adjacent_occurrences, &item_signature_occurrences);
 
-    let containing_range_vs_item_weighted_overlap = weighted_overlap_coefficient(
-        containing_range_identifier_occurrences,
-        &item_source_occurrences,
-    );
-    let containing_range_vs_signature_weighted_overlap = weighted_overlap_coefficient(
-        containing_range_identifier_occurrences,
-        &item_signature_occurrences,
-    );
+    let excerpt_vs_item_weighted_overlap =
+        weighted_overlap_coefficient(excerpt_occurrences, &item_source_occurrences);
+    let excerpt_vs_signature_weighted_overlap =
+        weighted_overlap_coefficient(excerpt_occurrences, &item_signature_occurrences);
     let adjacent_vs_item_weighted_overlap =
-        weighted_overlap_coefficient(adjacent_identifier_occurrences, &item_source_occurrences);
+        weighted_overlap_coefficient(adjacent_occurrences, &item_source_occurrences);
     let adjacent_vs_signature_weighted_overlap =
-        weighted_overlap_coefficient(adjacent_identifier_occurrences, &item_signature_occurrences);
+        weighted_overlap_coefficient(adjacent_occurrences, &item_signature_occurrences);
 
     // TODO: Consider adding declaration_file_count
-    let score_components = ScoreComponents {
+    let score_components = DeclarationScoreComponents {
         is_same_file,
         is_referenced_nearby,
         is_referenced_in_breadcrumb,
@@ -248,32 +229,32 @@ fn score_snippet(
         reference_count,
         same_file_declaration_count,
         declaration_count,
-        containing_range_vs_item_jaccard,
-        containing_range_vs_signature_jaccard,
+        excerpt_vs_item_jaccard,
+        excerpt_vs_signature_jaccard,
         adjacent_vs_item_jaccard,
         adjacent_vs_signature_jaccard,
-        containing_range_vs_item_weighted_overlap,
-        containing_range_vs_signature_weighted_overlap,
+        excerpt_vs_item_weighted_overlap,
+        excerpt_vs_signature_weighted_overlap,
         adjacent_vs_item_weighted_overlap,
         adjacent_vs_signature_weighted_overlap,
     };
 
-    Some(ScoredSnippet {
+    Some(ScoredDeclaration {
         identifier: identifier.clone(),
         declaration: declaration,
-        scores: Scores::score(&score_components),
+        scores: DeclarationScores::score(&score_components),
         score_components,
     })
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Scores {
+pub struct DeclarationScores {
     pub signature: f32,
     pub declaration: f32,
 }
 
-impl Scores {
-    fn score(components: &ScoreComponents) -> Scores {
+impl DeclarationScores {
+    fn score(components: &DeclarationScoreComponents) -> DeclarationScores {
         // TODO: handle truncation
 
         // Score related to how likely this is the correct declaration, range 0 to 1
@@ -295,13 +276,11 @@ impl Scores {
         // For now instead of linear combination, the scores are just multiplied together.
         let combined_score = 10.0 * accuracy_score * distance_score;
 
-        Scores {
-            signature: combined_score * components.containing_range_vs_signature_weighted_overlap,
+        DeclarationScores {
+            signature: combined_score * components.excerpt_vs_signature_weighted_overlap,
             // declaration score gets boosted both by being multiplied by 2 and by there being more
             // weighted overlap.
-            declaration: 2.0
-                * combined_score
-                * components.containing_range_vs_item_weighted_overlap,
+            declaration: 2.0 * combined_score * components.excerpt_vs_item_weighted_overlap,
         }
     }
 }
