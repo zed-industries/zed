@@ -5888,9 +5888,9 @@ impl ClipboardEntry {
 fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
     let entry_a = lhs.as_ref();
     let entry_b = rhs.as_ref();
-    compare_paths(
-        (entry_a.path.as_std_path(), entry_a.is_file()),
-        (entry_b.path.as_std_path(), entry_b.is_file()),
+    util::paths::compare_rel_paths(
+        (&entry_a.path, entry_a.is_file()),
+        (&entry_b.path, entry_b.is_file()),
     )
 }
 
