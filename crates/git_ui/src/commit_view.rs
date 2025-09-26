@@ -769,20 +769,13 @@ impl ToolbarItemView for CommitViewToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.commit_view = active_pane_item
-            .and_then(|item| item.act_as::<CommitView>(cx))
-            .map(|entity| entity.downgrade());
-
-        if let Some(commit_view) = self.commit_view(cx) {
-            let is_stash = commit_view.read(cx).stash.is_some();
-            if is_stash {
-                ToolbarItemLocation::PrimaryRight
-            } else {
-                ToolbarItemLocation::Hidden
-            }
-        } else {
-            ToolbarItemLocation::Hidden
+        if let Some(entity) = active_pane_item.and_then(|i| i.act_as::<CommitView>(cx))
+            && entity.read(cx).stash.is_some()
+        {
+            self.commit_view = Some(entity.downgrade());
+            return ToolbarItemLocation::PrimaryRight;
         }
+        ToolbarItemLocation::Hidden
     }
 
     fn pane_focus_update(
