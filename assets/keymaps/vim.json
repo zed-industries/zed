@@ -810,6 +810,14 @@
     }
   },
   {
+    "context": "Editor",
+    "bindings": {
+      "ctrl-h": "editor::Backspace",
+      "ctrl-u": "editor::DeleteToBeginningOfLine",
+      "ctrl-w": "editor::DeleteToPreviousWordStart"
+    }
+  },
+  {
     "context": "VimControl || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
@@ -943,14 +951,6 @@
       "*": null,
       "n": null,
       "shift-n": null
-    }
-  },
-  {
-    "context": "Picker > Editor",
-    "bindings": {
-      "ctrl-h": "editor::Backspace",
-      "ctrl-u": "editor::DeleteToBeginningOfLine",
-      "ctrl-w": "editor::DeleteToPreviousWordStart"
     }
   },
   {
