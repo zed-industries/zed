@@ -1,6 +1,6 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
-use project_panel::sort_worktree_entries;
+use project_panel::par_sort_worktree_entries;
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -44,7 +44,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("Sort linux worktree snapshot", |b| {
         b.iter_batched(
             || snapshot.clone(),
-            |mut snapshot| sort_worktree_entries(&mut snapshot),
+            |mut snapshot| par_sort_worktree_entries(&mut snapshot),
             criterion::BatchSize::LargeInput,
         );
     });

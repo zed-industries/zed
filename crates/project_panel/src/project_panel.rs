@@ -5898,7 +5898,7 @@ pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
     entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
-fn par_sort_worktree_entries(entries: &mut Vec<GitEntry>) {
+pub fn par_sort_worktree_entries(entries: &mut Vec<GitEntry>) {
     entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
