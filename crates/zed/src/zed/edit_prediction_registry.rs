@@ -5,9 +5,7 @@ use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use language_model::LanguageModelProvider;
 use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
-use ollama;
 use ollama_edit_predictions::OllamaEditPredictionProvider;
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -16,15 +14,6 @@ use ui::Window;
 use zeta::ZetaEditPredictionProvider;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    let ollama_provider = cx.new(|cx| OllamaLanguageModelProvider::new(client.http_client(), cx));
-
-    OllamaLanguageModelProvider::set_global(ollama_provider, cx);
-
-    if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
-        let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
-        task.detach();
-    }
-
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -261,59 +250,30 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
 
-            let api_url: gpui::SharedString = if settings.api_url.is_empty() {
-                ollama::OLLAMA_API_URL.into()
-            } else {
-                settings.api_url.clone().into()
-            };
-
             let model = if let Some(first_model) = settings.available_models.first() {
                 Some(first_model.name.clone())
             } else if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
-                provider
-                    .read(cx)
-                    .available_models_for_completion(cx)
-                    .first()
-                    .map(|m| m.name.clone())
+                // If no models are available yet, trigger refresh and try again
+                let available_models = provider.read(cx).available_models_for_completion(cx);
+                if available_models.is_empty() {
+                    provider.update(cx, |provider, cx| {
+                        provider.refresh_models(cx);
+                    });
+                }
+                available_models.first().map(|m| m.name.clone())
             } else {
                 None
             };
 
             if let Some(model) = model {
-                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, api_url, cx));
+                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, cx));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             } else {
+                // If no model is available, still create the provider but it will be inactive
+                // This allows the UI to show that Ollama is selected but not ready
                 editor
                     .set_edit_prediction_provider::<OllamaEditPredictionProvider>(None, window, cx);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::zed::tests::init_test;
-    use gpui::TestAppContext;
-
-    #[gpui::test]
-    async fn test_ollama_provider_authentication_on_init(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-
-        cx.update(|cx| {
-            assert!(OllamaLanguageModelProvider::global(cx).is_none());
-
-            init(app_state.client.clone(), app_state.user_store.clone(), cx);
-
-            let provider = OllamaLanguageModelProvider::global(cx);
-            assert!(
-                provider.is_some(),
-                "Global OllamaLanguageModelProvider should be set after init"
-            );
-
-            if let Some(provider) = provider {
-                let _models = provider.read(cx).available_models_for_completion(cx);
-            }
-        });
     }
 }

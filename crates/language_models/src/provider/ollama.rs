@@ -46,6 +46,7 @@ pub struct OllamaSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
+#[derive(Clone)]
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
@@ -105,7 +106,14 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let models = match get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await
+            {
+                Ok(models) => models,
+                Err(e) => {
+                    log::error!("Ollama: Failed to fetch models: {}", e);
+                    return Err(e);
+                }
+            };
 
             let tasks = models
                 .into_iter()
@@ -201,22 +209,34 @@ impl OllamaLanguageModelProvider {
                             last_settings = current_settings.clone();
                             if url_changed {
                                 this.fetched_models.clear();
-                                this.authenticate(cx).detach();
                             }
+                            // Trigger authentication when any settings change, not just URL
+                            this.authenticate(cx).detach();
                             cx.notify();
                         }
                     }
                 })
                 .detach();
 
-                State {
+                let mut state = State {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx)),
-                }
+                };
+
+                // Trigger initial authentication to fetch models
+                let auth_task = state.authenticate(cx);
+                auth_task.detach();
+
+                state
             }),
         };
+
+        // Create an entity wrapper and set as global so edit prediction providers can access it
+        let provider_entity = cx.new(|_| this.clone());
+        Self::set_global(provider_entity, cx);
+
         this
     }
 

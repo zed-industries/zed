@@ -2,7 +2,7 @@ use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::AsyncReadExt;
-use gpui::{App, Context, Entity, EntityId, SharedString, Subscription, Task};
+use gpui::{App, Context, Entity, EntityId, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language::{Anchor, Buffer, ToOffset, ToPoint};
 use language_models::provider::ollama::OllamaLanguageModelProvider;
@@ -10,6 +10,7 @@ use ollama::KeepAlive;
 use ollama::Model;
 use project::Project;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{ops::Range, path::Path, sync::Arc, time::Duration};
 use text;
 
@@ -65,7 +66,7 @@ pub struct OllamaEditPredictionProvider {
 }
 
 impl OllamaEditPredictionProvider {
-    pub fn new(model: String, _api_url: SharedString, cx: &mut Context<Self>) -> Self {
+    pub fn new(model: String, cx: &mut Context<Self>) -> Self {
         let subscription = if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
             Some(cx.observe(&provider, |_this, _provider, cx| {
                 cx.notify();
@@ -197,8 +198,16 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
         true
     }
 
-    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, _cx: &App) -> bool {
-        true
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
+        if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            let provider_ref = provider.read(cx);
+            let available_models = provider_ref.available_models_for_completion(cx);
+            !available_models.is_empty()
+        } else {
+            // Provider might still be initializing, check if we have a configured model in settings
+            let settings = &language_models::AllLanguageModelSettings::get_global(cx).ollama;
+            !settings.available_models.is_empty()
+        }
     }
 
     fn is_refreshing(&self) -> bool {
@@ -216,10 +225,8 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
         let (http_client, api_url) = if let Some(provider) = OllamaLanguageModelProvider::global(cx)
         {
             let provider_ref = provider.read(cx);
-            (
-                provider_ref.http_client(),
-                OllamaLanguageModelProvider::api_url(cx).to_string(),
-            )
+            let url = OllamaLanguageModelProvider::api_url(cx).to_string();
+            (provider_ref.http_client(), url)
         } else {
             (
                 project
@@ -467,25 +474,15 @@ mod tests {
     fn test_get_stop_tokens(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let codellama_provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "codellama:7b-code".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let codellama_provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("codellama:7b-code".to_string(), cx));
 
         codellama_provider.read_with(cx, |provider, _| {
             assert_eq!(provider.get_stop_tokens(), Some(vec!["<EOT>".to_string()]));
         });
 
-        let qwen_provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let qwen_provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         qwen_provider.read_with(cx, |provider, _| {
             assert_eq!(provider.get_stop_tokens(), None);
@@ -524,13 +521,8 @@ mod tests {
             provider
         });
 
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         cx.background_executor.run_until_parked();
 
@@ -658,13 +650,8 @@ mod tests {
             OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         cx.background_executor.run_until_parked();
 
@@ -716,13 +703,8 @@ mod tests {
             OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         provider.update(cx, |provider, cx| {
             provider.refresh(None, buffer.clone(), cursor_position, false, cx);
@@ -861,13 +843,8 @@ mod tests {
 
         let _api_key = provider.read_with(cx, |provider, cx| provider.api_key(cx));
 
-        let edit_provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "test-model".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let edit_provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("test-model".to_string(), cx));
 
         edit_provider.read_with(cx, |_provider, cx| {
             if let Some(lang_provider) = OllamaLanguageModelProvider::global(cx) {
@@ -918,13 +895,8 @@ mod tests {
             OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
-        });
+        let provider =
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         editor_cx.update_editor(|editor, window, cx| {
             editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
