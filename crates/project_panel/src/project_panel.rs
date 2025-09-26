@@ -5832,7 +5832,7 @@ fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
     )
 }
 
-fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
+pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
     entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
