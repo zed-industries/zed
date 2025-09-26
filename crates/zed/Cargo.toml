@@ -171,7 +171,10 @@ zlog_settings.workspace = true
 windows.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
 winresource = "0.1"
+zip = "5.1.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true

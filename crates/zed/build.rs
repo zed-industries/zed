@@ -77,5 +77,53 @@ fn main() {
             eprintln!("{}", e);
             std::process::exit(1);
         }
+
+        // Download conpty.dll and OpenConsole.exe if not already downloaded
+        let out_dir = std::env::var("OUT_DIR").unwrap();
+        let dest_path = std::path::Path::new(&out_dir).join("conpty");
+        if dest_path.exists() {
+            println!(
+                "cargo:warning=conpty nuget package already downloaded: {}. Skipping",
+                out_dir
+            );
+        } else {
+            if let Err(e) = download_conpty_nuget_package(&dest_path) {
+                println!("cargo:warning=Failed to download conpty nuget package: {e}");
+            };
+            // TODO
+            // 1. find conpty.dll that matches the host architecture
+            // 2. copy conpty.dll to CARGO_TARGET_DIR
+            // 3. copy build/native/runtimes/* to CARGO_TARGET_DIR
+        }
     }
+}
+
+#[cfg(windows)]
+fn download_conpty_nuget_package(path: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    const CONPTY_URL: &str =
+        "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001";
+
+    let path = path.as_ref();
+
+    std::fs::create_dir_all(path).context("Failed to create directory for conpty")?;
+    let response = reqwest::blocking::get(CONPTY_URL).with_context(|| {
+        format!(
+            "Failed to download conpty nuget package from {}",
+            CONPTY_URL
+        )
+    })?;
+    let contents = response.bytes().with_context(|| {
+        format!(
+            "Failed to download conpty nuget package from {}",
+            CONPTY_URL
+        )
+    })?;
+    let reader = std::io::Cursor::new(contents);
+
+    let mut archive = zip::ZipArchive::new(reader).context("Failed to open archive")?;
+    archive.extract(path).context("Failed to extract archive")?;
+
+    Ok(())
 }
