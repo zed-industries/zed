@@ -156,9 +156,9 @@ fn user_settings_data() -> Vec<SettingsPage> {
                             &mut settings_content.project.worktree.project_name
                         },
                     }),
-                    metadata: Some(SettingsFieldMetadata {
+                    metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("A new name"),
-                    }),
+                    })),
                 }),
             ],
         },
@@ -181,9 +181,9 @@ fn project_settings_data() -> Vec<SettingsPage> {
                         &mut settings_content.project.worktree.project_name
                     },
                 }),
-                metadata: Some(SettingsFieldMetadata {
+                metadata: Some(Box::new(SettingsFieldMetadata {
                     placeholder: Some("A new name"),
-                }),
+                })),
             }),
         ],
     }]
@@ -285,7 +285,7 @@ impl SettingsPageItem {
                     .child(setting_item.description)
                     .child(renderer.render(
                         setting_item.field.as_ref(),
-                        setting_item.metadata.as_ref(),
+                        setting_item.metadata.as_deref(),
                         cx,
                     ))
                     .into_any_element()
@@ -298,7 +298,7 @@ struct SettingItem {
     title: &'static str,
     description: &'static str,
     field: Box<dyn AnySettingField>,
-    metadata: Option<SettingsFieldMetadata>,
+    metadata: Option<Box<SettingsFieldMetadata>>,
 }
 
 #[allow(unused)]
