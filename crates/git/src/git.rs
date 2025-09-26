@@ -94,6 +94,7 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
     ]
 );
 
