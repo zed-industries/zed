@@ -70,7 +70,7 @@ pub struct PlannedSnippet<'a> {
 }
 
 #[derive(EnumIter, Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub enum SnippetStyle {
+pub enum DeclarationStyle {
     Signature,
     Declaration,
 }
@@ -84,10 +84,10 @@ pub struct SectionLabels {
 impl<'a> PlannedPrompt<'a> {
     /// Greedy one-pass knapsack algorithm to populate the prompt plan. Does the following:
     ///
-    /// Initializes a priority queue by populating it with each snippet, finding the SnippetStyle
-    /// that minimizes `score_density = score / snippet.range(style).len()`. When a "signature"
-    /// snippet is popped, insert an entry for the "declaration" variant that reflects the cost of
-    /// upgrade.
+    /// Initializes a priority queue by populating it with each snippet, finding the
+    /// DeclarationStyle that minimizes `score_density = score / snippet.range(style).len()`. When a
+    /// "signature" snippet is popped, insert an entry for the "declaration" variant that reflects
+    /// the cost of upgrade.
     ///
     /// TODO: Implement an early halting condition. One option might be to have another priority
     /// queue where the score is the size, and update it accordingly. Another option might be to
@@ -131,13 +131,13 @@ impl<'a> PlannedPrompt<'a> {
         struct QueueEntry {
             score_density: OrderedFloat<f32>,
             declaration_index: usize,
-            style: SnippetStyle,
+            style: DeclarationStyle,
         }
 
         // Initialize priority queue with the best score for each snippet.
         let mut queue: BinaryHeap<QueueEntry> = BinaryHeap::new();
         for (declaration_index, declaration) in request.referenced_declarations.iter().enumerate() {
-            let (style, score_density) = SnippetStyle::iter()
+            let (style, score_density) = DeclarationStyle::iter()
                 .map(|style| {
                     (
                         style,
@@ -186,7 +186,7 @@ impl<'a> PlannedPrompt<'a> {
             this.budget_used += additional_bytes;
             this.add_parents(&mut included_parents, additional_parents);
             let planned_snippet = match queue_entry.style {
-                SnippetStyle::Signature => {
+                DeclarationStyle::Signature => {
                     let Some(text) = declaration.text.get(declaration.signature_range.clone())
                     else {
                         return Err(anyhow!(
@@ -203,7 +203,7 @@ impl<'a> PlannedPrompt<'a> {
                         text_is_truncated: declaration.text_is_truncated,
                     }
                 }
-                SnippetStyle::Declaration => PlannedSnippet {
+                DeclarationStyle::Declaration => PlannedSnippet {
                     path: declaration.path.clone(),
                     range: declaration.range.clone(),
                     text: &declaration.text,
@@ -213,11 +213,13 @@ impl<'a> PlannedPrompt<'a> {
             this.snippets.push(planned_snippet);
 
             // When a Signature is consumed, insert an entry for Definition style.
-            if queue_entry.style == SnippetStyle::Signature {
-                let signature_size = declaration_size(&declaration, SnippetStyle::Signature);
-                let declaration_size = declaration_size(&declaration, SnippetStyle::Declaration);
-                let signature_score = declaration_score(&declaration, SnippetStyle::Signature);
-                let declaration_score = declaration_score(&declaration, SnippetStyle::Declaration);
+            if queue_entry.style == DeclarationStyle::Signature {
+                let signature_size = declaration_size(&declaration, DeclarationStyle::Signature);
+                let declaration_size =
+                    declaration_size(&declaration, DeclarationStyle::Declaration);
+                let signature_score = declaration_score(&declaration, DeclarationStyle::Signature);
+                let declaration_score =
+                    declaration_score(&declaration, DeclarationStyle::Declaration);
 
                 let score_diff = declaration_score - signature_score;
                 let size_diff = declaration_size.saturating_sub(signature_size);
@@ -225,7 +227,7 @@ impl<'a> PlannedPrompt<'a> {
                     queue.push(QueueEntry {
                         declaration_index: queue_entry.declaration_index,
                         score_density: OrderedFloat(score_diff / (size_diff as f32)),
-                        style: SnippetStyle::Declaration,
+                        style: DeclarationStyle::Declaration,
                     });
                 }
             }
@@ -510,20 +512,20 @@ impl<'a> PlannedPrompt<'a> {
     }
 }
 
-fn declaration_score_density(declaration: &ReferencedDeclaration, style: SnippetStyle) -> f32 {
+fn declaration_score_density(declaration: &ReferencedDeclaration, style: DeclarationStyle) -> f32 {
     declaration_score(declaration, style) / declaration_size(declaration, style) as f32
 }
 
-fn declaration_score(declaration: &ReferencedDeclaration, style: SnippetStyle) -> f32 {
+fn declaration_score(declaration: &ReferencedDeclaration, style: DeclarationStyle) -> f32 {
     match style {
-        SnippetStyle::Signature => declaration.signature_score,
-        SnippetStyle::Declaration => declaration.declaration_score,
+        DeclarationStyle::Signature => declaration.signature_score,
+        DeclarationStyle::Declaration => declaration.declaration_score,
     }
 }
 
-fn declaration_size(declaration: &ReferencedDeclaration, style: SnippetStyle) -> usize {
+fn declaration_size(declaration: &ReferencedDeclaration, style: DeclarationStyle) -> usize {
     match style {
-        SnippetStyle::Signature => declaration.signature_range.len(),
-        SnippetStyle::Declaration => declaration.text.len(),
+        DeclarationStyle::Signature => declaration.signature_range.len(),
+        DeclarationStyle::Declaration => declaration.text.len(),
     }
 }

@@ -19,7 +19,7 @@ use crate::reference::Reference;
 static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
 
 /// Multiset of text occurrences for text similarity that only stores hashes and counts.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Occurrences {
     table: HashTable<OccurrenceEntry>,
     total_count: usize,
@@ -32,43 +32,42 @@ struct OccurrenceEntry {
 }
 
 impl Occurrences {
-    pub fn within_string(code: &str) -> Self {
-        Self::from_iterator(IDENTIFIER_REGEX.find_iter(code).map(|mat| mat.as_str()))
+    pub fn within_string(text: &str) -> Self {
+        Self::from_identifiers(IDENTIFIER_REGEX.find_iter(text).map(|mat| mat.as_str()))
     }
 
     #[allow(dead_code)]
     pub fn within_references(references: &[Reference]) -> Self {
-        Self::from_iterator(
+        Self::from_identifiers(
             references
                 .iter()
                 .map(|reference| reference.identifier.name.as_ref()),
         )
     }
 
-    pub fn from_iterator<'a>(identifier_iterator: impl Iterator<Item = &'a str>) -> Self {
-        let mut identifier_to_count = HashTable::new();
-        let mut total_count = 0;
-        for identifier in identifier_iterator {
-            // TODO: Score matches that match case higher?
-            //
-            // TODO: Also include unsplit identifier?
+    pub fn from_identifiers<'a>(identifiers: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut this = Self::default();
+        // TODO: Score matches that match case higher?
+        //
+        // TODO: Also include unsplit identifier?
+        for identifier in identifiers {
             for identifier_part in split_identifier(identifier) {
-                let hash = fx_hash(&identifier_part.to_lowercase());
-                identifier_to_count
-                    .entry(
-                        hash,
-                        |entry: &OccurrenceEntry| entry.hash == hash,
-                        |entry| entry.hash,
-                    )
-                    .and_modify(|entry| entry.count += 1)
-                    .or_insert(OccurrenceEntry { hash, count: 1 });
-                total_count += 1;
+                this.add_hash(fx_hash(&identifier_part.to_lowercase()));
             }
         }
-        Occurrences {
-            table: identifier_to_count,
-            total_count,
-        }
+        this
+    }
+
+    fn add_hash(&mut self, hash: u64) {
+        self.table
+            .entry(
+                hash,
+                |entry: &OccurrenceEntry| entry.hash == hash,
+                |entry| entry.hash,
+            )
+            .and_modify(|entry| entry.count += 1)
+            .or_insert(OccurrenceEntry { hash, count: 1 });
+        self.total_count += 1;
     }
 
     fn contains_hash(&self, hash: u64) -> bool {
