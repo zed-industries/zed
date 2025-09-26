@@ -153,7 +153,7 @@ pub fn init(cx: &mut App) {
 
         // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
         workspace.register_action(move |workspace, action: &DeploySearch, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(cx) {
                 cx.propagate();
                 return;
             }
@@ -161,7 +161,7 @@ pub fn init(cx: &mut App) {
             cx.notify();
         });
         workspace.register_action(move |workspace, action: &NewSearch, window, cx| {
-            if workspace.has_active_modal(window, cx) {
+            if workspace.has_active_modal(cx) {
                 cx.propagate();
                 return;
             }
@@ -2278,7 +2278,7 @@ fn register_workspace_action<A: Action>(
     callback: fn(&mut ProjectSearchBar, &A, &mut Window, &mut Context<ProjectSearchBar>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) {
+        if workspace.has_active_modal(cx) {
             cx.propagate();
             return;
         }
@@ -2305,7 +2305,7 @@ fn register_workspace_action_for_present_search<A: Action>(
     callback: fn(&mut Workspace, &A, &mut Window, &mut Context<Workspace>),
 ) {
     workspace.register_action(move |workspace, action: &A, window, cx| {
-        if workspace.has_active_modal(window, cx) {
+        if workspace.has_active_modal(cx) {
             cx.propagate();
             return;
         }

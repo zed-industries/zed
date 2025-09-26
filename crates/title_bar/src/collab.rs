@@ -332,7 +332,7 @@ impl TitleBar {
 
         let is_connecting_to_project = self
             .workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
+            .update(cx, |workspace, cx| workspace.has_active_modal(cx))
             .unwrap_or(false);
 
         let room = room.read(cx);

@@ -111,6 +111,7 @@ use util::{
     serde::default_true,
 };
 use uuid::Uuid;
+
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
@@ -1458,6 +1459,7 @@ impl Workspace {
             status_bar,
             modal_layer,
             toast_layer,
+
             titlebar_item: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
@@ -5807,7 +5809,7 @@ impl Workspace {
         div
     }
 
-    pub fn has_active_modal(&self, _: &mut Window, cx: &mut App) -> bool {
+    pub fn has_active_modal(&self, cx: &mut App) -> bool {
         self.modal_layer.read(cx).has_active_modal()
     }
 
