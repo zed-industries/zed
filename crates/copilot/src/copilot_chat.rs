@@ -140,7 +140,7 @@ fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInpu
                 input_items.push(ResponseInputItem::SystemMessage {
                     role: "system".to_string(),
                     content: vec![ResponseInputContent::Text {
-                        type_field: "text".to_string(),
+                        type_field: "input_text".to_string(),
                         text: content.clone(),
                     }],
                 });
@@ -149,18 +149,18 @@ fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInpu
                 let content_parts = match content {
                     ChatMessageContent::Plain(text) => {
                         vec![ResponseInputContent::Text {
-                            type_field: "text".to_string(),
+                            type_field: "input_text".to_string(),
                             text: text.clone(),
                         }]
                     }
                     ChatMessageContent::Multipart(parts) => {
                         parts.iter().map(|part| match part {
                             ChatMessagePart::Text { text } => ResponseInputContent::Text {
-                                type_field: "text".to_string(),
+                                type_field: "input_text".to_string(),
                                 text: text.clone(),
                             },
                             ChatMessagePart::Image { image_url } => ResponseInputContent::ImageUrl {
-                                type_field: "image_url".to_string(),
+                                type_field: "input_image".to_string(),
                                 image_url: ImageUrlContent {
                                     url: image_url.url.clone(),
                                 },
@@ -190,7 +190,7 @@ fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInpu
                     input_items.push(ResponseInputItem::AssistantMessage {
                         role: "assistant".to_string(),
                         content: vec![ResponseOutputContent::Text {
-                            type_field: "text".to_string(),
+                            type_field: "output_text".to_string(),
                             text: text_content,
                         }],
                         type_field: "message".to_string(),
