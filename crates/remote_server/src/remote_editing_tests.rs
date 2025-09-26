@@ -849,6 +849,8 @@ async fn test_remote_resolve_path_in_buffer(
 
     let worktree2_id = cx.update(|cx| worktree2.read(cx).id());
 
+    cx.run_until_parked();
+
     let buffer2 = project
         .update(cx, |project, cx| {
             project.open_buffer((worktree2_id, rel_path("src/lib.rs")), cx)
@@ -1037,7 +1039,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert!(worktree.is_visible());
         let entries = worktree.entries(true, 0).collect::<Vec<_>>();
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[1].path.as_str(), "README.md")
+        assert_eq!(entries[1].path.as_unix_str(), "README.md")
     })
 }
 

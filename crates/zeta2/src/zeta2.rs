@@ -733,7 +733,7 @@ fn make_cloud_request(
     let mut declaration_to_signature_index = HashMap::default();
     let mut referenced_declarations = Vec::new();
 
-    for snippet in context.snippets {
+    for snippet in context.declarations {
         let project_entry_id = snippet.declaration.project_entry_id();
         let Some(path) = worktrees.iter().find_map(|worktree| {
             worktree.entry_for_id(project_entry_id).map(|entry| {

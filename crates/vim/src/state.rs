@@ -59,8 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-            Mode::HelixSelect => write!(f, "HELIX SELECT"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
@@ -344,11 +344,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
-                    let path = RelPath::from_std_path(relative, worktree.read(cx).path_style())
-                        .log_err()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     })
                 })
                 .next();

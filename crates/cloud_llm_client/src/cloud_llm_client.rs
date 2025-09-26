@@ -55,6 +55,9 @@ pub const CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
 pub const SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME: &str =
     "x-zed-server-supports-status-messages";
 
+/// The name of the header used by the client to indicate that it supports receiving xAI models.
+pub const CLIENT_SUPPORTS_X_AI_HEADER_NAME: &str = "x-zed-client-supports-x-ai";
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageLimit {
@@ -144,6 +147,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    XAi,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4628,12 +4628,12 @@ impl BufferSnapshot {
         self.file.as_ref()
     }
 
-    pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
+    pub fn resolve_file_path(&self, include_root: bool, cx: &App) -> Option<String> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
-                Some(file.full_path(cx))
+                Some(file.full_path(cx).to_string_lossy().to_string())
             } else {
-                Some(file.path().as_std_path().to_owned())
+                Some(file.path().display(file.path_style(cx)).to_string())
             }
         } else {
             None

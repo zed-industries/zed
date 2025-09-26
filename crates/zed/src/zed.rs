@@ -1669,8 +1669,9 @@ fn open_local_file(
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
-                let full_path = worktree
-                    .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+                let full_path = worktree.read_with(cx, |tree, _| {
+                    tree.abs_path().join(settings_relative_path.as_std_path())
+                })?;
 
                 let fs = project.read_with(cx, |project, _| project.fs().clone())?;
 

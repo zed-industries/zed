@@ -332,7 +332,7 @@ mod tests {
 
         let traversal = GitTraversal::new(
             &repo_snapshots,
-            worktree_snapshot.traverse_from_path(true, false, true, RelPath::new("x").unwrap()),
+            worktree_snapshot.traverse_from_path(true, false, true, RelPath::unix("x").unwrap()),
         );
         let entries = traversal
             .map(|entry| (entry.path.clone(), entry.git_summary))

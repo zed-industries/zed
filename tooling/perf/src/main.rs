@@ -93,7 +93,10 @@ impl OutputKind<'_> {
         match self {
             OutputKind::Markdown => print!("{output}"),
             OutputKind::Json(ident) => {
-                let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+                // We're going to be in tooling/perf/$whatever.
+                let wspace_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                    .join("..")
+                    .join("..");
                 let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
                 std::fs::create_dir_all(&runs_dir).unwrap();
                 assert!(

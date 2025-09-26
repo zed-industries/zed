@@ -312,10 +312,7 @@ fn assign_edit_prediction_provider(
 mod tests {
     use super::*;
     use crate::zed::tests::init_test;
-    use editor::{Editor, MultiBuffer};
     use gpui::TestAppContext;
-    use language::Buffer;
-    use settings::OllamaAvailableModel;
 
     #[gpui::test]
     async fn test_ollama_provider_authentication_on_init(cx: &mut TestAppContext) {

@@ -18,6 +18,7 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
+hashbrown.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true

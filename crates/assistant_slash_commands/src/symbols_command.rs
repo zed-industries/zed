@@ -7,8 +7,8 @@ use editor::Editor;
 use gpui::{AppContext as _, Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
-use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{App, IconName, Window};
+use std::sync::atomic::AtomicBool;
+use ui::{App, IconName, SharedString, Window};
 use workspace::Workspace;
 
 pub struct OutlineSlashCommand;
@@ -67,13 +67,13 @@ impl SlashCommand for OutlineSlashCommand {
             };
 
             let snapshot = buffer.read(cx).snapshot();
-            let path = snapshot.resolve_file_path(cx, true);
+            let path = snapshot.resolve_file_path(true, cx);
 
             cx.background_spawn(async move {
                 let outline = snapshot.outline(None);
 
-                let path = path.as_deref().unwrap_or(Path::new("untitled"));
-                let mut outline_text = format!("Symbols for {}:\n", path.display());
+                let path = path.as_deref().unwrap_or("untitled");
+                let mut outline_text = format!("Symbols for {path}:\n");
                 for item in &outline.path_candidates {
                     outline_text.push_str("- ");
                     outline_text.push_str(&item.string);
@@ -84,7 +84,7 @@ impl SlashCommand for OutlineSlashCommand {
                     sections: vec![SlashCommandOutputSection {
                         range: 0..outline_text.len(),
                         icon: IconName::ListTree,
-                        label: path.to_string_lossy().to_string().into(),
+                        label: SharedString::new(path),
                         metadata: None,
                     }],
                     text: outline_text,

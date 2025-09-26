@@ -269,7 +269,7 @@ impl TypeScriptContextProvider {
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let new_json_data = file_relative_path
             .ancestors()
-            .map(|path| worktree_root.join(path))
+            .map(|path| worktree_root.join(path.as_std_path()))
             .map(|parent_path| {
                 self.package_json_data(&parent_path, self.last_package_json.clone(), fs.clone(), cx)
             })
@@ -533,7 +533,7 @@ impl TypeScriptLspAdapter {
     }
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::new(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 

@@ -1110,6 +1110,7 @@
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-n": "workspace::NewTerminal",
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],

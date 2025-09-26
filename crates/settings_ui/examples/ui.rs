@@ -49,8 +49,8 @@ fn main() {
     app.run(move |cx| {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
         settings::init(cx);
+        settings_ui::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
-
         client::init_settings(cx);
         workspace::init_settings(cx);
         // production client because fake client requires gpui/test-support

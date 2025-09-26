@@ -859,7 +859,7 @@ impl SettingsObserver {
                     .unwrap()
                     .into();
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(RelPath::new(EDITORCONFIG_NAME).unwrap()) {
+            } else if path.ends_with(RelPath::unix(EDITORCONFIG_NAME).unwrap()) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
@@ -881,7 +881,7 @@ impl SettingsObserver {
                         Some(
                             async move {
                                 let content = fs.load(&abs_path).await?;
-                                if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+                                if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeTaskFile>(&content)
                                             .with_context(|| {
@@ -898,7 +898,7 @@ impl SettingsObserver {
                                             "serializing Zed tasks into JSON, file {abs_path:?}"
                                         )
                                     })
-                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeDebugTaskFile>(&content)
                                             .with_context(|| {
@@ -984,7 +984,7 @@ impl SettingsObserver {
                             Ok(()) => {
                                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
                                     .as_std_path()
-                                    .join(local_settings_file_relative_path()))));
+                                    .join(local_settings_file_relative_path().as_std_path()))));
                             }
                         }
                     }),
@@ -1013,7 +1013,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(task_file_name()))));
                         }
                     }
                 }
@@ -1044,7 +1044,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(task_file_name()))));
                         }
                     }
                 }

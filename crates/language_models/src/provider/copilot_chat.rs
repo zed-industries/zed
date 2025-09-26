@@ -89,7 +89,7 @@ impl CopilotChatLanguageModelProvider {
 impl LanguageModelProviderState for CopilotChatLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }

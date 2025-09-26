@@ -2032,7 +2032,7 @@ impl Project {
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
-            .map(|tree| tree.read(cx).root_name().as_str())
+            .map(|tree| tree.read(cx).root_name().as_unix_str())
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
@@ -4242,20 +4242,18 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![];
-        if let Ok(path) = RelPath::from_std_path(Path::new(path), self.path_style(cx)) {
-            candidates.push(path);
+        let path_style = self.path_style(cx);
+        if let Ok(path) = RelPath::new(path.as_ref(), path_style) {
+            candidates.push(path.into_arc());
         }
 
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            if let Some(joined) = self
-                .path_style(cx)
-                .join(&*dir.display(self.path_style(cx)), path)
-                && let Some(joined) =
-                    RelPath::from_std_path(Path::new(&joined), self.path_style(cx)).ok()
+            if let Some(joined) = path_style.join(&*dir.display(path_style), path)
+                && let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok()
             {
-                candidates.push(joined);
+                candidates.push(joined.into_arc());
             }
         }
 
@@ -4470,30 +4468,30 @@ impl Project {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 
                 if let Ok(relative_path) = path.strip_prefix(worktree_abs_path)
-                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     });
                 }
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name)
-                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     });
                 }
             }
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::from_std_path(path, path_style)
+                if let Ok(path) = RelPath::new(path, path_style)
                     && let Some(entry) = worktree.entry_for_path(&path)
                 {
                     return Some(ProjectPath {

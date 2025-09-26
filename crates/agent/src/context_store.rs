@@ -312,7 +312,7 @@ impl ContextStore {
                 let item = image_item.read(cx);
                 this.insert_image(
                     Some(item.project_path(cx)),
-                    Some(item.file.full_path(cx).into()),
+                    Some(item.file.full_path(cx).to_string_lossy().to_string()),
                     item.image.clone(),
                     remove_if_exists,
                     cx,
@@ -328,7 +328,7 @@ impl ContextStore {
     fn insert_image(
         &mut self,
         project_path: Option<ProjectPath>,
-        full_path: Option<Arc<Path>>,
+        full_path: Option<String>,
         image: Arc<Image>,
         remove_if_exists: bool,
         cx: &mut Context<ContextStore>,
