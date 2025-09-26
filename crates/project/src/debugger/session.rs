@@ -1557,7 +1557,11 @@ impl Session {
             Events::ProgressStart(_) => {}
             Events::ProgressUpdate(_) => {}
             Events::Invalidated(_) => {}
-            Events::Other(_) => {}
+            Events::Other(event) => {
+                if event.event == "launchBrowserInCompanion" {
+                    // TODO
+                }
+            }
         }
     }
 

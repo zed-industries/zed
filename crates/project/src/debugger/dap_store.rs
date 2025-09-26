@@ -538,6 +538,8 @@ impl DapStore {
             local_store.environment.update(cx, |env, cx| {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
+            // FIXME not quite right (collab)
+            self.downstream_client.is_some(),
         ))
     }
 
@@ -870,6 +872,7 @@ pub struct DapAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    is_headless: bool,
 }
 
 impl DapAdapterDelegate {
@@ -881,6 +884,7 @@ impl DapAdapterDelegate {
         http_client: Arc<dyn HttpClient>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+        is_headless: bool,
     ) -> Self {
         Self {
             fs,
@@ -890,6 +894,7 @@ impl DapAdapterDelegate {
             node_runtime,
             toolchain_store,
             load_shell_env_task,
+            is_headless,
         }
     }
 }
@@ -952,5 +957,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         let abs_path = self.worktree.absolutize(&entry.path);
 
         self.fs.load(&abs_path).await
+    }
+
+    fn is_headless(&self) -> bool {
+        self.is_headless
     }
 }
