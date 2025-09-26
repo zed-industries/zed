@@ -7584,7 +7584,7 @@ dependencies = [
  "http-body 1.0.1",
  "log",
  "parking_lot",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
+ "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=34db7800e7b4980420566f0d0c50388a6aaf8af1)",
  "serde",
  "serde_json",
  "url",
@@ -9190,7 +9190,7 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "prost-types 0.9.0",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
+ "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=34db7800e7b4980420566f0d0c50388a6aaf8af1)",
  "serde",
  "workspace-hack",
 ]
@@ -13267,7 +13267,7 @@ dependencies = [
 [[package]]
 name = "reqwest"
 version = "0.12.15"
-source = "git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415#951c770a32f1998d6e999cef3e59e0013e6c4415"
+source = "git+https://github.com/zed-industries/reqwest.git?rev=34db7800e7b4980420566f0d0c50388a6aaf8af1#34db7800e7b4980420566f0d0c50388a6aaf8af1"
 dependencies = [
  "base64 0.22.1",
  "bytes 1.10.1",
@@ -13326,7 +13326,7 @@ dependencies = [
  "http_client_tls",
  "log",
  "regex",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
+ "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=34db7800e7b4980420566f0d0c50388a6aaf8af1)",
  "serde",
  "tokio",
  "workspace-hack",
@@ -20325,7 +20325,7 @@ dependencies = [
  "release_channel",
  "remote",
  "repl",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
+ "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=34db7800e7b4980420566f0d0c50388a6aaf8af1)",
  "reqwest_client",
  "rope",
  "search",
