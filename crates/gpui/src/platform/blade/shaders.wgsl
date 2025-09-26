@@ -180,10 +180,24 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+fn srgb_to_linear_component(a: f32) -> f32 {
+    let cutoff = a < 0.04045;
+    let higher = pow((a + 0.055) / 1.055, 2.4);
+    let lower = a / 12.92;
+    return select(higher, lower, cutoff);
+}
+
 fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
     let cutoff = linear < vec3<f32>(0.0031308);
     let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
     let lower = linear * vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
+
+fn linear_to_srgb_component(linear: f32) -> f32 {
+    let cutoff = linear < 0.0031308;
+    let higher = 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
+    let lower = linear * 12.92;
     return select(higher, lower, cutoff);
 }
 
@@ -1155,13 +1169,18 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 @fragment
 fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
-    let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    // converting to linear space to do color operations as cosmic_text outputs texture data in srgb format
+    // cannot make the gpu automatically do the conversion as there's no R8UnormSrgb format
+    let sample_linear = srgb_to_linear_component(sample);
+    let alpha_corrected = apply_contrast_and_gamma_correction(sample_linear, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
 
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
-    return blend_color(input.color, alpha_corrected);
+
+    // convert to srgb space as the rest of the code (output swapchain) expects that
+    return blend_color(input.color, linear_to_srgb_component(alpha_corrected));
 }
 
 // --- polychrome sprites --- //
@@ -1214,7 +1233,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
+    return blend_color(color, linear_to_srgb_component(sprite.opacity * saturate(0.5 - distance)));
 }
 
 // --- surfaces --- //
