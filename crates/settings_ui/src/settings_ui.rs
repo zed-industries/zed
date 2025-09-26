@@ -1,6 +1,8 @@
 //! # settings_ui
+mod components;
+
 use std::{
-    any::{Any, TypeId},
+    any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
     rc::Rc,
@@ -23,15 +25,38 @@ use ui::{
 };
 use util::{paths::PathStyle, rel_path::RelPath};
 
+use crate::components::SettingsEditor;
+
 #[derive(Clone)]
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> &T,
     pick_mut: fn(&mut SettingsContent) -> &mut T,
 }
 
+trait AnySettingField {
+    fn as_any(&self) -> &dyn Any;
+    fn type_name(&self) -> &'static str;
+    fn type_id(&self) -> TypeId;
+}
+
+impl<T> AnySettingField for SettingField<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<T>()
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+}
+
 #[derive(Default, Clone)]
 struct SettingFieldRenderer {
-    renderers: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&dyn Any, &mut App) -> AnyElement>>>>,
+    renderers:
+        Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&dyn AnySettingField, &mut App) -> AnyElement>>>>,
 }
 
 impl Global for SettingFieldRenderer {}
@@ -40,24 +65,38 @@ impl SettingFieldRenderer {
     fn add_renderer<T: 'static>(
         &mut self,
         renderer: impl Fn(&SettingField<T>, &mut App) -> AnyElement + 'static,
-    ) {
-        let type_id = TypeId::of::<SettingField<T>>();
-        let renderer = Box::new(move |any_setting_field: &dyn Any, cx: &mut App| {
-            let field = any_setting_field.downcast_ref::<SettingField<T>>().unwrap();
-            renderer(field, cx)
-        });
-        self.renderers.borrow_mut().insert(type_id, renderer);
+    ) -> &mut Self {
+        let key = TypeId::of::<T>();
+        let renderer = Box::new(
+            move |any_setting_field: &dyn AnySettingField, cx: &mut App| {
+                let field = any_setting_field
+                    .as_any()
+                    .downcast_ref::<SettingField<T>>()
+                    .unwrap();
+                renderer(field, cx)
+            },
+        );
+        self.renderers.borrow_mut().insert(key, renderer);
+        self
     }
 
-    fn render(&self, any_setting_field: &dyn Any, cx: &mut App) -> AnyElement {
-        let type_id = any_setting_field.type_id();
-        if let Some(renderer) = self.renderers.borrow().get(&type_id) {
+    fn render(&self, any_setting_field: &dyn AnySettingField, cx: &mut App) -> AnyElement {
+        let key = any_setting_field.type_id();
+        if let Some(renderer) = self.renderers.borrow().get(&key) {
             renderer(any_setting_field, cx)
         } else {
-            panic!("No renderer found for type")
+            panic!(
+                "No renderer found for type: {}",
+                any_setting_field.type_name()
+            )
         }
     }
 }
+
+// TODO: Pass through metadata to SettingFieldRenderer::render
+// struct SettingsFieldMetadata {
+//     placeholder: Option<&'static str>,
+// }
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -73,37 +112,30 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
                 }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Auto Update",
-                //     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                //     render: Rc::new(|_, cx| {
-                //         render_toggle_button(
-                //             "Auto Update",
-                //             SettingsFile::User,
-                //             cx,
-                //             |settings_content| &mut settings_content.auto_update,
-                //         )
-                //     }),
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                    }),
+                }),
             ],
         },
         SettingsPage {
             title: "Project",
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Project Name",
-                //     description: "The displayed name of this project. If not set, the root directory name",
-                //     render: Rc::new(|window, cx| {
-                //         render_text_field(
-                //             "project_name",
-                //             SettingsFile::User,
-                //             window,
-                //             cx,
-                //             |settings_content| &mut settings_content.project.worktree.project_name,
-                //         )
-                //     }),
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Name",
+                    description: "The displayed name of this project. If not set, the root directory name",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.project.worktree.project_name,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project.worktree.project_name
+                        },
+                    }),
+                }),
             ],
         },
     ]
@@ -116,22 +148,16 @@ fn project_settings_data() -> Vec<SettingsPage> {
         title: "Project",
         items: vec![
             SettingsPageItem::SectionHeader("Worktree Settings Content"),
-            // SettingsPageItem::SettingItem(SettingItem {
-            //     title: "Project Name",
-            //     description: " The displayed name of this project. If not set, the root directory name",
-            //     render: Rc::new(|window, cx| {
-            //         render_text_field(
-            //             "project_name",
-            //             SettingsFile::Local((
-            //                 WorktreeId::from_usize(0),
-            //                 Arc::from(RelPath::new("TODO: actually pass through file").unwrap()),
-            //             )),
-            //             window,
-            //             cx,
-            //             |settings_content| &mut settings_content.project.worktree.project_name,
-            //         )
-            //     }),
-            // }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Project Name",
+                description: "The displayed name of this project. If not set, the root directory name",
+                field: Box::new(SettingField {
+                    pick: |settings_content| &settings_content.project.worktree.project_name,
+                    pick_mut: |settings_content| {
+                        &mut settings_content.project.worktree.project_name
+                    },
+                }),
+            }),
         ],
     }]
 }
@@ -151,10 +177,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.default_global::<SettingFieldRenderer>()
-        .add_renderer::<bool>(|settings_field, cx| {
-            render_toggle_button(SettingsFile::User, settings_field.clone(), cx).into_any_element()
-        });
+    init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
@@ -177,6 +200,16 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn init_renderers(cx: &mut App) {
+    cx.default_global::<SettingFieldRenderer>()
+        .add_renderer::<Option<bool>>(|settings_field, cx| {
+            render_toggle_button(settings_field.clone(), cx).into_any_element()
+        })
+        .add_renderer::<Option<String>>(|settings_field, cx| {
+            render_text_field(settings_field.clone(), cx)
+        });
 }
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
@@ -218,9 +251,9 @@ impl SettingsPageItem {
                 .size(LabelSize::Large)
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
-                let renderer = cx.default_global::<SettingFieldRenderer>().clone();
+                let renderer = cx.global::<SettingFieldRenderer>().clone();
                 div()
-                    .id(setting_item.title) // This would be a formatted version of the field name,
+                    .id(setting_item.title)
                     .child(setting_item.title)
                     .child(setting_item.description)
                     .child(renderer.render(setting_item.field.as_ref(), cx))
@@ -230,19 +263,10 @@ impl SettingsPageItem {
     }
 }
 
-impl SettingsPageItem {
-    fn _header(&self) -> Option<&'static str> {
-        match self {
-            SettingsPageItem::SectionHeader(header) => Some(header),
-            _ => None,
-        }
-    }
-}
-
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    field: Box<dyn Any>,
+    field: Box<dyn AnySettingField>,
 }
 
 #[allow(unused)]
@@ -416,87 +440,52 @@ impl Render for SettingsWindow {
     }
 }
 
-// fn render_text_field(
-//     id: &'static str,
-//     _file: SettingsFile,
-//     window: &mut Window,
-//     cx: &mut App,
-//     get_value: fn(&mut SettingsContent) -> &mut Option<String>,
-// ) -> AnyElement {
-//     // TODO: Updating file does not cause the editor text to reload, suspicious it may be a missing global update/notify in SettingsStore
-
-//     // TODO: in settings window state
-//     let store = SettingsStore::global(cx);
-
-//     // TODO: This clone needs to go!!
-//     let mut defaults = store.raw_default_settings().clone();
-//     let mut user_settings = store
-//         .raw_user_settings()
-//         .cloned()
-//         .unwrap_or_default()
-//         .content;
-
-//     // TODO: unwrap_or_default here because project name is null
-//     let initial_text = get_value(user_settings.as_mut())
-//         .clone()
-//         .unwrap_or_else(|| get_value(&mut defaults).clone().unwrap_or_default());
-
-//     let editor = window.use_keyed_state((id.into(), initial_text.clone()), cx, {
-//         move |window, cx| {
-//             let mut editor = Editor::single_line(window, cx);
-//             editor.set_text(initial_text, window, cx);
-//             editor
-//         }
-//     });
-
-//     let weak_editor = editor.downgrade();
-//     let theme_colors = cx.theme().colors();
-
-//     div()
-//         .child(editor)
-//         .bg(theme_colors.editor_background)
-//         .border_1()
-//         .rounded_lg()
-//         .border_color(theme_colors.border)
-//         .on_action::<menu::Confirm>({
-//             move |_, _, cx| {
-//                 let Some(editor) = weak_editor.upgrade() else {
-//                     return;
-//                 };
-//                 let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-//                 let new_value = (!new_value.is_empty()).then_some(new_value);
-//                 write_setting_value(get_value, new_value, cx);
-//                 editor.update(cx, |_, cx| {
-//                     cx.notify();
-//                 });
-//             }
-//         })
-//         .into_any_element()
-// }
-
-// TODO: This should not be thinking about fallback logic
-fn render_toggle_button(
-    // id: &'static str,
-    _: SettingsFile,
-    field: SettingField<bool>,
-    cx: &mut App,
-) -> AnyElement {
+fn render_text_field(field: SettingField<Option<String>>, cx: &mut App) -> AnyElement {
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
     // TODO: This clone needs to go!!
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
+    let defaults = store.raw_default_settings().clone();
+    let user_settings = store
         .raw_user_settings()
         .cloned()
         .unwrap_or_default()
         .content;
 
-    let toggle_state = if *(field.pick)(&user_settings) {
-        ui::ToggleState::Selected
-    } else {
-        ui::ToggleState::Unselected
-    };
+    // TODO: unwrap_or_default here because project name is null
+    let initial_text = (field.pick)(&user_settings)
+        .clone()
+        .unwrap_or_else(|| (field.pick)(&defaults).clone().unwrap_or_default());
+
+    SettingsEditor::new(initial_text)
+        .on_confirm(move |new_text, cx: &mut App| {
+            cx.update_global(move |store: &mut SettingsStore, cx| {
+                store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+                    *(field.pick_mut)(settings) = new_text;
+                });
+            });
+        })
+        .into_any_element()
+}
+
+fn render_toggle_button(field: SettingField<Option<bool>>, cx: &mut App) -> AnyElement {
+    // TODO: in settings window state
+    let store = SettingsStore::global(cx);
+
+    // TODO: This clone needs to go!!
+    let defaults = store.raw_default_settings().clone();
+    let user_settings = store
+        .raw_user_settings()
+        .cloned()
+        .unwrap_or_default()
+        .content;
+
+    let toggle_state =
+        if (field.pick)(&user_settings).unwrap_or_else(|| (field.pick)(&defaults).unwrap()) {
+            ui::ToggleState::Selected
+        } else {
+            ui::ToggleState::Unselected
+        };
 
     Switch::new("toggle_button", toggle_state)
         .on_click({
@@ -505,7 +494,7 @@ fn render_toggle_button(
                 let field = field.clone();
                 cx.update_global(move |store: &mut SettingsStore, cx| {
                     store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-                        *(field.pick_mut)(settings) = state
+                        *(field.pick_mut)(settings) = Some(state);
                     });
                 });
             }
