@@ -8394,7 +8394,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dap",
- "editor",
  "extension",
  "gpui",
  "language",
@@ -8408,7 +8407,6 @@ dependencies = [
  "task",
  "theme",
  "util",
- "workspace",
 ]
 
 [[package]]
