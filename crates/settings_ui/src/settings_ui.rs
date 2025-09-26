@@ -4,8 +4,8 @@ use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div, px, size,
-    uniform_list,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
+    point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
@@ -17,12 +17,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use ui::{
-    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color, Divider,
-    DropdownMenu, FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label,
-    LabelCommon as _, LabelSize, ListItem, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled, StyledTypography, Switch, h_flex, v_flex,
-};
+use ui::{Divider, DropdownMenu, ListItem, Switch, prelude::*};
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -292,11 +287,16 @@ fn init_renderers(cx: &mut App) {
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
     cx.open_window(
         WindowOptions {
-            titlebar: None,
+            titlebar: Some(TitlebarOptions {
+                title: Some("Settings Window".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(12.0), px(12.0))),
+            }),
             focus: true,
             show: true,
             kind: gpui::WindowKind::Normal,
-            window_min_size: Some(size(px(300.), px(500.))), // todo(settings_ui): Does this min_size make sense?
+            window_background: cx.theme().window_background_appearance(),
+            window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
             ..Default::default()
         },
         |window, cx| cx.new(|cx| SettingsWindow::new(window, cx)),
@@ -342,40 +342,40 @@ enum SettingsPageItem {
 impl SettingsPageItem {
     fn render(&self, _file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
-            SettingsPageItem::SectionHeader(header) => div()
+            SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
+                .gap_0p5()
                 .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
-                div()
+                h_flex()
                     .id(setting_item.title)
+                    .w_full()
+                    .gap_2()
+                    .flex_wrap()
+                    .justify_between()
                     .child(
-                        Label::new(SharedString::new_static(setting_item.title))
-                            .size(LabelSize::Default),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_between()
+                        v_flex()
+                            .max_w_1_2()
+                            .flex_shrink()
                             .child(
-                                div()
-                                    .child(
-                                        Label::new(SharedString::new_static(
-                                            setting_item.description,
-                                        ))
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    )
-                                    .max_w_1_2(),
+                                Label::new(SharedString::new_static(setting_item.title))
+                                    .size(LabelSize::Default),
                             )
-                            .child(renderer.render(
-                                setting_item.field.as_ref(),
-                                setting_item.metadata.as_deref(),
-                                window,
-                                cx,
-                            )),
+                            .child(
+                                Label::new(SharedString::new_static(setting_item.description))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
                     )
+                    .child(renderer.render(
+                        setting_item.field.as_ref(),
+                        setting_item.metadata.as_deref(),
+                        window,
+                        cx,
+                    ))
                     .into_any_element()
             }
         }
@@ -423,7 +423,7 @@ impl SettingsWindow {
         let current_file = SettingsFile::User;
         let search = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search Settings", window, cx);
+            editor.set_placeholder_text("Search settings…", window, cx);
             editor
         });
         let mut this = Self {
@@ -526,9 +526,7 @@ impl SettingsWindow {
     }
 
     fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        div()
-            .flex()
-            .flex_row()
+        h_flex()
             .gap_1()
             .children(self.files.iter().enumerate().map(|(ix, file)| {
                 Button::new(ix, file.name())
@@ -536,19 +534,30 @@ impl SettingsWindow {
             }))
     }
 
-    fn render_search(&self, _window: &mut Window, _cx: &mut App) -> Div {
+    fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
-            .child(Icon::new(IconName::MagnifyingGlass))
+            .pt_1()
+            .px_1p5()
+            .gap_1p5()
+            .rounded_sm()
+            .bg(cx.theme().colors().editor_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(Icon::new(IconName::MagnifyingGlass).color(Color::Muted))
             .child(self.search.clone())
     }
 
     fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
         v_flex()
-            .bg(cx.theme().colors().panel_background)
-            .p_3()
-            .child(div().h_10()) // Files spacer;
-            .child(self.render_search(window, cx).pb_1())
+            .w_64()
+            .p_2p5()
+            .pt_10()
             .gap_3()
+            .flex_none()
+            .border_r_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().panel_background)
+            .child(self.render_search(window, cx).pb_1())
             .child(
                 uniform_list(
                     "settings-ui-nav-bar",
@@ -559,12 +568,25 @@ impl SettingsWindow {
                             .map(|ix| {
                                 let entry = &this.navbar_entries[ix];
 
-                                div()
+                                h_flex()
                                     .id(("settings-ui-section", ix))
+                                    .w_full()
+                                    .pl_2p5()
+                                    .py_0p5()
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_transparent)
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .when(this.is_navbar_entry_selected(ix), |this| {
+                                        this.text_color(cx.theme().colors().text)
+                                            .bg(cx.theme().colors().element_selected.opacity(0.2))
+                                            .border_color(cx.theme().colors().border)
+                                    })
                                     .child(
                                         ListItem::new(("settings-ui-navbar-entry", ix))
                                             .selectable(true)
-                                            .indent_step_size(px(10.))
+                                            .inset(true)
+                                            .indent_step_size(px(1.))
                                             .indent_level(if entry.is_root { 1 } else { 3 })
                                             .when(entry.is_root, |item| {
                                                 item.toggle(
@@ -579,26 +601,13 @@ impl SettingsWindow {
                                                 }))
                                             })
                                             .child(
-                                                div()
+                                                h_flex()
                                                     .text_ui(cx)
-                                                    .size_full()
-                                                    .child(entry.title)
-                                                    .hover(|style| {
-                                                        style.bg(cx.theme().colors().element_hover)
+                                                    .truncate()
+                                                    .hover(|s| {
+                                                        s.bg(cx.theme().colors().element_hover)
                                                     })
-                                                    .when(!entry.is_root, |this| {
-                                                        this.text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        )
-                                                    })
-                                                    .when(
-                                                        this.is_navbar_entry_selected(ix),
-                                                        |this| {
-                                                            this.text_color(
-                                                                Color::Selected.color(cx),
-                                                            )
-                                                        },
-                                                    ),
+                                                    .child(entry.title),
                                             ),
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -610,7 +619,6 @@ impl SettingsWindow {
                     }),
                 )
                 .track_scroll(self.list_handle.clone())
-                .gap_1_5()
                 .size_full()
                 .flex_grow(),
             )
@@ -622,7 +630,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> Div {
-        v_flex().gap_4().py_4().children(
+        v_flex().gap_4().children(
             page.items
                 .iter()
                 .map(|item| item.render(self.current_file.clone(), window, cx)),
@@ -655,21 +663,21 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
-            .bg(cx.theme().colors().background)
             .flex()
             .flex_row()
+            .size_full()
+            .bg(cx.theme().colors().background)
             .text_color(cx.theme().colors().text)
-            .child(self.render_nav(window, cx).w(px(300.0)))
-            .child(Divider::vertical().color(ui::DividerColor::BorderVariant))
+            .child(self.render_nav(window, cx))
             .child(
                 v_flex()
-                    .bg(cx.theme().colors().editor_background)
+                    .w_full()
+                    .pt_4()
                     .px_6()
-                    .py_2()
+                    .gap_4()
+                    .bg(cx.theme().colors().editor_background)
                     .child(self.render_files(window, cx))
-                    .child(self.render_page(self.current_page(), window, cx))
-                    .w_full(),
+                    .child(self.render_page(self.current_page(), window, cx)),
             )
     }
 }
