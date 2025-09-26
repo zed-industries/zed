@@ -1970,7 +1970,7 @@ mod tests {
         time::Duration,
     };
     use theme::{SystemAppearance, ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::Path};
+    use util::{path, rel_path::RelPath};
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
