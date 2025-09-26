@@ -197,6 +197,10 @@ pub struct EditorSettingsContent {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct StatusBarContent {
+    /// Whether to show the status bar.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true

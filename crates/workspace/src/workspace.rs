@@ -42,7 +42,7 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
+    PathPromptOptions, Point, PromptLevel, ReadGlobal, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
     WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
@@ -77,7 +77,7 @@ use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::Conne
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file};
+use settings::{Settings, SettingsLocation, update_settings_file, SettingsStore};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1740,6 +1740,14 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
+    }
+
+    pub fn status_bar_visible(&self, cx: &App) -> bool {
+        let store = SettingsStore::global(cx);
+        store.raw_user_settings()
+            .and_then(|content| content.content.editor.status_bar.as_ref())
+            .and_then(|sb| sb.show)
+            .unwrap_or(true)
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -6707,7 +6715,9 @@ impl Render for Workspace {
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
-                        .child(self.status_bar.clone())
+                        .when(self.status_bar_visible(cx), |parent| {
+                            parent.child(self.status_bar.clone())
+                        })
                         .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
@@ -10747,6 +10757,48 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_visibility(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, _cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Test with status bar shown (default)
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible by default");
+        });
+
+        // Test with status bar hidden
+        cx.update(|cx| {
+            SettingsStore::test_set_user_settings(
+                cx,
+                r#"{"status_bar": {"show": false}}"#,
+            );
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(!visible, "Status bar should be hidden when show is false");
+        });
+
+        // Test with status bar shown explicitly
+        cx.update(|cx| {
+            SettingsStore::test_set_user_settings(
+                cx,
+                r#"{"status_bar": {"show": true}}"#,
+            );
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible when show is true");
+        });
     }
 
     fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
