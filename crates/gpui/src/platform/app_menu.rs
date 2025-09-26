@@ -46,6 +46,15 @@ impl OsMenu {
 pub enum SystemMenuType {
     /// The 'Services' menu in the Application menu on macOS
     Services,
+
+    /// The 'Window' menu on macOS.
+    ///
+    /// This item is a marker and will not display as a menu item.
+    /// If a menu begins with this item, it will be treated as the Window menu.
+    ///
+    /// macOS will add window management items to this menu, such as
+    /// 'Fill', 'Center', 'Move to [Display]', and a list of windows.
+    Window,
 }
 
 /// The different kinds of items that can be in a menu
