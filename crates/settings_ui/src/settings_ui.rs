@@ -518,6 +518,8 @@ impl SettingsWindow {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
+            self.build_navbar();
+            cx.notify();
             return;
         }
 
@@ -739,18 +741,27 @@ impl SettingsWindow {
     fn render_page(
         &self,
         page: &SettingsPage,
+        page_idx: usize,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> Div {
         v_flex().gap_4().children(
             page.items
                 .iter()
+                .enumerate()
+                .filter_map(|(item_index, item)| {
+                    self.search_matches[page_idx][item_index].then_some(item)
+                })
                 .map(|item| item.render(self.current_file.clone(), window, cx)),
         )
     }
 
+    fn current_page_index(&self) -> usize {
+        self.page_index_from_navbar_index(self.navbar_entry)
+    }
+
     fn current_page(&self) -> &SettingsPage {
-        &self.pages[self.page_index_from_navbar_index(self.navbar_entry)]
+        &self.pages[self.current_page_index()]
     }
 
     fn page_index_from_navbar_index(&self, index: usize) -> usize {
@@ -789,7 +800,12 @@ impl Render for SettingsWindow {
                     .gap_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.render_files(window, cx))
-                    .child(self.render_page(self.current_page(), window, cx)),
+                    .child(self.render_page(
+                        self.current_page(),
+                        self.current_page_index(),
+                        window,
+                        cx,
+                    )),
             )
     }
 }
