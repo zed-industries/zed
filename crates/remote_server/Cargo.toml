@@ -39,6 +39,7 @@ git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
+json_schema_store.workspace = true
 language.workspace = true
 language_extension.workspace = true
 languages.workspace = true

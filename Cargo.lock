@@ -13062,6 +13062,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "json_schema_store",
  "language",
  "language_extension",
  "language_model",
