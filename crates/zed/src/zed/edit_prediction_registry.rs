@@ -21,21 +21,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     OllamaLanguageModelProvider::set_global(ollama_provider, cx);
 
     if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
-        let api_url = language_models::provider::ollama::OllamaLanguageModelProvider::api_url(cx);
-        log::info!(
-            "Initializing Ollama edit predictions with API URL: {}",
-            api_url
-        );
-
-        if api_url.contains("ollama.com") {
-            log::info!(
-                "Detected Ollama Turbo configuration. Supported models: gpt-oss:20b, gpt-oss:120b, deepseek-v3.1:671b"
-            );
-            log::info!("Make sure you have a valid OLLAMA_API_KEY for Ollama Turbo access");
-        } else {
-            log::info!("Using local Ollama instance at: {}", api_url);
-        }
-
         let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
         task.detach();
     }
@@ -298,9 +283,6 @@ fn assign_edit_prediction_provider(
                 let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, api_url, cx));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             } else {
-                log::error!(
-                    "No Ollama models available. Please configure models in settings or pull models using 'ollama pull <model-name>'"
-                );
                 editor
                     .set_edit_prediction_provider::<OllamaEditPredictionProvider>(None, window, cx);
             }
