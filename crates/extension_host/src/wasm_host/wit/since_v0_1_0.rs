@@ -429,11 +429,9 @@ impl ExtensionImports for WasmState {
                 let location = path
                     .as_ref()
                     .zip(location.as_ref())
-                    .and_then(|(path, location)| {
-                        Some(::settings::SettingsLocation {
-                            worktree_id: WorktreeId::from_proto(location.worktree_id),
-                            path,
-                        })
+                    .map(|(path, location)| ::settings::SettingsLocation {
+                        worktree_id: WorktreeId::from_proto(location.worktree_id),
+                        path,
                     });
 
                 cx.update(|cx| match category.as_str() {
