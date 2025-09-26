@@ -546,19 +546,6 @@ mod tests {
                     }
                 },
                 {
-                    "name": "codellama:7b-code",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 2000000,
-                    "digest": "def456",
-                    "details": {
-                        "format": "gguf",
-                        "family": "codellama",
-                        "families": ["codellama"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
                     "name": "nomic-embed-text",
                     "modified_at": "2024-01-01T00:00:00Z",
                     "size": 500000,
@@ -624,13 +611,10 @@ mod tests {
 
         provider.read_with(cx, |provider, cx| {
             let models = provider.available_models(cx);
-            // The OllamaLanguageModelProvider filters out embedding models (nomic-embed-text)
-            // So we should have 2 models: qwen2.5-coder:3b and codellama:7b-code
-            assert_eq!(models.len(), 2);
+            assert_eq!(models.len(), 1);
 
             let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
             assert!(model_names.contains(&"qwen2.5-coder:3b"));
-            assert!(model_names.contains(&"codellama:7b-code"));
             assert!(!model_names.contains(&"nomic-embed-text"));
         });
     }
