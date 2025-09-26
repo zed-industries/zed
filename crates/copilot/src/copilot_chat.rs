@@ -246,20 +246,20 @@ pub struct Request {
     pub tool_choice: Option<ToolChoice>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Function {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Tool {
     Function { function: Function },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
@@ -267,7 +267,7 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
@@ -287,7 +287,7 @@ pub enum ChatMessage {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum ChatMessageContent {
     Plain(String),
@@ -316,20 +316,20 @@ impl From<String> for ChatMessageContent {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct ToolCall {
     pub id: String,
     #[serde(flatten)]
     pub content: ToolCallContent,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct FunctionContent {
     pub name: String,
     pub arguments: String,
@@ -487,39 +487,9 @@ impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
                 }
             }
             "response.tool_call.delta" => {
-                // Handle tool call streaming
-                if let Some(tool_call_id) = event.tool_call_id {
-                    let tool_call = ToolCallChunk {
-                        id: Some(tool_call_id.clone()),
-                        r#type: Some("function".to_string()),
-                        function: Some(ToolCallFunctionChunk {
-                            name: event.tool.as_ref()
-                                .and_then(|t| t.get("name"))
-                                .and_then(|n| n.as_str())
-                                .map(|s| s.to_string()),
-                            arguments: event.delta.clone(),
-                        }),
-                    };
-
-                    let choice = ResponseChoice {
-                        index: 0,
-                        finish_reason: None,
-                        delta: Some(ResponseDelta {
-                            content: None,
-                            role: Some(Role::Assistant),
-                            tool_calls: vec![tool_call],
-                        }),
-                        message: None,
-                    };
-
-                    Some(ResponseEvent {
-                        choices: vec![choice],
-                        id: tool_call_id,
-                        usage: None,
-                    })
-                } else {
-                    None
-                }
+                // TODO: Handle tool call streaming properly
+                // For now, skip tool call events
+                None
             }
             _ => None, // Ignore other event types
         }
@@ -929,9 +899,7 @@ async fn stream_completion(
                 if attempt == MAX_RETRIES - 1 {
                     return Err(e);
                 }
-                // Wait before retrying (exponential backoff)
-                let delay = std::time::Duration::from_millis(100 * (1 << attempt));
-                tokio::time::sleep(delay).await;
+                // Simple retry without delay for now
                 log::warn!("Retrying stream completion after error (attempt {}/{}): {}", attempt + 1, MAX_RETRIES, e);
             }
         }
