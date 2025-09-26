@@ -5900,7 +5900,9 @@ fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
 }
 
 fn par_sort_worktree_entries<T: AsRef<Entry> + Send + Clone>(mut entries: Vec<T>) -> Vec<T> {
+    let timer = std::time::Instant::now();
     entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
+    dbg!(timer.elapsed());
     entries
 }
 

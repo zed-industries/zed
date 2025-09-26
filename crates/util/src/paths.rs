@@ -3,8 +3,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use std::iter::Peekable;
 use std::mem;
 use std::path::StripPrefixError;
+use std::str::Chars;
 use std::sync::{Arc, OnceLock};
 use std::{
     ffi::OsStr,
@@ -682,56 +684,54 @@ fn compare_chars(a: char, b: char) -> Ordering {
 ///
 /// The function advances both iterators past their respective numeric sequences,
 /// regardless of the comparison result.
-fn compare_numeric_segments<I>(
-    a_iter: &mut std::iter::Peekable<I>,
-    b_iter: &mut std::iter::Peekable<I>,
-) -> Ordering
-where
-    I: Iterator<Item = char>,
-{
+fn compare_numeric_segments(lhs: &mut Chars<'_>, rhs: &mut Chars<'_>) -> Ordering {
     // Collect all consecutive digits into strings
-    let mut a_num_str = String::new();
-    let mut b_num_str = String::new();
+    let lhs_bytes = lhs.as_str().as_bytes();
+    let rhs_bytes = rhs.as_str().as_bytes();
 
-    while let Some(&c) = a_iter.peek() {
-        if !c.is_ascii_digit() {
-            break;
-        }
+    let lhs_digits_len = lhs_bytes
+        .iter()
+        .position(|c| !c.is_ascii_digit())
+        .unwrap_or(lhs_bytes.len());
+    let rhs_digits_len = rhs_bytes
+        .iter()
+        .position(|c| !c.is_ascii_digit())
+        .unwrap_or(rhs_bytes.len());
+    let lhs_digits = &lhs_bytes[..lhs_digits_len];
+    let rhs_digits = &rhs_bytes[..rhs_digits_len];
 
-        a_num_str.push(c);
-        a_iter.next();
-    }
-
-    while let Some(&c) = b_iter.peek() {
-        if !c.is_ascii_digit() {
-            break;
-        }
-
-        b_num_str.push(c);
-        b_iter.next();
-    }
+    // Move the iterator forward to compensate for our reading. All that we read
+    // is single byte characters, so this is ok.
+    let _ = lhs.nth(lhs_digits_len - 1);
+    let _ = rhs.nth(rhs_digits_len - 1);
 
     // First compare lengths (handle leading zeros)
-    match a_num_str.len().cmp(&b_num_str.len()) {
+    match lhs_digits_len.cmp(&rhs_digits_len) {
         Ordering::Equal => {
             // Same length, compare digit by digit
-            match a_num_str.cmp(&b_num_str) {
-                Ordering::Equal => Ordering::Equal,
-                ordering => ordering,
-            }
+            lhs_digits.cmp(&rhs_digits)
         }
 
         // Different lengths but same value means leading zeros
         ordering => {
             // Try parsing as numbers first
-            if let (Ok(a_val), Ok(b_val)) = (a_num_str.parse::<u128>(), b_num_str.parse::<u128>()) {
+            // SAFETY: We're reinterpreting a byte slice that we know is entirely
+            // ascii digits and therefore valid utf-8.
+            let (lhs_digits, rhs_digits) = unsafe {
+                (
+                    str::from_utf8_unchecked(lhs_digits),
+                    str::from_utf8_unchecked(rhs_digits),
+                )
+            };
+            if let (Ok(a_val), Ok(b_val)) = (lhs_digits.parse::<u128>(), rhs_digits.parse::<u128>())
+            {
                 match a_val.cmp(&b_val) {
                     Ordering::Equal => ordering, // Same value, longer one is greater (leading zeros)
                     ord => ord,
                 }
             } else {
                 // If parsing fails (overflow), compare as strings
-                a_num_str.cmp(&b_num_str)
+                lhs_digits.cmp(&rhs_digits)
             }
         }
     }
@@ -757,30 +757,36 @@ where
 /// 3. Comparing numbers by their numeric value rather than lexicographically
 /// 4. For non-numeric characters, using case-sensitive comparison with lowercase priority
 fn natural_sort(a: &str, b: &str) -> Ordering {
-    let mut a_iter = a.chars().peekable();
-    let mut b_iter = b.chars().peekable();
+    // We want to operate cheaply on the underlying byte slice, so don't make this
+    // peekable (as we want to use `as_str`/`as_bytes` of Chars iter).
+    let mut a_iter = a.chars().into_iter();
+    let mut b_iter = b.chars().into_iter();
 
     loop {
-        match (a_iter.peek(), b_iter.peek()) {
-            (None, None) => return Ordering::Equal,
-            (None, _) => return Ordering::Less,
-            (_, None) => return Ordering::Greater,
-            (Some(&a_char), Some(&b_char)) => {
+        match (
+            // Should be ~free since it's just infallibly reinterpreting the value
+            a_iter.as_str().as_bytes().first(),
+            b_iter.as_str().as_bytes().first(),
+        ) {
+            (Some(a_char), Some(b_char)) => {
                 if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
                     match compare_numeric_segments(&mut a_iter, &mut b_iter) {
                         Ordering::Equal => continue,
                         ordering => return ordering,
                     }
                 } else {
+                    // This could be unchecked
+                    let a_char = a_iter.next().unwrap();
+                    let b_char = b_iter.next().unwrap();
                     match compare_chars(a_char, b_char) {
                         Ordering::Equal => {
-                            a_iter.next();
-                            b_iter.next();
+                            continue;
                         }
                         ordering => return ordering,
                     }
                 }
             }
+            (lhs, rhs) => return lhs.cmp(&rhs),
         }
     }
 }
@@ -1300,8 +1306,8 @@ mod tests {
     fn test_compare_numeric_segments() {
         // Helper function to create peekable iterators and test
         fn compare(a: &str, b: &str) -> Ordering {
-            let mut a_iter = a.chars().peekable();
-            let mut b_iter = b.chars().peekable();
+            let mut a_iter = a.chars();
+            let mut b_iter = b.chars();
 
             let result = compare_numeric_segments(&mut a_iter, &mut b_iter);
 
@@ -1355,8 +1361,8 @@ mod tests {
         );
 
         // Iterator advancement verification
-        let mut a_iter = "123abc".chars().peekable();
-        let mut b_iter = "456def".chars().peekable();
+        let mut a_iter = "123abc".chars();
+        let mut b_iter = "456def".chars();
 
         compare_numeric_segments(&mut a_iter, &mut b_iter);
 
