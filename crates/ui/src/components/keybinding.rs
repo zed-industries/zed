@@ -392,6 +392,7 @@ pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option
 
 pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
+    let vim_enabled = KeyBinding::is_vim_mode(cx);
     keystrokes
         .iter()
         .map(|keystroke| {
@@ -399,7 +400,7 @@ pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
                 &keystroke.modifiers,
                 &keystroke.key,
                 platform_style,
-                KeyBinding::is_vim_mode(cx),
+                vim_enabled,
             )
         })
         .join(" ")
@@ -407,6 +408,7 @@ pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
 
 pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
+    let vim_enabled = KeyBinding::is_vim_mode(cx);
     keystrokes
         .iter()
         .map(|keystroke| {
@@ -414,7 +416,7 @@ pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &A
                 keystroke.modifiers(),
                 keystroke.key(),
                 platform_style,
-                KeyBinding::is_vim_mode(cx),
+                vim_enabled,
             )
         })
         .join(" ")
