@@ -16,7 +16,7 @@ use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_default_system_shell, get_system_shell, maybe};
+use util::{get_default_system_shell, get_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
 
@@ -68,7 +68,7 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
@@ -88,15 +88,8 @@ impl Project {
 
         let local_path = if is_via_remote { None } else { path.clone() };
         let task_state = Some(TaskState {
-            id: spawn_task.id,
-            full_label: spawn_task.full_label,
-            label: spawn_task.label,
-            command_label: spawn_task.command_label,
-            hide: spawn_task.hide,
+            spawned_task: spawn_task.clone(),
             status: TaskStatus::Running,
-            show_summary: spawn_task.show_summary,
-            show_command: spawn_task.show_command,
-            show_rerun: spawn_task.show_rerun,
             completion_rx,
         });
         let remote_client = self.remote_client.clone();
@@ -125,7 +118,7 @@ impl Project {
                     .map(|wt| wt.read(cx).id())
                     .map(|worktree_id| ProjectPath {
                         worktree_id,
-                        path: Arc::from(Path::new("")),
+                        path: Arc::from(RelPath::empty()),
                     }),
             );
         let toolchains = project_path_contexts
@@ -305,7 +298,7 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
@@ -332,7 +325,7 @@ impl Project {
                     .map(|wt| wt.read(cx).id())
                     .map(|worktree_id| ProjectPath {
                         worktree_id,
-                        path: Arc::from(Path::new("")),
+                        path: RelPath::empty().into(),
                     }),
             );
         let toolchains = project_path_contexts
@@ -471,7 +464,7 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         TerminalSettings::get(settings_location, cx)

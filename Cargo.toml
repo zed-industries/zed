@@ -35,6 +35,7 @@ members = [
     "crates/cloud_api_client",
     "crates/cloud_api_types",
     "crates/cloud_llm_client",
+    "crates/cloud_zeta2_prompt",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
@@ -58,7 +59,7 @@ members = [
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/edit_prediction_context",
-    "crates/edit_prediction_tools",
+    "crates/zeta2_tools",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -89,8 +90,6 @@ members = [
     "crates/image_viewer",
     "crates/inspector_ui",
     "crates/install_cli",
-    "crates/jj",
-    "crates/jj_ui",
     "crates/journal",
     "crates/keymap_editor",
     "crates/language",
@@ -152,6 +151,7 @@ members = [
     "crates/settings",
     "crates/settings_macros",
     "crates/settings_profile_selector",
+    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -199,6 +199,7 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta",
+    "crates/zeta2",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
@@ -270,6 +271,7 @@ clock = { path = "crates/clock" }
 cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
+cloud_zeta2_prompt = { path = "crates/cloud_zeta2_prompt" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
@@ -316,11 +318,9 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
-edit_prediction_tools = { path = "crates/edit_prediction_tools" }
+zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
-jj = { path = "crates/jj" }
-jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
@@ -376,7 +376,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
+rodio = { git = "https://github.com/RustAudio/rodio" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -432,6 +432,7 @@ zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
+zeta2 = { path = "crates/zeta2" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
 
@@ -439,7 +440,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.4.2", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -510,6 +511,7 @@ futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
+hashbrown = "0.15.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
@@ -525,7 +527,6 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
-jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
 json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
@@ -713,6 +714,7 @@ windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"
+zeroize = "1.8"
 zstd = "0.11"
 
 [workspace.dependencies.windows]
@@ -739,6 +741,7 @@ features = [
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",

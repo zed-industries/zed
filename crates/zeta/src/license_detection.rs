@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     fmt::{Display, Formatter},
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, LazyLock},
 };
 
@@ -14,7 +14,7 @@ use itertools::Itertools;
 use postage::watch;
 use project::Worktree;
 use strum::VariantArray;
-use util::{ResultExt as _, maybe};
+use util::{ResultExt as _, maybe, rel_path::RelPath};
 use worktree::ChildEntriesOptions;
 
 /// Matches the most common license locations, with US and UK English spelling.
@@ -283,15 +283,14 @@ impl LicenseDetectionWatcher {
             return Self::Remote;
         };
         let fs = local_worktree.fs().clone();
-        let worktree_abs_path = local_worktree.abs_path().clone();
 
         let options = ChildEntriesOptions {
             include_files: true,
             include_dirs: false,
             include_ignored: true,
         };
-        for top_file in local_worktree.child_entries_with_options(Path::new(""), options) {
-            let path_bytes = top_file.path.as_os_str().as_encoded_bytes();
+        for top_file in local_worktree.child_entries_with_options(RelPath::empty(), options) {
+            let path_bytes = top_file.path.as_unix_str().as_bytes();
             if top_file.is_created() && LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
                 let rel_path = top_file.path.clone();
                 files_to_check_tx.unbounded_send(rel_path).ok();
@@ -303,7 +302,7 @@ impl LicenseDetectionWatcher {
                 worktree::Event::UpdatedEntries(updated_entries) => {
                     for updated_entry in updated_entries.iter() {
                         let rel_path = &updated_entry.0;
-                        let path_bytes = rel_path.as_os_str().as_encoded_bytes();
+                        let path_bytes = rel_path.as_unix_str().as_bytes();
                         if LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
                             files_to_check_tx.unbounded_send(rel_path.clone()).ok();
                         }
@@ -312,12 +311,13 @@ impl LicenseDetectionWatcher {
                 worktree::Event::DeletedEntry(_) | worktree::Event::UpdatedGitRepositories(_) => {}
             });
 
+        let worktree_snapshot = worktree.read(cx).snapshot();
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
         let _is_open_source_task = cx.background_spawn(async move {
             let mut eligible_licenses = BTreeSet::new();
             while let Some(rel_path) = files_to_check_rx.next().await {
-                let abs_path = worktree_abs_path.join(&rel_path);
+                let abs_path = worktree_snapshot.absolutize(&rel_path);
                 let was_open_source = !eligible_licenses.is_empty();
                 if Self::is_path_eligible(&fs, abs_path).await.unwrap_or(false) {
                     eligible_licenses.insert(rel_path);
@@ -384,6 +384,8 @@ impl LicenseDetectionWatcher {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use fs::FakeFs;
     use gpui::TestAppContext;
     use rand::Rng as _;

@@ -30,7 +30,10 @@ use std::{
 };
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
 use theme::ThemeRegistry;
-use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
+    rel_path::RelPath,
+};
 
 use crate::PackageJsonData;
 
@@ -52,8 +55,8 @@ impl ContextProvider for JsonTaskProvider {
         let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
             return Task::ready(None);
         };
-        let is_package_json = file.path.ends_with("package.json");
-        let is_composer_json = file.path.ends_with("composer.json");
+        let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
+        let is_composer_json = file.path.ends_with(RelPath::unix("composer.json").unwrap());
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }
@@ -157,12 +160,16 @@ impl JsonLspAdapter {
     ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
-        let theme_names = &ThemeRegistry::global(cx).list_names();
-        let icon_theme_names = &ThemeRegistry::global(cx)
-            .list_icon_themes()
-            .into_iter()
-            .map(|icon_theme| icon_theme.name)
-            .collect::<Vec<SharedString>>();
+        let themes = ThemeRegistry::try_global(cx);
+        let theme_names = &themes.clone().map(|t| t.list_names()).unwrap_or_default();
+        let icon_theme_names = &themes
+            .map(|t| {
+                t.list_icon_themes()
+                    .into_iter()
+                    .map(|icon_theme| icon_theme.name)
+                    .collect::<Vec<SharedString>>()
+            })
+            .unwrap_or_default();
         let settings_schema = cx
             .global::<SettingsStore>()
             .json_schema(&SettingsJsonSchemaParams {
@@ -181,7 +188,7 @@ impl JsonLspAdapter {
         #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
             {
-                "fileMatch": ["tsconfig.json"],
+                "fileMatch": ["tsconfig*.json"],
                 "schema":tsconfig_schema
             },
             {

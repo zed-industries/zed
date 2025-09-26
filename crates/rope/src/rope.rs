@@ -34,7 +34,7 @@ impl Rope {
         if self.chunks.is_empty() {
             return offset == 0;
         }
-        let mut cursor = self.chunks.cursor::<usize>(&());
+        let mut cursor = self.chunks.cursor::<usize>(());
         cursor.seek(&offset, Bias::Left);
         let chunk_offset = offset - cursor.start();
         cursor
@@ -53,7 +53,7 @@ impl Rope {
                 (u8 as i8) >= -0x40
             }
 
-            let mut cursor = self.chunks.cursor::<usize>(&());
+            let mut cursor = self.chunks.cursor::<usize>(());
             cursor.seek(&index, Bias::Left);
             let chunk_offset = index - cursor.start();
             let lower_idx = cursor.item().map(|chunk| {
@@ -85,7 +85,7 @@ impl Rope {
                 (u8 as i8) >= -0x40
             }
 
-            let mut cursor = self.chunks.cursor::<usize>(&());
+            let mut cursor = self.chunks.cursor::<usize>(());
             cursor.seek(&index, Bias::Left);
             let chunk_offset = index - cursor.start();
             let upper_idx = cursor.item().map(|chunk| {
@@ -110,15 +110,15 @@ impl Rope {
         {
             self.push_chunk(chunk.as_slice());
 
-            let mut chunks = rope.chunks.cursor::<()>(&());
+            let mut chunks = rope.chunks.cursor::<()>(());
             chunks.next();
             chunks.next();
-            self.chunks.append(chunks.suffix(), &());
+            self.chunks.append(chunks.suffix(), ());
             self.check_invariants();
             return;
         }
 
-        self.chunks.append(rope.chunks.clone(), &());
+        self.chunks.append(rope.chunks.clone(), ());
         self.check_invariants();
     }
 
@@ -165,7 +165,7 @@ impl Rope {
                 last_chunk.push_str(suffix);
                 text = remainder;
             },
-            &(),
+            (),
         );
 
         if text.len() > 2048 {
@@ -190,10 +190,10 @@ impl Rope {
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks
-                .par_extend(new_chunks.into_vec().into_par_iter().map(Chunk::new), &());
+                .par_extend(new_chunks.into_vec().into_par_iter().map(Chunk::new), ());
         } else {
             self.chunks
-                .extend(new_chunks.into_iter().map(Chunk::new), &());
+                .extend(new_chunks.into_iter().map(Chunk::new), ());
         }
 
         self.check_invariants();
@@ -234,10 +234,10 @@ impl Rope {
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
             self.chunks
-                .par_extend(new_chunks.into_par_iter().map(Chunk::new), &());
+                .par_extend(new_chunks.into_par_iter().map(Chunk::new), ());
         } else {
             self.chunks
-                .extend(new_chunks.into_iter().map(Chunk::new), &());
+                .extend(new_chunks.into_iter().map(Chunk::new), ());
         }
 
         self.check_invariants();
@@ -263,11 +263,11 @@ impl Rope {
                 last_chunk.append(suffix);
                 chunk = remainder;
             },
-            &(),
+            (),
         );
 
         if !chunk.is_empty() {
-            self.chunks.push(chunk.into(), &());
+            self.chunks.push(chunk.into(), ());
         }
     }
 
@@ -281,7 +281,7 @@ impl Rope {
         {
             // Ensure all chunks except maybe the last one are not underflowing.
             // Allow some wiggle room for multibyte characters at chunk boundaries.
-            let mut chunks = self.chunks.cursor::<()>(&()).peekable();
+            let mut chunks = self.chunks.cursor::<()>(()).peekable();
             while let Some(chunk) = chunks.next() {
                 if chunks.peek().is_some() {
                     assert!(chunk.text.len() + 3 >= chunk::MIN_BASE);
@@ -295,7 +295,7 @@ impl Rope {
     }
 
     pub fn len(&self) -> usize {
-        self.chunks.extent(&())
+        self.chunks.extent(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -303,11 +303,11 @@ impl Rope {
     }
 
     pub fn max_point(&self) -> Point {
-        self.chunks.extent(&())
+        self.chunks.extent(())
     }
 
     pub fn max_point_utf16(&self) -> PointUtf16 {
-        self.chunks.extent(&())
+        self.chunks.extent(())
     }
 
     pub fn cursor(&self, offset: usize) -> Cursor<'_> {
@@ -351,7 +351,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().len_utf16;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, OffsetUtf16>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, OffsetUtf16>>(());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -364,7 +364,7 @@ impl Rope {
         if offset >= self.summary().len_utf16 {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<OffsetUtf16, usize>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<OffsetUtf16, usize>>(());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -377,7 +377,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, Point>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, Point>>(());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -390,7 +390,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<usize, PointUtf16>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, PointUtf16>>(());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -403,7 +403,7 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<Point, PointUtf16>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<Point, PointUtf16>>(());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -416,7 +416,7 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<Point, usize>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<Point, usize>>(());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -437,7 +437,7 @@ impl Rope {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, usize>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, usize>>(());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -450,7 +450,7 @@ impl Rope {
         if point.0 >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, Point>>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, Point>>(());
         cursor.seek(&point.0, Bias::Left);
         let overshoot = Unclipped(point.0 - cursor.start().0);
         cursor.start().1
@@ -467,7 +467,7 @@ impl Rope {
     }
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
-        let mut cursor = self.chunks.cursor::<OffsetUtf16>(&());
+        let mut cursor = self.chunks.cursor::<OffsetUtf16>(());
         cursor.seek(&offset, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = offset - cursor.start();
@@ -478,7 +478,7 @@ impl Rope {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        let mut cursor = self.chunks.cursor::<Point>(&());
+        let mut cursor = self.chunks.cursor::<Point>(());
         cursor.seek(&point, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = point - cursor.start();
@@ -489,7 +489,7 @@ impl Rope {
     }
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
-        let mut cursor = self.chunks.cursor::<PointUtf16>(&());
+        let mut cursor = self.chunks.cursor::<PointUtf16>(());
         cursor.seek(&point.0, Bias::Right);
         if let Some(chunk) = cursor.item() {
             let overshoot = Unclipped(point.0 - cursor.start());
@@ -564,13 +564,13 @@ impl fmt::Debug for Rope {
 
 pub struct Cursor<'a> {
     rope: &'a Rope,
-    chunks: sum_tree::Cursor<'a, Chunk, usize>,
+    chunks: sum_tree::Cursor<'a, 'static, Chunk, usize>,
     offset: usize,
 }
 
 impl<'a> Cursor<'a> {
     pub fn new(rope: &'a Rope, offset: usize) -> Self {
-        let mut chunks = rope.chunks.cursor(&());
+        let mut chunks = rope.chunks.cursor(());
         chunks.seek(&offset, Bias::Right);
         Self {
             rope,
@@ -619,7 +619,7 @@ impl<'a> Cursor<'a> {
     pub fn summary<D: TextDimension>(&mut self, end_offset: usize) -> D {
         debug_assert!(end_offset >= self.offset);
 
-        let mut summary = D::zero(&());
+        let mut summary = D::zero(());
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end()) - self.chunks.start();
@@ -640,7 +640,7 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn suffix(mut self) -> Rope {
-        self.slice(self.rope.chunks.extent(&()))
+        self.slice(self.rope.chunks.extent(()))
     }
 
     pub fn offset(&self) -> usize {
@@ -659,7 +659,7 @@ pub struct ChunkBitmaps<'a> {
 
 #[derive(Clone)]
 pub struct Chunks<'a> {
-    chunks: sum_tree::Cursor<'a, Chunk, usize>,
+    chunks: sum_tree::Cursor<'a, 'static, Chunk, usize>,
     range: Range<usize>,
     offset: usize,
     reversed: bool,
@@ -667,7 +667,7 @@ pub struct Chunks<'a> {
 
 impl<'a> Chunks<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
-        let mut chunks = rope.chunks.cursor(&());
+        let mut chunks = rope.chunks.cursor(());
         let offset = if reversed {
             chunks.seek(&range.end, Bias::Left);
             range.end
@@ -994,14 +994,14 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct Bytes<'a> {
-    chunks: sum_tree::Cursor<'a, Chunk, usize>,
+    chunks: sum_tree::Cursor<'a, 'static, Chunk, usize>,
     range: Range<usize>,
     reversed: bool,
 }
 
 impl<'a> Bytes<'a> {
     pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
-        let mut chunks = rope.chunks.cursor(&());
+        let mut chunks = rope.chunks.cursor(());
         if reversed {
             chunks.seek(&range.end, Bias::Left);
         } else {
@@ -1079,7 +1079,7 @@ pub struct Lines<'a> {
     reversed: bool,
 }
 
-impl Lines<'_> {
+impl<'a> Lines<'a> {
     pub fn next(&mut self) -> Option<&str> {
         if self.done {
             return None;
@@ -1144,7 +1144,7 @@ impl Lines<'_> {
 impl sum_tree::Item for Chunk {
     type Summary = ChunkSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         ChunkSummary {
             text: self.as_slice().text_summary(),
         }
@@ -1156,14 +1156,12 @@ pub struct ChunkSummary {
     text: TextSummary,
 }
 
-impl sum_tree::Summary for ChunkSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for ChunkSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &()) {
+    fn add_summary(&mut self, summary: &Self) {
         self.text += &summary.text;
     }
 }
@@ -1273,14 +1271,12 @@ impl<'a> From<&'a str> for TextSummary {
     }
 }
 
-impl sum_tree::Summary for TextSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for TextSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, summary: &Self) {
         *self += summary;
     }
 }
@@ -1359,11 +1355,11 @@ impl<D1: TextDimension, D2: TextDimension> TextDimension for Dimensions<D1, D2, 
 }
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for TextSummary {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
         *self += &summary.text;
     }
 }
@@ -1383,11 +1379,11 @@ impl TextDimension for TextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for usize {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
         *self += summary.text.len;
     }
 }
@@ -1407,11 +1403,11 @@ impl TextDimension for usize {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for OffsetUtf16 {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
         *self += summary.text.len_utf16;
     }
 }
@@ -1431,11 +1427,11 @@ impl TextDimension for OffsetUtf16 {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for Point {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
         *self += summary.text.lines;
     }
 }
@@ -1455,11 +1451,11 @@ impl TextDimension for Point {
 }
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for PointUtf16 {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _: ()) {
         *self += summary.text.lines_utf16();
     }
 }
@@ -1547,14 +1543,14 @@ where
     K: sum_tree::Dimension<'a, ChunkSummary>,
     V: sum_tree::Dimension<'a, ChunkSummary>,
 {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Self {
             key: K::zero(_cx),
             value: Some(V::zero(_cx)),
         }
     }
 
-    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: &()) {
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: ()) {
         self.key.add_summary(summary, _cx);
         if let Some(value) = &mut self.value {
             value.add_summary(summary, _cx);
@@ -2233,7 +2229,7 @@ mod tests {
     impl Rope {
         fn text(&self) -> String {
             let mut text = String::new();
-            for chunk in self.chunks.cursor::<()>(&()) {
+            for chunk in self.chunks.cursor::<()>(()) {
                 text.push_str(&chunk.text);
             }
             text

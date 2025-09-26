@@ -10,7 +10,7 @@ If you're using the Agent Panel for the first time, you need to have at least on
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
-2. [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
+2. [using your own API keys](./llm-providers.md#use-your-own-keys), either from model providers like Anthropic or model gateways like OpenRouter.
 3. using an external agent like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
 
 ## Overview {#overview}
@@ -51,20 +51,18 @@ To view all historical conversations, reach for the `View All` option from withi
 
 ### Following the Agent {#following-the-agent}
 
-Zed is built with collaboration natively integrated.
-This approach extends to collaboration with AI as well.
-To follow the agent reading through your codebase and performing edits, click on the "crosshair" icon button at the bottom left of the panel.
+Zed is built with collaboration natively integrated, and this design pattern extends to collaboration with AI. To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
 
 You can also do that with the keyboard by pressing the `cmd`/`ctrl` modifier with `enter` when submitting a message.
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, you can be notified of whether its response is finished either via:
+If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, you can be notified when its response is finished via:
 
 - a visual notification that appears in the top right of your screen
-- or a sound notification
+- a sound notification
 
-Both notification methods can be used together or individually according to your preference.
+These notifications can be used together or individually, according to your preference.
 
 You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
@@ -76,8 +74,7 @@ To see which files specifically have been edited, expand the accordion bar that 
 
 You're able to reject or accept each individual change hunk, or the whole set of changes made by the agent.
 
-Edit diffs also appear in individual buffers.
-So, if your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+Edit diffs also appear in individual buffers. If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 
 ## Adding Context {#adding-context}
 
@@ -89,15 +86,16 @@ Pasting images as context is also supported by the Agent Panel.
 
 ### Token Usage {#token-usage}
 
-Zed surfaces how many tokens you are consuming for your currently active thread nearby the profile selector in the panel's message editor.
-Depending on how many pieces of context you add, your token consumption can grow rapidly.
+Zed surfaces how many tokens you are consuming for your currently active thread nearby the profile selector in the panel's message editor. Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
-With that in mind, once you get close to the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
+Once you approach the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
 You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./llm-providers.md#use-your-own-keys) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+
+> The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more. Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ## Using Tools {#using-tools}
 
@@ -140,27 +138,19 @@ You can change that by setting this key to `true` in either your `settings.json`
 ### Model Support {#model-support}
 
 Tool calling needs to be individually supported by each model and model provider.
-Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed.
-You should see a "No tools" label if you select a model that falls into this case.
-
-We want to support all of them, though!
-We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute to fast-track those that don't fit this bill.
+Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed. You should see a "No tools" label if you select a model that falls into this case.
 
 All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 ### MCP Servers {#mcp-servers}
 
-Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
-Zed's UI will inform about this via a warning icon that appears close to the model selector.
+Similarly to the built-in tools, some models may not support all tools included in a given MCP Server. Zed's UI will inform about this via a warning icon that appears close to the model selector.
 
 ## Text Threads {#text-threads}
 
-["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
-With text threads, you have full control over the conversation data.
-You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
+["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text. With text threads, you have full control over the conversation data. You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
 
-For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
-We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
+For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers. We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
 
 ## Errors and Debugging {#errors-and-debugging}
 
@@ -170,15 +160,12 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 
 ## Feedback {#feedback}
 
-Every change we make to Zed's system prompt and tool set, needs to be backed by a thorough eval with good scores.
-
-Every time the LLM performs a weird change or investigates a certain topic in your code base incorrectly, it's an indication that there's an improvement opportunity.
+Zed supports rating responses from the agent for feedback and improvement.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > See [AI Improvement](./ai-improvement.md) and [Privacy and Security](./privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
-The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
-In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
+The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response. In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
 
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.

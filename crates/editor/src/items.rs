@@ -44,7 +44,9 @@ use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_buffer_view::InvalidBufferView,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
+    },
 };
 use workspace::{
     OpenOptions,
@@ -188,7 +190,7 @@ impl FollowableItem for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors_arc(),
-                    self.selections.line_mode,
+                    self.selections.line_mode(),
                     self.cursor_shape,
                     cx,
                 );
@@ -649,7 +651,7 @@ impl Item for Editor {
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
-            path.to_string_lossy().to_string().into()
+            path.to_string().into()
         } else {
             // Use the same logic as the displayed title for consistency
             self.buffer.read(cx).title(cx).to_string().into()
@@ -665,7 +667,7 @@ impl Item for Editor {
             .file_icons
             .then(|| {
                 path_for_buffer(&self.buffer, 0, true, cx)
-                    .and_then(|path| FileIcons::get_icon(path.as_ref(), cx))
+                    .and_then(|path| FileIcons::get_icon(Path::new(&*path), cx))
             })
             .flatten()
             .map(Icon::from_path)
@@ -701,8 +703,7 @@ impl Item for Editor {
 
         let description = params.detail.and_then(|detail| {
             let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.to_string_lossy();
-            let description = description.trim();
+            let description = path.trim();
 
             if description.is_empty() {
                 return None;
@@ -896,10 +897,7 @@ impl Item for Editor {
             .as_singleton()
             .expect("cannot call save_as on an excerpt list");
 
-        let file_extension = path
-            .path
-            .extension()
-            .map(|a| a.to_string_lossy().to_string());
+        let file_extension = path.path.extension().map(|a| a.to_string());
         self.report_editor_event(
             ReportEditorEvent::Saved { auto_saved: false },
             file_extension,
@@ -965,13 +963,12 @@ impl Item for Editor {
             buffer
                 .snapshot()
                 .resolve_file_path(
-                    cx,
                     self.project
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default(),
+                    cx,
                 )
-                .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_else(|| {
                     if multibuffer.is_singleton() {
                         multibuffer.title(cx).to_string()
@@ -1165,7 +1162,7 @@ impl SerializableItem for Editor {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
+                        path: path,
                     };
                     Some(project.open_path(project_path, cx))
                 });
@@ -1286,7 +1283,7 @@ impl SerializableItem for Editor {
             project
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).absolutize(file.path()).ok())
+                .map(|worktree| worktree.read(cx).absolutize(file.path()))
                 .or_else(|| {
                     let full_path = file.full_path(cx);
                     let project_path = project.read(cx).find_project_path(&full_path, cx)?;
@@ -1510,7 +1507,7 @@ impl SearchableItem for Editor {
 
     fn toggle_filtered_search_ranges(
         &mut self,
-        enabled: bool,
+        enabled: Option<FilteredSearchRange>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1520,15 +1517,16 @@ impl SearchableItem for Editor {
                 .map(|(_, ranges)| ranges)
         }
 
-        if !enabled {
-            return;
-        }
+        if let Some(range) = enabled {
+            let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
-        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
-        if ranges.iter().any(|s| s.start != s.end) {
-            self.set_search_within_ranges(&ranges, cx);
-        } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
-            self.set_search_within_ranges(&previous_search_ranges, cx)
+            if ranges.iter().any(|s| s.start != s.end) {
+                self.set_search_within_ranges(&ranges, cx);
+            } else if let Some(previous_search_ranges) = self.previous_search_ranges.take()
+                && range != FilteredSearchRange::Selection
+            {
+                self.set_search_within_ranges(&previous_search_ranges, cx);
+            }
         }
     }
 
@@ -1879,7 +1877,7 @@ fn path_for_buffer<'a>(
     height: usize,
     include_filename: bool,
     cx: &'a App,
-) -> Option<Cow<'a, Path>> {
+) -> Option<Cow<'a, str>> {
     let file = buffer.read(cx).as_singleton()?.read(cx).file()?;
     path_for_file(file.as_ref(), height, include_filename, cx)
 }
@@ -1889,7 +1887,7 @@ fn path_for_file<'a>(
     mut height: usize,
     include_filename: bool,
     cx: &'a App,
-) -> Option<Cow<'a, Path>> {
+) -> Option<Cow<'a, str>> {
     // Ensure we always render at least the filename.
     height += 1;
 
@@ -1903,22 +1901,21 @@ fn path_for_file<'a>(
         }
     }
 
-    // Here we could have just always used `full_path`, but that is very
-    // allocation-heavy and so we try to use a `Cow<Path>` if we haven't
-    // traversed all the way up to the worktree's root.
+    // The full_path method allocates, so avoid calling it if height is zero.
     if height > 0 {
-        let full_path = file.full_path(cx);
-        if include_filename {
-            Some(full_path.into())
-        } else {
-            Some(full_path.parent()?.to_path_buf().into())
+        let mut full_path = file.full_path(cx);
+        if !include_filename {
+            if !full_path.pop() {
+                return None;
+            }
         }
+        Some(full_path.to_string_lossy().to_string().into())
     } else {
         let mut path = file.path().strip_prefix(prefix).ok()?;
         if !include_filename {
             path = path.parent()?;
         }
-        Some(path.into())
+        Some(path.display(file.path_style(cx)))
     }
 }
 
@@ -1933,12 +1930,12 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
-    use util::path;
+    use util::{path, rel_path::RelPath};
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
         let file = TestFile {
-            path: Path::new("").into(),
+            path: RelPath::empty().into(),
             root_name: String::new(),
             local_root: None,
         };

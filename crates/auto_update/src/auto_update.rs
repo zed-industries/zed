@@ -3,7 +3,8 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, SemanticVersion,
+    Task, Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
+use std::mem;
 use std::{
     env::{
         self,
@@ -84,31 +86,37 @@ pub struct JsonRelease {
     pub url: String,
 }
 
-struct MacOsUnmounter {
+struct MacOsUnmounter<'a> {
     mount_path: PathBuf,
+    background_executor: &'a BackgroundExecutor,
 }
 
-impl Drop for MacOsUnmounter {
+impl Drop for MacOsUnmounter<'_> {
     fn drop(&mut self) {
-        let unmount_output = std::process::Command::new("hdiutil")
-            .args(["detach", "-force"])
-            .arg(&self.mount_path)
-            .output();
-
-        match unmount_output {
-            Ok(output) if output.status.success() => {
-                log::info!("Successfully unmounted the disk image");
-            }
-            Ok(output) => {
-                log::error!(
-                    "Failed to unmount disk image: {:?}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            Err(error) => {
-                log::error!("Error while trying to unmount disk image: {:?}", error);
-            }
-        }
+        let mount_path = mem::take(&mut self.mount_path);
+        self.background_executor
+            .spawn(async move {
+                let unmount_output = Command::new("hdiutil")
+                    .args(["detach", "-force"])
+                    .arg(&mount_path)
+                    .output()
+                    .await;
+                match unmount_output {
+                    Ok(output) if output.status.success() => {
+                        log::info!("Successfully unmounted the disk image");
+                    }
+                    Ok(output) => {
+                        log::error!(
+                            "Failed to unmount disk image: {:?}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                    Err(error) => {
+                        log::error!("Error while trying to unmount disk image: {:?}", error);
+                    }
+                }
+            })
+            .detach();
     }
 }
 
@@ -896,6 +904,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
+        background_executor: cx.background_executor(),
     };
 
     let output = Command::new("rsync")

@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
+use askpass::EncryptedPassword;
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -118,7 +119,7 @@ pub struct RemoteConnectionPrompt {
     nickname: Option<SharedString>,
     is_wsl: bool,
     status_message: Option<SharedString>,
-    prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
+    prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Entity<Editor>,
 }
@@ -160,10 +161,10 @@ impl RemoteConnectionPrompt {
         self.cancellation = Some(tx);
     }
 
-    pub fn set_prompt(
+    fn set_prompt(
         &mut self,
         prompt: String,
-        tx: oneshot::Sender<String>,
+        tx: oneshot::Sender<EncryptedPassword>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -203,8 +204,12 @@ impl RemoteConnectionPrompt {
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
+
             self.editor.update(cx, |editor, cx| {
-                tx.send(editor.text(cx)).ok();
+                let pw = editor.text(cx);
+                if let Ok(secure) = EncryptedPassword::try_from(pw.as_ref()) {
+                    tx.send(secure).ok();
+                }
                 editor.clear(window, cx);
             });
         }
@@ -438,11 +443,16 @@ impl ModalView for RemoteConnectionModal {
 pub struct RemoteClientDelegate {
     window: AnyWindowHandle,
     ui: WeakEntity<RemoteConnectionPrompt>,
-    known_password: Option<String>,
+    known_password: Option<EncryptedPassword>,
 }
 
 impl remote::RemoteClientDelegate for RemoteClientDelegate {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
+    fn ask_password(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<EncryptedPassword>,
+        cx: &mut AsyncApp,
+    ) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
             tx.send(password).ok();
@@ -531,7 +541,10 @@ pub fn connect_over_ssh(
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
-    let known_password = connection_options.password.clone();
+    let known_password = connection_options
+        .password
+        .as_deref()
+        .and_then(|pw| EncryptedPassword::try_from(pw).ok());
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
@@ -557,9 +570,10 @@ pub fn connect(
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
     let known_password = match &connection_options {
-        RemoteConnectionOptions::Ssh(ssh_connection_options) => {
-            ssh_connection_options.password.clone()
-        }
+        RemoteConnectionOptions::Ssh(ssh_connection_options) => ssh_connection_options
+            .password
+            .as_deref()
+            .and_then(|pw| pw.try_into().ok()),
         _ => None,
     };
     let (tx, rx) = oneshot::channel();
@@ -644,7 +658,10 @@ pub async fn open_remote_project(
                     known_password: if let RemoteConnectionOptions::Ssh(options) =
                         &connection_options
                     {
-                        options.password.clone()
+                        options
+                            .password
+                            .as_deref()
+                            .and_then(|pw| EncryptedPassword::try_from(pw).ok())
                     } else {
                         None
                     },

@@ -34,6 +34,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -58,8 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-            Mode::HelixSelect => write!(f, "HELIX SELECT"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
@@ -343,9 +344,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative.into(),
+                        path: path.into_arc(),
                     })
                 })
                 .next();
@@ -872,7 +874,7 @@ impl VimGlobals {
                     buffer
                         .read(cx)
                         .file()
-                        .map(|file| file.path().to_string_lossy().to_string().into())
+                        .map(|file| file.path().display(file.path_style(cx)).into_owned().into())
                 } else {
                     None
                 }
@@ -988,6 +990,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+    pub helix_select: bool,
 }
 
 impl Operator {

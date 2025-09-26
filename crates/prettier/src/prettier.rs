@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::PathMatcher;
+use util::paths::{PathMatcher, PathStyle};
 
 #[derive(Debug, Clone)]
 pub enum Prettier {
@@ -119,7 +119,7 @@ impl Prettier {
                                             None
                                         }
                                     }).any(|workspace_definition| {
-                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition]).ok().is_some_and(|path_matcher| path_matcher.is_match(subproject_path))
+                                        workspace_definition == subproject_path.to_string_lossy() || PathMatcher::new(&[workspace_definition], PathStyle::local()).ok().is_some_and(|path_matcher| path_matcher.is_match(subproject_path))
                                     }) {
                                         anyhow::ensure!(has_prettier_in_node_modules(fs, &path_to_check).await?, "Path {path_to_check:?} is the workspace root for project in {closest_package_json_path:?}, but it has no prettier installed");
                                         log::info!("Found prettier path {path_to_check:?} in the workspace root for project in {closest_package_json_path:?}");
@@ -215,11 +215,14 @@ impl Prettier {
                                 })
                                 .any(|workspace_definition| {
                                     workspace_definition == subproject_path.to_string_lossy()
-                                        || PathMatcher::new(&[workspace_definition])
-                                            .ok()
-                                            .is_some_and(|path_matcher| {
-                                                path_matcher.is_match(subproject_path)
-                                            })
+                                        || PathMatcher::new(
+                                            &[workspace_definition],
+                                            PathStyle::local(),
+                                        )
+                                        .ok()
+                                        .is_some_and(
+                                            |path_matcher| path_matcher.is_match(subproject_path),
+                                        )
                                 })
                             {
                                 let workspace_ignore = path_to_check.join(".prettierignore");

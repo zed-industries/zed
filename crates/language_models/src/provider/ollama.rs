@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -48,7 +48,7 @@ pub struct OllamaSettings {
 
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -105,8 +105,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models =
-                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
+            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
 
             let tasks = models
                 .into_iter()
@@ -210,7 +209,7 @@ impl OllamaLanguageModelProvider {
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -249,19 +248,32 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &OllamaLanguageModelProvider::settings(cx).available_models {
-            models.insert(
-                model.name.clone(),
-                ollama::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    keep_alive: model.keep_alive.clone(),
-                    supports_tools: model.supports_tools,
-                    supports_vision: model.supports_images,
-                    supports_thinking: model.supports_thinking,
-                },
-            );
+        for setting_model in &OllamaLanguageModelProvider::settings(cx).available_models {
+            let setting_base = setting_model.name.split(':').next().unwrap();
+            if let Some(model) = models
+                .values_mut()
+                .find(|m| m.name.split(':').next().unwrap() == setting_base)
+            {
+                model.max_tokens = setting_model.max_tokens;
+                model.display_name = setting_model.display_name.clone();
+                model.keep_alive = setting_model.keep_alive.clone();
+                model.supports_tools = setting_model.supports_tools;
+                model.supports_vision = setting_model.supports_images;
+                model.supports_thinking = setting_model.supports_thinking;
+            } else {
+                models.insert(
+                    setting_model.name.clone(),
+                    ollama::Model {
+                        name: setting_model.name.clone(),
+                        display_name: setting_model.display_name.clone(),
+                        max_tokens: setting_model.max_tokens,
+                        keep_alive: setting_model.keep_alive.clone(),
+                        supports_tools: setting_model.supports_tools,
+                        supports_vision: setting_model.supports_images,
+                        supports_thinking: setting_model.supports_thinking,
+                    },
+                );
+            }
         }
 
         let mut models = models
@@ -310,7 +322,7 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 impl OllamaLanguageModel {
@@ -611,13 +623,13 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    api_key_editor: gpui::Entity<SingleLineInput>,
-    api_url_editor: gpui::Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    api_url_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
 
@@ -888,7 +900,7 @@ impl Render for ConfigurationView {
                             this.child(
                                 ButtonLike::new("connected")
                                     .disabled(true)
-                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                    .cursor_style(CursorStyle::Arrow)
                                     .child(
                                         h_flex()
                                             .gap_2()

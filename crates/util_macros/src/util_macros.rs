@@ -133,7 +133,6 @@ impl PerfArgs {
 /// Marks a test as perf-sensitive, to be triaged when checking the performance
 /// of a build. This also automatically applies `#[test]`.
 ///
-///
 /// # Usage
 /// Applying this attribute to a test marks it as average importance by default.
 /// There are 4 levels of importance (`Critical`, `Important`, `Average`, `Fluff`);
@@ -194,7 +193,12 @@ pub fn perf(our_attr: TokenStream, input: TokenStream) -> TokenStream {
         sig: mut sig_main,
         block,
     } = parse_macro_input!(input as ItemFn);
-    attrs_main.push(parse_quote!(#[test]));
+    if !attrs_main
+        .iter()
+        .any(|a| Some(&parse_quote!(test)) == a.path().segments.last())
+    {
+        attrs_main.push(parse_quote!(#[test]));
+    }
     attrs_main.push(parse_quote!(#[allow(non_snake_case)]));
 
     let fns = if cfg!(perf_enabled) {

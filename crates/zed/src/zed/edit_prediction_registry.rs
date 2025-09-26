@@ -97,6 +97,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
+    } else if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+        zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
 
@@ -203,21 +205,43 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
-
-                if let Some(buffer) = &singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                    && let Some(project) = editor.project()
-                {
-                    zeta.update(cx, |zeta, cx| {
-                        zeta.register_buffer(buffer, project, cx);
+                if std::env::var("ZED_ZETA2").is_ok() {
+                    let zeta = zeta2::Zeta::global(client, &user_store, cx);
+                    let provider = cx.new(|cx| {
+                        zeta2::ZetaEditPredictionProvider::new(
+                            editor.project(),
+                            &client,
+                            &user_store,
+                            cx,
+                        )
                     });
+
+                    if let Some(buffer) = &singleton_buffer
+                        && buffer.read(cx).file().is_some()
+                        && let Some(project) = editor.project()
+                    {
+                        zeta.update(cx, |zeta, cx| {
+                            zeta.register_buffer(buffer, project, cx);
+                        });
+                    }
+
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
+                } else {
+                    let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
+                    if let Some(buffer) = &singleton_buffer
+                        && buffer.read(cx).file().is_some()
+                        && let Some(project) = editor.project()
+                    {
+                        zeta.update(cx, |zeta, cx| {
+                            zeta.register_buffer(buffer, project, cx);
+                        });
+                    }
+
+                    let provider =
+                        cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }
-
-                let provider =
-                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
-
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
     }

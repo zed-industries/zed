@@ -1,14 +1,11 @@
-use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
 use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent,
     ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
-use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, FontStyle, Task, TextStyle, WhiteSpace};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
@@ -23,10 +20,13 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
+
+use crate::api_key::ApiKeyState;
+use crate::ui::InstructionListItem;
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
@@ -42,7 +42,7 @@ pub struct AnthropicSettings {
 
 pub struct AnthropicLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 const API_KEY_ENV_VAR_NAME: &str = "ANTHROPIC_API_KEY";
@@ -123,7 +123,7 @@ impl AnthropicLanguageModelProvider {
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -226,7 +226,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 pub struct AnthropicModel {
     id: LanguageModelId,
     model: anthropic::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -823,8 +823,8 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
     target_agent: ConfigurationViewTargetAgent,
 }
@@ -833,7 +833,7 @@ impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
     fn new(
-        state: gpui::Entity<State>,
+        state: Entity<State>,
         target_agent: ConfigurationViewTargetAgent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -862,11 +862,7 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, window, cx);
-                editor
-            }),
+            api_key_editor: cx.new(|cx| SingleLineInput::new(window, cx, Self::PLACEHOLDER_TEXT)),
             state,
             load_credentials_task,
             target_agent,
@@ -905,31 +901,6 @@ impl ConfigurationView {
         .detach_and_log_err(cx);
     }
 
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -962,18 +933,7 @@ impl Render for ConfigurationView {
                             InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
                         )
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
                         format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),

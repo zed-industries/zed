@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -17,13 +17,14 @@ use std::{
     any::{Any, TypeId, type_name},
     fmt::Debug,
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     str::{self, FromStr},
     sync::Arc,
 };
 use util::{
     ResultExt as _,
+    rel_path::RelPath,
     schemars::{DefaultDenyUnknownFields, replace_subschema},
 };
 
@@ -31,10 +32,9 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, SettingsJsonSchemaParams, SettingsUiEntry, ThemeName, VsCodeSettings,
-    WorktreeId,
+    LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
-    parse_json_with_comments, replace_value_in_json_text,
+    parse_json_with_comments,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
@@ -135,10 +135,9 @@ pub trait Settings: 'static + Send + Sync + Sized {
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
     pub worktree_id: WorktreeId,
-    pub path: &'a Path,
+    pub path: &'a RelPath,
 }
 
-/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
@@ -150,12 +149,22 @@ pub struct SettingsStore {
 
     merged_settings: Rc<SettingsContent>,
 
-    local_settings: BTreeMap<(WorktreeId, Arc<Path>), SettingsContent>,
-    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<Path>), (String, Option<Editorconfig>)>,
+    local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
+    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<RelPath>), (String, Option<Editorconfig>)>,
 
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum SettingsFile {
+    User,
+    Global,
+    Extension,
+    Server,
+    Default,
+    Local((WorktreeId, Arc<RelPath>)),
 }
 
 #[derive(Clone)]
@@ -191,7 +200,7 @@ impl Global for SettingsStore {}
 #[derive(Debug)]
 struct SettingValue<T> {
     global_value: Option<T>,
-    local_values: Vec<(WorktreeId, Arc<Path>, T)>,
+    local_values: Vec<(WorktreeId, Arc<RelPath>, T)>,
 }
 
 trait AnySettingValue: 'static + Send + Sync {
@@ -200,9 +209,9 @@ trait AnySettingValue: 'static + Send + Sync {
     fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
-    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
-    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
     fn import_from_vscode(
         &self,
         vscode_settings: &VsCodeSettings,
@@ -291,7 +300,7 @@ impl SettingsStore {
     }
 
     /// Get all values from project specific settings
-    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<Path>, &T)> {
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<RelPath>, &T)> {
         self.setting_values
             .get(&TypeId::of::<T>())
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
@@ -318,12 +327,17 @@ impl SettingsStore {
             .set_global_value(Box::new(value))
     }
 
-    /// Get the user's settings as a raw JSON value.
+    /// Get the user's settings content.
     ///
     /// For user-facing functionality use the typed setting interface.
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> Option<&UserSettingsContent> {
         self.user_settings.as_ref()
+    }
+
+    /// Get the default settings content as a raw JSON value.
+    pub fn raw_default_settings(&self) -> &SettingsContent {
+        &self.default_settings
     }
 
     /// Get the configured settings profile names.
@@ -425,34 +439,6 @@ impl SettingsStore {
         return rx;
     }
 
-    pub fn update_settings_file_at_path(
-        &self,
-        fs: Arc<dyn Fs>,
-        path: &[impl AsRef<str>],
-        new_value: serde_json::Value,
-    ) -> oneshot::Receiver<Result<()>> {
-        let key_path = path
-            .into_iter()
-            .map(AsRef::as_ref)
-            .map(SharedString::new)
-            .collect::<Vec<_>>();
-        let update = move |mut old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
-                // todo(settings_ui) use `update_value_in_json_text` for merging new and old objects with comment preservation, needs old value though...
-                let (range, replacement) = replace_value_in_json_text(
-                    &old_text,
-                    key_path.as_slice(),
-                    store.json_tab_size(),
-                    Some(&new_value),
-                    None,
-                );
-                old_text.replace_range(range, &replacement);
-                old_text
-            })
-        };
-        self.update_settings_file_inner(fs, update)
-    }
-
     pub fn update_settings_file(
         &self,
         fs: Arc<dyn Fs>,
@@ -477,8 +463,34 @@ impl SettingsStore {
         })
     }
 
-    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiEntry> {
-        [].into_iter()
+    pub fn get_all_files(&self) -> Vec<SettingsFile> {
+        let mut files = Vec::from_iter(
+            self.local_settings
+                .keys()
+                // rev because these are sorted by path, so highest precedence is last
+                .rev()
+                .cloned()
+                .map(SettingsFile::Local),
+        );
+
+        if self.server_settings.is_some() {
+            files.push(SettingsFile::Server);
+        }
+        // ignoring profiles
+        // ignoring os profiles
+        // ignoring release channel profiles
+
+        if self.user_settings.is_some() {
+            files.push(SettingsFile::User);
+        }
+        if self.extension_settings.is_some() {
+            files.push(SettingsFile::Extension);
+        }
+        if self.global_settings.is_some() {
+            files.push(SettingsFile::Global);
+        }
+        files.push(SettingsFile::Default);
+        files
     }
 }
 
@@ -605,7 +617,7 @@ impl SettingsStore {
     pub fn set_local_settings(
         &mut self,
         root_id: WorktreeId,
-        directory_path: Arc<Path>,
+        directory_path: Arc<RelPath>,
         kind: LocalSettingsKind,
         settings_content: Option<&str>,
         cx: &mut App,
@@ -620,14 +632,20 @@ impl SettingsStore {
             (LocalSettingsKind::Tasks, _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
-                    path: directory_path.join(task_file_name()),
+                    path: directory_path
+                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .as_std_path()
+                        .to_path_buf(),
                 });
             }
             (LocalSettingsKind::Debug, _) => {
                 return Err(InvalidSettingsError::Debug {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
-                    path: directory_path.join(task_file_name()),
+                    path: directory_path
+                        .join(RelPath::unix(task_file_name()).unwrap())
+                        .as_std_path()
+                        .to_path_buf(),
                 });
             }
             (LocalSettingsKind::Settings, None) => {
@@ -680,7 +698,8 @@ impl SettingsStore {
                             v.insert((editorconfig_contents.to_owned(), None));
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
-                                path: directory_path.join(EDITORCONFIG_NAME),
+                                path: directory_path
+                                    .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                             });
                         }
                     },
@@ -697,7 +716,8 @@ impl SettingsStore {
                                     o.insert((editorconfig_contents.to_owned(), None));
                                     return Err(InvalidSettingsError::Editorconfig {
                                         message: e.to_string(),
-                                        path: directory_path.join(EDITORCONFIG_NAME),
+                                        path: directory_path
+                                            .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                                     });
                                 }
                             }
@@ -733,20 +753,20 @@ impl SettingsStore {
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut App) -> Result<()> {
         self.local_settings
             .retain(|(worktree_id, _), _| worktree_id != &root_id);
-        self.recompute_values(Some((root_id, "".as_ref())), cx)?;
+        self.recompute_values(Some((root_id, RelPath::empty())), cx)?;
         Ok(())
     }
 
     pub fn local_settings(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<Path>, &ProjectSettingsContent)> {
+    ) -> impl '_ + Iterator<Item = (Arc<RelPath>, &ProjectSettingsContent)> {
         self.local_settings
             .range(
-                (root_id, Path::new("").into())
+                (root_id, RelPath::empty().into())
                     ..(
                         WorktreeId::from_usize(root_id.to_usize() + 1),
-                        Path::new("").into(),
+                        RelPath::empty().into(),
                     ),
             )
             .map(|((_, path), content)| (path.clone(), &content.project))
@@ -755,13 +775,13 @@ impl SettingsStore {
     pub fn local_editorconfig_settings(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<Path>, String, Option<Editorconfig>)> {
+    ) -> impl '_ + Iterator<Item = (Arc<RelPath>, String, Option<Editorconfig>)> {
         self.raw_editorconfig_settings
             .range(
-                (root_id, Path::new("").into())
+                (root_id, RelPath::empty().into())
                     ..(
                         WorktreeId::from_usize(root_id.to_usize() + 1),
-                        Path::new("").into(),
+                        RelPath::empty().into(),
                     ),
             )
             .map(|((_, path), (content, parsed_content))| {
@@ -823,12 +843,12 @@ impl SettingsStore {
 
     fn recompute_values(
         &mut self,
-        changed_local_path: Option<(WorktreeId, &Path)>,
+        changed_local_path: Option<(WorktreeId, &RelPath)>,
         cx: &mut App,
     ) -> std::result::Result<(), InvalidSettingsError> {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<SettingsContent>::new();
-        let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
+        let mut paths_stack = Vec::<Option<(WorktreeId, &RelPath)>>::new();
 
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
@@ -892,7 +912,7 @@ impl SettingsStore {
     pub fn editorconfig_properties(
         &self,
         for_worktree: WorktreeId,
-        for_path: &Path,
+        for_path: &RelPath,
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
 
@@ -908,7 +928,9 @@ impl SettingsStore {
                 properties = EditorconfigProperties::new();
             }
             for section in parsed_editorconfig.sections {
-                section.apply_to(&mut properties, for_path).log_err()?;
+                section
+                    .apply_to(&mut properties, for_path.as_std_path())
+                    .log_err()?;
             }
         }
 
@@ -919,11 +941,11 @@ impl SettingsStore {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InvalidSettingsError {
-    LocalSettings { path: PathBuf, message: String },
+    LocalSettings { path: Arc<RelPath>, message: String },
     UserSettings { message: String },
     ServerSettings { message: String },
     DefaultSettings { message: String },
-    Editorconfig { path: PathBuf, message: String },
+    Editorconfig { path: Arc<RelPath>, message: String },
     Tasks { path: PathBuf, message: String },
     Debug { path: PathBuf, message: String },
 }
@@ -972,7 +994,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         type_name::<T>()
     }
 
-    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)> {
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)> {
         self.local_values
             .iter()
             .map(|(id, path, value)| (*id, path.clone(), value as _))
@@ -997,7 +1019,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         self.global_value = Some(*value.downcast().unwrap());
     }
 
-    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>) {
+    fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>) {
         let value = *value.downcast().unwrap();
         match self
             .local_values
@@ -1022,12 +1044,13 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibility, VsCodeSettingsSource, default_settings,
+        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
     use super::*;
     use unindent::Unindent;
+    use util::rel_path::rel_path;
 
     #[derive(Debug, PartialEq)]
     struct AutoUpdateSetting {
@@ -1043,30 +1066,30 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq)]
-    struct TitleBarSettings {
-        show: TitleBarVisibility,
-        show_branch_name: bool,
+    struct ItemSettings {
+        close_position: ClosePosition,
+        git_status: bool,
     }
 
-    impl Settings for TitleBarSettings {
+    impl Settings for ItemSettings {
         fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
-            let content = content.title_bar.clone().unwrap();
-            TitleBarSettings {
-                show: content.show.unwrap(),
-                show_branch_name: content.show_branch_name.unwrap(),
+            let content = content.tabs.clone().unwrap();
+            ItemSettings {
+                close_position: content.close_position.unwrap(),
+                git_status: content.git_status.unwrap(),
             }
         }
 
         fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
             let mut show = None;
 
-            vscode.enum_setting("window.titleBarStyle", &mut show, |value| match value {
-                "never" => Some(TitleBarVisibility::Never),
-                "always" => Some(TitleBarVisibility::Always),
-                _ => None,
-            });
+            vscode.bool_setting("workbench.editor.decorations.colors", &mut show);
             if let Some(show) = show {
-                content.title_bar.get_or_insert_default().show.replace(show);
+                content
+                    .tabs
+                    .get_or_insert_default()
+                    .git_status
+                    .replace(show);
             }
         }
     }
@@ -1103,7 +1126,7 @@ mod tests {
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
         store.register_setting::<DefaultLanguageSettings>(cx);
 
         assert_eq!(
@@ -1111,16 +1134,16 @@ mod tests {
             &AutoUpdateSetting { auto_update: true }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always
+            store.get::<ItemSettings>(None).close_position,
+            ClosePosition::Right
         );
 
         store
             .set_user_settings(
                 r#"{
                     "auto_update": false,
-                    "title_bar": {
-                      "show": "never"
+                    "tabs": {
+                      "close_position": "left"
                     }
                 }"#,
                 cx,
@@ -1132,14 +1155,14 @@ mod tests {
             &AutoUpdateSetting { auto_update: false }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Never
+            store.get::<ItemSettings>(None).close_position,
+            ClosePosition::Left
         );
 
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                Path::new("/root1").into(),
+                rel_path("root1").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "tab_size": 5 }"#),
                 cx,
@@ -1148,7 +1171,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                Path::new("/root1/subdir").into(),
+                rel_path("root1/subdir").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "preferred_line_length": 50 }"#),
                 cx,
@@ -1158,9 +1181,9 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                Path::new("/root2").into(),
+                rel_path("root2").into(),
                 LocalSettingsKind::Settings,
-                Some(r#"{ "tab_size": 9, "title_bar": { "show_branch_name": false } }"#),
+                Some(r#"{ "tab_size": 9, "auto_update": true}"#),
                 cx,
             )
             .unwrap();
@@ -1168,7 +1191,7 @@ mod tests {
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: Path::new("/root1/something"),
+                path: rel_path("root1/something"),
             })),
             &DefaultLanguageSettings {
                 preferred_line_length: 80,
@@ -1178,7 +1201,7 @@ mod tests {
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: Path::new("/root1/subdir/something")
+                path: rel_path("root1/subdir/something"),
             })),
             &DefaultLanguageSettings {
                 preferred_line_length: 50,
@@ -1188,7 +1211,7 @@ mod tests {
         assert_eq!(
             store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: Path::new("/root2/something")
+                path: rel_path("root2/something"),
             })),
             &DefaultLanguageSettings {
                 preferred_line_length: 80,
@@ -1196,14 +1219,11 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(Some(SettingsLocation {
+            store.get::<AutoUpdateSetting>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: Path::new("/root2/something")
+                path: rel_path("root2/something")
             })),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Never,
-                show_branch_name: true,
-            }
+            &AutoUpdateSetting { auto_update: false }
         );
     }
 
@@ -1214,15 +1234,10 @@ mod tests {
             .set_user_settings(r#"{ "auto_update": false }"#, cx)
             .unwrap();
         store.register_setting::<AutoUpdateSetting>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
-        );
-        assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always,
         );
     }
 
@@ -1346,14 +1361,14 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "title_bar":   { "show": "always", "name": "Max"  }
+                "tabs":   { "close_position": "left", "name": "Max"  }
                 }"#
             .unindent(),
             |settings| {
-                settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibility::Never);
+                settings.tabs.as_mut().unwrap().close_position = Some(ClosePosition::Left);
             },
             r#"{
-                "title_bar":   { "show": "never", "name": "Max"  }
+                "tabs":   { "close_position": "left", "name": "Max"  }
                 }"#
             .unindent(),
             cx,
@@ -1372,13 +1387,13 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "title_bar": {}
+                "tabs": {}
             }"#
             .unindent(),
-            |settings| settings.title_bar.as_mut().unwrap().show_menus = Some(true),
+            |settings| settings.tabs.as_mut().unwrap().close_position = Some(ClosePosition::Left),
             r#"{
-                "title_bar": {
-                    "show_menus": true
+                "tabs": {
+                    "close_position": "left"
                 }
             }"#
             .unindent(),
@@ -1390,14 +1405,14 @@ mod tests {
             &mut store,
             r#""#.unindent(),
             |settings| {
-                settings.title_bar = Some(TitleBarSettingsContent {
-                    show_branch_name: Some(true),
+                settings.tabs = Some(ItemSettingsContent {
+                    git_status: Some(true),
                     ..Default::default()
                 })
             },
             r#"{
-                "title_bar": {
-                    "show_branch_name": true
+                "tabs": {
+                    "git_status": true
                 }
             }
             "#
@@ -1427,7 +1442,7 @@ mod tests {
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
         store.register_setting::<AutoUpdateSetting>(cx);
 
         // create settings that werent present
@@ -1487,16 +1502,13 @@ mod tests {
         check_vscode_import(
             &mut store,
             r#"{
-                "title_bar": {
-                "show": "always"
-                }
             }
             "#
             .unindent(),
-            r#"{ "window.titleBarStyle": "never" }"#.to_owned(),
+            r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
             r#"{
-                "title_bar": {
-                "show": "never"
+                "tabs": {
+                    "git_status": true
                 }
             }
             "#
@@ -1550,14 +1562,15 @@ mod tests {
     #[gpui::test]
     fn test_global_settings(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
 
         // Set global settings - these should override defaults but not user settings
         store
             .set_global_settings(
                 r#"{
-                    "title_bar": {
-                        "show": "never",
+                    "tabs": {
+                        "close_position": "right",
+                        "git_status": true,
                     }
                 }"#,
                 cx,
@@ -1566,10 +1579,10 @@ mod tests {
 
         // Before user settings, global settings should apply
         assert_eq!(
-            store.get::<TitleBarSettings>(None),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Never,
-                show_branch_name: true,
+            store.get::<ItemSettings>(None),
+            &ItemSettings {
+                close_position: ClosePosition::Right,
+                git_status: true,
             }
         );
 
@@ -1577,8 +1590,8 @@ mod tests {
         store
             .set_user_settings(
                 r#"{
-                    "title_bar": {
-                        "show": "always"
+                    "tabs": {
+                        "close_position": "left"
                     }
                 }"#,
                 cx,
@@ -1587,10 +1600,10 @@ mod tests {
 
         // User settings should override global settings
         assert_eq!(
-            store.get::<TitleBarSettings>(None),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Always,
-                show_branch_name: true, // Staff from global settings
+            store.get::<ItemSettings>(None),
+            &ItemSettings {
+                close_position: ClosePosition::Left,
+                git_status: true, // Staff from global settings
             }
         );
     }
