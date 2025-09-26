@@ -97,6 +97,7 @@ pub enum LoadThemes {
 
 /// Initialize the theme system.
 pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
+    SystemAppearance::init(cx);
     let (assets, load_user_themes) = match themes_to_load {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),

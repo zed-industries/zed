@@ -1970,7 +1970,10 @@ mod tests {
         time::Duration,
     };
     use theme::{SystemAppearance, ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::RelPath};
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -4561,12 +4564,7 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name
-                == &ThemeSettings::get_global(cx)
-                    .theme
-                    .name(SystemAppearance::global(cx).0)
-                    .0
-            {
+            if theme.name.as_ref() == "One Dark" {
                 has_default_theme = true;
             }
         }

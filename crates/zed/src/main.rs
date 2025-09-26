@@ -528,7 +528,6 @@ pub fn main() {
             cx,
         );
 
-        SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         theme_extension::init(
             extension_host_proxy.clone(),
