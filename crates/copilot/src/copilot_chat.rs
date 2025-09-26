@@ -18,6 +18,224 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use settings::watch_config_dir;
 
+// Inline Responses API implementation
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static MESSAGE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ResponseInputItem {
+    SystemMessage {
+        role: String, // "system"
+        content: Vec<ResponseInputContent>,
+    },
+    UserMessage {
+        role: String, // "user"
+        content: Vec<ResponseInputContent>,
+    },
+    AssistantMessage {
+        role: String, // "assistant"
+        content: Vec<ResponseOutputContent>,
+        #[serde(rename = "type")]
+        type_field: String, // "message"
+        status: String, // "completed"
+        id: String,
+    },
+    FunctionCall {
+        #[serde(rename = "type")]
+        type_field: String, // "function_call"
+        name: String,
+        arguments: String,
+        call_id: String,
+    },
+    FunctionCallOutput {
+        #[serde(rename = "type")]
+        type_field: String, // "function_call_output"
+        call_id: String,
+        output: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ResponseInputContent {
+    Text {
+        #[serde(rename = "type")]
+        type_field: String, // "text"
+        text: String,
+    },
+    ImageUrl {
+        #[serde(rename = "type")]
+        type_field: String, // "image_url"
+        image_url: ImageUrlContent,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ImageUrlContent {
+    url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ResponseOutputContent {
+    Text {
+        #[serde(rename = "type")]
+        type_field: String, // "text"
+        text: String,
+    },
+}
+
+fn create_responses_request_body(request: &Request) -> Result<String, serde_json::Error> {
+    // Convert messages to ResponseInputItem array following VSCode patterns
+    let input_items = map_messages_to_responses_input(&request.messages);
+
+    // Create Responses API request following the documented format
+    let mut responses_request = json!({
+        "model": request.model,
+        "input": input_items,
+        "stream": true,
+        "include": ["reasoning.encrypted_content"],
+        "store": false
+    });
+
+    // Add tools if present
+    if !request.tools.is_empty() {
+        let responses_tools: Vec<serde_json::Value> = request.tools.iter()
+            .map(|tool| match tool {
+                Tool::Function { function } => json!({
+                    "type": "function",
+                    "name": function.name,
+                    "description": function.description,
+                    "parameters": function.parameters.clone(),
+                    "strict": false
+                })
+            })
+            .collect();
+        responses_request["tools"] = json!(responses_tools);
+    }
+
+    // Add tool_choice if present
+    if let Some(tool_choice) = &request.tool_choice {
+        responses_request["tool_choice"] = match tool_choice {
+            ToolChoice::Auto => json!("auto"),
+            ToolChoice::Any => json!("auto"), // Responses API uses "auto" for any
+            ToolChoice::None => json!("none"),
+        };
+    }
+
+    // Add other parameters (based on the actual Request struct)
+    responses_request["temperature"] = json!(request.temperature);
+
+    serde_json::to_string(&responses_request)
+}
+
+fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInputItem> {
+    let mut input_items = Vec::new();
+
+    for message in messages {
+        match message {
+            ChatMessage::System { content } => {
+                input_items.push(ResponseInputItem::SystemMessage {
+                    role: "system".to_string(),
+                    content: vec![ResponseInputContent::Text {
+                        type_field: "text".to_string(),
+                        text: content.clone(),
+                    }],
+                });
+            }
+            ChatMessage::User { content } => {
+                let content_parts = match content {
+                    ChatMessageContent::Plain(text) => {
+                        vec![ResponseInputContent::Text {
+                            type_field: "text".to_string(),
+                            text: text.clone(),
+                        }]
+                    }
+                    ChatMessageContent::Multipart(parts) => {
+                        parts.iter().map(|part| match part {
+                            ChatMessagePart::Text { text } => ResponseInputContent::Text {
+                                type_field: "text".to_string(),
+                                text: text.clone(),
+                            },
+                            ChatMessagePart::Image { image_url } => ResponseInputContent::ImageUrl {
+                                type_field: "image_url".to_string(),
+                                image_url: ImageUrlContent {
+                                    url: image_url.url.clone(),
+                                },
+                            },
+                        }).collect()
+                    }
+                };
+
+                input_items.push(ResponseInputItem::UserMessage {
+                    role: "user".to_string(),
+                    content: content_parts,
+                });
+            }
+            ChatMessage::Assistant { content, tool_calls } => {
+                // Add assistant message if there's text content
+                let text_content = match content {
+                    ChatMessageContent::Plain(text) => text.clone(),
+                    ChatMessageContent::Multipart(parts) => {
+                        parts.iter().filter_map(|part| match part {
+                            ChatMessagePart::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        }).collect::<Vec<_>>().join(" ")
+                    }
+                };
+
+                if !text_content.is_empty() {
+                    input_items.push(ResponseInputItem::AssistantMessage {
+                        role: "assistant".to_string(),
+                        content: vec![ResponseOutputContent::Text {
+                            type_field: "text".to_string(),
+                            text: text_content,
+                        }],
+                        type_field: "message".to_string(),
+                        status: "completed".to_string(),
+                        id: format!("msg_{}", MESSAGE_COUNTER.fetch_add(1, Ordering::Relaxed)),
+                    });
+                }
+
+                // Add tool calls if present
+                for tool_call in tool_calls {
+                    match &tool_call.content {
+                        ToolCallContent::Function { function } => {
+                            input_items.push(ResponseInputItem::FunctionCall {
+                                type_field: "function_call".to_string(),
+                                name: function.name.clone(),
+                                arguments: function.arguments.clone(),
+                                call_id: tool_call.id.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            ChatMessage::Tool { content, tool_call_id } => {
+                let text = match content {
+                    ChatMessageContent::Plain(text) => text.clone(),
+                    ChatMessageContent::Multipart(parts) => {
+                        parts.iter().filter_map(|part| match part {
+                            ChatMessagePart::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        }).collect::<Vec<_>>().join(" ")
+                    }
+                };
+
+                input_items.push(ResponseInputItem::FunctionCallOutput {
+                    type_field: "function_call_output".to_string(),
+                    call_id: tool_call_id.clone(),
+                    output: text,
+                });
+            }
+        }
+    }
+
+    input_items
+}
+
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -360,20 +578,72 @@ pub struct ResponsesApiStreamEvent {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct ResponsesApiWrapper {
+    pub response: ResponsesApiResponse,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct ResponsesApiResponse {
     pub id: String,
     pub object: String,
     pub status: String,
     pub output: Option<Vec<ResponsesApiOutput>>,
     pub usage: Option<Usage>,
+    // Optional fields that may be present
+    #[serde(default)]
+    pub background: bool,
+    pub created_at: Option<i64>,
+    pub error: Option<serde_json::Value>,
+    pub incomplete_details: Option<serde_json::Value>,
+    pub instructions: Option<String>,
+    pub max_output_tokens: Option<i64>,
+    pub max_tool_calls: Option<i64>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    pub model: Option<String>,
+    #[serde(default)]
+    pub parallel_tool_calls: bool,
+    pub previous_response_id: Option<String>,
+    pub prompt_cache_key: Option<String>,
+    pub reasoning: Option<serde_json::Value>,
+    pub safety_identifier: Option<String>,
+    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub store: bool,
+    pub temperature: Option<f64>,
+    pub text: Option<serde_json::Value>,
+    pub tool_choice: Option<String>,
+    #[serde(default)]
+    pub tools: Vec<serde_json::Value>,
+    pub top_logprobs: Option<i64>,
+    pub top_p: Option<f64>,
+    pub truncation: Option<String>,
+    pub user: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ResponsesApiOutput {
-    #[serde(rename = "type")]
-    pub output_type: String,
-    pub role: String,
-    pub content: Vec<ResponsesApiContent>,
+#[serde(tag = "type")]
+pub enum ResponsesApiOutput {
+    #[serde(rename = "message")]
+    Message {
+        id: String,
+        status: String,
+        role: String,
+        content: Vec<ResponsesApiContent>,
+    },
+    #[serde(rename = "function_call")]
+    FunctionCall {
+        id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+        status: String,
+    },
+    #[serde(rename = "reasoning")]
+    Reasoning {
+        id: String,
+        summary: Vec<serde_json::Value>,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -381,14 +651,20 @@ pub struct ResponsesApiContent {
     #[serde(rename = "type")]
     pub content_type: String,
     pub text: Option<String>,
+    #[serde(default)]
+    pub annotations: Vec<serde_json::Value>,
 }
 
 impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
     fn from(event: ResponsesApiStreamEvent) -> Self {
+        log::debug!("Processing ResponsesApiStreamEvent: type={}, delta={:?}, text={:?}",
+                   event.event_type, event.delta, event.text);
+
         match event.event_type.as_str() {
             "response.output_text.delta" => {
                 // Convert delta event to ResponseEvent
                 if let Some(delta_text) = event.delta {
+                    log::debug!("Creating delta response with text: '{}'", delta_text);
                     let choice = ResponseChoice {
                         index: 0,
                         finish_reason: None,
@@ -406,6 +682,7 @@ impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
                         usage: None,
                     })
                 } else {
+                    log::debug!("Delta event has no delta text");
                     None
                 }
             }
@@ -454,26 +731,54 @@ impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
             "response.completed" => {
                 // Convert final response
                 if let Some(response) = event.response {
-                    let choices = response.output.unwrap_or_default().into_iter().enumerate().map(|(index, output)| {
-                        let content = output.content.iter()
-                            .filter_map(|c| c.text.as_ref())
-                            .map(|s| s.as_str())
-                            .collect::<Vec<_>>()
-                            .join("");
+                    let choices = response.output.unwrap_or_default().into_iter().enumerate().filter_map(|(index, output)| {
+                        match output {
+                            ResponsesApiOutput::Message { role, content, .. } => {
+                                let text_content = content.iter()
+                                    .filter_map(|c| c.text.as_ref())
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("");
 
-                        ResponseChoice {
-                            index,
-                            finish_reason: Some("stop".to_string()),
-                            delta: None,
-                            message: Some(ResponseDelta {
-                                content: if content.is_empty() { None } else { Some(content) },
-                                role: Some(match output.role.as_str() {
-                                    "assistant" => Role::Assistant,
-                                    "user" => Role::User,
-                                    _ => Role::Assistant,
-                                }),
-                                tool_calls: vec![],
-                            }),
+                                Some(ResponseChoice {
+                                    index,
+                                    finish_reason: Some("stop".to_string()),
+                                    delta: None,
+                                    message: Some(ResponseDelta {
+                                        content: if text_content.is_empty() { None } else { Some(text_content) },
+                                        role: Some(match role.as_str() {
+                                            "assistant" => Role::Assistant,
+                                            "user" => Role::User,
+                                            _ => Role::Assistant,
+                                        }),
+                                        tool_calls: vec![],
+                                    }),
+                                })
+                            },
+                            ResponsesApiOutput::FunctionCall { call_id, name, arguments, .. } => {
+                                Some(ResponseChoice {
+                                    index,
+                                    finish_reason: Some("tool_calls".to_string()),
+                                    delta: None,
+                                    message: Some(ResponseDelta {
+                                        content: None,
+                                        role: Some(Role::Assistant),
+                                        tool_calls: vec![ToolCallChunk {
+                                            index: 0,
+                                            id: Some(call_id),
+                                            function: Some(FunctionChunk {
+                                                name: Some(name),
+                                                arguments: Some(arguments),
+                                            }),
+                                        }],
+                                    }),
+                                })
+                            },
+                            ResponsesApiOutput::Reasoning { .. } => {
+                                // Skip reasoning outputs as they are internal
+                                log::debug!("Skipping reasoning output in streaming GPT-5 Codex response");
+                                None
+                            }
                         }
                     }).collect();
 
@@ -946,159 +1251,9 @@ async fn stream_completion_inner(
 
     let is_streaming = request.stream;
 
-    // GPT-5 Codex uses Responses API format with 'input' parameter instead of 'messages'
+    // GPT-5 Codex uses Responses API format - convert to proper ResponseInputItem array
     let json = if request.model == "gpt-5-codex" {
-        // Separate system messages for instructions
-        let instructions = request.messages.iter()
-            .find_map(|msg| match msg {
-                ChatMessage::System { content } => Some(content.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "You are a helpful coding assistant.".to_string());
-
-        // Check if we have vision content (images)
-        let has_vision_content = request.messages.iter().any(|msg| match msg {
-            ChatMessage::User { content } => matches!(content, ChatMessageContent::Multipart(_)),
-            _ => false,
-        });
-
-        let input = if has_vision_content {
-            // Use array format for complex content (images, etc.)
-            let input_messages: Vec<serde_json::Value> = request.messages.iter()
-                .filter_map(|msg| match msg {
-                    ChatMessage::System { .. } => None, // Skip system messages (they become instructions)
-                    ChatMessage::User { content } => {
-                        let content_parts = match content {
-                            ChatMessageContent::Plain(text) => {
-                                vec![json!({
-                                    "type": "input_text",
-                                    "text": text
-                                })]
-                            }
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().map(|part| match part {
-                                    ChatMessagePart::Text { text } => json!({
-                                        "type": "input_text",
-                                        "text": text.clone()
-                                    }),
-                                    ChatMessagePart::Image { image_url } => json!({
-                                        "type": "input_image",
-                                        "image_url": image_url.url.clone()
-                                    }),
-                                }).collect()
-                            }
-                        };
-                        Some(json!({
-                            "role": "user",
-                            "content": content_parts
-                        }))
-                    }
-                    ChatMessage::Assistant { content, .. } => {
-                        let text = match content {
-                            ChatMessageContent::Plain(text) => text.clone(),
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().filter_map(|part| match part {
-                                    ChatMessagePart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(" ")
-                            }
-                        };
-                        Some(json!({
-                            "role": "assistant",
-                            "content": [json!({
-                                "type": "input_text",
-                                "text": text
-                            })]
-                        }))
-                    }
-                    ChatMessage::Tool { content, .. } => {
-                        let text = match content {
-                            ChatMessageContent::Plain(text) => text.clone(),
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().filter_map(|part| match part {
-                                    ChatMessagePart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(" ")
-                            }
-                        };
-                        Some(json!({
-                            "role": "tool",
-                            "content": [json!({
-                                "type": "input_text",
-                                "text": text
-                            })]
-                        }))
-                    }
-                })
-                .collect();
-            json!(input_messages)
-        } else {
-            // Use simple string format for text-only content
-            let input_text = request.messages.iter()
-                .filter_map(|msg| match msg {
-                    ChatMessage::System { .. } => None, // Skip system messages
-                    ChatMessage::User { content } => {
-                        let text = match content {
-                            ChatMessageContent::Plain(text) => text.clone(),
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().filter_map(|part| match part {
-                                    ChatMessagePart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(" ")
-                            }
-                        };
-                        Some(text)
-                    },
-                    ChatMessage::Assistant { content, .. } => {
-                        let text = match content {
-                            ChatMessageContent::Plain(text) => text.clone(),
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().filter_map(|part| match part {
-                                    ChatMessagePart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(" ")
-                            }
-                        };
-                        Some(format!("Assistant: {}", text))
-                    },
-                    ChatMessage::Tool { content, .. } => {
-                        let text = match content {
-                            ChatMessageContent::Plain(text) => text.clone(),
-                            ChatMessageContent::Multipart(parts) => {
-                                parts.iter().filter_map(|part| match part {
-                                    ChatMessagePart::Text { text } => Some(text.as_str()),
-                                    _ => None,
-                                }).collect::<Vec<_>>().join(" ")
-                            }
-                        };
-                        Some(format!("Tool: {}", text))
-                    },
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            json!(input_text)
-        };
-
-        // Create Responses API compatible request
-        // Note: GPT-5 Codex doesn't support temperature and some other parameters
-        let mut responses_request = json!({
-            "model": request.model,
-            "instructions": instructions,
-            "input": input,
-            "stream": request.stream
-        });
-
-        // Add tools if present
-        if !request.tools.is_empty() {
-            responses_request["tools"] = json!(request.tools);
-        }
-
-        // Add tool_choice if present
-        if let Some(tool_choice) = request.tool_choice {
-            responses_request["tool_choice"] = json!(tool_choice);
-        }
-
-        serde_json::to_string(&responses_request)?
+        create_responses_request_body(&request)?
     } else {
         // Use standard Chat Completions API format
         serde_json::to_string(&request)?
@@ -1189,28 +1344,58 @@ async fn stream_completion_inner(
         // Parse response based on model - GPT-5 Codex uses Responses API format
         let response: ResponseEvent = if request.model == "gpt-5-codex" {
             // Try Responses API response format first
-            match serde_json::from_str::<ResponsesApiResponse>(body_str) {
-                Ok(responses_response) => {
-                    let choices = responses_response.output.unwrap_or_default().into_iter().enumerate().map(|(index, output)| {
-                        let content = output.content.iter()
-                            .filter_map(|c| c.text.as_ref())
-                            .map(|s| s.as_str())
-                            .collect::<Vec<_>>()
-                            .join("");
+            log::debug!("Parsing GPT-5 Codex response as Responses API format. Response: {}", body_str);
+            match serde_json::from_str::<ResponsesApiWrapper>(body_str) {
+                Ok(wrapper) => {
+                    let responses_response = wrapper.response;
+                    let choices = responses_response.output.unwrap_or_default().into_iter().enumerate().filter_map(|(index, output)| {
+                        match output {
+                            ResponsesApiOutput::Message { role, content, .. } => {
+                                let text_content = content.iter()
+                                    .filter_map(|c| c.text.as_ref())
+                                    .map(|s| s.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join("");
 
-                        ResponseChoice {
-                            index,
-                            finish_reason: Some("stop".to_string()),
-                            delta: None,
-                            message: Some(ResponseDelta {
-                                content: if content.is_empty() { None } else { Some(content) },
-                                role: Some(match output.role.as_str() {
-                                    "assistant" => Role::Assistant,
-                                    "user" => Role::User,
-                                    _ => Role::Assistant,
-                                }),
-                                tool_calls: vec![],
-                            }),
+                                Some(ResponseChoice {
+                                    index,
+                                    finish_reason: Some("stop".to_string()),
+                                    delta: None,
+                                    message: Some(ResponseDelta {
+                                        content: if text_content.is_empty() { None } else { Some(text_content) },
+                                        role: Some(match role.as_str() {
+                                            "assistant" => Role::Assistant,
+                                            "user" => Role::User,
+                                            _ => Role::Assistant,
+                                        }),
+                                        tool_calls: vec![],
+                                    }),
+                                })
+                            },
+                            ResponsesApiOutput::FunctionCall { call_id, name, arguments, .. } => {
+                                Some(ResponseChoice {
+                                    index,
+                                    finish_reason: Some("tool_calls".to_string()),
+                                    delta: None,
+                                    message: Some(ResponseDelta {
+                                        content: None,
+                                        role: Some(Role::Assistant),
+                                        tool_calls: vec![ToolCallChunk {
+                                            index: 0,
+                                            id: Some(call_id),
+                                            function: Some(FunctionChunk {
+                                                name: Some(name),
+                                                arguments: Some(arguments),
+                                            }),
+                                        }],
+                                    }),
+                                })
+                            },
+                            ResponsesApiOutput::Reasoning { .. } => {
+                                // Skip reasoning outputs as they are internal
+                                log::debug!("Skipping reasoning output in GPT-5 Codex response");
+                                None
+                            }
                         }
                     }).collect();
 
@@ -1220,10 +1405,15 @@ async fn stream_completion_inner(
                         usage: responses_response.usage,
                     }
                 }
-                Err(_) => {
+                Err(e) => {
                     // Fallback to Chat Completions format if Responses API parsing fails
-                    log::warn!("GPT-5 Codex response parsing failed with Responses API format, trying Chat Completions format. Response: {}", body_str);
-                    serde_json::from_str(body_str)?
+                    log::warn!("GPT-5 Codex response parsing failed with Responses API format: {}. Trying Chat Completions format. Response: {}", e, body_str);
+                    match serde_json::from_str::<ResponseEvent>(body_str) {
+                        Ok(chat_response) => chat_response,
+                        Err(chat_error) => {
+                            return Err(anyhow::anyhow!("Failed to parse GPT-5 Codex response in both formats. Responses API error: {}, Chat Completions error: {}", e, chat_error));
+                        }
+                    }
                 }
             }
         } else {
