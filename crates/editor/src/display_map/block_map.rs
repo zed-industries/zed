@@ -26,8 +26,8 @@ use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
 use text::{BufferId, Edit};
 use ui::ElementId;
 
-const NEWLINES: &[u8] = &[b'\n'; u128::BITS as usize];
-const BULLETS: &str = "********************************************************************************************************************************";
+const NEWLINES: &[u8; u128::BITS as usize] = &[b'\n'; _];
+const BULLETS: &[u8; u128::BITS as usize] = &[b'*'; _];
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -1774,7 +1774,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             // need to have the same number of bytes in the input as output.
             let chars_count = prefix.chars().count();
             let bullet_len = chars_count;
-            prefix = &BULLETS[..bullet_len];
+            prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
             chars = 1u128.unbounded_shl(bullet_len as u32) - 1;
             tabs = 0;
         }
