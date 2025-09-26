@@ -799,6 +799,7 @@ impl SettingsStore {
         let language_settings_content_ref = generator
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
+
         replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
             json_schema!({
                 "type": "object",
@@ -811,7 +812,8 @@ impl SettingsStore {
                             language_settings_content_ref.clone(),
                         )
                     })
-                    .collect::<serde_json::Map<_, _>>()
+                    .collect::<serde_json::Map<_, _>>(),
+                "errorMessage": "No language with this name is installed."
             })
         });
 

@@ -470,7 +470,7 @@ impl Project {
         TerminalSettings::get(settings_location, cx)
     }
 
-    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<std::process::Command> {
+    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<smol::process::Command> {
         let path = self.first_project_directory(cx);
         let remote_client = self.remote_client.as_ref();
         let settings = self.terminal_settings(&path, cx).clone();
@@ -508,6 +508,10 @@ impl Project {
                 Ok(command)
             }
         }
+        .map(|mut process| {
+            util::set_pre_exec_to_start_new_session(&mut process);
+            smol::process::Command::from(process)
+        })
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {

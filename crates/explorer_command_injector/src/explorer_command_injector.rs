@@ -77,6 +77,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         for idx in 0..count {
             let item = unsafe { items.GetItemAt(idx)? };
             let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
+            #[allow(clippy::disallowed_methods, reason = "no async context in sight..")]
             std::process::Command::new(&zed_exe)
                 .arg(&item_path)
                 .spawn()

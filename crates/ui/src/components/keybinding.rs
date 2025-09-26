@@ -392,7 +392,7 @@ pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option
 
 pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
-    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    let vim_enabled = KeyBinding::is_vim_mode(cx);
     keystrokes
         .iter()
         .map(|keystroke| {
@@ -408,7 +408,7 @@ pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
 
 pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
-    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    let vim_enabled = KeyBinding::is_vim_mode(cx);
     keystrokes
         .iter()
         .map(|keystroke| {
@@ -424,8 +424,7 @@ pub fn text_for_keybinding_keystrokes(keystrokes: &[KeybindingKeystroke], cx: &A
 
 pub fn text_for_keystroke(modifiers: &Modifiers, key: &str, cx: &App) -> String {
     let platform_style = PlatformStyle::platform();
-    let vim_enabled = cx.try_global::<VimStyle>().is_some();
-    keystroke_text(modifiers, key, platform_style, vim_enabled)
+    keystroke_text(modifiers, key, platform_style, KeyBinding::is_vim_mode(cx))
 }
 
 /// Returns a textual representation of the given [`Keystroke`].
@@ -473,6 +472,7 @@ fn keystroke_text(
     if modifiers.alt {
         match (platform_style, vim_mode) {
             (PlatformStyle::Mac, false) => text.push_str("Option"),
+            (PlatformStyle::Mac, true) => text.push_str("option"),
             (PlatformStyle::Linux | PlatformStyle::Windows, false) => text.push_str("Alt"),
             (_, true) => text.push_str("alt"),
         }
