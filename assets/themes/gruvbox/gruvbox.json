@@ -245,6 +245,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#b8bb25ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
@@ -260,12 +265,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#8ec07cff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -320,11 +325,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#ebdbb2ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#83a598ff",
             "font_style": null,
@@ -335,12 +335,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
@@ -372,11 +382,6 @@
           },
           "tag": {
             "color": "#8ec07cff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -650,6 +655,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#b8bb25ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
@@ -665,12 +675,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#8ec07cff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -725,11 +735,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#ebdbb2ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#83a598ff",
             "font_style": null,
@@ -740,12 +745,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
@@ -777,11 +792,6 @@
           },
           "tag": {
             "color": "#8ec07cff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1055,6 +1065,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#b8bb25ff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#8c957dff",
             "font_style": null,
@@ -1070,12 +1085,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#8ec07cff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -1130,11 +1145,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#ebdbb2ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#83a598ff",
             "font_style": null,
@@ -1145,12 +1155,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#fabd2eff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
@@ -1182,11 +1202,6 @@
           },
           "tag": {
             "color": "#8ec07cff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1460,6 +1475,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#677562ff",
             "font_style": null,
@@ -1475,12 +1495,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#427b58ff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -1535,11 +1555,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#282828ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#066578ff",
             "font_style": null,
@@ -1550,12 +1565,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#0b6678ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#0b6678ff",
             "font_style": null,
             "font_weight": null
@@ -1587,11 +1612,6 @@
           },
           "tag": {
             "color": "#427b58ff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1865,6 +1885,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#677562ff",
             "font_style": null,
@@ -1880,12 +1905,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#427b58ff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -1940,11 +1965,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#282828ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#066578ff",
             "font_style": null,
@@ -1955,12 +1975,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#0b6678ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#0b6678ff",
             "font_style": null,
             "font_weight": null
@@ -1992,11 +2022,6 @@
           },
           "tag": {
             "color": "#427b58ff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2270,6 +2295,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "heading": {
+            "color": "#79740eff",
+            "font_style": null,
+            "font_weight": 700
+          },
           "hint": {
             "color": "#677562ff",
             "font_style": null,
@@ -2285,12 +2315,12 @@
             "font_style": null,
             "font_weight": null
           },
-          "link_text": {
+          "link": {
             "color": "#427b58ff",
             "font_style": "italic",
             "font_weight": null
           },
-          "link_uri": {
+          "link.uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -2345,11 +2375,6 @@
             "font_style": null,
             "font_weight": null
           },
-          "punctuation.list_marker": {
-            "color": "#282828ff",
-            "font_style": null,
-            "font_weight": null
-          },
           "punctuation.markup": {
             "color": "#066578ff",
             "font_style": null,
@@ -2360,12 +2385,22 @@
             "font_style": null,
             "font_weight": null
           },
+          "raw": {
+            "color": "#066578ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "selector": {
             "color": "#b57613ff",
             "font_style": null,
             "font_weight": null
           },
           "selector.pseudo": {
+            "color": "#0b6678ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "strikethrough": {
             "color": "#0b6678ff",
             "font_style": null,
             "font_weight": null
@@ -2397,11 +2432,6 @@
           },
           "tag": {
             "color": "#427b58ff",
-            "font_style": null,
-            "font_weight": null
-          },
-          "text.literal": {
-            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
