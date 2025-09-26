@@ -90,6 +90,8 @@ fn main() {
             if let Err(e) = conpty::download_conpty_nuget_package(&dest_path) {
                 println!("cargo:warning=Failed to download conpty nuget package: {e}");
             };
+            conpty::install_conpty_nuget_package(&dest_path, &conpty::get_target_dir().unwrap())
+                .unwrap();
         }
     }
 }
@@ -101,7 +103,7 @@ mod conpty {
     use reqwest::blocking::get;
     use std::{
         io::{Cursor, Read},
-        path::Path,
+        path::{Path, PathBuf},
     };
     use zip::ZipArchive;
 
@@ -109,7 +111,7 @@ mod conpty {
         "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001";
 
     pub(super) fn download_conpty_nuget_package(path: impl AsRef<Path>) -> anyhow::Result<()> {
-        std::fs::create_dir_all(path).context("Failed to create directory for conpty")?;
+        std::fs::create_dir_all(&path).context("Failed to create directory for conpty")?;
         let response = get(CONPTY_URL).with_context(|| {
             format!(
                 "Failed to download conpty nuget package from {}",
@@ -124,11 +126,24 @@ mod conpty {
         })?;
 
         let mut zip = ZipArchive::new(Cursor::new(package)).context("Failed to open archive")?;
-        let out_path = std::env::var("OUT_DIR").unwrap();
-        extract_dll(&mut zip, &out_path).context("Failed to extract conpty.dll")?;
-        extract_runtimes(&mut zip, &out_path)
-            .context("Failed to extract OpenConsole.exe runtimes")?;
+        extract_dll(&mut zip, &path).context("Failed to extract conpty.dll")?;
+        extract_runtimes(&mut zip, &path).context("Failed to extract OpenConsole.exe runtimes")?;
 
+        Ok(())
+    }
+
+    pub(super) fn install_conpty_nuget_package(
+        dest_path: &Path,
+        target_dir: &Path,
+    ) -> anyhow::Result<()> {
+        std::fs::copy(dest_path.join("conpty.dll"), target_dir.join("conpty.dll"))?;
+        for arch in &["x64", "arm64"] {
+            std::fs::create_dir_all(target_dir.join(arch))?;
+            std::fs::copy(
+                dest_path.join(arch).join("OpenConsole.exe"),
+                target_dir.join(arch).join("OpenConsole.exe"),
+            )?;
+        }
         Ok(())
     }
 
@@ -163,5 +178,13 @@ mod conpty {
             buf.clear();
         }
         Ok(())
+    }
+
+    pub(super) fn get_target_dir() -> anyhow::Result<PathBuf> {
+        let cwd = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let profile = std::env::var("PROFILE").unwrap();
+        let root = cwd.parent().unwrap().parent().unwrap();
+        let target_dir = root.join("target").join(profile);
+        Ok(PathBuf::from(target_dir))
     }
 }
