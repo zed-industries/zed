@@ -54,6 +54,8 @@ pub fn system_prompt(format: PromptFormat) -> &'static str {
     match format {
         PromptFormat::MarkedExcerpt => MARKED_EXCERPT_SYSTEM_PROMPT,
         PromptFormat::LabeledSections => LABELED_SECTIONS_SYSTEM_PROMPT,
+        // only intended for use via zeta_cli
+        PromptFormat::OnlySnippets => "",
     }
 }
 
@@ -343,6 +345,7 @@ impl<'a> PlannedPrompt<'a> {
                 self.request.excerpt_range.start + self.request.cursor_offset,
                 CURSOR_MARKER,
             )],
+            PromptFormat::OnlySnippets => vec![],
         };
 
         let mut prompt = String::new();
@@ -432,12 +435,13 @@ impl<'a> PlannedPrompt<'a> {
             }
 
             writeln!(output, "```{}", file_path.display()).ok();
+            let mut skipped_last_snippet = false;
             for (snippet, range) in disjoint_snippets {
                 let section_index = section_ranges.len();
 
                 match self.request.prompt_format {
-                    PromptFormat::MarkedExcerpt => {
-                        if range.start > 0 {
+                    PromptFormat::MarkedExcerpt | PromptFormat::OnlySnippets => {
+                        if range.start > 0 && !skipped_last_snippet {
                             output.push_str("…\n");
                         }
                     }
@@ -454,25 +458,38 @@ impl<'a> PlannedPrompt<'a> {
                 }
 
                 if is_excerpt_file {
-                    excerpt_index = Some(section_index);
-                    let mut last_offset = range.start;
-                    let mut i = 0;
-                    while i < excerpt_file_insertions.len() {
-                        let (offset, insertion) = &excerpt_file_insertions[i];
-                        let found = *offset >= range.start && *offset <= range.end;
-                        if found {
-                            output.push_str(
-                                &snippet.text[last_offset - range.start..offset - range.start],
-                            );
-                            output.push_str(insertion);
-                            last_offset = *offset;
-                            excerpt_file_insertions.remove(i);
-                            continue;
+                    if self.request.prompt_format == PromptFormat::OnlySnippets {
+                        if range.start >= self.request.excerpt_range.start
+                            && range.end <= self.request.excerpt_range.end
+                        {
+                            skipped_last_snippet = true;
+                        } else {
+                            skipped_last_snippet = false;
+                            output.push_str(snippet.text);
                         }
-                        i += 1;
+                    } else {
+                        let mut last_offset = range.start;
+                        let mut i = 0;
+                        while i < excerpt_file_insertions.len() {
+                            let (offset, insertion) = &excerpt_file_insertions[i];
+                            let found = *offset >= range.start && *offset <= range.end;
+                            if found {
+                                excerpt_index = Some(section_index);
+                                output.push_str(
+                                    &snippet.text[last_offset - range.start..offset - range.start],
+                                );
+                                output.push_str(insertion);
+                                last_offset = *offset;
+                                excerpt_file_insertions.remove(i);
+                                continue;
+                            }
+                            i += 1;
+                        }
+                        skipped_last_snippet = false;
+                        output.push_str(&snippet.text[last_offset - range.start..]);
                     }
-                    output.push_str(&snippet.text[last_offset - range.start..]);
                 } else {
+                    skipped_last_snippet = false;
                     output.push_str(snippet.text);
                 }
 
@@ -483,7 +500,11 @@ impl<'a> PlannedPrompt<'a> {
         }
 
         Ok(SectionLabels {
-            excerpt_index: excerpt_index.context("bug: no snippet found for excerpt")?,
+            // TODO: Clean this up
+            excerpt_index: match self.request.prompt_format {
+                PromptFormat::OnlySnippets => 0,
+                _ => excerpt_index.context("bug: no snippet found for excerpt")?,
+            },
             section_ranges,
         })
     }

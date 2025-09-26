@@ -564,7 +564,7 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(RelPath::new(&path)?)
+            .read_text_file(RelPath::unix(&path)?)
             .await
             .map_err(|error| error.to_string()))
     }
@@ -917,7 +917,7 @@ impl ExtensionImports for WasmState {
                 let location = location.as_ref().and_then(|location| {
                     Some(::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: RelPath::new(&location.path).ok()?,
+                        path: RelPath::unix(&location.path).ok()?,
                     })
                 });
 

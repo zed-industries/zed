@@ -280,6 +280,17 @@ impl PathStyle {
             ))
         }
     }
+
+    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
+        let Some(pos) = path_like.rfind(self.separator()) else {
+            return (None, path_like);
+        };
+        let filename_start = pos + self.separator().len();
+        (
+            Some(&path_like[..filename_start]),
+            &path_like[filename_start..],
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

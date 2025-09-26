@@ -36,7 +36,7 @@ impl VtslsLspAdapter {
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::new(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 

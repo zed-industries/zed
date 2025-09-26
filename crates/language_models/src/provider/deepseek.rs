@@ -1,13 +1,10 @@
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use deepseek::DEEPSEEK_API_URL;
-use editor::{Editor, EditorElement, EditorStyle};
+
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future, future::BoxFuture, stream::BoxStream};
-use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, SharedString, Task, TextStyle, WhiteSpace,
-    Window,
-};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -21,8 +18,9 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
-use theme::ThemeSettings;
+
 use ui::{Icon, IconName, List, prelude::*};
+use ui_input::SingleLineInput;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
@@ -527,18 +525,15 @@ impl DeepSeekEventMapper {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
+    api_key_editor: Entity<SingleLineInput>,
     state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
     fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let api_key_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("sk-00000000000000000000000000000000", window, cx);
-            editor
-        });
+        let api_key_editor =
+            cx.new(|cx| SingleLineInput::new(window, cx, "sk-00000000000000000000000000000000"));
 
         cx.observe(&state, |_, _, cx| {
             cx.notify();
@@ -598,34 +593,6 @@ impl ConfigurationView {
         .detach_and_log_err(cx);
     }
 
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -653,18 +620,7 @@ impl Render for ConfigurationView {
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(format!(
                         "Or set the {API_KEY_ENV_VAR_NAME} environment variable."

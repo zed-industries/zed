@@ -76,7 +76,7 @@ impl From<ModelMode> for AnthropicModelMode {
 
 pub struct CloudLanguageModelProvider {
     client: Arc<Client>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     _maintain_client_status: Task<()>,
 }
 
@@ -287,7 +287,7 @@ impl CloudLanguageModelProvider {
 impl LanguageModelProviderState for CloudLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }

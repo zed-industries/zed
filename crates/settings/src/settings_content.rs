@@ -593,7 +593,6 @@ pub enum ModeContent {
     #[default]
     Normal,
     Insert,
-    HelixNormal,
 }
 
 /// Controls when to use system clipboard.
@@ -867,6 +866,12 @@ pub struct SaturatingBool(pub bool);
 impl From<bool> for SaturatingBool {
     fn from(value: bool) -> Self {
         SaturatingBool(value)
+    }
+}
+
+impl From<SaturatingBool> for bool {
+    fn from(value: SaturatingBool) -> bool {
+        value.0
     }
 }
 

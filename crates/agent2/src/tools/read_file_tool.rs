@@ -225,9 +225,12 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
-                let buffer_content =
-                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), cx)
-                        .await?;
+                let buffer_content = outline::get_buffer_content_or_outline(
+                    buffer.clone(),
+                    Some(&abs_path.to_string_lossy()),
+                    cx,
+                )
+                .await?;
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);

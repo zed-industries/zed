@@ -682,10 +682,11 @@ impl Render for BreakpointList {
             breakpoints.into_iter().filter_map(move |breakpoint| {
                 debug_assert_eq!(&path, &breakpoint.path);
                 let file_name = breakpoint.path.file_name()?;
+                let breakpoint_path = RelPath::new(&breakpoint.path, path_style).ok();
 
                 let dir = relative_worktree_path
-                    .clone()
-                    .or_else(|| RelPath::from_std_path(&breakpoint.path, path_style).ok())?
+                    .as_deref()
+                    .or(breakpoint_path.as_deref())?
                     .parent()
                     .map(|parent| SharedString::from(parent.display(path_style).to_string()));
                 let name = file_name

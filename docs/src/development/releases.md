@@ -61,7 +61,9 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 1. Build social media posts based on the popular items in preview.
 
    - Draft the copy in the [tweets](https://zed.dev/channel/tweets-23331) channel.
-   - Create the preview media (screenshots, videos) and store in `Feature Media` in our Google Drive.
+   - Create the preview media (videos, screenshots).
+     - For features that you film videos around, try to create alternative photo-only versions to be used in the email, as videos and GIFs aren't great for email.
+     - Store all created media in `Feature Media` in our Google Drive.
    - Build X and Bluesky post drafts (copy and media) in [Buffer](https://buffer.com), to be sent for next week's stable release.
 
    **Note: These are preview items and you may discover bugs.**
@@ -69,9 +71,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 
 1. Build email based on the popular items in preview.
 
-   - You can reuse the copy from the preview social media posts.
-   - For media, aim to have screenshots, as videos and GIFs in email are not well supported or very friendly.
-     - Store any new media created in `Feature Media` in our Google Drive.
+   - You can reuse the copy and photo media from the preview social media posts.
    - Create a draft email in [Kit](https://kit.com), to be sent for next week's stable release.
 
 ## Patch Release Process

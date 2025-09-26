@@ -386,7 +386,9 @@ impl Worktree {
                     abs_path
                         .file_name()
                         .and_then(|f| f.to_str())
-                        .map_or(RelPath::empty().into(), |f| RelPath::new(f).unwrap().into()),
+                        .map_or(RelPath::empty().into(), |f| {
+                            RelPath::unix(f).unwrap().into()
+                        }),
                     abs_path.clone(),
                     PathStyle::local(),
                 ),
@@ -423,7 +425,7 @@ impl Worktree {
                 if !metadata.is_dir {
                     if let Some(file_name) = abs_path.file_name()
                         && let Some(file_name) = file_name.to_str()
-                        && let Ok(path) = RelPath::new(file_name)
+                        && let Ok(path) = RelPath::unix(file_name)
                     {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                     }
@@ -1556,11 +1558,12 @@ impl LocalWorktree {
         let paths_to_refresh = paths
             .iter()
             .filter_map(|(_, target)| {
-                RelPath::from_std_path(
+                RelPath::new(
                     target.strip_prefix(&worktree_path).ok()?,
                     PathStyle::local(),
                 )
                 .ok()
+                .map(|path| path.into_arc())
             })
             .collect::<Vec<_>>();
 
@@ -1767,7 +1770,9 @@ impl LocalWorktree {
                 .as_path()
                 .file_name()
                 .and_then(|f| f.to_str())
-                .map_or(RelPath::empty().into(), |f| RelPath::new(f).unwrap().into());
+                .map_or(RelPath::empty().into(), |f| {
+                    RelPath::unix(f).unwrap().into()
+                });
             self.snapshot.update_abs_path(new_path, root_name);
         }
         self.restart_background_scanners(cx);
@@ -1962,7 +1967,7 @@ impl RemoteWorktree {
                 let Some(filename) = root_path_to_copy
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .and_then(|filename| RelPath::new(filename).ok())
+                    .and_then(|filename| RelPath::unix(filename).ok())
                 else {
                     continue;
                 };
@@ -1972,9 +1977,7 @@ impl RemoteWorktree {
                     let Some(relative_path) = abs_path
                         .strip_prefix(&root_path_to_copy)
                         .map_err(|e| anyhow::Error::from(e))
-                        .and_then(|relative_path| {
-                            RelPath::from_std_path(relative_path, PathStyle::local())
-                        })
+                        .and_then(|relative_path| RelPath::new(relative_path, PathStyle::local()))
                         .log_err()
                     else {
                         continue;
@@ -2025,7 +2028,7 @@ impl Snapshot {
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name
-                .as_str()
+                .as_unix_str()
                 .chars()
                 .map(|c| c.to_ascii_lowercase())
                 .collect(),
@@ -2154,7 +2157,7 @@ impl Snapshot {
         self.abs_path = abs_path;
         if root_name != self.root_name {
             self.root_char_bag = root_name
-                .as_str()
+                .as_unix_str()
                 .chars()
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
@@ -2349,7 +2352,7 @@ impl Snapshot {
     }
 
     pub fn root_name_str(&self) -> &str {
-        self.root_name.as_str()
+        self.root_name.as_unix_str()
     }
 
     pub fn scan_id(&self) -> usize {
@@ -2589,7 +2592,7 @@ impl LocalSnapshot {
 
         if git_state {
             for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
-                let ignore_parent_path = &RelPath::from_std_path(
+                let ignore_parent_path = &RelPath::new(
                     ignore_parent_abs_path
                         .strip_prefix(self.abs_path.as_path())
                         .unwrap(),
@@ -2598,8 +2601,10 @@ impl LocalSnapshot {
                 .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
                 assert!(
-                    self.entry_for_path(&ignore_parent_path.join(RelPath::new(GITIGNORE).unwrap()))
-                        .is_some()
+                    self.entry_for_path(
+                        &ignore_parent_path.join(RelPath::unix(GITIGNORE).unwrap())
+                    )
+                    .is_some()
                 );
             }
         }
@@ -3038,7 +3043,7 @@ impl language::File for File {
     fn file_name<'a>(&'a self, cx: &'a App) -> &'a str {
         self.path
             .file_name()
-            .unwrap_or_else(|| self.worktree.read(cx).root_name.as_str())
+            .unwrap_or_else(|| self.worktree.read(cx).root_name_str())
     }
 
     fn worktree_id(&self, cx: &App) -> WorktreeId {
@@ -3815,9 +3820,9 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path: Arc<RelPath> = if let Ok(path) =
+                let relative_path = if let Ok(path) =
                     abs_path.strip_prefix(&root_canonical_path)
-                    && let Ok(path) = RelPath::from_std_path(path, PathStyle::local())
+                    && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
                 } else {
@@ -3864,7 +3869,7 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                relative_paths.push(relative_path);
+                relative_paths.push(relative_path.into_arc());
                 true
             }
         });
@@ -4116,7 +4121,7 @@ impl BackgroundScanner {
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
-                .and_then(|name| Some(job.path.join(RelPath::new(name).ok()?)))
+                .and_then(|name| Some(job.path.join(RelPath::unix(name).ok()?)))
             else {
                 continue;
             };
@@ -4231,7 +4236,7 @@ impl BackgroundScanner {
             {
                 let relative_path = job
                     .path
-                    .join(RelPath::new(child_name.to_str().unwrap()).unwrap());
+                    .join(RelPath::unix(child_name.to_str().unwrap()).unwrap());
                 if self.is_path_private(&relative_path) {
                     log::debug!("detected private file: {relative_path:?}");
                     child_entry.is_private = true;
@@ -4366,7 +4371,7 @@ impl BackgroundScanner {
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
-                            || (fs_entry.path.as_os_str().is_empty()
+                            || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
                             state.enqueue_scan_dir(
@@ -4489,7 +4494,7 @@ impl BackgroundScanner {
                 .retain(|parent_abs_path, (_, needs_update)| {
                     if let Ok(parent_path) = parent_abs_path.strip_prefix(abs_path.as_path())
                         && let Some(parent_path) =
-                            RelPath::from_std_path(&parent_path, PathStyle::local()).log_err()
+                            RelPath::new(&parent_path, PathStyle::local()).log_err()
                     {
                         if *needs_update {
                             *needs_update = false;
@@ -4498,7 +4503,7 @@ impl BackgroundScanner {
                             }
                         }
 
-                        let ignore_path = parent_path.join(RelPath::new(GITIGNORE).unwrap());
+                        let ignore_path = parent_path.join(RelPath::unix(GITIGNORE).unwrap());
                         if snapshot.snapshot.entry_for_path(&ignore_path).is_none() {
                             return false;
                         }
@@ -4546,7 +4551,7 @@ impl BackgroundScanner {
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
-        let Some(path) = RelPath::from_std_path(&path, PathStyle::local()).log_err() else {
+        let Some(path) = RelPath::new(&path, PathStyle::local()).log_err() else {
             return;
         };
 
@@ -4650,7 +4655,9 @@ impl BackgroundScanner {
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state.insert_git_repository(
-                        RelPath::from_std_path(relative, PathStyle::local()).unwrap(),
+                        RelPath::new(relative, PathStyle::local())
+                            .unwrap()
+                            .into_arc(),
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     );
@@ -4675,7 +4682,7 @@ impl BackgroundScanner {
                     .entry_for_id(work_directory_id)
                     .is_some_and(|entry| {
                         snapshot
-                            .entry_for_path(&entry.path.join(RelPath::new(DOT_GIT).unwrap()))
+                            .entry_for_path(&entry.path.join(RelPath::unix(DOT_GIT).unwrap()))
                             .is_some()
                     });
 
@@ -4908,7 +4915,7 @@ fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
 
 fn char_bag_for_path(root_char_bag: CharBag, path: &RelPath) -> CharBag {
     let mut result = root_char_bag;
-    result.extend(path.as_str().chars().map(|c| c.to_ascii_lowercase()));
+    result.extend(path.as_unix_str().chars().map(|c| c.to_ascii_lowercase()));
     result
 }
 
@@ -4971,7 +4978,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
             let mut events = cx.events(&tree);
             while events.next().await.is_some() {
                 if tree.read_with(cx, |tree, _| {
-                    tree.entry_for_path(RelPath::new(file_name).unwrap())
+                    tree.entry_for_path(RelPath::unix(file_name).unwrap())
                         .is_some()
                 }) {
                     break;
@@ -4983,7 +4990,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .unwrap();
             while events.next().await.is_some() {
                 if tree.read_with(cx, |tree, _| {
-                    tree.entry_for_path(RelPath::new(file_name).unwrap())
+                    tree.entry_for_path(RelPath::unix(file_name).unwrap())
                         .is_none()
                 }) {
                     break;

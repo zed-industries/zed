@@ -973,7 +973,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     let dot_git_dir = repo_path.join(".git");
                     let contents = contents
                         .iter()
-                        .map(|(path, contents)| (path.as_str(), contents.clone()))
+                        .map(|(path, contents)| (path.as_unix_str(), contents.clone()))
                         .collect::<Vec<_>>();
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
@@ -1031,7 +1031,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let statuses = statuses
                         .iter()
-                        .map(|(path, val)| (path.as_str(), *val))
+                        .map(|(path, val)| (path.as_unix_str(), *val))
                         .collect::<Vec<_>>();
 
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
@@ -1463,7 +1463,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         paths
             .iter()
             .map(|path| {
-                RelPath::from_std_path(path.strip_prefix(repo_path).unwrap(), PathStyle::local())
+                RelPath::new(path.strip_prefix(repo_path).unwrap(), PathStyle::local())
                     .unwrap()
                     .to_rel_path_buf()
             })

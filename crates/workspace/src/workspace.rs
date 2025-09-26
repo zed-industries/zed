@@ -2631,11 +2631,9 @@ impl Workspace {
                                     .strip_prefix(worktree_abs_path.as_ref())
                                     .ok()
                                     .and_then(|relative_path| {
-                                        let relative_path = RelPath::from_std_path(
-                                            relative_path,
-                                            PathStyle::local(),
-                                        )
-                                        .log_err()?;
+                                        let relative_path =
+                                            RelPath::new(relative_path, PathStyle::local())
+                                                .log_err()?;
                                         worktree.entry_for_path(&relative_path)
                                     })
                             }
@@ -10766,7 +10764,7 @@ mod tests {
             .flat_map(|item| {
                 item.project_paths(cx)
                     .into_iter()
-                    .map(|path| path.path.as_str().to_string())
+                    .map(|path| path.path.display(PathStyle::local()).into_owned())
             })
             .collect()
     }
