@@ -1997,7 +1997,7 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        project::sort_worktree_entries(&mut siblings);
+        sort_worktree_entries(&mut siblings);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -3226,7 +3226,7 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            project::sort_worktree_entries(&mut visible_worktree_entries);
+            sort_worktree_entries(&mut visible_worktree_entries);
 
             self.visible_entries.push(VisibleEntriesForWorktree {
                 worktree_id,
@@ -5821,6 +5821,19 @@ impl ClipboardEntry {
             ClipboardEntry::Cut(entries) => ClipboardEntry::Copied(entries),
         }
     }
+}
+
+fn cmp<T: AsRef<Entry>>(lhs: T, rhs: T) -> cmp::Ordering {
+    let entry_a = lhs.as_ref();
+    let entry_b = rhs.as_ref();
+    compare_paths(
+        (entry_a.path.as_std_path(), entry_a.is_file()),
+        (entry_b.path.as_std_path(), entry_b.is_file()),
+    )
+}
+
+fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
+    entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
 #[cfg(test)]
