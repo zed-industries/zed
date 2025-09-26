@@ -24,9 +24,9 @@ use rpc::{
     proto::{self},
 };
 use smol::channel::Receiver;
-use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
+use std::{io, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
