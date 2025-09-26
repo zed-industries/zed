@@ -644,6 +644,8 @@ fn into_copilot_chat(
             LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
             LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
         }),
+        use_responses_api: model.uses_responses_api(),
+        previous_response_id: None,
     })
 }
 
