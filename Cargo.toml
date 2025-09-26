@@ -862,6 +862,7 @@ todo = "deny"
 declare_interior_mutable_const = "deny"
 
 redundant_clone = "deny"
+disallowed_methods = "deny"
 
 # We currently do not restrict any style rules
 # as it slows down shipping code to Zed.

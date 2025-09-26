@@ -5,6 +5,7 @@ use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
+use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use git2::BranchType;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -12,20 +13,19 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
-use std::io::prelude::*;
 use std::process::{ExitStatus, Stdio};
 use std::{
     cmp::Ordering,
     future,
-    io::{BufRead, BufReader, BufWriter, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::command::{new_smol_command, new_std_command};
+use util::command::new_smol_command;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{ResultExt, paths};
@@ -644,7 +644,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let output = new_std_command("git")
+                let output = new_smol_command("git")
                     .current_dir(&working_directory)
                     .args([
                         "--no-optional-locks",
@@ -653,7 +653,8 @@ impl GitRepository for RealGitRepository {
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
                         &commit,
                     ])
-                    .output()?;
+                    .output()
+                    .await?;
                 let output = std::str::from_utf8(&output.stdout)?;
                 let fields = output.split('\0').collect::<Vec<_>>();
                 if fields.len() != 6 {
@@ -681,7 +682,7 @@ impl GitRepository for RealGitRepository {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
         };
         cx.background_spawn(async move {
-            let show_output = util::command::new_std_command("git")
+            let show_output = util::command::new_smol_command("git")
                 .current_dir(&working_directory)
                 .args([
                     "--no-optional-locks",
@@ -696,6 +697,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
+                .await
                 .context("starting git show process")?;
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
@@ -703,7 +705,7 @@ impl GitRepository for RealGitRepository {
             let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
             let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
 
-            let mut cat_file_process = util::command::new_std_command("git")
+            let mut cat_file_process = util::command::new_smol_command("git")
                 .current_dir(&working_directory)
                 .args(["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
                 .stdin(Stdio::piped())
@@ -712,7 +714,6 @@ impl GitRepository for RealGitRepository {
                 .spawn()
                 .context("starting git cat-file process")?;
 
-            use std::io::Write as _;
             let mut files = Vec::<CommitFile>::new();
             let mut stdin = BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
             let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
@@ -726,28 +727,40 @@ impl GitRepository for RealGitRepository {
 
                 match status_code {
                     StatusCode::Modified => {
-                        writeln!(&mut stdin, "{commit}:{path}")?;
-                        writeln!(&mut stdin, "{parent_sha}:{path}")?;
+                        stdin.write_all(commit.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                        stdin.write_all(parent_sha.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
                     }
                     StatusCode::Added => {
-                        writeln!(&mut stdin, "{commit}:{path}")?;
+                        stdin.write_all(commit.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
                     }
                     StatusCode::Deleted => {
-                        writeln!(&mut stdin, "{parent_sha}:{path}")?;
+                        stdin.write_all(parent_sha.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
                     }
                     _ => continue,
                 }
-                stdin.flush()?;
+                stdin.flush().await?;
 
                 info_line.clear();
-                stdout.read_line(&mut info_line)?;
+                stdout.read_line(&mut info_line).await?;
 
                 let len = info_line.trim_end().parse().with_context(|| {
                     format!("invalid object size output from cat-file {info_line}")
                 })?;
                 let mut text = vec![0; len];
-                stdout.read_exact(&mut text)?;
-                stdout.read_exact(&mut newline)?;
+                stdout.read_exact(&mut text).await?;
+                stdout.read_exact(&mut newline).await?;
                 let text = String::from_utf8_lossy(&text).to_string();
 
                 let mut old_text = None;
@@ -755,13 +768,13 @@ impl GitRepository for RealGitRepository {
                 match status_code {
                     StatusCode::Modified => {
                         info_line.clear();
-                        stdout.read_line(&mut info_line)?;
+                        stdout.read_line(&mut info_line).await?;
                         let len = info_line.trim_end().parse().with_context(|| {
                             format!("invalid object size output from cat-file {}", info_line)
                         })?;
                         let mut parent_text = vec![0; len];
-                        stdout.read_exact(&mut parent_text)?;
-                        stdout.read_exact(&mut newline)?;
+                        stdout.read_exact(&mut parent_text).await?;
+                        stdout.read_exact(&mut newline).await?;
                         old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
                         new_text = Some(text);
                     }
@@ -962,7 +975,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let mut process = new_std_command("git")
+                let mut process = new_smol_command("git")
                     .current_dir(&working_directory)
                     .args([
                         "--no-optional-locks",
@@ -980,12 +993,13 @@ impl GitRepository for RealGitRepository {
                     .context("no stdin for git cat-file subprocess")?;
                 let mut stdin = BufWriter::new(stdin);
                 for rev in &revs {
-                    writeln!(&mut stdin, "{rev}")?;
+                    stdin.write_all(rev.as_bytes()).await?;
+                    stdin.write_all(b"\n").await?;
                 }
-                stdin.flush()?;
+                stdin.flush().await?;
                 drop(stdin);
 
-                let output = process.wait_with_output()?;
+                let output = process.output().await?;
                 let output = std::str::from_utf8(&output.stdout)?;
                 let shas = output
                     .lines()
@@ -1024,10 +1038,11 @@ impl GitRepository for RealGitRepository {
         let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
         self.executor.spawn(async move {
-            let output = new_std_command(&git_binary_path)
+            let output = new_smol_command(&git_binary_path)
                 .current_dir(working_directory)
                 .args(args)
-                .output()?;
+                .output()
+                .await?;
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 stdout.parse()
@@ -1043,10 +1058,11 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
-                let output = new_std_command(&git_binary_path)
+                let output = new_smol_command(&git_binary_path)
                     .current_dir(working_directory?)
                     .args(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
-                    .output()?;
+                    .output()
+                    .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     stdout.parse()

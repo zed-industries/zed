@@ -1407,7 +1407,7 @@ impl GitStore {
             GitStoreState::Local { fs, .. } => {
                 let fs = fs.clone();
                 cx.background_executor()
-                    .spawn(async move { fs.git_init(&path, fallback_branch_name) })
+                    .spawn(async move { fs.git_init(&path, fallback_branch_name).await })
             }
             GitStoreState::Remote {
                 upstream_client,
