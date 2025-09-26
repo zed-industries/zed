@@ -87,43 +87,81 @@ fn main() {
                 out_dir
             );
         } else {
-            if let Err(e) = download_conpty_nuget_package(&dest_path) {
+            if let Err(e) = conpty::download_conpty_nuget_package(&dest_path) {
                 println!("cargo:warning=Failed to download conpty nuget package: {e}");
             };
-            // TODO
-            // 1. find conpty.dll that matches the host architecture
-            // 2. copy conpty.dll to CARGO_TARGET_DIR
-            // 3. copy build/native/runtimes/* to CARGO_TARGET_DIR
         }
     }
 }
 
 #[cfg(windows)]
-fn download_conpty_nuget_package(path: impl AsRef<std::path::Path>) -> anyhow::Result<()> {
+mod conpty {
     use anyhow::Context;
+    use bytes::Bytes;
+    use reqwest::blocking::get;
+    use std::{
+        io::{Cursor, Read},
+        path::Path,
+    };
+    use zip::ZipArchive;
 
     const CONPTY_URL: &str =
         "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001";
 
-    let path = path.as_ref();
+    pub(super) fn download_conpty_nuget_package(path: impl AsRef<Path>) -> anyhow::Result<()> {
+        std::fs::create_dir_all(path).context("Failed to create directory for conpty")?;
+        let response = get(CONPTY_URL).with_context(|| {
+            format!(
+                "Failed to download conpty nuget package from {}",
+                CONPTY_URL
+            )
+        })?;
+        let package = response.bytes().with_context(|| {
+            format!(
+                "Failed to download conpty nuget package from {}",
+                CONPTY_URL
+            )
+        })?;
 
-    std::fs::create_dir_all(path).context("Failed to create directory for conpty")?;
-    let response = reqwest::blocking::get(CONPTY_URL).with_context(|| {
-        format!(
-            "Failed to download conpty nuget package from {}",
-            CONPTY_URL
-        )
-    })?;
-    let contents = response.bytes().with_context(|| {
-        format!(
-            "Failed to download conpty nuget package from {}",
-            CONPTY_URL
-        )
-    })?;
-    let reader = std::io::Cursor::new(contents);
+        let mut zip = ZipArchive::new(Cursor::new(package)).context("Failed to open archive")?;
+        let out_path = std::env::var("OUT_DIR").unwrap();
+        extract_dll(&mut zip, &out_path).context("Failed to extract conpty.dll")?;
+        extract_runtimes(&mut zip, &out_path)
+            .context("Failed to extract OpenConsole.exe runtimes")?;
 
-    let mut archive = zip::ZipArchive::new(reader).context("Failed to open archive")?;
-    archive.extract(path).context("Failed to extract archive")?;
+        Ok(())
+    }
 
-    Ok(())
+    fn extract_dll(
+        zip: &mut ZipArchive<Cursor<Bytes>>,
+        out_path: impl AsRef<Path>,
+    ) -> anyhow::Result<()> {
+        let mut file = if cfg!(target_arch = "x86_64") {
+            zip.by_path("runtimes/win10-x64/native/conpty.dll")?
+        } else if cfg!(target_arch = "aarch64") {
+            zip.by_path("runtimes/win10-arm64/native/conpty.dll")?
+        } else {
+            anyhow::bail!("Unsupported architecture")
+        };
+        let mut buf = Vec::with_capacity(1024);
+        file.read_to_end(&mut buf)?;
+        std::fs::write(out_path.as_ref().join("conpty.dll"), &buf)?;
+        Ok(())
+    }
+
+    fn extract_runtimes(
+        zip: &mut ZipArchive<Cursor<Bytes>>,
+        out_path: impl AsRef<Path>,
+    ) -> anyhow::Result<()> {
+        let mut buf = Vec::with_capacity(1024);
+        for arch in &["arm64", "x64", "x86"] {
+            std::fs::create_dir_all(out_path.as_ref().join(arch))?;
+            let mut file =
+                zip.by_path(format!("build/native/runtimes/{}/OpenConsole.exe", arch))?;
+            file.read_to_end(&mut buf)?;
+            std::fs::write(out_path.as_ref().join(arch).join("OpenConsole.exe"), &buf)?;
+            buf.clear();
+        }
+        Ok(())
+    }
 }

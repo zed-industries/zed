@@ -20246,6 +20246,7 @@ dependencies = [
  "backtrace",
  "bincode",
  "breadcrumbs",
+ "bytes 1.10.1",
  "call",
  "channel",
  "clap",
