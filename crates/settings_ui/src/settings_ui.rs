@@ -1,15 +1,22 @@
 //! # settings_ui
-use std::{ops::Range, sync::Arc};
-
+mod components;
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render,
+    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
     UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div, px, size,
     uniform_list,
 };
 use project::WorktreeId;
-use settings::{SettingsContent, SettingsStore};
+use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
+use std::{
+    any::{Any, TypeId, type_name},
+    cell::RefCell,
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
 use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color, Divider,
     DropdownMenu, FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label,
@@ -17,6 +24,106 @@ use ui::{
     StatefulInteractiveElement as _, Styled, StyledTypography, Switch, h_flex, v_flex,
 };
 use util::{paths::PathStyle, rel_path::RelPath};
+
+use crate::components::SettingsEditor;
+
+#[derive(Clone)]
+struct SettingField<T: 'static> {
+    pick: fn(&SettingsContent) -> &T,
+    pick_mut: fn(&mut SettingsContent) -> &mut T,
+}
+
+trait AnySettingField {
+    fn as_any(&self) -> &dyn Any;
+    fn type_name(&self) -> &'static str;
+    fn type_id(&self) -> TypeId;
+}
+
+impl<T> AnySettingField for SettingField<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<T>()
+    }
+
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+}
+
+#[derive(Default, Clone)]
+struct SettingFieldRenderer {
+    renderers: Rc<
+        RefCell<
+            HashMap<
+                TypeId,
+                Box<
+                    dyn Fn(
+                        &dyn AnySettingField,
+                        Option<&SettingsFieldMetadata>,
+                        &mut Window,
+                        &mut App,
+                    ) -> AnyElement,
+                >,
+            >,
+        >,
+    >,
+}
+
+impl Global for SettingFieldRenderer {}
+
+impl SettingFieldRenderer {
+    fn add_renderer<T: 'static>(
+        &mut self,
+        renderer: impl Fn(
+            &SettingField<T>,
+            Option<&SettingsFieldMetadata>,
+            &mut Window,
+            &mut App,
+        ) -> AnyElement
+        + 'static,
+    ) -> &mut Self {
+        let key = TypeId::of::<T>();
+        let renderer = Box::new(
+            move |any_setting_field: &dyn AnySettingField,
+                  metadata: Option<&SettingsFieldMetadata>,
+                  window: &mut Window,
+                  cx: &mut App| {
+                let field = any_setting_field
+                    .as_any()
+                    .downcast_ref::<SettingField<T>>()
+                    .unwrap();
+                renderer(field, metadata, window, cx)
+            },
+        );
+        self.renderers.borrow_mut().insert(key, renderer);
+        self
+    }
+
+    fn render(
+        &self,
+        any_setting_field: &dyn AnySettingField,
+        metadata: Option<&SettingsFieldMetadata>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let key = any_setting_field.type_id();
+        if let Some(renderer) = self.renderers.borrow().get(&key) {
+            renderer(any_setting_field, metadata, window, cx)
+        } else {
+            panic!(
+                "No renderer found for type: {}",
+                any_setting_field.type_name()
+            )
+        }
+    }
+}
+
+struct SettingsFieldMetadata {
+    placeholder: Option<&'static str>,
+}
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -28,20 +135,20 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    render: |file, _, cx| {
-                        render_toggle_button("confirm_quit", file, cx, |settings_content| {
-                            &mut settings_content.workspace.confirm_quit
-                        })
-                    },
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.confirm_quit,
+                        pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
+                    }),
+                    metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: |file, _, cx| {
-                        render_toggle_button("Auto Update", file, cx, |settings_content| {
-                            &mut settings_content.auto_update
-                        })
-                    },
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                    }),
+                    metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Privacy"),
             ],
@@ -54,11 +161,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Name",
                     description: "The displayed name of this project. If not set, the root directory name",
-                    render: |file, window, cx| {
-                        render_text_field("project_name", file, window, cx, |settings_content| {
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.project.worktree.project_name,
+                        pick_mut: |settings_content| {
                             &mut settings_content.project.worktree.project_name
-                        })
-                    },
+                        },
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("A new name"),
+                    })),
                 }),
             ],
         },
@@ -70,11 +181,11 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Disable AI",
                     description: "Whether to disable all AI features in Zed",
-                    render: |file, _, cx| {
-                        render_toggle_button("disable_AI", file, cx, |settings_content| {
-                            &mut settings_content.disable_ai
-                        })
-                    },
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.disable_ai,
+                        pick_mut: |settings_content| &mut settings_content.disable_ai,
+                    }),
+                    metadata: None,
                 }),
             ],
         },
@@ -86,20 +197,18 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
                     description: "Cursor shape for the editor",
-                    render: |file, window, cx| {
-                        render_dropdown::<settings::CursorShape>(
-                            "cursor_shape",
-                            file,
-                            window,
-                            cx,
-                            |settings_content| &mut settings_content.editor.cursor_shape,
-                        )
-                    },
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.cursor_shape,
+                        pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
+                    }),
+                    metadata: None,
                 }),
             ],
         },
     ]
 }
+
+// Derive Macro, on the new ProjectSettings struct
 
 fn project_settings_data() -> Vec<SettingsPage> {
     vec![SettingsPage {
@@ -109,12 +218,16 @@ fn project_settings_data() -> Vec<SettingsPage> {
             SettingsPageItem::SectionHeader("Worktree Settings Content"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Name",
-                description: " The displayed name of this project. If not set, the root directory name",
-                render: |file, window, cx| {
-                    render_text_field("project_name", file, window, cx, |settings_content| {
+                description: "The displayed name of this project. If not set, the root directory name",
+                field: Box::new(SettingField {
+                    pick: |settings_content| &settings_content.project.worktree.project_name,
+                    pick_mut: |settings_content| {
                         &mut settings_content.project.worktree.project_name
-                    })
-                },
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("A new name"),
+                })),
             }),
         ],
     }]
@@ -135,6 +248,8 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
+    init_renderers(cx);
+
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
             let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
@@ -156,6 +271,22 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn init_renderers(cx: &mut App) {
+    cx.default_global::<SettingFieldRenderer>()
+        .add_renderer::<Option<bool>>(|settings_field, _, _, cx| {
+            render_toggle_button(settings_field.clone(), cx).into_any_element()
+        })
+        .add_renderer::<Option<String>>(|settings_field, metadata, _, cx| {
+            render_text_field(settings_field.clone(), metadata, cx)
+        })
+        .add_renderer::<Option<SaturatingBool>>(|settings_field, _, _, cx| {
+            render_toggle_button(settings_field.clone(), cx)
+        })
+        .add_renderer::<Option<CursorShape>>(|settings_field, _, window, cx| {
+            render_dropdown(settings_field.clone(), window, cx)
+        });
 }
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
@@ -188,7 +319,6 @@ struct NavBarEntry {
     is_root: bool,
 }
 
-#[derive(Clone)]
 struct SettingsPage {
     title: &'static str,
     expanded: bool,
@@ -204,58 +334,59 @@ impl SettingsPage {
     }
 }
 
-#[derive(Clone)]
 enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
 }
 
 impl SettingsPageItem {
-    fn render(&self, file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(&self, _file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => div()
                 .w_full()
                 .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
                 .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
-            SettingsPageItem::SettingItem(setting_item) => div()
-                .child(
-                    Label::new(SharedString::new_static(setting_item.title))
-                        .size(LabelSize::Default),
-                )
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(
-                            div()
-                                .child(
-                                    Label::new(SharedString::new_static(setting_item.description))
+            SettingsPageItem::SettingItem(setting_item) => {
+                let renderer = cx.default_global::<SettingFieldRenderer>().clone();
+                div()
+                    .id(setting_item.title)
+                    .child(
+                        Label::new(SharedString::new_static(setting_item.title))
+                            .size(LabelSize::Default),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .child(
+                                        Label::new(SharedString::new_static(
+                                            setting_item.description,
+                                        ))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
-                                )
-                                .max_w_1_2(),
-                        )
-                        .child((setting_item.render)(file, window, cx)),
-                )
-                .into_any_element(),
+                                    )
+                                    .max_w_1_2(),
+                            )
+                            .child(renderer.render(
+                                setting_item.field.as_ref(),
+                                setting_item.metadata.as_deref(),
+                                window,
+                                cx,
+                            )),
+                    )
+                    .into_any_element()
+            }
         }
     }
 }
 
-impl SettingsPageItem {
-    fn _header(&self) -> Option<&'static str> {
-        match self {
-            SettingsPageItem::SectionHeader(header) => Some(header),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone)]
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    render: fn(file: SettingsFile, &mut Window, &mut App) -> AnyElement,
+    field: Box<dyn AnySettingField>,
+    metadata: Option<Box<SettingsFieldMetadata>>,
 }
 
 #[allow(unused)]
@@ -543,95 +674,59 @@ impl Render for SettingsWindow {
     }
 }
 
-fn write_setting_value<T: Send + 'static>(
-    get_value: fn(&mut SettingsContent) -> &mut Option<T>,
-    value: Option<T>,
-    cx: &mut App,
-) {
-    cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-            *get_value(settings) = value;
-        });
-    });
-}
-
 fn render_text_field(
-    id: &'static str,
-    _file: SettingsFile,
-    window: &mut Window,
+    field: SettingField<Option<String>>,
+    metadata: Option<&SettingsFieldMetadata>,
     cx: &mut App,
-    get_value: fn(&mut SettingsContent) -> &mut Option<String>,
 ) -> AnyElement {
-    // TODO: Updating file does not cause the editor text to reload, suspicious it may be a missing global update/notify in SettingsStore
-
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
     // TODO: This clone needs to go!!
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
+    let defaults = store.raw_default_settings().clone();
+    let user_settings = store
         .raw_user_settings()
         .cloned()
         .unwrap_or_default()
         .content;
 
-    // TODO: unwrap_or_default here because project name is null
-    let initial_text = get_value(user_settings.as_mut())
+    let initial_text = (field.pick)(&user_settings)
         .clone()
-        .unwrap_or_else(|| get_value(&mut defaults).clone().unwrap_or_default());
+        .or_else(|| (field.pick)(&defaults).clone());
 
-    let editor = window.use_keyed_state((id.into(), initial_text.clone()), cx, {
-        move |window, cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_text(initial_text, window, cx);
-            editor
-        }
-    });
-
-    let weak_editor = editor.downgrade();
-    let theme_colors = cx.theme().colors();
-
-    div()
-        .child(editor)
-        .bg(theme_colors.editor_background)
-        .border_1()
-        .rounded_lg()
-        .border_color(theme_colors.border)
-        .on_action::<menu::Confirm>({
-            move |_, _, cx| {
-                let Some(editor) = weak_editor.upgrade() else {
-                    return;
-                };
-                let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-                let new_value = (!new_value.is_empty()).then_some(new_value);
-                write_setting_value(get_value, new_value, cx);
-                editor.update(cx, |_, cx| {
-                    cx.notify();
+    SettingsEditor::new()
+        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
+        .when_some(
+            metadata.and_then(|metadata| metadata.placeholder),
+            |editor, placeholder| editor.with_placeholder(placeholder),
+        )
+        .on_confirm(move |new_text, cx: &mut App| {
+            cx.update_global(move |store: &mut SettingsStore, cx| {
+                store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+                    *(field.pick_mut)(settings) = new_text;
                 });
-            }
+            });
         })
         .into_any_element()
 }
 
-fn render_toggle_button<B: Into<bool> + From<bool> + Copy + Send + 'static>(
-    id: &'static str,
-    _: SettingsFile,
+fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
+    field: SettingField<Option<B>>,
     cx: &mut App,
-    get_value: fn(&mut SettingsContent) -> &mut Option<B>,
 ) -> AnyElement {
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
     // TODO: This clone needs to go!!
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
+    let defaults = store.raw_default_settings().clone();
+    let user_settings = store
         .raw_user_settings()
         .cloned()
         .unwrap_or_default()
         .content;
 
-    let toggle_state = if get_value(&mut user_settings)
-        .unwrap_or_else(|| get_value(&mut defaults).unwrap())
+    let toggle_state = if (field.pick)(&user_settings)
+        .unwrap_or_else(|| (field.pick)(&defaults).unwrap())
         .into()
     {
         ui::ToggleState::Selected
@@ -639,25 +734,25 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy + Send + 'static>(
         ui::ToggleState::Unselected
     };
 
-    Switch::new(id, toggle_state)
+    Switch::new("toggle_button", toggle_state)
         .on_click({
             move |state, _window, cx| {
-                write_setting_value(
-                    get_value,
-                    Some((*state == ui::ToggleState::Selected).into()),
-                    cx,
-                );
+                let state = *state == ui::ToggleState::Selected;
+                let field = field.clone();
+                cx.update_global(move |store: &mut SettingsStore, cx| {
+                    store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+                        *(field.pick_mut)(settings) = Some(state.into());
+                    });
+                });
             }
         })
         .into_any_element()
 }
 
 fn render_dropdown<T>(
-    id: &'static str,
-    _: SettingsFile,
+    field: SettingField<Option<T>>,
     window: &mut Window,
     cx: &mut App,
-    get_value: fn(&mut SettingsContent) -> &mut Option<T>,
 ) -> AnyElement
 where
     T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + 'static,
@@ -666,20 +761,20 @@ where
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
     let store = SettingsStore::global(cx);
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
+    let defaults = store.raw_default_settings().clone();
+    let user_settings = store
         .raw_user_settings()
         .cloned()
         .unwrap_or_default()
         .content;
 
     let current_value =
-        get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap());
+        (field.pick)(&user_settings).unwrap_or_else(|| (field.pick)(&defaults).unwrap());
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
 
     DropdownMenu::new(
-        id,
+        "dropdown",
         current_value_label,
         ui::ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (value, label) in variants()
@@ -696,7 +791,14 @@ where
                         if value == current_value {
                             return;
                         }
-                        write_setting_value(get_value, Some(value), cx);
+                        cx.update_global(move |store: &mut SettingsStore, cx| {
+                            store.update_settings_file(
+                                <dyn fs::Fs>::global(cx),
+                                move |settings, _cx| {
+                                    *(field.pick_mut)(settings) = Some(value);
+                                },
+                            );
+                        });
                     },
                 );
             }
