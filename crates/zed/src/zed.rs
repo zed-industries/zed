@@ -1969,7 +1969,7 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{SystemAppearance, ThemeRegistry, ThemeSettings};
+    use theme::ThemeRegistry;
     use util::{
         path,
         rel_path::{RelPath, rel_path},
