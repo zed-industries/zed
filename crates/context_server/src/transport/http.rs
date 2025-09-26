@@ -11,7 +11,7 @@ use std::{
 use crate::transport::Transport;
 
 // Constants from MCP spec
-const HEADER_SESSION_ID: &str = "x-mcp-session-id";
+const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const HEADER_LAST_EVENT_ID: &str = "Last-Event-ID";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
