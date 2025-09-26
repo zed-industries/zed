@@ -110,7 +110,6 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         }
 
         if let Some(current) = zeta.current_prediction_for_buffer(&buffer, &self.project, cx)
-            // todo! is it correct to refresh when we had a jump?
             && let Some(local) = current.as_local()
             && local.interpolate(buffer.read(cx)).is_some()
         {
@@ -206,8 +205,12 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 
         let prediction = match prediction {
             BufferEditPrediction::Local { prediction } => prediction,
-            BufferEditPrediction::Jump { path, offset } => {
-                return Some(edit_prediction::EditPrediction::JumpOut { path, offset });
+            BufferEditPrediction::Jump { id, path, offset } => {
+                return Some(edit_prediction::EditPrediction::JumpOut {
+                    id: Some(id.to_string().into()),
+                    path,
+                    offset,
+                });
             }
         };
 

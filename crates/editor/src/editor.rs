@@ -631,7 +631,6 @@ enum EditPrediction {
         target: Anchor,
         snapshot: BufferSnapshot,
     },
-    // todo! rename me
     JumpOut {
         path: Arc<Path>,
         offset: usize,
@@ -642,7 +641,7 @@ struct EditPredictionState {
     inlay_ids: Vec<InlayId>,
     completion: EditPrediction,
     completion_id: Option<SharedString>,
-    invalidation_range: Range<Anchor>,
+    invalidation_range: Option<Range<Anchor>>,
 }
 
 enum EditPredictionSettings {
@@ -7491,8 +7490,39 @@ impl Editor {
 
                 cx.notify();
             }
-            EditPrediction::JumpOut { .. } => {
-                todo!()
+            EditPrediction::JumpOut { path, offset } => {
+                let Some((workspace, _)) = self.workspace.clone() else {
+                    return;
+                };
+
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(path) = workspace.project().read(cx).find_project_path(path, cx)
+                        else {
+                            return;
+                        };
+                        let item = workspace.open_path(path, None, true, window, cx);
+                        let offset = *offset;
+                        window
+                            .spawn(cx, async move |cx| {
+                                let Some(editor) = item.await?.downcast::<Editor>() else {
+                                    return Ok(());
+                                };
+                                editor
+                                    .update_in(cx, |editor, window, cx| {
+                                        editor.change_selections(
+                                            SelectionEffects::scroll(Autoscroll::center()),
+                                            window,
+                                            cx,
+                                            |s| s.select_ranges(vec![offset..offset]),
+                                        );
+                                    })
+                                    .ok();
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
             }
         }
 
@@ -7566,8 +7596,39 @@ impl Editor {
                     self.accept_edit_prediction(&Default::default(), window, cx);
                 }
             }
-            EditPrediction::JumpOut { .. } => {
-                todo!()
+            EditPrediction::JumpOut { path, offset } => {
+                let Some((workspace, _)) = self.workspace.clone() else {
+                    return;
+                };
+
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let Some(path) = workspace.project().read(cx).find_project_path(path, cx)
+                        else {
+                            return;
+                        };
+                        let item = workspace.open_path(path, None, true, window, cx);
+                        let offset = *offset;
+                        window
+                            .spawn(cx, async move |cx| {
+                                let Some(editor) = item.await?.downcast::<Editor>() else {
+                                    return Ok(());
+                                };
+                                editor
+                                    .update_in(cx, |editor, window, cx| {
+                                        editor.change_selections(
+                                            SelectionEffects::scroll(Autoscroll::center()),
+                                            window,
+                                            cx,
+                                            |s| s.select_ranges(vec![offset..offset]),
+                                        );
+                                    })
+                                    .ok();
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
             }
         }
     }
@@ -7839,7 +7900,10 @@ impl Editor {
                 .active_edit_prediction
                 .as_ref()
                 .is_some_and(|completion| {
-                    let invalidation_range = completion.invalidation_range.to_offset(&multibuffer);
+                    let Some(invalidation_range) = completion.invalidation_range.as_ref() else {
+                        return false;
+                    };
+                    let invalidation_range = invalidation_range.to_offset(&multibuffer);
                     let invalidation_range = invalidation_range.start..=invalidation_range.end;
                     !invalidation_range.contains(&offset_selection.head())
                 })
@@ -7882,17 +7946,16 @@ impl Editor {
                 edits,
                 edit_preview,
             } => (id, edits, edit_preview),
-            edit_prediction::EditPrediction::JumpOut { path, offset } => {
-                self.take_active_edit_prediction(cx);
+            edit_prediction::EditPrediction::JumpOut { id, path, offset } => {
+                self.stale_edit_prediction_in_menu = None;
                 self.active_edit_prediction = Some(EditPredictionState {
                     inlay_ids: vec![],
                     completion: EditPrediction::JumpOut { path, offset },
-                    // todo!?
-                    completion_id: None,
-                    invalidation_range: Anchor::min()..Anchor::min(),
+                    completion_id: id,
+                    invalidation_range: None,
                 });
                 cx.notify();
-                return None;
+                return Some(());
             }
         };
 
@@ -8008,7 +8071,7 @@ impl Editor {
             inlay_ids,
             completion,
             completion_id,
-            invalidation_range,
+            invalidation_range: Some(invalidation_range),
         });
 
         cx.notify();
@@ -8679,7 +8742,26 @@ impl Editor {
                 window,
                 cx,
             ),
-            EditPrediction::JumpOut { .. } => todo!(),
+            EditPrediction::JumpOut { path, .. } => {
+                let mut element = self
+                    .render_edit_prediction_line_popover(
+                        path.file_name()
+                            .map(|name| format!("Jump to {}", name.display()))
+                            .unwrap_or_else(|| format!("Jump to {}", path.display())),
+                        Some(IconName::ZedPredict),
+                        window,
+                        cx,
+                    )
+                    .into_any();
+
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let origin_x = text_bounds.size.width / 2. - size.width / 2.;
+                let origin_y = text_bounds.size.height - size.height - px(30.);
+                let origin = text_bounds.origin + gpui::Point::new(origin_x, origin_y);
+                element.prepaint_at(origin, window, cx);
+
+                Some((element, origin))
+            }
         }
     }
 
@@ -8744,13 +8826,13 @@ impl Editor {
             .items_end()
             .when(flag_on_right, |el| el.items_start())
             .child(if flag_on_right {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
+                self.render_edit_prediction_line_popover("Jump", None, window, cx)
                     .rounded_bl(px(0.))
                     .rounded_tl(px(0.))
                     .border_l_2()
                     .border_color(border_color)
             } else {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
+                self.render_edit_prediction_line_popover("Jump", None, window, cx)
                     .rounded_br(px(0.))
                     .rounded_tr(px(0.))
                     .border_r_2()
@@ -8790,7 +8872,7 @@ impl Editor {
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         let mut element = self
-            .render_edit_prediction_line_popover("Scroll", Some(scroll_icon), window, cx)?
+            .render_edit_prediction_line_popover("Scroll", Some(scroll_icon), window, cx)
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -8830,7 +8912,7 @@ impl Editor {
                     Some(IconName::ArrowUp),
                     window,
                     cx,
-                )?
+                )
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -8849,7 +8931,7 @@ impl Editor {
                     Some(IconName::ArrowDown),
                     window,
                     cx,
-                )?
+                )
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -8896,7 +8978,7 @@ impl Editor {
         );
 
         let mut element = self
-            .render_edit_prediction_line_popover(label, None, window, cx)?
+            .render_edit_prediction_line_popover(label, None, window, cx)
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -8923,7 +9005,7 @@ impl Editor {
             };
 
             element = self
-                .render_edit_prediction_line_popover(label, Some(icon), window, cx)?
+                .render_edit_prediction_line_popover(label, Some(icon), window, cx)
                 .into_any();
 
             let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -9177,13 +9259,13 @@ impl Editor {
         icon: Option<IconName>,
         window: &mut Window,
         cx: &App,
-    ) -> Option<Stateful<Div>> {
+    ) -> Stateful<Div> {
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
         let keybind = self.render_edit_prediction_accept_keybind(window, cx);
         let has_keybind = keybind.is_some();
 
-        let result = h_flex()
+        h_flex()
             .id("ep-line-popover")
             .py_0p5()
             .pl_1()
@@ -9229,9 +9311,7 @@ impl Editor {
                         .mt(px(1.5))
                         .child(Icon::new(icon).size(IconSize::Small)),
                 )
-            });
-
-        Some(result)
+            })
     }
 
     fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
@@ -9513,9 +9593,14 @@ impl Editor {
                 )
             }
 
-            EditPrediction::JumpOut { .. } => {
-                todo!()
-            }
+            EditPrediction::JumpOut { path, .. } => Some(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .flex_1()
+                    .child(Icon::new(IconName::ZedPredict))
+                    .child(Label::new(format!("Jump to {}", path.display()))),
+            ),
 
             EditPrediction::Edit {
                 edits,

@@ -43,11 +43,20 @@ pub struct PredictEditsRequest {
     pub prompt_format: PromptFormat,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum PromptFormat {
-    #[default]
     MarkedExcerpt,
     LabeledSections,
+}
+
+impl PromptFormat {
+    pub const DEFAULT: PromptFormat = PromptFormat::LabeledSections;
+}
+
+impl Default for PromptFormat {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl PromptFormat {

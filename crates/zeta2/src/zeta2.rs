@@ -36,7 +36,7 @@ mod prediction;
 mod provider;
 
 use crate::prediction::{
-    EditPrediction, PendingEditPrediction, ResolvedEditPrediction, buffer_path_eq,
+    EditPrediction, EditPredictionId, PendingEditPrediction, ResolvedEditPrediction, buffer_path_eq,
 };
 pub use provider::ZetaEditPredictionProvider;
 
@@ -55,7 +55,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     excerpt: DEFAULT_EXCERPT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
-    prompt_format: PromptFormat::MarkedExcerpt,
+    prompt_format: PromptFormat::DEFAULT,
 };
 
 #[derive(Clone)]
@@ -148,6 +148,7 @@ enum BufferEditPrediction<'a> {
         prediction: &'a ResolvedEditPrediction,
     },
     Jump {
+        id: EditPredictionId,
         path: Arc<Path>,
         offset: usize,
     },
@@ -393,10 +394,12 @@ impl Zeta {
             } else {
                 match prediction {
                     EditPrediction::Pending(prediction) => Some(BufferEditPrediction::Jump {
+                        id: prediction.id,
                         path: prediction.path.clone(),
                         offset: prediction.edits.first()?.range.start,
                     }),
                     EditPrediction::Resolved(prediction) => Some(BufferEditPrediction::Jump {
+                        id: prediction.id,
                         path: prediction.path.clone(),
                         offset: prediction
                             .edits

@@ -23,6 +23,8 @@ pub enum EditPrediction {
         edit_preview: Option<language::EditPreview>,
     },
     JumpOut {
+        /// The ID of the completion, if it has one.
+        id: Option<SharedString>,
         path: Arc<Path>,
         offset: usize,
     },
