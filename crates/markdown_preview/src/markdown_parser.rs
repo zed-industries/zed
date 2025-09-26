@@ -810,11 +810,15 @@ impl<'a> MarkdownParser<'a> {
             }
             markup5ever_rcdom::NodeData::Doctype { .. } => {}
             markup5ever_rcdom::NodeData::Text { contents } => {
+                let contents = contents.borrow().to_string();
+                if contents.trim().is_empty() {
+                    return;
+                }
                 elements.push(ParsedMarkdownElement::Paragraph(vec![
                     MarkdownParagraphChunk::Text(ParsedMarkdownText {
                         source_range,
-                        contents: contents.borrow().to_string(),
                         highlights: Vec::default(),
+                        contents,
                         region_ranges: Vec::default(),
                         regions: Vec::default(),
                     }),
@@ -822,15 +826,133 @@ impl<'a> MarkdownParser<'a> {
             }
             markup5ever_rcdom::NodeData::Comment { .. } => {}
             markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                let mut styles = if let Some(styles) = Self::markdown_style_from_html_styles(
+                    Self::extract_styles_from_attributes(attrs),
+                ) {
+                    vec![MarkdownHighlight::Style(styles)]
+                } else {
+                    Vec::default()
+                };
+
                 if local_name!("img") == name.local {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
+                    }
+                } else if local_name!("p") == name.local {
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.parse_paragraph(source_range, node, &mut paragraph, &mut styles);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Paragraph(paragraph));
                     }
                 } else {
                     self.consume_children(source_range, node, elements);
                 }
             }
-            markup5ever_rcdom::NodeData::ProcessingInstruction { .. } => {}
+            _ => {}
+        }
+    }
+
+    fn parse_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
+    ) {
+        fn add_highlight_range(
+            text: String,
+            highlights: Vec<MarkdownHighlight>,
+        ) -> Vec<(Range<usize>, MarkdownHighlight)> {
+            highlights
+                .into_iter()
+                .map(|style| (0..text.len(), style))
+                .collect()
+        }
+
+        match &node.data {
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                let contents = contents.borrow().to_string();
+                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range,
+                    regions: Vec::default(),
+                    contents: contents.clone(),
+                    region_ranges: Vec::default(),
+                    highlights: add_highlight_range(contents, std::mem::take(highlights)),
+                }));
+            }
+            markup5ever_rcdom::NodeData::Element { name, attrs, .. } => {
+                if local_name!("img") == name.local {
+                    if let Some(image) = self.extract_image(source_range, attrs) {
+                        paragraph.push(MarkdownParagraphChunk::Image(image));
+                    }
+                } else if local_name!("b") == name.local || local_name!("strong") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: false,
+                        strikethrough: false,
+                        weight: FontWeight::BOLD,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("i") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: true,
+                        oblique: false,
+                        underline: false,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("em") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: true,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("del") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: false,
+                        oblique: false,
+                        strikethrough: true,
+                        weight: FontWeight::NORMAL,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else if local_name!("ins") == name.local {
+                    highlights.push(MarkdownHighlight::Style(MarkdownHighlightStyle {
+                        italic: false,
+                        underline: true,
+                        oblique: false,
+                        strikethrough: false,
+                        weight: FontWeight::NORMAL,
+                    }));
+
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                } else {
+                    self.consume_paragraph(source_range, node, paragraph, highlights);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+        highlights: &mut Vec<MarkdownHighlight>,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_paragraph(source_range.clone(), node, paragraph, highlights);
         }
     }
 
@@ -876,6 +998,58 @@ impl<'a> MarkdownParser<'a> {
         }
 
         styles
+    }
+
+    fn markdown_style_from_html_styles(
+        styles: HashMap<String, String>,
+    ) -> Option<MarkdownHighlightStyle> {
+        let mut markdown_style = MarkdownHighlightStyle::default();
+
+        if let Some(text_decoration) = styles.get("text-decoration") {
+            match text_decoration.to_lowercase().as_str() {
+                "underline" => {
+                    markdown_style.underline = true;
+                }
+                "line-through" => {
+                    markdown_style.strikethrough = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_style) = styles.get("font-style") {
+            match font_style.to_lowercase().as_str() {
+                "italic" => {
+                    markdown_style.italic = true;
+                }
+                "oblique" => {
+                    markdown_style.oblique = true;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(font_weight) = styles.get("font-weight") {
+            match font_weight.to_lowercase().as_str() {
+                "bold" => {
+                    markdown_style.weight = FontWeight::BOLD;
+                }
+                "lighter" => {
+                    markdown_style.weight = FontWeight::THIN;
+                }
+                _ => {
+                    if let Some(weight) = font_weight.parse::<f32>().ok() {
+                        markdown_style.weight = FontWeight(weight);
+                    }
+                }
+            }
+        }
+
+        if markdown_style != MarkdownHighlightStyle::default() {
+            Some(markdown_style)
+        } else {
+            None
+        }
     }
 
     fn extract_image(
@@ -1266,6 +1440,360 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_multiple_upfollowing_paragraphs() {
+        let parsed = parse(
+            "<p>1. Some text more text and many more</p>
+            <p>2. Some text more text and many more</p>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 0..44,
+                            contents: "1. Some text more text and many more".into(),
+                            highlights: Default::default(),
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 44..99,
+                            contents: "2. Some text more text and many more".into(),
+                            highlights: Default::default(),
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )])
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_inline_style_attributes_elements() {
+        let parsed = parse(
+            "<p style=\"font-weight: bold;\">bold text</p>
+            <p style=\"font-weight: lighter;\">thin text</p>
+            <p style=\"font-style: italic;\">italic text</p>
+            <p style=\"text-decoration: underline;\">underline text</p>
+            <p style=\"text-decoration: line-through;\">line-through text</p>
+            <p style=\"font-style: oblique;\">obliqued text</p>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 0..44,
+                            contents: "bold text".into(),
+                            highlights: vec![(
+                                0..9,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::BOLD,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 44..103,
+                            contents: "thin text".into(),
+                            highlights: vec![(
+                                0..9,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::THIN,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 103..162,
+                            contents: "italic text".into(),
+                            highlights: vec![(
+                                0..11,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: true,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 162..232,
+                            contents: "underline text".into(),
+                            highlights: vec![(
+                                0..14,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: true,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 232..308,
+                            contents: "line-through text".into(),
+                            highlights: vec![(
+                                0..17,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: true,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: false
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                    ParsedMarkdownElement::Paragraph(vec![MarkdownParagraphChunk::Text(
+                        ParsedMarkdownText {
+                            source_range: 308..369,
+                            contents: "obliqued text".into(),
+                            highlights: vec![(
+                                0..13,
+                                MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                    italic: false,
+                                    underline: false,
+                                    strikethrough: false,
+                                    weight: FontWeight::NORMAL,
+                                    oblique: true
+                                })
+                            )],
+                            region_ranges: Default::default(),
+                            regions: Default::default()
+                        }
+                    )]),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_inline_style_elements() {
+        let parsed =
+            parse("<p>Some text <strong>strong text</strong> more text <b>bold text</b> more text <i>italic text</i> more text <em>emphasized text</em> more text <del>deleted text</del> more text <ins>inserted text</ins></p>").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "Some text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "strong text".into(),
+                        highlights: vec![(
+                            0..11,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: false,
+                                underline: false,
+                                strikethrough: false,
+                                weight: FontWeight::BOLD,
+                                oblique: false
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: " more text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "bold text".into(),
+                        highlights: vec![(
+                            0..9,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: false,
+                                underline: false,
+                                strikethrough: false,
+                                weight: FontWeight::BOLD,
+                                oblique: false
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: " more text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "italic text".into(),
+                        highlights: vec![(
+                            0..11,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: true,
+                                underline: false,
+                                strikethrough: false,
+                                weight: FontWeight::NORMAL,
+                                oblique: false
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: " more text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "emphasized text".into(),
+                        highlights: vec![(
+                            0..15,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: false,
+                                underline: false,
+                                strikethrough: false,
+                                weight: FontWeight::NORMAL,
+                                oblique: true
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: " more text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "deleted text".into(),
+                        highlights: vec![(
+                            0..12,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: false,
+                                underline: false,
+                                strikethrough: true,
+                                weight: FontWeight::NORMAL,
+                                oblique: false
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: " more text ".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..205,
+                        contents: "inserted text".into(),
+                        highlights: vec![(
+                            0..13,
+                            MarkdownHighlight::Style(MarkdownHighlightStyle {
+                                italic: false,
+                                underline: true,
+                                strikethrough: false,
+                                weight: FontWeight::NORMAL,
+                                oblique: false
+                            })
+                        )],
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                ])]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_inline_html_image_tag() {
+        let parsed =
+            parse("<p>Some text<img src=\"http://example.com/foo.png\" /> some more text</p>")
+                .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Paragraph(vec![
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..71,
+                        contents: "Some text".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                    MarkdownParagraphChunk::Image(Image {
+                        source_range: 0..71,
+                        link: Link::Web {
+                            url: "http://example.com/foo.png".to_string(),
+                        },
+                        alt_text: None,
+                        height: None,
+                        width: None,
+                    }),
+                    MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                        source_range: 0..71,
+                        contents: " some more text".into(),
+                        highlights: Default::default(),
+                        region_ranges: Default::default(),
+                        regions: Default::default()
+                    }),
+                ])]
+            },
+            parsed
         );
     }
 
