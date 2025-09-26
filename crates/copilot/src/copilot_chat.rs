@@ -125,8 +125,7 @@ fn create_responses_request_body(request: &Request) -> Result<String, serde_json
         };
     }
 
-    // Add other parameters (based on the actual Request struct)
-    responses_request["temperature"] = json!(request.temperature);
+    // Note: GPT-5 Codex doesn't support temperature parameter, so we omit it
 
     serde_json::to_string(&responses_request)
 }
