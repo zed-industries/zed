@@ -12,7 +12,7 @@ use ui::{
 mod blame_ui;
 
 use git::{
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
@@ -28,7 +28,7 @@ use ui::prelude::*;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 use zed_actions;
 
-use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
+use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -213,6 +213,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
         });
+        workspace.register_action(show_ref_picker);
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
                 if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
@@ -369,6 +370,117 @@ fn rename_current_branch(
 
     workspace.toggle_modal(window, cx, |window, cx| {
         RenameBranchModal::new(current_branch_name, repo, window, cx)
+    });
+}
+
+struct RefPickerModal {
+    editor: Entity<Editor>,
+    repo: Entity<Repository>,
+    workspace: Entity<Workspace>,
+}
+
+impl RefPickerModal {
+    fn new(
+        repo: Entity<Repository>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter git ref...", window, cx);
+            editor
+        });
+
+        Self {
+            editor,
+            repo,
+            workspace,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let git_ref = self.editor.read(cx).text(cx);
+        let git_ref = git_ref.trim();
+
+        if git_ref.is_empty() {
+            cx.emit(DismissEvent);
+            return;
+        }
+
+        // Create a CommitSummary with the entered git ref
+        // The CommitView will resolve this to the actual commit details
+        let commit_summary = CommitSummary {
+            sha: git_ref.to_string().into(),
+            subject: "".into(), // Will be filled in by CommitView when it loads the commit
+            commit_timestamp: 0, // Will be filled in by CommitView
+            author_name: "".into(), // Will be filled in by CommitView
+            has_parent: true,
+        };
+
+        // Open the commit view
+        CommitView::open(
+            commit_summary,
+            self.repo.downgrade(),
+            self.workspace.downgrade(),
+            window,
+            cx,
+        );
+
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RefPickerModal {}
+impl ModalView for RefPickerModal {}
+impl Focusable for RefPickerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RefPickerModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RefPickerModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::Hash).size(IconSize::XSmall))
+                    .child(
+                        Headline::new("Open Commit")
+                            .size(HeadlineSize::XSmall),
+                    ),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
+fn show_ref_picker(
+    workspace: &mut Workspace,
+    _: &git::ViewCommit,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(repo) = workspace.project().read(cx).active_repository(cx) else {
+        return;
+    };
+
+    let workspace_entity = cx.entity();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RefPickerModal::new(repo, workspace_entity, window, cx)
     });
 }
 
