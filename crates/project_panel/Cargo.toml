@@ -36,6 +36,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
+rayon.workspace = true
 ui.workspace = true
 util.workspace = true
 client.workspace = true
