@@ -20418,7 +20418,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "zed_extension_api 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
