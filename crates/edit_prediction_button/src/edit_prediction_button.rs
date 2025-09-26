@@ -132,7 +132,8 @@ impl Render for EditPredictionButton {
                 div().child(
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
-                            Some(match status {
+                            let current_status = Copilot::global(cx)?.read(cx).status();
+                            Some(match current_status {
                                 Status::Authorized => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
                                 }),
