@@ -827,7 +827,11 @@ impl Room {
                                 },
                             );
 
-                            Audio::play_sound(Sound::Joined, cx);
+                            if let proto::ChannelRole::Guest = role {
+                                Audio::play_sound(Sound::GuestJoined, cx);
+                            } else {
+                                Audio::play_sound(Sound::Joined, cx);
+                            }
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
                                     .get(&ParticipantIdentity(user.id.to_string()))
