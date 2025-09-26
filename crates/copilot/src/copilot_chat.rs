@@ -1302,18 +1302,71 @@ async fn stream_completion_inner(
                                         None // Skip events we don't handle
                                     }
                                 }
-                                Err(_) => {
-                                    // Fallback to Chat Completions format if Responses API parsing fails
-                                    log::warn!("GPT-5 Codex response parsing failed with Responses API format, trying Chat Completions format. Response line: {}", line);
-                                    match serde_json::from_str::<ResponseEvent>(line) {
-                                        Ok(response) => {
-                                            if response.choices.is_empty() {
-                                                None
-                                            } else {
-                                                Some(Ok(response))
+                                Err(parse_error) => {
+                                    // Log the detailed parse error and raw line for debugging
+                                    log::warn!("GPT-5 Codex response parsing failed with Responses API format: {}", parse_error);
+                                    log::debug!("Raw response line: {}", line);
+
+                                    // Check if this is a raw JSON response (non-streaming completion)
+                                    if line.contains("\"object\":\"responses.response\"") || line.contains("\"object\":\"chat.completion\"") {
+                                        log::debug!("Attempting to parse as complete response object");
+                                        // Try parsing as complete Responses API response
+                                        match serde_json::from_str::<ResponsesApiWrapper>(line) {
+                                            Ok(wrapper) => {
+                                                let response = wrapper.response;
+                                                log::debug!("Successfully parsed complete response: id={}", response.id);
+
+                                                // Convert to ResponseEvent format
+                                                let choices = response.output.unwrap_or_default().into_iter().enumerate().filter_map(|(index, output)| {
+                                                    match output {
+                                                        ResponsesApiOutput::Message { content, .. } => {
+                                                            let text_content = content.iter()
+                                                                .filter_map(|c| c.text.as_ref())
+                                                                .map(|s| s.as_str())
+                                                                .collect::<Vec<_>>()
+                                                                .join("");
+                                                            Some(ResponseChoice {
+                                                                index,
+                                                                finish_reason: Some("stop".to_string()),
+                                                                delta: None,
+                                                                message: Some(ResponseDelta {
+                                                                    content: if text_content.is_empty() { None } else { Some(text_content) },
+                                                                    role: Some(Role::Assistant),
+                                                                    tool_calls: vec![],
+                                                                }),
+                                                            })
+                                                        },
+                                                        _ => {
+                                                            log::debug!("Skipping non-message output in complete response");
+                                                            None
+                                                        }
+                                                    }
+                                                }).collect();
+
+                                                Some(Ok(ResponseEvent {
+                                                    choices,
+                                                    id: response.id,
+                                                    usage: response.usage,
+                                                }))
+                                            },
+                                            Err(_) => {
+                                                // Final fallback to Chat Completions format
+                                                log::warn!("Trying Chat Completions format as final fallback");
+                                                match serde_json::from_str::<ResponseEvent>(line) {
+                                                    Ok(response) => {
+                                                        if response.choices.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(Ok(response))
+                                                        }
+                                                    }
+                                                    Err(error) => Some(Err(anyhow!("Failed to parse GPT-5 Codex response in all formats. Stream event error: {}, Complete response error: parse failed, Chat completion error: {}", parse_error, error))),
+                                                }
                                             }
                                         }
-                                        Err(error) => Some(Err(anyhow!("Failed to parse GPT-5 Codex response in both formats: {}", error))),
+                                    } else {
+                                        // Not a complete response, return the original streaming parse error
+                                        Some(Err(anyhow!("Failed to parse GPT-5 Codex streaming event: {}", parse_error)))
                                     }
                                 }
                             }
@@ -1343,7 +1396,8 @@ async fn stream_completion_inner(
         // Parse response based on model - GPT-5 Codex uses Responses API format
         let response: ResponseEvent = if request.model == "gpt-5-codex" {
             // Try Responses API response format first
-            log::debug!("Parsing GPT-5 Codex response as Responses API format. Response: {}", body_str);
+            log::debug!("Parsing GPT-5 Codex non-streaming response as Responses API format. Response length: {}", body_str.len());
+            log::debug!("Response preview: {}", &body_str[..std::cmp::min(500, body_str.len())]);
             match serde_json::from_str::<ResponsesApiWrapper>(body_str) {
                 Ok(wrapper) => {
                     let responses_response = wrapper.response;
