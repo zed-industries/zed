@@ -55,8 +55,20 @@ impl<T> AnySettingField for SettingField<T> {
 
 #[derive(Default, Clone)]
 struct SettingFieldRenderer {
-    renderers:
-        Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&dyn AnySettingField, &mut App) -> AnyElement>>>>,
+    renderers: Rc<
+        RefCell<
+            HashMap<
+                TypeId,
+                Box<
+                    dyn Fn(
+                        &dyn AnySettingField,
+                        Option<&SettingsFieldMetadata>,
+                        &mut App,
+                    ) -> AnyElement,
+                >,
+            >,
+        >,
+    >,
 }
 
 impl Global for SettingFieldRenderer {}
@@ -64,26 +76,34 @@ impl Global for SettingFieldRenderer {}
 impl SettingFieldRenderer {
     fn add_renderer<T: 'static>(
         &mut self,
-        renderer: impl Fn(&SettingField<T>, &mut App) -> AnyElement + 'static,
+        renderer: impl Fn(&SettingField<T>, Option<&SettingsFieldMetadata>, &mut App) -> AnyElement
+        + 'static,
     ) -> &mut Self {
         let key = TypeId::of::<T>();
         let renderer = Box::new(
-            move |any_setting_field: &dyn AnySettingField, cx: &mut App| {
+            move |any_setting_field: &dyn AnySettingField,
+                  metadata: Option<&SettingsFieldMetadata>,
+                  cx: &mut App| {
                 let field = any_setting_field
                     .as_any()
                     .downcast_ref::<SettingField<T>>()
                     .unwrap();
-                renderer(field, cx)
+                renderer(field, metadata, cx)
             },
         );
         self.renderers.borrow_mut().insert(key, renderer);
         self
     }
 
-    fn render(&self, any_setting_field: &dyn AnySettingField, cx: &mut App) -> AnyElement {
+    fn render(
+        &self,
+        any_setting_field: &dyn AnySettingField,
+        metadata: Option<&SettingsFieldMetadata>,
+        cx: &mut App,
+    ) -> AnyElement {
         let key = any_setting_field.type_id();
         if let Some(renderer) = self.renderers.borrow().get(&key) {
-            renderer(any_setting_field, cx)
+            renderer(any_setting_field, metadata, cx)
         } else {
             panic!(
                 "No renderer found for type: {}",
@@ -93,10 +113,9 @@ impl SettingFieldRenderer {
     }
 }
 
-// TODO: Pass through metadata to SettingFieldRenderer::render
-// struct SettingsFieldMetadata {
-//     placeholder: Option<&'static str>,
-// }
+struct SettingsFieldMetadata {
+    placeholder: Option<&'static str>,
+}
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -111,6 +130,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         pick: |settings_content| &settings_content.workspace.confirm_quit,
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
+                    metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
@@ -119,6 +139,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         pick: |settings_content| &settings_content.auto_update,
                         pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
+                    metadata: None,
                 }),
             ],
         },
@@ -134,6 +155,9 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| {
                             &mut settings_content.project.worktree.project_name
                         },
+                    }),
+                    metadata: Some(SettingsFieldMetadata {
+                        placeholder: Some("A new name"),
                     }),
                 }),
             ],
@@ -156,6 +180,9 @@ fn project_settings_data() -> Vec<SettingsPage> {
                     pick_mut: |settings_content| {
                         &mut settings_content.project.worktree.project_name
                     },
+                }),
+                metadata: Some(SettingsFieldMetadata {
+                    placeholder: Some("A new name"),
                 }),
             }),
         ],
@@ -204,11 +231,11 @@ pub fn init(cx: &mut App) {
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_renderer::<Option<bool>>(|settings_field, cx| {
+        .add_renderer::<Option<bool>>(|settings_field, _, cx| {
             render_toggle_button(settings_field.clone(), cx).into_any_element()
         })
-        .add_renderer::<Option<String>>(|settings_field, cx| {
-            render_text_field(settings_field.clone(), cx)
+        .add_renderer::<Option<String>>(|settings_field, metadata, cx| {
+            render_text_field(settings_field.clone(), metadata, cx)
         });
 }
 
@@ -256,7 +283,11 @@ impl SettingsPageItem {
                     .id(setting_item.title)
                     .child(setting_item.title)
                     .child(setting_item.description)
-                    .child(renderer.render(setting_item.field.as_ref(), cx))
+                    .child(renderer.render(
+                        setting_item.field.as_ref(),
+                        setting_item.metadata.as_ref(),
+                        cx,
+                    ))
                     .into_any_element()
             }
         }
@@ -267,6 +298,7 @@ struct SettingItem {
     title: &'static str,
     description: &'static str,
     field: Box<dyn AnySettingField>,
+    metadata: Option<SettingsFieldMetadata>,
 }
 
 #[allow(unused)]
@@ -440,7 +472,11 @@ impl Render for SettingsWindow {
     }
 }
 
-fn render_text_field(field: SettingField<Option<String>>, cx: &mut App) -> AnyElement {
+fn render_text_field(
+    field: SettingField<Option<String>>,
+    metadata: Option<&SettingsFieldMetadata>,
+    cx: &mut App,
+) -> AnyElement {
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
@@ -452,12 +488,16 @@ fn render_text_field(field: SettingField<Option<String>>, cx: &mut App) -> AnyEl
         .unwrap_or_default()
         .content;
 
-    // TODO: unwrap_or_default here because project name is null
     let initial_text = (field.pick)(&user_settings)
         .clone()
-        .unwrap_or_else(|| (field.pick)(&defaults).clone().unwrap_or_default());
+        .or_else(|| (field.pick)(&defaults).clone());
 
-    SettingsEditor::new(initial_text)
+    SettingsEditor::new()
+        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
+        .when_some(
+            metadata.and_then(|metadata| metadata.placeholder),
+            |editor, placeholder| editor.with_placeholder(placeholder),
+        )
         .on_confirm(move |new_text, cx: &mut App| {
             cx.update_global(move |store: &mut SettingsStore, cx| {
                 store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {

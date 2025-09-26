@@ -7,16 +7,28 @@ use ui::{
 
 #[derive(IntoElement)]
 pub struct SettingsEditor {
-    initial_text: String,
+    initial_text: Option<String>,
+    placeholder: Option<&'static str>,
     confirm: Option<Box<dyn Fn(Option<String>, &mut App)>>,
 }
 
 impl SettingsEditor {
-    pub fn new(initial_text: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            initial_text,
+            initial_text: None,
+            placeholder: None,
             confirm: None,
         }
+    }
+
+    pub fn with_initial_text(mut self, initial_text: String) -> Self {
+        self.initial_text = Some(initial_text);
+        self
+    }
+
+    pub fn with_placeholder(mut self, placeholder: &'static str) -> Self {
+        self.placeholder = Some(placeholder);
+        self
     }
 
     pub fn on_confirm(mut self, confirm: impl Fn(Option<String>, &mut App) + 'static) -> Self {
@@ -30,7 +42,13 @@ impl RenderOnce for SettingsEditor {
         let editor = window.use_state(cx, {
             move |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_text(self.initial_text, window, cx);
+                if let Some(text) = self.initial_text {
+                    editor.set_text(text, window, cx);
+                }
+
+                if let Some(placeholder) = self.placeholder {
+                    editor.set_placeholder_text(placeholder, window, cx);
+                }
                 editor
             }
         });
