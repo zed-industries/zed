@@ -137,7 +137,7 @@ mod conpty {
         target_dir: &Path,
     ) -> anyhow::Result<()> {
         std::fs::copy(dest_path.join("conpty.dll"), target_dir.join("conpty.dll"))?;
-        for arch in &["x64", "arm64"] {
+        for arch in &["x64", "x86", "arm64"] {
             std::fs::create_dir_all(target_dir.join(arch))?;
             std::fs::copy(
                 dest_path.join(arch).join("OpenConsole.exe"),
@@ -152,9 +152,9 @@ mod conpty {
         out_path: impl AsRef<Path>,
     ) -> anyhow::Result<()> {
         let mut file = if cfg!(target_arch = "x86_64") {
-            zip.by_path("runtimes/win10-x64/native/conpty.dll")?
+            zip.by_name("runtimes\\win10-x64\\native\\conpty.dll")?
         } else if cfg!(target_arch = "aarch64") {
-            zip.by_path("runtimes/win10-arm64/native/conpty.dll")?
+            zip.by_name("runtimes\\win10-arm64\\native\\conpty.dll")?
         } else {
             anyhow::bail!("Unsupported architecture")
         };
@@ -171,8 +171,10 @@ mod conpty {
         let mut buf = Vec::with_capacity(1024);
         for arch in &["arm64", "x64", "x86"] {
             std::fs::create_dir_all(out_path.as_ref().join(arch))?;
-            let mut file =
-                zip.by_path(format!("build/native/runtimes/{}/OpenConsole.exe", arch))?;
+            let mut file = zip.by_name(&format!(
+                "build\\native\\runtimes\\{}\\OpenConsole.exe",
+                arch
+            ))?;
             file.read_to_end(&mut buf)?;
             std::fs::write(out_path.as_ref().join(arch).join("OpenConsole.exe"), &buf)?;
             buf.clear();
