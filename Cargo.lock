@@ -3708,6 +3708,7 @@ dependencies = [
  "paths",
  "project",
  "rpc",
+ "semver",
  "serde",
  "serde_json",
  "settings",
