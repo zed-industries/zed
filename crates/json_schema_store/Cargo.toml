@@ -19,17 +19,18 @@ anyhow.workspace = true
 dap.workspace = true
 extension.workspace = true
 gpui.workspace = true
+language.workspace = true
 paths.workspace = true
 project.workspace = true
 schemars.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 settings.workspace = true
 snippet_provider.workspace = true
 task.workspace = true
 theme.workspace = true
 util.workspace = true
-language.workspace = true
+workspace-hack.workspace = true
 
 
 

@@ -8407,6 +8407,7 @@ dependencies = [
  "task",
  "theme",
  "util",
+ "workspace-hack",
 ]
 
 [[package]]
