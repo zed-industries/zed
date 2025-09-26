@@ -4,12 +4,12 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use cloud_llm_client::{
-    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
-    CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
-    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan,
-    PlanV1, PlanV2, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
-    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
-    ZED_VERSION_HEADER_NAME,
+    CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_X_AI_HEADER_NAME,
+    CURRENT_PLAN_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
+    CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse,
+    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan, PlanV1, PlanV2,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
@@ -217,6 +217,7 @@ impl State {
 
         let request = http_client::Request::builder()
             .method(Method::GET)
+            .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
             .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
             .header("Authorization", format!("Bearer {token}"))
             .body(AsyncBody::empty())?;
