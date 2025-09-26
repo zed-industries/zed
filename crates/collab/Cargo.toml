@@ -76,7 +76,6 @@ agent_settings.workspace = true
 assistant_context.workspace = true
 assistant_slash_command.workspace = true
 async-trait.workspace = true
-audio.workspace = true
 buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
 channel.workspace = true

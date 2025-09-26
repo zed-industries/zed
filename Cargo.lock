@@ -3326,7 +3326,6 @@ dependencies = [
  "assistant_slash_command",
  "async-trait",
  "async-tungstenite",
- "audio",
  "aws-config",
  "aws-sdk-kinesis",
  "aws-sdk-s3",
