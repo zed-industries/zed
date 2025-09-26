@@ -1,20 +1,25 @@
 use hashbrown::HashTable;
 use regex::Regex;
 use std::{
+    collections::VecDeque,
+    fmt::Debug,
     hash::{Hash, Hasher as _},
     sync::LazyLock,
 };
+use util::debug_panic;
 
 use crate::reference::Reference;
 
-// TODO: Consider implementing sliding window similarity matching like
-// https://github.com/sourcegraph/cody-public-snapshot/blob/8e20ac6c1460c08b0db581c0204658112a246eda/vscode/src/completions/context/retrievers/jaccard-similarity/bestJaccardMatch.ts
+// Variants to consider:
 //
-// That implementation could actually be more efficient - no need to track words in the window that
-// are not in the query.
-
-// TODO: Consider a flat sorted Vec<(String, usize)> representation. Intersection can just walk the
-// two in parallel.
+// * Score matches that match case higher?
+//
+// * Also include unsplit identifier?
+//
+// * N-grams
+//
+// * Flat sorted Vec<(String, usize)> representation - more compact / efficient to iterate.
+// Intersection can just walk two in parallel.
 
 static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
 
@@ -33,41 +38,81 @@ struct OccurrenceEntry {
 
 impl Occurrences {
     pub fn within_string(text: &str) -> Self {
-        Self::from_identifiers(IDENTIFIER_REGEX.find_iter(text).map(|mat| mat.as_str()))
+        Self::from_hashes(hashes_of_lowercase_identifier_parts(text))
     }
 
     #[allow(dead_code)]
     pub fn within_references(references: &[Reference]) -> Self {
-        Self::from_identifiers(
+        Self::from_hashes(
             references
                 .iter()
-                .map(|reference| reference.identifier.name.as_ref()),
+                .flat_map(|reference| split_identifier(reference.identifier.name.as_ref()))
+                .map(|part| fx_hash(&part.to_ascii_lowercase())),
         )
     }
 
     pub fn from_identifiers<'a>(identifiers: impl IntoIterator<Item = &'a str>) -> Self {
         let mut this = Self::default();
-        // TODO: Score matches that match case higher?
-        //
-        // TODO: Also include unsplit identifier?
         for identifier in identifiers {
             for identifier_part in split_identifier(identifier) {
-                this.add_hash(fx_hash(&identifier_part.to_lowercase()));
+                this.add_hash(fx_hash(&identifier_part.to_ascii_lowercase()));
             }
         }
         this
     }
 
-    fn add_hash(&mut self, hash: u64) {
-        self.table
+    pub fn from_hashes(hashes: impl IntoIterator<Item = u64>) -> Self {
+        let mut this = Self::default();
+        for hash in hashes {
+            this.add_hash(hash);
+        }
+        this
+    }
+
+    fn add_hash(&mut self, hash: u64) -> usize {
+        let new_count = self
+            .table
             .entry(
                 hash,
                 |entry: &OccurrenceEntry| entry.hash == hash,
                 |entry| entry.hash,
             )
             .and_modify(|entry| entry.count += 1)
-            .or_insert(OccurrenceEntry { hash, count: 1 });
+            .or_insert(OccurrenceEntry { hash, count: 1 })
+            .get()
+            .count;
         self.total_count += 1;
+        new_count
+    }
+
+    fn remove_hash(&mut self, hash: u64) -> usize {
+        let entry = self.table.entry(
+            hash,
+            |entry: &OccurrenceEntry| entry.hash == hash,
+            |entry| entry.hash,
+        );
+        match entry {
+            hashbrown::hash_table::Entry::Occupied(mut entry) => {
+                let new_count = entry.get().count.checked_sub(1);
+                if let Some(new_count) = new_count {
+                    if new_count == 0 {
+                        entry.remove();
+                    } else {
+                        entry.get_mut().count = new_count;
+                    }
+                    debug_assert!(self.total_count != 0);
+                    self.total_count = self.total_count.saturating_sub(1);
+                    new_count
+                } else {
+                    debug_panic!("Hash removed from occurrences more times than it was added.");
+                    0
+                }
+            }
+            hashbrown::hash_table::Entry::Vacant(_) => {
+                debug_panic!("Hash removed from occurrences more times than it was added.");
+                0
+            }
+        }
     }
 
     fn contains_hash(&self, hash: u64) -> bool {
@@ -82,7 +127,14 @@ impl Occurrences {
     }
 }
 
-pub fn fx_hash<T: Hash + ?Sized>(data: &T) -> u64 {
+pub fn hashes_of_lowercase_identifier_parts(text: &str) -> impl Iterator<Item = u64> {
+    IDENTIFIER_REGEX
+        .find_iter(text)
+        .flat_map(|mat| split_identifier(mat.as_str()))
+        .map(|part| fx_hash(&part.to_ascii_lowercase()))
+}
+
+fn fx_hash<T: Hash + ?Sized>(data: &T) -> u64 {
     let mut hasher = collections::FxHasher::default();
     data.hash(&mut hasher);
     hasher.finish()
@@ -222,6 +274,127 @@ pub fn weighted_overlap_coefficient<'a>(
         0.0
     } else {
         numerator as f32 / denominator as f32
+    }
+}
+
+pub struct SlidingWindow<Target, Id> {
+    target: Target,
+    intersection: Occurrences,
+    regions: VecDeque<WeightedOverlapRegion<Id>>,
+    numerator: usize,
+    window_count: usize,
+    jaccard_denominator_part: usize,
+}
+
+pub struct WeightedOverlapRegion<Id> {
+    id: Id,
+    added_hashes: Vec<u64>,
+    numerator_delta: usize,
+    window_count_delta: usize,
+    jaccard_denominator_delta: usize,
+}
+
+impl AsRef<Occurrences> for Occurrences {
+    fn as_ref(&self) -> &Occurrences {
+        self
+    }
+}
+
+impl<Id: Debug + PartialEq, Target: AsRef<Occurrences>> SlidingWindow<Target, Id> {
+    pub fn new(target: Target, capacity: usize) -> Self {
+        let jaccard_denominator_part = target.as_ref().total_count;
+        Self {
+            target,
+            intersection: Occurrences::default(),
+            regions: VecDeque::with_capacity(capacity),
+            numerator: 0,
+            window_count: 0,
+            jaccard_denominator_part,
+        }
+    }
+
+    pub fn add(&mut self, id: Id, hashes: impl IntoIterator<Item = u64>) {
+        let mut added_hashes = Vec::new();
+        let mut numerator_delta = 0;
+        let mut jaccard_denominator_delta = 0;
+        let mut window_count_delta = 0;
+        for hash in hashes {
+            window_count_delta += 1;
+            let target_count = self.target.as_ref().get_count(hash);
+            if target_count > 0 {
+                added_hashes.push(hash);
+                let window_count = self.intersection.add_hash(hash);
+                if window_count <= target_count {
+                    numerator_delta += 1;
+                } else {
+                    jaccard_denominator_delta += 1;
+                }
+            }
+        }
+        self.numerator += numerator_delta;
+        self.window_count += window_count_delta;
+        self.jaccard_denominator_part += jaccard_denominator_delta;
+        self.regions.push_back(WeightedOverlapRegion {
+            id,
+            added_hashes,
+            numerator_delta,
+            window_count_delta,
+            jaccard_denominator_delta,
+        });
+    }
+
+    pub fn remove(&mut self, id: Id) {
+        let removed;
+        #[cfg(debug_assertions)]
+        {
+            removed = self
+                .regions
+                .pop_front()
+                .expect("No sliding window region to remove");
+            debug_assert_eq!(removed.id, id);
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            removed = self.regions.pop_front();
+            let Some(removed) = removed else {
+                return;
+            };
+        }
+
+        for hash in removed.added_hashes {
+            self.intersection.remove_hash(hash);
+        }
+
+        if let Some(numerator) = self.numerator.checked_sub(removed.numerator_delta)
+            && let Some(window_count) = self.window_count.checked_sub(removed.window_count_delta)
+            && let Some(jaccard_denominator_part) = self
+                .jaccard_denominator_part
+                .checked_sub(removed.jaccard_denominator_delta)
+        {
+            self.numerator = numerator;
+            self.window_count = window_count;
+            self.jaccard_denominator_part = jaccard_denominator_part;
+        } else {
+            debug_panic!("bug: underflow in sliding window text similarity");
+        }
+    }
+
+    pub fn weighted_overlap_coefficient(&self) -> f32 {
+        let denominator = self.target.as_ref().total_count.min(self.window_count);
+        self.numerator as f32 / denominator as f32
+    }
+
+    pub fn weighted_jaccard_similarity(&self) -> f32 {
+        let mut denominator = self.jaccard_denominator_part;
+        if let Some(other_denominator_part) =
+            self.window_count.checked_sub(self.intersection.total_count)
+        {
+            denominator += other_denominator_part;
+        } else {
+            debug_panic!("bug: underflow in sliding window text similarity");
+        }
+        self.numerator as f32 / denominator as f32
     }
 }
 

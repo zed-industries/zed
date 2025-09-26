@@ -3,6 +3,7 @@ mod declaration_scoring;
 mod excerpt;
 mod outline;
 mod reference;
+mod similar_snippets;
 mod syntax_index;
 mod text_similarity;
 
@@ -14,7 +15,9 @@ pub use declaration::*;
 pub use declaration_scoring::*;
 pub use excerpt::*;
 pub use reference::*;
+pub use similar_snippets::*;
 pub use syntax_index::*;
+pub use text_similarity::*;
 
 #[derive(Clone, Debug)]
 pub struct EditPredictionContext {
@@ -22,6 +25,7 @@ pub struct EditPredictionContext {
     pub excerpt_text: EditPredictionExcerptText,
     pub cursor_offset_in_excerpt: usize,
     pub declarations: Vec<ScoredDeclaration>,
+    pub similar_snippets: Vec<SimilarSnippet>,
 }
 
 impl EditPredictionContext {
@@ -58,11 +62,11 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
+        let excerpt_occurrences = Occurrences::within_string(&excerpt_text.body);
 
         let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
         let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = text_similarity::Occurrences::within_string(
+        let adjacent_occurrences = Occurrences::within_string(
             &buffer
                 .text_for_range(adjacent_start..adjacent_end)
                 .collect::<String>(),
@@ -88,11 +92,20 @@ impl EditPredictionContext {
             vec![]
         };
 
+        let similar_snippets = similar_snippets(
+            &excerpt_occurrences,
+            Some(excerpt.range.clone()),
+            buffer,
+            todo!(),
+            todo!(),
+        );
+
         Some(Self {
             excerpt,
             excerpt_text,
             cursor_offset_in_excerpt,
             declarations,
+            similar_snippets,
         })
     }
 }
