@@ -187,7 +187,7 @@ impl FileContextHandle {
             log::error!("file context missing path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx).to_string_lossy().to_string();
+        let full_path = file.full_path(cx).to_string_lossy().into_owned();
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
 
@@ -283,7 +283,7 @@ impl DirectoryContextHandle {
         let descendants_future = future::join_all(file_paths.into_iter().map(|path| {
             let worktree_ref = worktree.read(cx);
             let worktree_id = worktree_ref.id();
-            let full_path = worktree_ref.full_path(&path).to_string_lossy().to_string();
+            let full_path = worktree_ref.full_path(&path).to_string_lossy().into_owned();
 
             let rel_path = path
                 .strip_prefix(&directory_path)
@@ -403,7 +403,7 @@ impl SymbolContextHandle {
             log::error!("symbol context's file has no path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx).to_string_lossy().to_string();
+        let full_path = file.full_path(cx).to_string_lossy().into_owned();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
         let text = self.text(cx);
         let buffer = self.buffer.clone();
@@ -476,7 +476,7 @@ impl SelectionContextHandle {
         let text = self.text(cx);
         let buffer = self.buffer.clone();
         let context = AgentContext::Selection(SelectionContext {
-            full_path: full_path.to_string_lossy().to_string(),
+            full_path: full_path.to_string_lossy().into_owned(),
             line_range: self.line_range(cx),
             text,
             handle: self,

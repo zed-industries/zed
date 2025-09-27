@@ -604,7 +604,7 @@ fn highlights_for_path(
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path.file_name().map(|file_name| {
-        let file_name_text = file_name.to_string_lossy().to_string();
+        let file_name_text = file_name.to_string_lossy().into_owned();
         let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
             .iter()

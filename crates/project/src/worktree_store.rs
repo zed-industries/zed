@@ -536,8 +536,8 @@ impl WorktreeStore {
             let root_path_buf = PathBuf::from(response.canonicalized_path.clone());
             let root_name = root_path_buf
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(root_path_buf.to_string_lossy().to_string());
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(root_path_buf.to_string_lossy().into_owned());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -860,7 +860,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().to_string(),
+                    abs_path: worktree.abs_path().to_string_lossy().into_owned(),
                 }
             })
             .collect()

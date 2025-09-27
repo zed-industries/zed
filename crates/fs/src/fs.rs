@@ -2642,8 +2642,8 @@ fn atomic_replace<P: AsRef<Path>>(
 
     unsafe {
         ReplaceFileW(
-            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().into_owned()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().into_owned()),
             None,
             REPLACE_FILE_FLAGS::default(),
             None,

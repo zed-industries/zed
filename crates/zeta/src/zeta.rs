@@ -443,7 +443,7 @@ impl Zeta {
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
-        let full_path_str = full_path.to_string_lossy().to_string();
+        let full_path_str = full_path.to_string_lossy().into_owned();
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let prompt_for_events = {

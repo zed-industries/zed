@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 

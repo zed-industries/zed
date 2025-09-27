@@ -139,7 +139,7 @@ pub fn selections_creases(
         let language_name = language_name.as_deref().unwrap_or("");
         let filename = snapshot
             .file_at(range.start)
-            .map(|file| file.full_path(cx).to_string_lossy().to_string());
+            .map(|file| file.full_path(cx).to_string_lossy().into_owned());
         let text = if language_name == "markdown" {
             selected_text
                 .lines()

@@ -106,7 +106,7 @@ impl DeclarativeExample {
     }
 
     pub fn name_from_path(path: &Path) -> String {
-        path.file_stem().unwrap().to_string_lossy().to_string()
+        path.file_stem().unwrap().to_string_lossy().into_owned()
     }
 }
 
