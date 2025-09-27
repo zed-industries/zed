@@ -194,7 +194,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             let file_language = project
                 .read(cx)
                 .languages()
-                .language_for_file_path(file.path.as_std_path());
+                .load_language_for_file_path(file.path.as_std_path());
             let file_language = cx
                 .background_executor()
                 .block(file_language)

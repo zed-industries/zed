@@ -84,6 +84,7 @@ impl SyntaxIndex {
         let (dirty_files_tx, mut dirty_files_rx) = mpsc::channel::<()>(1);
         let (mut initial_file_indexing_done_tx, initial_file_indexing_done_rx) =
             postage::watch::channel();
+
         let initial_state = SyntaxIndexState {
             declarations: SlotMap::default(),
             identifiers: HashMap::default(),
@@ -297,6 +298,9 @@ impl SyntaxIndex {
 
     fn update_buffer(&self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) {
         let buffer = buffer_entity.read(cx);
+        if buffer.language().is_none() {
+            return;
+        }
 
         let Some(project_entry_id) =
             project::File::from_dyn(buffer.file()).and_then(|f| f.project_entry_id(cx))
@@ -395,23 +399,28 @@ impl SyntaxIndex {
             return Task::ready(());
         };
         let project = project.read(cx);
+
+        let Some(language) = project
+            .languages()
+            .language_for_file_path(project_path.path.as_std_path())
+        else {
+            return Task::ready(());
+        };
+
         let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
             return Task::ready(());
         };
-        let language_registry = project.languages().clone();
 
+        let language_registry = project.languages().clone();
         let snapshot_task = worktree.update(cx, |worktree, cx| {
             let load_task = worktree.load_file(&project_path.path, cx);
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
-                let language = language_registry
-                    .language_for_file_path(&project_path.path.as_std_path())
-                    .await
-                    .ok();
+                let language = language_registry.load_language(&language).await??;
 
                 let buffer = cx.new(|cx| {
                     let mut buffer = Buffer::local(loaded_file.text, cx);
-                    buffer.set_language(language, cx);
+                    buffer.set_language(Some(language), cx);
                     buffer
                 })?;
 

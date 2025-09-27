@@ -12831,7 +12831,7 @@ async fn populate_labels_for_symbols(
             continue;
         };
         let language = language_registry
-            .language_for_file_path(Path::new(file_name))
+            .load_language_for_file_path(Path::new(file_name))
             .await
             .ok()
             .or_else(|| {
