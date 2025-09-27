@@ -109,6 +109,15 @@ impl Keystroke {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        if self.modifiers.function {
+            // On macOS, the Function key modifier is reserved for system applications and
+            // should not be used to form user keybindings.
+            let mut modifiers = self.modifiers;
+            modifiers.function = false;
+            return target.inner.modifiers == modifiers && target.inner.key == self.key;
+        }
+
         target.inner.modifiers == self.modifiers && target.inner.key == self.key
     }
 
@@ -568,6 +577,14 @@ impl Modifiers {
     pub fn shift() -> Modifiers {
         Modifiers {
             shift: true,
+            ..Default::default()
+        }
+    }
+
+    /// Returns [`Modifiers`] with just function.
+    pub fn function() -> Modifiers {
+        Modifiers {
+            function: true,
             ..Default::default()
         }
     }
