@@ -69,6 +69,10 @@ pub struct Jupyter {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusBar {
+    /// Whether to show the status bar.
+    ///
+    /// Default: true
+    pub show: bool,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
@@ -209,6 +213,7 @@ impl Settings for EditorSettings {
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
             status_bar: StatusBar {
+                show: status_bar.show.unwrap_or(true),
                 active_language_button: status_bar.active_language_button.unwrap(),
                 cursor_position_button: status_bar.cursor_position_button.unwrap(),
             },
