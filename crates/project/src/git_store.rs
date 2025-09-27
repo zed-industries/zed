@@ -1420,7 +1420,7 @@ impl GitStore {
                     client
                         .request(proto::GitInit {
                             project_id: project_id,
-                            abs_path: path.to_string_lossy().to_string(),
+                            abs_path: path.to_string_lossy().into_owned(),
                             fallback_branch_name,
                         })
                         .await?;
@@ -1455,7 +1455,7 @@ impl GitStore {
                 }
                 let request = upstream_client.request(proto::GitClone {
                     project_id: *upstream_project_id,
-                    abs_path: path.to_string_lossy().to_string(),
+                    abs_path: path.to_string_lossy().into_owned(),
                     remote_repo: repo,
                 });
 
@@ -2802,7 +2802,7 @@ impl RepositorySnapshot {
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
             entry_ids: vec![self.id.to_proto()],
             scan_id: self.scan_id,
             is_last_update: true,
@@ -2871,7 +2871,7 @@ impl RepositorySnapshot {
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
             entry_ids: vec![],
             scan_id: self.scan_id,
             is_last_update: true,

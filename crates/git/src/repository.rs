@@ -1869,7 +1869,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
     if !excluded_paths.is_empty() {
         let exclude_patterns = excluded_paths
             .into_iter()
-            .map(|path| path.to_string_lossy().to_string())
+            .map(|path| path.to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("\n");
         excludes.add_excludes(&exclude_patterns).await?;

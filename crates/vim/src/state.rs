@@ -1610,7 +1610,7 @@ impl PickerDelegate for MarksViewDelegate {
 
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
-                let s = path.to_string_lossy().to_string();
+                let s = path.to_string_lossy().into_owned();
                 (
                     s.clone(),
                     vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],

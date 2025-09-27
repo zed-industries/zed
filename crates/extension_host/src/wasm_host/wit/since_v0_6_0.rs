@@ -724,7 +724,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .binary_path()
             .await
-            .map(|path| path.to_string_lossy().to_string())
+            .map(|path| path.to_string_lossy().into_owned())
             .to_wasmtime_result()
     }
 

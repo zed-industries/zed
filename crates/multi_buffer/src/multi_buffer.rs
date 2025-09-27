@@ -178,7 +178,7 @@ impl PathKey {
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().to_string().into())
+            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
         } else {
             Self::namespaced(0, buffer.entity_id().to_string().into())
         }
