@@ -12,9 +12,10 @@ use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
-use gpui::AsyncApp;
+use gpui::{App, AsyncApp};
 use parking_lot::RwLock;
 pub use settings::ContextServerCommand;
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -50,6 +51,12 @@ impl ContextServer {
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
         }
+    }
+
+    pub fn from_url(id: ContextServerId, endpoint: &Url, cx: &App) -> Result<Self> {
+        let http_client = cx.http_client();
+        let transport = transport::build_transport(http_client, endpoint)?;
+        Ok(Self::new(id, transport))
     }
 
     pub fn new(id: ContextServerId, transport: Arc<dyn crate::transport::Transport>) -> Self {
