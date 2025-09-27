@@ -51,7 +51,9 @@ extend-exclude = [
     # typos-cli doesn't understand our `vˇariable` markup
     "crates/editor/src/hover_links.rs",
     # typos-cli doesn't understand `setis` is intentional test case
-    "crates/editor/src/code_completion_tests.rs"
+    "crates/editor/src/code_completion_tests.rs",
+    # Linux repository structure is not a valid text, hence we should not check it for typos
+    "crates/project_panel/benches/linux_repo_snapshot.txt",
 ]
 
 [default]
