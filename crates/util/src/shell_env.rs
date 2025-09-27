@@ -108,7 +108,7 @@ pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     // Use PowerShell to get environment variables in the directory context
-    let mut command = std::process::Command::new("powershell.exe");
+    let mut command = std::process::Command::new(crate::get_windows_system_shell());
     command
         .arg("-NonInteractive")
         .arg("-NoProfile")
