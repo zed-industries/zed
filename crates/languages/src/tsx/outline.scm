@@ -47,6 +47,13 @@
         (variable_declarator
             name: (_) @name) @item))
 
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (_) @name
+            value: (arrow_function)) @item))
+
 (class_declaration
     "class" @context
     name: (_) @name) @item
@@ -81,6 +88,10 @@
         (accessibility_modifier)
     ]* @context
     name: (_) @name) @item
+
+(pair
+    key: (_) @name
+    value: (arrow_function)) @item
 
 ; Add support for (node:test, bun:test and Jest) runnable
 (
