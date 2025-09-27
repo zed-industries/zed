@@ -675,8 +675,8 @@ async fn parse_commit_messages(
             .as_ref()
             .map(|(provider, remote)| GitRemote {
                 host: provider.clone(),
-                owner: remote.owner.to_string(),
-                repo: remote.repo.to_string(),
+                owner: remote.owner.clone().into(),
+                repo: remote.repo.clone().into(),
             });
 
         let pull_request = parsed_remote_url

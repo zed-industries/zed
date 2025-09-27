@@ -241,7 +241,7 @@ impl Render for CommitTooltip {
             has_parent: false,
         };
 
-        tooltip_container(window, cx, move |this, _, cx| {
+        tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

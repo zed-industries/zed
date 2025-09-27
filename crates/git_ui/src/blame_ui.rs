@@ -17,7 +17,7 @@ use settings::Settings as _;
 use theme::ThemeSettings;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
-use ui::{ContextMenu, Divider, IconButtonShape, prelude::*};
+use ui::{ContextMenu, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
@@ -197,10 +197,9 @@ impl BlameRenderer for GitBlameRenderer {
             .render(window, cx);
 
         let short_commit_id = sha
-            .get(0..8)
+            .get(..8)
             .map(|sha| sha.to_string().into())
             .unwrap_or_else(|| sha.clone());
-        let full_sha = sha.to_string();
         let absolute_timestamp = format_local_timestamp(
             commit_time,
             OffsetDateTime::now_utc(),
@@ -226,148 +225,131 @@ impl BlameRenderer for GitBlameRenderer {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let commit_summary = CommitSummary {
-            sha: sha,
-            subject: details.as_ref().map_or(Default::default(), |details| {
-                details
-                    .message
-                    .split('\n')
-                    .next()
-                    .unwrap()
-                    .trim_end()
-                    .to_string()
-                    .into()
-            }),
+            sha: sha.clone(),
+            subject: details
+                .as_ref()
+                .and_then(|details| {
+                    Some(
+                        details
+                            .message
+                            .split('\n')
+                            .next()?
+                            .trim_end()
+                            .to_string()
+                            .into(),
+                    )
+                })
+                .unwrap_or_default(),
             commit_timestamp: commit_time.unix_timestamp(),
             author_name: author.clone(),
             has_parent: false,
         };
 
-        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
-
-        // padding to avoid tooltip appearing right below the mouse cursor
-        // TODO: use tooltip_container here
         Some(
-            div()
-                .pl_2()
-                .pt_2p5()
-                .child(
-                    v_flex()
-                        .elevation_2(cx)
-                        .font(ui_font)
-                        .text_ui(cx)
-                        .text_color(cx.theme().colors().text)
-                        .py_1()
-                        .px_2()
-                        .map(|el| {
-                            el.occlude()
-                                .on_mouse_move(|_, _, cx| cx.stop_propagation())
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .child(
-                                    v_flex()
-                                        .w(gpui::rems(30.))
-                                        .gap_4()
-                                        .child(
-                                            h_flex()
-                                                .pb_1p5()
-                                                .gap_x_2()
-                                                .overflow_x_hidden()
-                                                .flex_wrap()
-                                                .children(avatar)
-                                                .child(author)
-                                                .when(!author_email.is_empty(), |this| {
-                                                    this.child(
-                                                        div()
-                                                            .text_color(
-                                                                cx.theme().colors().text_muted,
-                                                            )
-                                                            .child(author_email.to_owned()),
-                                                    )
-                                                })
-                                                .border_b_1()
-                                                .border_color(cx.theme().colors().border_variant),
-                                        )
-                                        .child(
+            tooltip_container(cx, |d, cx| {
+                d.occlude()
+                    .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        v_flex()
+                            .w(gpui::rems(30.))
+                            .gap_4()
+                            .child(
+                                h_flex()
+                                    .pb_1p5()
+                                    .gap_x_2()
+                                    .overflow_x_hidden()
+                                    .flex_wrap()
+                                    .children(avatar)
+                                    .child(author)
+                                    .when(!author_email.is_empty(), |this| {
+                                        this.child(
                                             div()
-                                                .id("inline-blame-commit-message")
-                                                .child(message)
-                                                .max_h(message_max_height)
-                                                .overflow_y_scroll()
-                                                .track_scroll(&scroll_handle),
-                                        )
-                                        .child(
-                                            h_flex()
                                                 .text_color(cx.theme().colors().text_muted)
-                                                .w_full()
-                                                .justify_between()
-                                                .pt_1p5()
-                                                .border_t_1()
-                                                .border_color(cx.theme().colors().border_variant)
-                                                .child(absolute_timestamp)
-                                                .child(
-                                                    h_flex()
-                                                        .gap_1p5()
-                                                        .when_some(pull_request, |this, pr| {
-                                                            this.child(
-                                                                Button::new(
-                                                                    "pull-request-button",
-                                                                    format!("#{}", pr.number),
-                                                                )
-                                                                .color(Color::Muted)
-                                                                .icon(IconName::PullRequest)
-                                                                .icon_color(Color::Muted)
-                                                                .icon_position(IconPosition::Start)
-                                                                .style(ButtonStyle::Subtle)
-                                                                .on_click(move |_, _, cx| {
-                                                                    cx.stop_propagation();
-                                                                    cx.open_url(pr.url.as_str())
-                                                                }),
-                                                            )
-                                                        })
-                                                        .child(Divider::vertical())
-                                                        .child(
-                                                            Button::new(
-                                                                "commit-sha-button",
-                                                                short_commit_id.clone(),
-                                                            )
-                                                            .style(ButtonStyle::Subtle)
-                                                            .color(Color::Muted)
-                                                            .icon(IconName::FileGit)
-                                                            .icon_color(Color::Muted)
-                                                            .icon_position(IconPosition::Start)
-                                                            .on_click(move |_, window, cx| {
-                                                                CommitView::open(
-                                                                    commit_summary.clone(),
-                                                                    repository.downgrade(),
-                                                                    workspace.clone(),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                                cx.stop_propagation();
-                                                            }),
+                                                .child(author_email.to_owned()),
+                                        )
+                                    })
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant),
+                            )
+                            .child(
+                                div()
+                                    .id("inline-blame-commit-message")
+                                    .child(message)
+                                    .max_h(message_max_height)
+                                    .overflow_y_scroll()
+                                    .track_scroll(&scroll_handle),
+                            )
+                            .child(
+                                h_flex()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .w_full()
+                                    .justify_between()
+                                    .pt_1p5()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(absolute_timestamp)
+                                    .child(
+                                        h_flex()
+                                            .gap_1p5()
+                                            .when_some(pull_request, |this, pr| {
+                                                this.child(
+                                                    Button::new(
+                                                        "pull-request-button",
+                                                        format!("#{}", pr.number),
+                                                    )
+                                                    .color(Color::Muted)
+                                                    .icon(IconName::PullRequest)
+                                                    .icon_color(Color::Muted)
+                                                    .icon_position(IconPosition::Start)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.stop_propagation();
+                                                        cx.open_url(pr.url.as_str())
+                                                    }),
+                                                )
+                                            })
+                                            .child(Divider::vertical())
+                                            .child(
+                                                Button::new(
+                                                    "commit-sha-button",
+                                                    short_commit_id.clone(),
+                                                )
+                                                .style(ButtonStyle::Subtle)
+                                                .color(Color::Muted)
+                                                .icon(IconName::FileGit)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
+                                                .on_click(move |_, window, cx| {
+                                                    CommitView::open(
+                                                        commit_summary.clone(),
+                                                        repository.downgrade(),
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    cx.stop_propagation();
+                                                }),
+                                            )
+                                            .child(
+                                                IconButton::new("copy-sha-button", IconName::Copy)
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.stop_propagation();
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                sha.to_string(),
+                                                            ),
                                                         )
-                                                        .child(
-                                                            IconButton::new(
-                                                                "copy-sha-button",
-                                                                IconName::Copy,
-                                                            )
-                                                            .shape(IconButtonShape::Square)
-                                                            .icon_size(IconSize::Small)
-                                                            .icon_color(Color::Muted)
-                                                            .on_click(move |_, _, cx| {
-                                                                cx.stop_propagation();
-                                                                cx.write_to_clipboard(
-                                                                    ClipboardItem::new_string(
-                                                                        full_sha.clone(),
-                                                                    ),
-                                                                )
-                                                            }),
-                                                        ),
-                                                ),
-                                        ),
-                                )
-                        }),
-                )
-                .into_any_element(),
+                                                    }),
+                                            ),
+                                    ),
+                            ),
+                    )
+            })
+            .into_any_element(),
         )
     }
 

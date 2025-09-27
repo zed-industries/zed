@@ -825,8 +825,8 @@ impl InteractiveMarkdownElementTooltip {
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),
                 ..Default::default()
