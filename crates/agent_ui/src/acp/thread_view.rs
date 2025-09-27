@@ -36,11 +36,13 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use task::{Shell, ShellKind};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
@@ -1581,12 +1583,26 @@ impl AcpThreadView {
         let project = workspace.read(cx).project().clone();
         let cwd = project.read(cx).first_project_directory(cx);
         let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
+        let shell_program = match &shell {
+            Shell::System => util::get_system_shell(),
+            Shell::Program(program) => program.clone(),
+            Shell::WithArguments { program, .. } => program.clone(),
+        };
+        let shell_kind = ShellKind::new(&shell_program);
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
+
             task.command = task
                 .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
+                .map(|command| {
+                    let mut quoted_command = shlex::try_quote(&command)?;
+                    if quoted_command.starts_with('"')
+                    && let Some(command_prefix) = shell_kind.command_prefix() {
+                        quoted_command = Cow::Owned(format!("{}{}", command_prefix, quoted_command));
+                    }
+                    anyhow::Ok(quoted_command.to_string())
+                })
                 .transpose()?;
             task.args = task
                 .args
