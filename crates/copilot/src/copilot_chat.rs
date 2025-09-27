@@ -376,6 +376,53 @@ fn tool_chunk_from_value(
     Some(chunk)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_chunk_from_function_call_prefers_top_level_arguments() {
+        let chunk = tool_chunk_from_function_call(
+            0,
+            "item".to_string(),
+            Some("call".to_string()),
+            Some("read_file".to_string()),
+            serde_json::json!({}),
+            Some("{\"path\":\"/Users/example/project/file.rs\"}".to_string()),
+            None,
+            None,
+        )
+        .expect("expected chunk");
+
+        let function = chunk.function.expect("expected function payload");
+        assert_eq!(
+            function.arguments.as_deref(),
+            Some("{\"path\":\"/Users/example/project/file.rs\"}")
+        );
+    }
+
+    #[test]
+    fn tool_chunk_from_function_call_preserves_arguments_delta() {
+        let chunk = tool_chunk_from_function_call(
+            1,
+            "item".to_string(),
+            Some("call".to_string()),
+            Some("read_file".to_string()),
+            serde_json::json!({}),
+            None,
+            Some("{\"path\":\"src/lib.rs\"}".to_string()),
+            None,
+        )
+        .expect("expected chunk");
+
+        let function = chunk.function.expect("expected function payload");
+        assert_eq!(
+            function.arguments.as_deref(),
+            Some("{\"path\":\"src/lib.rs\"}")
+        );
+    }
+}
+
 fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInputItem> {
     let mut input_items = Vec::new();
 
@@ -1063,7 +1110,7 @@ impl ResponsesApiStreamEvent {
                     index,
                     finish_reason: None,
                     delta: Some(ResponseDelta {
-                        content: self.text,
+                        content: None,
                         role: Some(Role::Assistant),
                         tool_calls: vec![],
                     }),
@@ -1252,19 +1299,25 @@ impl ResponsesApiStreamEvent {
                                 _ => Role::Assistant,
                             };
 
+                            let message_delta = if text_content.is_empty() {
+                                None
+                            } else {
+                                Some(ResponseDelta {
+                                    content: Some(text_content),
+                                    role: Some(role),
+                                    tool_calls: vec![],
+                                })
+                            };
+
                             Some(ResponseChoice {
                                 index: choice_index,
                                 finish_reason: Some("stop".to_string()),
                                 delta: Some(ResponseDelta {
-                                    content: if text_content.is_empty() {
-                                        None
-                                    } else {
-                                        Some(text_content)
-                                    },
+                                    content: None,
                                     role: Some(role),
                                     tool_calls: vec![],
                                 }),
-                                message: None,
+                                message: message_delta,
                             })
                         }
                         ResponsesApiOutput::FunctionCall {
@@ -1972,21 +2025,27 @@ async fn stream_completion_inner(
                                                                 _ => Role::Assistant,
                                                             };
 
-                                                            Some(ResponseChoice {
-                                                                index,
-                                                                finish_reason: Some("stop".to_string()),
-                                                                delta: Some(ResponseDelta {
-                                                                    content: if text_content.is_empty() {
-                                                                        None
-                                                                    } else {
-                                                                        Some(text_content)
-                                                                    },
-                                                                    role: Some(role),
-                                                                    tool_calls: vec![],
-                                                                }),
-                                                                message: None,
+                                                        let message_delta = if text_content.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(ResponseDelta {
+                                                                content: Some(text_content),
+                                                                role: Some(role),
+                                                                tool_calls: vec![],
                                                             })
-                                                        }
+                                                        };
+
+                                                        Some(ResponseChoice {
+                                                            index,
+                                                            finish_reason: Some("stop".to_string()),
+                                                            delta: Some(ResponseDelta {
+                                                                content: None,
+                                                                role: Some(role),
+                                                                tool_calls: vec![],
+                                                            }),
+                                                            message: message_delta,
+                                                        })
+                                                    }
                                                         ResponsesApiOutput::FunctionCall {
                                                             id,
                                                             call_id,
@@ -2124,19 +2183,25 @@ async fn stream_completion_inner(
                                         _ => Role::Assistant,
                                     };
 
+                                    let message_delta = if text_content.is_empty() {
+                                        None
+                                    } else {
+                                        Some(ResponseDelta {
+                                            content: Some(text_content),
+                                            role: Some(role),
+                                            tool_calls: vec![],
+                                        })
+                                    };
+
                                     Some(ResponseChoice {
                                         index,
                                         finish_reason: Some("stop".to_string()),
-                                        delta: None,
-                                        message: Some(ResponseDelta {
-                                            content: if text_content.is_empty() {
-                                                None
-                                            } else {
-                                                Some(text_content)
-                                            },
+                                        delta: Some(ResponseDelta {
+                                            content: None,
                                             role: Some(role),
                                             tool_calls: vec![],
                                         }),
+                                        message: message_delta,
                                     })
                                 }
                                 ResponsesApiOutput::FunctionCall {
