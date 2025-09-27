@@ -28,6 +28,18 @@ pub async fn parse_markdown(
     }
 }
 
+fn cleanup_html(source: &str) -> Vec<u8> {
+    let mut w = std::io::Cursor::new(vec![]);
+    let mut r = std::io::Cursor::new(source);
+    let mut minify = crate::markdown_minifier::Minifier::new(&mut w);
+    minify.omit_doctype(true);
+    if let Ok(()) = minify.minify(&mut r) {
+        w.into_inner()
+    } else {
+        source.bytes().collect()
+    }
+}
+
 struct MarkdownParser<'a> {
     tokens: Vec<(Event<'a>, Range<usize>)>,
     /// The current index in the tokens array
@@ -764,6 +776,10 @@ impl<'a> MarkdownParser<'a> {
             return elements;
         };
 
+        let mut html_source_range_start = None;
+        let mut html_source_range_end = None;
+        let mut html_buffer = String::new();
+
         while !self.eof() {
             let Some((current, source_range)) = self.current() else {
                 break;
@@ -771,19 +787,10 @@ impl<'a> MarkdownParser<'a> {
             let source_range = source_range.clone();
             match current {
                 Event::Html(html) => {
-                    let mut cursor = std::io::Cursor::new(html.as_bytes());
-                    let Some(dom) = parse_document(RcDom::default(), ParseOpts::default())
-                        .from_utf8()
-                        .read_from(&mut cursor)
-                        .ok()
-                    else {
-                        self.cursor += 1;
-                        continue;
-                    };
-
+                    html_source_range_start.get_or_insert(source_range.start);
+                    html_source_range_end = Some(source_range.end);
+                    html_buffer.push_str(html);
                     self.cursor += 1;
-
-                    self.parse_html_node(source_range, &dom.document, &mut elements);
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
@@ -793,6 +800,17 @@ impl<'a> MarkdownParser<'a> {
                     break;
                 }
             }
+        }
+
+        let bytes = cleanup_html(&html_buffer);
+
+        let mut cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut cursor)
+            && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
+        {
+            self.parse_html_node(start..end, &dom.document, &mut elements);
         }
 
         elements
@@ -826,11 +844,121 @@ impl<'a> MarkdownParser<'a> {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
+                } else if matches!(
+                    name.local,
+                    local_name!("h1")
+                        | local_name!("h2")
+                        | local_name!("h3")
+                        | local_name!("h4")
+                        | local_name!("h5")
+                        | local_name!("h6")
+                ) {
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                            source_range,
+                            level: match name.local {
+                                local_name!("h1") => HeadingLevel::H1,
+                                local_name!("h2") => HeadingLevel::H2,
+                                local_name!("h3") => HeadingLevel::H3,
+                                local_name!("h4") => HeadingLevel::H4,
+                                local_name!("h5") => HeadingLevel::H5,
+                                local_name!("h6") => HeadingLevel::H6,
+                                _ => unreachable!(),
+                            },
+                            contents: paragraph,
+                        }));
+                    }
+                } else if local_name!("table") == name.local {
+                    let mut header_columns = Vec::new();
+                    let mut body_rows = Vec::new();
+
+                    // node should be a thead or tbody element
+                    for node in node.children.borrow().iter() {
+                        match &node.data {
+                            markup5ever_rcdom::NodeData::Element { name, .. } => {
+                                if local_name!("thead") == name.local {
+                                    // node should be a tr element
+                                    for node in node.children.borrow().iter() {
+                                        let mut paragraph = MarkdownParagraph::new();
+                                        self.consume_paragraph(
+                                            source_range.clone(),
+                                            node,
+                                            &mut paragraph,
+                                        );
+
+                                        for paragraph in paragraph.into_iter() {
+                                            header_columns.push(vec![paragraph]);
+                                        }
+                                    }
+                                } else if local_name!("tbody") == name.local {
+                                    // node should be a tr element
+                                    for node in node.children.borrow().iter() {
+                                        let mut row = MarkdownParagraph::new();
+                                        self.consume_paragraph(
+                                            source_range.clone(),
+                                            node,
+                                            &mut row,
+                                        );
+                                        body_rows.push(ParsedMarkdownTableRow::with_children(
+                                            row.into_iter().map(|column| vec![column]).collect(),
+                                        ));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !header_columns.is_empty() || !body_rows.is_empty() {
+                        elements.push(ParsedMarkdownElement::Table(ParsedMarkdownTable {
+                            source_range,
+                            header: ParsedMarkdownTableRow::with_children(header_columns),
+                            body: body_rows,
+                            column_alignments: Vec::default(),
+                        }));
+                    }
                 } else {
                     self.consume_children(source_range, node, elements);
                 }
             }
             markup5ever_rcdom::NodeData::ProcessingInstruction { .. } => {}
+        }
+    }
+
+    fn parse_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range,
+                    regions: Vec::default(),
+                    contents: contents.borrow().to_string(),
+                    region_ranges: Vec::default(),
+                    highlights: Vec::default(),
+                }));
+            }
+            markup5ever_rcdom::NodeData::Element { .. } => {
+                self.consume_paragraph(source_range, node, paragraph);
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_paragraph(source_range.clone(), node, paragraph);
         }
     }
 
@@ -1266,6 +1394,124 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..366,
+                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    vec![
+                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
+                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_heading_tags() {
+        let parsed = parse("<h1>Heading</h1><h2>Heading</h2><h3>Heading</h3><h4>Heading</h4><h5>Heading</h5><h6>Heading</h6>").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H1,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H2,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H3,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H4,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H5,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H6,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                ],
+            },
+            parsed
         );
     }
 
