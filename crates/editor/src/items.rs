@@ -578,12 +578,11 @@ fn deserialize_selection(
 
 fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
-    Some(Anchor {
+    Some(Anchor::in_buffer(
         excerpt_id,
-        text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
-        buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
-        diff_base_anchor: None,
-    })
+        buffer.buffer_id_for_excerpt(excerpt_id)?,
+        language::proto::deserialize_anchor(anchor.anchor?)?,
+    ))
 }
 
 impl Item for Editor {
@@ -1752,13 +1751,8 @@ impl SearchableItem for Editor {
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    Anchor {
-                                        diff_base_anchor: Some(start),
-                                        ..deleted_hunk_anchor
-                                    }..Anchor {
-                                        diff_base_anchor: Some(end),
-                                        ..deleted_hunk_anchor
-                                    }
+                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                        ..deleted_hunk_anchor.with_diff_base_anchor(end)
                                 } else {
                                     let start = search_buffer
                                         .anchor_after(search_range.start + match_range.start);

@@ -297,14 +297,10 @@ pub fn update_inlay_link_and_hover_points(
     let mut hover_updated = false;
     if let Some(hovered_offset) = hovered_offset {
         let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-        let previous_valid_anchor = buffer_snapshot.anchor_at(
-            point_for_position.previous_valid.to_point(snapshot),
-            Bias::Left,
-        );
-        let next_valid_anchor = buffer_snapshot.anchor_at(
-            point_for_position.next_valid.to_point(snapshot),
-            Bias::Right,
-        );
+        let previous_valid_anchor =
+            buffer_snapshot.anchor_before(point_for_position.previous_valid.to_point(snapshot));
+        let next_valid_anchor =
+            buffer_snapshot.anchor_after(point_for_position.next_valid.to_point(snapshot));
         if let Some(hovered_hint) = editor
             .visible_inlay_hints(cx)
             .into_iter()
@@ -1396,7 +1392,7 @@ mod tests {
             let buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
             let expected_highlight = InlayHighlight {
                 inlay: InlayId::Hint(0),
-                inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                 range: 0..hint_label.len(),
             };
             assert_set_eq!(actual_highlights, vec![&expected_highlight]);

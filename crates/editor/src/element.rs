@@ -1311,10 +1311,10 @@ impl EditorElement {
 
         let range = snapshot
             .buffer_snapshot
-            .anchor_at(start.to_point(&snapshot.display_snapshot), Bias::Left)
+            .anchor_before(start.to_point(&snapshot.display_snapshot))
             ..snapshot
                 .buffer_snapshot
-                .anchor_at(end.to_point(&snapshot.display_snapshot), Bias::Right);
+                .anchor_after(end.to_point(&snapshot.display_snapshot));
 
         let Some(selection) = snapshot.remote_selections_in_range(&range, hub, cx).next() else {
             return;
