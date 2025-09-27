@@ -832,6 +832,7 @@ impl HumanRelPath {
                 Some(index)
             })
             .collect();
+
         Self {
             path,
             has_stem: is_file,
@@ -873,14 +874,14 @@ struct HumanRelPathComponents<'a> {
 
 impl HumanRelPathComponents<'_> {
     fn at_end(&self) -> bool {
-        self.index == self.rel_path.runs.len()
+        self.index == self.rel_path.runs.len() + 1
     }
 }
 impl<'a> From<&'a HumanRelPath> for HumanRelPathComponents<'a> {
     fn from(rel_path: &'a HumanRelPath) -> Self {
         Self {
             rel_path,
-            index: 0,
+            index: 1,
             cursor_position: 0,
         }
     }
@@ -891,13 +892,18 @@ impl<'a> Iterator for HumanRelPathComponents<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let start_index = self.cursor_position;
-        let end_index = start_index + *self.rel_path.runs.get(self.index)?;
+        let end_index = self
+            .rel_path
+            .runs
+            .get(self.index)
+            .copied()
+            .unwrap_or_else(|| self.rel_path.path.as_unix_str().len());
         let ret = self
             .rel_path
             .path
             .as_unix_str()
             .get(start_index..end_index)?;
-        self.cursor_position = end_index + 1;
+        self.cursor_position = end_index;
         self.index += 1;
         Some(ret)
     }
@@ -1095,6 +1101,13 @@ mod tests {
 
     fn mk_rel_path(path: &str) -> Arc<RelPath> {
         RelPath::unix(path).unwrap().into_arc()
+    }
+
+    #[test]
+    fn compare_paths_edge_case() {
+        let lhs = HumanRelPath::new(mk_rel_path("test_dirs/1.45/foo_1"), true);
+        let rhs = HumanRelPath::new(mk_rel_path("test_dirs/1.46/"), false);
+        assert_eq!(lhs.cmp(&rhs), Ordering::Less);
     }
     #[perf]
     fn compare_paths_with_dots() {
