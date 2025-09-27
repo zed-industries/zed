@@ -99,6 +99,47 @@ async fn spawn_and_read_fd(
     Ok((buffer, process.output().await?))
 }
 
+/// Capture all environment variables from the shell on Windows.
+#[cfg(windows)]
+pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+    use std::process::Stdio;
+
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+
+    // Use PowerShell to get environment variables in the directory context
+    let mut command = std::process::Command::new("powershell.exe");
+    command
+        .arg("-NonInteractive")
+        .arg("-NoProfile")
+        .arg("-Command")
+        .arg(format!(
+            "Set-Location '{}'; & '{}' --printenv",
+            directory.display(),
+            zed_path.display()
+        ))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = smol::process::Command::from(command).output().await?;
+
+    anyhow::ensure!(
+        output.status.success(),
+        "PowerShell command failed with {}. stdout: {:?}, stderr: {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    let env_output = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the JSON output from zed --printenv
+    let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
+        .with_context(|| "Failed to deserialize environment variables from json")?;
+    Ok(env_map)
+}
+
 pub fn print_env() {
     let env_vars: HashMap<String, String> = std::env::vars().collect();
     let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
