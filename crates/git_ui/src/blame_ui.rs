@@ -1,5 +1,5 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
@@ -39,6 +39,7 @@ impl BlameRenderer for GitBlameRenderer {
         editor: Entity<Editor>,
         ix: usize,
         sha_color: Hsla,
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -46,6 +47,11 @@ impl BlameRenderer for GitBlameRenderer {
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
+        let avatar = CommitAvatar::new(
+            &blame_entry.sha.to_string().into(),
+            details.as_ref().and_then(|it| it.remote.as_ref()),
+        )
+        .render(window, cx);
         Some(
             div()
                 .mr_2()
@@ -63,6 +69,7 @@ impl BlameRenderer for GitBlameRenderer {
                                 .items_center()
                                 .gap_2()
                                 .child(div().text_color(sha_color).child(short_commit_id))
+                                .children(avatar)
                                 .child(name),
                         )
                         .child(relative_timestamp)
@@ -179,31 +186,23 @@ impl BlameRenderer for GitBlameRenderer {
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
 
-        let commit_details = CommitDetails {
-            sha: blame.sha.to_string().into(),
-            commit_time,
-            author_name: blame
-                .author
-                .clone()
-                .unwrap_or("<no name>".to_string())
-                .into(),
-            author_email: blame.author_mail.unwrap_or("".to_string()).into(),
-            message: details,
-        };
+        let sha = blame.sha.to_string().into();
+        let author: SharedString = blame
+            .author
+            .clone()
+            .unwrap_or("<no name>".to_string())
+            .into();
+        let author_email = blame.author_mail.as_deref().unwrap_or_default();
+        let avatar = CommitAvatar::new(&sha, details.as_ref().and_then(|it| it.remote.as_ref()))
+            .render(window, cx);
 
-        let avatar = CommitAvatar::new(&commit_details).render(window, cx);
-
-        let author = commit_details.author_name.clone();
-        let author_email = commit_details.author_email.clone();
-
-        let short_commit_id = commit_details
-            .sha
+        let short_commit_id = sha
             .get(0..8)
             .map(|sha| sha.to_string().into())
-            .unwrap_or_else(|| commit_details.sha.clone());
-        let full_sha = commit_details.sha.to_string();
+            .unwrap_or_else(|| sha.clone());
+        let full_sha = sha.to_string();
         let absolute_timestamp = format_local_timestamp(
-            commit_details.commit_time,
+            commit_time,
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
@@ -215,36 +214,31 @@ impl BlameRenderer for GitBlameRenderer {
             style
         };
 
-        let message = commit_details
-            .message
+        let message = details
             .as_ref()
             .map(|_| MarkdownElement::new(markdown.clone(), markdown_style).into_any())
             .unwrap_or("<no commit message>".into_any());
 
-        let pull_request = commit_details
-            .message
+        let pull_request = details
             .as_ref()
             .and_then(|details| details.pull_request.clone());
 
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
         let commit_summary = CommitSummary {
-            sha: commit_details.sha.clone(),
-            subject: commit_details
-                .message
-                .as_ref()
-                .map_or(Default::default(), |message| {
-                    message
-                        .message
-                        .split('\n')
-                        .next()
-                        .unwrap()
-                        .trim_end()
-                        .to_string()
-                        .into()
-                }),
-            commit_timestamp: commit_details.commit_time.unix_timestamp(),
-            author_name: commit_details.author_name.clone(),
+            sha: sha,
+            subject: details.as_ref().map_or(Default::default(), |details| {
+                details
+                    .message
+                    .split('\n')
+                    .next()
+                    .unwrap()
+                    .trim_end()
+                    .to_string()
+                    .into()
+            }),
+            commit_timestamp: commit_time.unix_timestamp(),
+            author_name: author.clone(),
             has_parent: false,
         };
 
@@ -286,7 +280,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                             .text_color(
                                                                 cx.theme().colors().text_muted,
                                                             )
-                                                            .child(author_email),
+                                                            .child(author_email.to_owned()),
                                                     )
                                                 })
                                                 .border_b_1()

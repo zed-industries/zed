@@ -95,6 +95,7 @@ pub trait BlameRenderer {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        window: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -142,6 +143,7 @@ impl BlameRenderer for () {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None

@@ -2636,6 +2636,7 @@ impl EditorElement {
                     workspace.clone(),
                     buffer_id,
                     blame_renderer.clone(),
+                    window,
                     cx,
                 )?;
 
@@ -7518,6 +7519,7 @@ fn render_blame_entry(
     workspace: Entity<Workspace>,
     buffer: BufferId,
     renderer: Arc<dyn BlameRenderer>,
+    window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
     let mut sha_color = cx
@@ -7548,6 +7550,7 @@ fn render_blame_entry(
         editor,
         ix,
         sha_color.cursor,
+        window,
         cx,
     )
 }
