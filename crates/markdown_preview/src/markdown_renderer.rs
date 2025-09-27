@@ -492,6 +492,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         &parsed.column_alignments,
         &max_column_widths,
         true,
+        false,
         cx,
     );
 
@@ -504,6 +505,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 &parsed.column_alignments,
                 &max_column_widths,
                 false,
+                !parsed.header.children.is_empty(),
                 cx,
             )
         })
@@ -521,6 +523,7 @@ fn render_markdown_table_row(
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
     is_header: bool,
+    remove_top_border: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = Vec::with_capacity(parsed.children.len());
@@ -551,11 +554,15 @@ fn render_markdown_table_row(
         if is_header {
             cell = cell.border_2()
         } else {
-            cell = cell.border_1().border_t_0()
+            cell = cell.border_1()
         }
 
         if parsed.children.len().saturating_sub(1) > index {
             cell = cell.border_r_0();
+        }
+
+        if remove_top_border {
+            cell = cell.border_t_0()
         }
 
         items.push(cell);
