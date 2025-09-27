@@ -13,3 +13,6 @@
     (token_tree) @injection.content
     (#set! injection.language "rstml")
     )
+
+; Ignores doc-comments.
+([(block_comment !doc) (line_comment !doc)] @injection.content (#set! injection.language "comment"))

@@ -38,7 +38,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES, Rope,
+    QUERY_FILENAME_PREFIXES, Rope, UpdateInjections,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -1843,5 +1843,19 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
             }
         }
     }
+    LanguageExtension::update_injections_with_path(root_path, &mut result);
     result
 }
+
+// Helper to enable updating injections queries based on user configuration.
+struct LanguageExtension;
+
+impl LanguageExtension {
+    fn update_injections_with_path(path: &Path, queries: &mut LanguageQueries) {
+        if let Some(language) = path.file_name().and_then(std::ffi::OsStr::to_str) {
+            Self::update_injections(&paths::injections_dir(), language, queries)
+        }
+    }
+}
+
+impl UpdateInjections for LanguageExtension {}

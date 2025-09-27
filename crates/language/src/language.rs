@@ -9,6 +9,7 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
+mod injections;
 mod language_registry;
 pub mod language_settings;
 mod manifest;
@@ -73,6 +74,7 @@ use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::rel_path::RelPath;
 use util::serde::default_true;
 
+pub use self::injections::UpdateInjections;
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
