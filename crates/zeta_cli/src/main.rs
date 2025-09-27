@@ -244,12 +244,19 @@ async fn get_context(
     };
 
     if let Some(zeta2_args) = zeta2_args {
-        Ok(GetContextOutput::Zeta2(
-            cx.update(|cx| {
+        // wait for worktree scan before starting zeta2 so that wait_for_initial_indexing waits for
+        // the whole worktree.
+        worktree
+            .read_with(cx, |worktree, _cx| {
+                worktree.as_local().unwrap().scan_complete()
+            })?
+            .await;
+        let output = cx
+            .update(|cx| {
                 let zeta = cx.new(|cx| {
                     zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
                 });
-                zeta.update(cx, |zeta, cx| {
+                let indexing_done_task = zeta.update(cx, |zeta, cx| {
                     zeta.register_buffer(&buffer, &project, cx);
                     zeta.set_options(zeta2::ZetaOptions {
                         excerpt: EditPredictionExcerptOptions {
@@ -261,12 +268,11 @@ async fn get_context(
                         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
                         max_prompt_bytes: zeta2_args.max_prompt_bytes,
                         prompt_format: zeta2_args.prompt_format.into(),
-                    })
+                    });
+                    zeta.wait_for_initial_indexing(&project, cx)
                 });
-                // TODO: Actually wait for indexing.
-                let timer = cx.background_executor().timer(Duration::from_secs(5));
                 cx.spawn(async move |cx| {
-                    timer.await;
+                    indexing_done_task.await?;
                     let request = zeta
                         .update(cx, |zeta, cx| {
                             let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
@@ -288,8 +294,8 @@ async fn get_context(
                     }
                 })
             })?
-            .await?,
-        ))
+            .await?;
+        Ok(GetContextOutput::Zeta2(output))
     } else {
         let prompt_for_events = move || (events, 0);
         Ok(GetContextOutput::Zeta1(
@@ -414,7 +420,7 @@ pub fn wait_for_lang_server(
     ];
 
     cx.spawn(async move |cx| {
-        let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
+        let timeout = cx.background_executor().timer(Duration::from_secs(60 * 5));
         let result = futures::select! {
             _ = rx.next() => {
                 println!("{}⚑ Language server idle", log_prefix);
@@ -430,13 +436,14 @@ pub fn wait_for_lang_server(
 }
 
 fn main() {
+    zlog::init();
+    zlog::init_output_stderr();
     let args = ZetaCliArgs::parse();
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client);
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
-        let is_zeta2_context_command = matches!(args.command, Commands::Zeta2Context { .. });
         cx.spawn(async move |cx| {
             let result = match args.command {
                 Commands::Zeta2Context {
@@ -498,10 +505,6 @@ fn main() {
             match result {
                 Ok(output) => {
                     println!("{}", output);
-                    // TODO: Remove this once the 5 second delay is properly replaced.
-                    if is_zeta2_context_command {
-                        eprintln!("Note that zeta_cli doesn't yet wait for indexing, instead waits 5 seconds.");
-                    }
                     let _ = cx.update(|cx| cx.quit());
                 }
                 Err(e) => {

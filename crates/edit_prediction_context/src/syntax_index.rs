@@ -1,13 +1,17 @@
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
+use futures::StreamExt;
+use futures::channel::mpsc;
 use futures::lock::Mutex;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use language::{Buffer, BufferEvent};
+use postage::stream::Stream as _;
 use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
 use std::iter;
-use std::ops::Range;
+use std::ops::{DerefMut, Range};
 use std::sync::Arc;
 use text::BufferId;
 use util::{RangeExt as _, debug_panic, some_or_debug_panic};
@@ -17,42 +21,56 @@ use crate::declaration::{
 };
 use crate::outline::declarations_in_buffer;
 
+// TODO
+//
+// * Also queue / debounce buffer changes. A challenge for this is that use of
+// `buffer_declarations_containing_range` assumes that the index is always immediately up to date.
+
 // Potential future improvements:
+//
+// * Prevent indexing of a large file from blocking the queue.
 //
 // * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
 // references are present and their scores.
 
 // Potential future optimizations:
 //
+// * Index files on multiple threads. Currently it's intentionally single threaded (with most of the
+// work on the background executor) to reduce the risk of causing visible delays. Adding some kind
+// of priority system to the background executor could help.
+//
 // * Cache of buffers for files
 //
-// * Parse files directly instead of loading into a Rope. Make SyntaxMap generic to handle embedded
-// languages? Will also need to find line boundaries, but that can be done by scanning characters in
-// the flat representation.
+// * Parse files directly instead of loading into a Rope.
+//
+//   - This would allow the task handling dirty_files to be done entirely on the background executor.
+//
+//   - Make SyntaxMap generic to handle embedded languages? Will also need to find line boundaries,
+//   but that can be done by scanning characters in the flat representation.
 //
 // * Use something similar to slotmap without key versions.
 //
 // * Concurrent slotmap
-//
-// * Use queue for parsing
 
 pub struct SyntaxIndex {
     state: Arc<Mutex<SyntaxIndexState>>,
     project: WeakEntity<Project>,
+    initial_file_indexing_done_rx: postage::watch::Receiver<bool>,
 }
 
-#[derive(Default)]
 pub struct SyntaxIndexState {
     declarations: SlotMap<DeclarationId, Declaration>,
     identifiers: HashMap<Identifier, HashSet<DeclarationId>>,
     files: HashMap<ProjectEntryId, FileState>,
     buffers: HashMap<BufferId, BufferState>,
+    dirty_files: HashMap<ProjectEntryId, ProjectPath>,
+    dirty_files_tx: mpsc::Sender<()>,
+    _file_indexing_task: Option<Task<()>>,
 }
 
 #[derive(Debug, Default)]
 struct FileState {
     declarations: Vec<DeclarationId>,
-    task: Option<Task<()>>,
 }
 
 #[derive(Default)]
@@ -63,32 +81,75 @@ struct BufferState {
 
 impl SyntaxIndex {
     pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
-        let mut this = Self {
+        let (dirty_files_tx, mut dirty_files_rx) = mpsc::channel::<()>(1);
+        let (mut initial_file_indexing_done_tx, initial_file_indexing_done_rx) =
+            postage::watch::channel();
+        let initial_state = SyntaxIndexState {
+            declarations: SlotMap::default(),
+            identifiers: HashMap::default(),
+            files: HashMap::default(),
+            buffers: HashMap::default(),
+            dirty_files: HashMap::default(),
+            dirty_files_tx,
+            _file_indexing_task: None,
+        };
+        let this = Self {
             project: project.downgrade(),
-            state: Arc::new(Mutex::new(SyntaxIndexState::default())),
+            state: Arc::new(Mutex::new(initial_state)),
+            initial_file_indexing_done_rx,
         };
 
         let worktree_store = project.read(cx).worktree_store();
-        cx.subscribe(&worktree_store, Self::handle_worktree_store_event)
-            .detach();
-
-        for worktree in worktree_store
+        let initial_worktree_snapshots = worktree_store
             .read(cx)
             .worktrees()
             .map(|w| w.read(cx).snapshot())
-            .collect::<Vec<_>>()
-        {
-            for entry in worktree.files(false, 0) {
-                this.update_file(
-                    entry.id,
-                    ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: entry.path.clone(),
-                    },
-                    cx,
-                );
-            }
-        }
+            .collect::<Vec<_>>();
+        this.state.try_lock().unwrap()._file_indexing_task =
+            Some(cx.spawn(async move |this, cx| {
+                for worktree in initial_worktree_snapshots {
+                    for entry in worktree.files(false, 0) {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: entry.path.clone(),
+                        };
+                        let Ok(task) = this
+                            .update(cx, |this, cx| this.update_file(entry.id, project_path, cx))
+                        else {
+                            return;
+                        };
+                        task.await;
+                    }
+                }
+                log::info!("Finished initial file indexing");
+                *initial_file_indexing_done_tx.borrow_mut() = true;
+
+                let Ok(state) = this.read_with(cx, |this, _cx| this.state.clone()) else {
+                    return;
+                };
+                while dirty_files_rx.next().await.is_some() {
+                    let mut state = state.lock().await;
+                    let was_underused = state.dirty_files.capacity() > 255
+                        && state.dirty_files.len() * 8 < state.dirty_files.capacity();
+                    let dirty_files = state.dirty_files.drain().collect::<Vec<_>>();
+                    if was_underused {
+                        state.dirty_files.shrink_to_fit();
+                    }
+                    drop(state);
+
+                    for (entry_id, project_path) in dirty_files {
+                        let Ok(task) = this
+                            .update(cx, |this, cx| this.update_file(entry_id, project_path, cx))
+                        else {
+                            return;
+                        };
+                        task.await;
+                    }
+                }
+            }));
+
+        cx.subscribe(&worktree_store, Self::handle_worktree_store_event)
+            .detach();
 
         let buffer_store = project.read(cx).buffer_store().clone();
         for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
@@ -98,6 +159,27 @@ impl SyntaxIndex {
             .detach();
 
         this
+    }
+
+    pub fn wait_for_initial_file_indexing(&self, cx: &App) -> Task<Result<()>> {
+        if *self.initial_file_indexing_done_rx.borrow() {
+            Task::ready(Ok(()))
+        } else {
+            let mut rx = self.initial_file_indexing_done_rx.clone();
+            cx.background_spawn(async move {
+                loop {
+                    match rx.recv().await {
+                        Some(true) => return Ok(()),
+                        Some(false) => {}
+                        None => {
+                            return Err(anyhow!(
+                                "SyntaxIndex dropped while waiting for initial file indexing"
+                            ));
+                        }
+                    }
+                }
+            })
+        }
     }
 
     fn handle_worktree_store_event(
@@ -112,21 +194,26 @@ impl SyntaxIndex {
                 let state = Arc::downgrade(&self.state);
                 let worktree_id = *worktree_id;
                 let updated_entries_set = updated_entries_set.clone();
-                cx.spawn(async move |this, cx| {
+                cx.background_spawn(async move {
                     let Some(state) = state.upgrade() else { return };
+                    let mut state = state.lock().await;
                     for (path, entry_id, path_change) in updated_entries_set.iter() {
                         if let PathChange::Removed = path_change {
-                            state.lock().await.files.remove(entry_id);
+                            state.files.remove(entry_id);
+                            state.dirty_files.remove(entry_id);
                         } else {
                             let project_path = ProjectPath {
                                 worktree_id,
                                 path: path.clone(),
                             };
-                            this.update(cx, |this, cx| {
-                                this.update_file(*entry_id, project_path, cx);
-                            })
-                            .ok();
+                            state.dirty_files.insert(*entry_id, project_path);
                         }
+                    }
+                    match state.dirty_files_tx.try_send(()) {
+                        Err(err) if err.is_disconnected() => {
+                            log::error!("bug: syntax indexing queue is disconnected");
+                        }
+                        _ => {}
                     }
                 })
                 .detach();
@@ -177,7 +264,7 @@ impl SyntaxIndex {
         .detach();
     }
 
-    fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+    fn register_buffer(&self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
         let buffer_id = buffer.read(cx).remote_id();
         cx.observe_release(buffer, move |this, _buffer, cx| {
             this.with_state(cx, move |state| {
@@ -208,7 +295,7 @@ impl SyntaxIndex {
         }
     }
 
-    fn update_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) {
+    fn update_buffer(&self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) {
         let buffer = buffer_entity.read(cx);
 
         let Some(project_entry_id) =
@@ -229,70 +316,64 @@ impl SyntaxIndex {
             }
         });
 
-        let parse_task = cx.background_spawn(async move {
-            let snapshot = snapshot_task.await?;
-            let rope = snapshot.text.as_rope().clone();
+        let state = Arc::downgrade(&self.state);
+        let task = cx.background_spawn(async move {
+            // TODO: How to handle errors?
+            let Ok(snapshot) = snapshot_task.await else {
+                return;
+            };
+            let rope = snapshot.text.as_rope();
 
-            anyhow::Ok((
-                declarations_in_buffer(&snapshot)
-                    .into_iter()
-                    .map(|item| {
-                        (
-                            item.parent_index,
-                            BufferDeclaration::from_outline(item, &rope),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                rope,
-            ))
-        });
-
-        let task = cx.spawn({
-            async move |this, cx| {
-                let Ok((declarations, rope)) = parse_task.await else {
-                    return;
-                };
-
-                this.update(cx, move |this, cx| {
-                    this.with_state(cx, move |state| {
-                        let buffer_state = state
-                            .buffers
-                            .entry(buffer_id)
-                            .or_insert_with(Default::default);
-
-                        SyntaxIndexState::remove_buffer_declarations(
-                            &buffer_state.declarations,
-                            &mut state.declarations,
-                            &mut state.identifiers,
-                        );
-
-                        let mut new_ids = Vec::with_capacity(declarations.len());
-                        state.declarations.reserve(declarations.len());
-                        for (parent_index, mut declaration) in declarations {
-                            declaration.parent = parent_index
-                                .and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
-
-                            let identifier = declaration.identifier.clone();
-                            let declaration_id = state.declarations.insert(Declaration::Buffer {
-                                rope: rope.clone(),
-                                buffer_id,
-                                declaration,
-                                project_entry_id,
-                            });
-                            new_ids.push(declaration_id);
-
-                            state
-                                .identifiers
-                                .entry(identifier)
-                                .or_default()
-                                .insert(declaration_id);
-                        }
-
-                        buffer_state.declarations = new_ids;
-                    });
+            let declarations = declarations_in_buffer(&snapshot)
+                .into_iter()
+                .map(|item| {
+                    (
+                        item.parent_index,
+                        BufferDeclaration::from_outline(item, &rope),
+                    )
                 })
-                .ok();
+                .collect::<Vec<_>>();
+
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let mut state = state.lock().await;
+            let state = state.deref_mut();
+
+            let buffer_state = state
+                .buffers
+                .entry(buffer_id)
+                .or_insert_with(Default::default);
+
+            SyntaxIndexState::remove_buffer_declarations(
+                &buffer_state.declarations,
+                &mut state.declarations,
+                &mut state.identifiers,
+            );
+
+            let mut new_ids = Vec::with_capacity(declarations.len());
+            state.declarations.reserve(declarations.len());
+            for (parent_index, mut declaration) in declarations {
+                declaration.parent =
+                    parent_index.and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
+
+                let identifier = declaration.identifier.clone();
+                let declaration_id = state.declarations.insert(Declaration::Buffer {
+                    rope: rope.clone(),
+                    buffer_id,
+                    declaration,
+                    project_entry_id,
+                });
+                new_ids.push(declaration_id);
+
+                state
+                    .identifiers
+                    .entry(identifier)
+                    .or_default()
+                    .insert(declaration_id);
             }
+
+            buffer_state.declarations = new_ids;
         });
 
         self.with_state(cx, move |state| {
@@ -309,13 +390,13 @@ impl SyntaxIndex {
         entry_id: ProjectEntryId,
         project_path: ProjectPath,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<()> {
         let Some(project) = self.project.upgrade() else {
-            return;
+            return Task::ready(());
         };
         let project = project.read(cx);
         let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
-            return;
+            return Task::ready(());
         };
         let language_registry = project.languages().clone();
 
@@ -343,75 +424,58 @@ impl SyntaxIndex {
             })
         });
 
-        let parse_task = cx.background_spawn(async move {
-            let snapshot = snapshot_task.await?;
+        let state = Arc::downgrade(&self.state);
+        cx.background_spawn(async move {
+            // TODO: How to handle errors?
+            let Ok(snapshot) = snapshot_task.await else {
+                return;
+            };
             let rope = snapshot.as_rope();
             let declarations = declarations_in_buffer(&snapshot)
                 .into_iter()
                 .map(|item| (item.parent_index, FileDeclaration::from_outline(item, rope)))
                 .collect::<Vec<_>>();
-            anyhow::Ok(declarations)
-        });
 
-        let task = cx.spawn({
-            async move |this, cx| {
-                // TODO: how to handle errors?
-                let Ok(declarations) = parse_task.await else {
-                    return;
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let mut state = state.lock().await;
+            let state = state.deref_mut();
+
+            let file_state = state.files.entry(entry_id).or_insert_with(Default::default);
+            for old_declaration_id in &file_state.declarations {
+                let Some(declaration) = state.declarations.remove(*old_declaration_id) else {
+                    debug_panic!("declaration not found");
+                    continue;
                 };
-                this.update(cx, |this, cx| {
-                    this.with_state(cx, move |state| {
-                        let file_state =
-                            state.files.entry(entry_id).or_insert_with(Default::default);
-
-                        for old_declaration_id in &file_state.declarations {
-                            let Some(declaration) = state.declarations.remove(*old_declaration_id)
-                            else {
-                                debug_panic!("declaration not found");
-                                continue;
-                            };
-                            if let Some(identifier_declarations) =
-                                state.identifiers.get_mut(declaration.identifier())
-                            {
-                                identifier_declarations.remove(old_declaration_id);
-                            }
-                        }
-
-                        let mut new_ids = Vec::with_capacity(declarations.len());
-                        state.declarations.reserve(declarations.len());
-
-                        for (parent_index, mut declaration) in declarations {
-                            declaration.parent = parent_index
-                                .and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
-
-                            let identifier = declaration.identifier.clone();
-                            let declaration_id = state.declarations.insert(Declaration::File {
-                                project_entry_id: entry_id,
-                                declaration,
-                            });
-                            new_ids.push(declaration_id);
-
-                            state
-                                .identifiers
-                                .entry(identifier)
-                                .or_default()
-                                .insert(declaration_id);
-                        }
-
-                        file_state.declarations = new_ids;
-                    });
-                })
-                .ok();
+                if let Some(identifier_declarations) =
+                    state.identifiers.get_mut(declaration.identifier())
+                {
+                    identifier_declarations.remove(old_declaration_id);
+                }
             }
-        });
 
-        self.with_state(cx, move |state| {
-            state
-                .files
-                .entry(entry_id)
-                .or_insert_with(Default::default)
-                .task = Some(task);
-        });
+            let mut new_ids = Vec::with_capacity(declarations.len());
+            state.declarations.reserve(declarations.len());
+            for (parent_index, mut declaration) in declarations {
+                declaration.parent =
+                    parent_index.and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
+
+                let identifier = declaration.identifier.clone();
+                let declaration_id = state.declarations.insert(Declaration::File {
+                    project_entry_id: entry_id,
+                    declaration,
+                });
+                new_ids.push(declaration_id);
+
+                state
+                    .identifiers
+                    .entry(identifier)
+                    .or_default()
+                    .insert(declaration_id);
+            }
+            file_state.declarations = new_ids;
+        })
     }
 }
 

@@ -5178,6 +5178,7 @@ dependencies = [
  "language",
  "log",
  "ordered-float 2.10.1",
+ "postage",
  "pretty_assertions",
  "project",
  "regex",
@@ -20744,6 +20745,7 @@ dependencies = [
  "workspace-hack",
  "zeta",
  "zeta2",
+ "zlog",
 ]
 
 [[package]]

@@ -705,6 +705,18 @@ impl Zeta {
             })
         })
     }
+
+    pub fn wait_for_initial_indexing(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let zeta_project = self.get_or_init_zeta_project(project, cx);
+        zeta_project
+            .syntax_index
+            .read(cx)
+            .wait_for_initial_file_indexing(cx)
+    }
 }
 
 #[derive(Error, Debug)]

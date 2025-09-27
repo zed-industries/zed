@@ -47,3 +47,4 @@ watch.workspace = true
 workspace-hack.workspace = true
 zeta.workspace = true
 zeta2.workspace = true
+zlog.workspace = true
