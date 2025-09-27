@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::mem;
+use std::num::NonZeroU32;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -797,6 +798,189 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+
+/// Wrapper around `RelPath` for sorting purposes.
+#[derive(PartialEq, Eq)]
+pub struct HumanRelPath {
+    has_stem: bool,
+    file_extension: Option<NonZeroU32>,
+    runs: Box<[usize]>,
+    path: Arc<RelPath>,
+}
+
+impl HumanRelPath {
+    pub fn new(path: Arc<RelPath>, is_file: bool) -> Self {
+        let file_extension = if is_file && let Some(component) = path.components().next_back() {
+            stem_and_extension(component).1.and_then(|ext| {
+                NonZeroU32::new(
+                    path.as_unix_str()
+                        .len()
+                        .checked_sub(ext.len())?
+                        .try_into()
+                        .ok()?,
+                )
+            })
+        } else {
+            None
+        };
+        let runs = path
+            .components()
+            .scan(0usize, |state, component| {
+                let index = *state;
+                // Account for slashes
+                *state += component.len() + 1;
+                Some(index)
+            })
+            .collect();
+        Self {
+            path,
+            has_stem: is_file,
+            file_extension,
+            runs,
+        }
+    }
+    fn is_file(&self) -> bool {
+        self.has_stem || self.file_extension.is_some()
+    }
+    fn iter(&self) -> HumanRelPathComponents<'_> {
+        HumanRelPathComponents::from(self)
+    }
+    fn stem_and_extension(&self) -> Option<(&str, Option<&str>)> {
+        if !self.has_stem {
+            return None;
+        }
+        let last_component_start = *self.runs.last()?;
+        let (stem, extension) = if let Some(extension_index) = self.file_extension {
+            let stem =
+                &self.path.as_unix_str()[last_component_start..extension_index.get() as usize];
+            (
+                stem,
+                Some(&self.path.as_unix_str()[extension_index.get() as usize..]),
+            )
+        } else {
+            (&self.path.as_unix_str()[last_component_start..], None)
+        };
+
+        Some((stem, extension))
+    }
+}
+
+struct HumanRelPathComponents<'a> {
+    rel_path: &'a HumanRelPath,
+    index: usize,
+    cursor_position: usize,
+}
+
+impl HumanRelPathComponents<'_> {
+    fn at_end(&self) -> bool {
+        self.index == self.rel_path.runs.len()
+    }
+}
+impl<'a> From<&'a HumanRelPath> for HumanRelPathComponents<'a> {
+    fn from(rel_path: &'a HumanRelPath) -> Self {
+        Self {
+            rel_path,
+            index: 0,
+            cursor_position: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for HumanRelPathComponents<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let start_index = self.cursor_position;
+        let end_index = start_index + *self.rel_path.runs.get(self.index)?;
+        let ret = self
+            .rel_path
+            .path
+            .as_unix_str()
+            .get(start_index..end_index)?;
+        self.cursor_position = end_index + 1;
+        self.index += 1;
+        Some(ret)
+    }
+}
+
+impl PartialOrd for HumanRelPath {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HumanRelPath {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let mut components_a = self.iter();
+        let mut components_b = other.iter();
+        let a_is_file = self.is_file();
+        let b_is_file = other.is_file();
+        loop {
+            match (components_a.next(), components_b.next()) {
+                (Some(component_a), Some(component_b)) => {
+                    let a_is_file = a_is_file && components_a.at_end();
+                    let b_is_file = b_is_file && components_b.at_end();
+
+                    let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                        let (a_stem, a_extension) = a_is_file
+                            .then(|| self.stem_and_extension())
+                            .flatten()
+                            .unwrap_or_default();
+                        let path_string_a = if a_is_file { a_stem } else { component_a };
+
+                        let (b_stem, b_extension) = b_is_file
+                            .then(|| other.stem_and_extension())
+                            .flatten()
+                            .unwrap_or_default();
+                        let path_string_b = if b_is_file { b_stem } else { component_b };
+
+                        let compare_components = natural_sort(path_string_a, path_string_b);
+
+                        compare_components.then_with(|| {
+                            if a_is_file && b_is_file {
+                                let ext_a = a_extension.unwrap_or_default();
+                                let ext_b = b_extension.unwrap_or_default();
+                                ext_a.cmp(ext_b)
+                            } else {
+                                Ordering::Equal
+                            }
+                        })
+                    });
+
+                    if !ordering.is_eq() {
+                        return ordering;
+                    }
+                }
+                (Some(_), None) => break Ordering::Greater,
+                (None, Some(_)) => break Ordering::Less,
+                (None, None) => break Ordering::Equal,
+            }
+        }
+    }
+}
+fn stem_and_extension(filename: &str) -> (&str, Option<&str>) {
+    if filename.is_empty() {
+        return ("", None);
+    }
+
+    match filename.rsplit_once('.') {
+        // Case 1: No dot was found. The entire name is the stem.
+        None => (filename, None),
+
+        // Case 2: A dot was found.
+        Some((before, after)) => {
+            // This is the crucial check for dotfiles like ".bashrc".
+            // If `before` is empty, the dot was the first character.
+            // In that case, we revert to the "whole name is the stem" logic.
+            if before.is_empty() {
+                (filename, None)
+            } else {
+                // Otherwise, we have a standard stem and extension.
+                (before, Some(after))
+            }
+        }
+    }
+}
+
 pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
@@ -804,29 +988,6 @@ pub fn compare_rel_paths(
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
 
-    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
-        if filename.is_empty() {
-            return (None, None);
-        }
-
-        match filename.rsplit_once('.') {
-            // Case 1: No dot was found. The entire name is the stem.
-            None => (Some(filename), None),
-
-            // Case 2: A dot was found.
-            Some((before, after)) => {
-                // This is the crucial check for dotfiles like ".bashrc".
-                // If `before` is empty, the dot was the first character.
-                // In that case, we revert to the "whole name is the stem" logic.
-                if before.is_empty() {
-                    (Some(filename), None)
-                } else {
-                    // Otherwise, we have a standard stem and extension.
-                    (Some(before), Some(after))
-                }
-            }
-        }
-    }
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
@@ -837,19 +998,14 @@ pub fn compare_rel_paths(
                     let (a_stem, a_extension) = a_is_file
                         .then(|| stem_and_extension(component_a))
                         .unwrap_or_default();
-                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
+                    let path_string_a = if a_is_file { a_stem } else { component_a };
 
                     let (b_stem, b_extension) = b_is_file
                         .then(|| stem_and_extension(component_b))
                         .unwrap_or_default();
-                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
+                    let path_string_b = if b_is_file { b_stem } else { component_b };
 
-                    let compare_components = match (path_string_a, path_string_b) {
-                        (Some(a), Some(b)) => natural_sort(&a, &b),
-                        (Some(_), None) => Ordering::Greater,
-                        (None, Some(_)) => Ordering::Less,
-                        (None, None) => Ordering::Equal,
-                    };
+                    let compare_components = natural_sort(path_string_a, path_string_b);
 
                     compare_components.then_with(|| {
                         if a_is_file && b_is_file {
@@ -937,40 +1093,43 @@ mod tests {
     use super::*;
     use util_macros::perf;
 
+    fn mk_rel_path(path: &str) -> Arc<RelPath> {
+        RelPath::unix(path).unwrap().into_arc()
+    }
     #[perf]
     fn compare_paths_with_dots() {
         let mut paths = vec![
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/1.46"), false),
-            (Path::new("test_dirs/1.46/bar_1"), true),
-            (Path::new("test_dirs/1.46/bar_2"), true),
-            (Path::new("test_dirs/1.45"), false),
-            (Path::new("test_dirs/1.45/foo_2"), true),
-            (Path::new("test_dirs/1.45/foo_1"), true),
+            (mk_rel_path("test_dirs"), false),
+            (mk_rel_path("test_dirs/1.46"), false),
+            (mk_rel_path("test_dirs/1.46/bar_1"), true),
+            (mk_rel_path("test_dirs/1.46/bar_2"), true),
+            (mk_rel_path("test_dirs/1.45"), false),
+            (mk_rel_path("test_dirs/1.45/foo_2"), true),
+            (mk_rel_path("test_dirs/1.45/foo_1"), true),
         ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
+        paths.sort_by_cached_key(|(path, is_file)| HumanRelPath::new(path.clone(), *is_file));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/1.45"), false),
-                (Path::new("test_dirs/1.45/foo_1"), true),
-                (Path::new("test_dirs/1.45/foo_2"), true),
-                (Path::new("test_dirs/1.46"), false),
-                (Path::new("test_dirs/1.46/bar_1"), true),
-                (Path::new("test_dirs/1.46/bar_2"), true),
+                (mk_rel_path("test_dirs"), false),
+                (mk_rel_path("test_dirs/1.45"), false),
+                (mk_rel_path("test_dirs/1.45/foo_1"), true),
+                (mk_rel_path("test_dirs/1.45/foo_2"), true),
+                (mk_rel_path("test_dirs/1.46"), false),
+                (mk_rel_path("test_dirs/1.46/bar_1"), true),
+                (mk_rel_path("test_dirs/1.46/bar_2"), true),
             ]
         );
         let mut paths = vec![
-            (Path::new("root1/one.txt"), true),
-            (Path::new("root1/one.two.txt"), true),
+            (mk_rel_path("root1/one.txt"), true),
+            (mk_rel_path("root1/one.two.txt"), true),
         ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
+        paths.sort_by_cached_key(|(path, is_file)| HumanRelPath::new(path.clone(), *is_file));
         assert_eq!(
             paths,
             vec![
-                (Path::new("root1/one.txt"), true),
-                (Path::new("root1/one.two.txt"), true),
+                (mk_rel_path("root1/one.txt"), true),
+                (mk_rel_path("root1/one.two.txt"), true),
             ]
         );
     }
@@ -978,21 +1137,21 @@ mod tests {
     #[perf]
     fn compare_paths_with_same_name_different_extensions() {
         let mut paths = vec![
-            (Path::new("test_dirs/file.rs"), true),
-            (Path::new("test_dirs/file.txt"), true),
-            (Path::new("test_dirs/file.md"), true),
-            (Path::new("test_dirs/file"), true),
-            (Path::new("test_dirs/file.a"), true),
+            (mk_rel_path("test_dirs/file.rs"), true),
+            (mk_rel_path("test_dirs/file.txt"), true),
+            (mk_rel_path("test_dirs/file.md"), true),
+            (mk_rel_path("test_dirs/file"), true),
+            (mk_rel_path("test_dirs/file.a"), true),
         ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
+        paths.sort_by_cached_key(|(path, is_file)| HumanRelPath::new(path.clone(), *is_file));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs/file"), true),
-                (Path::new("test_dirs/file.a"), true),
-                (Path::new("test_dirs/file.md"), true),
-                (Path::new("test_dirs/file.rs"), true),
-                (Path::new("test_dirs/file.txt"), true),
+                (mk_rel_path("test_dirs/file"), true),
+                (mk_rel_path("test_dirs/file.a"), true),
+                (mk_rel_path("test_dirs/file.md"), true),
+                (mk_rel_path("test_dirs/file.rs"), true),
+                (mk_rel_path("test_dirs/file.txt"), true),
             ]
         );
     }
@@ -1000,31 +1159,31 @@ mod tests {
     #[perf]
     fn compare_paths_case_semi_sensitive() {
         let mut paths = vec![
-            (Path::new("test_DIRS"), false),
-            (Path::new("test_DIRS/foo_1"), true),
-            (Path::new("test_DIRS/foo_2"), true),
-            (Path::new("test_DIRS/bar"), true),
-            (Path::new("test_DIRS/BAR"), true),
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/foo_1"), true),
-            (Path::new("test_dirs/foo_2"), true),
-            (Path::new("test_dirs/bar"), true),
-            (Path::new("test_dirs/BAR"), true),
+            (mk_rel_path("test_DIRS"), false),
+            (mk_rel_path("test_DIRS/foo_1"), true),
+            (mk_rel_path("test_DIRS/foo_2"), true),
+            (mk_rel_path("test_DIRS/bar"), true),
+            (mk_rel_path("test_DIRS/BAR"), true),
+            (mk_rel_path("test_dirs"), false),
+            (mk_rel_path("test_dirs/foo_1"), true),
+            (mk_rel_path("test_dirs/foo_2"), true),
+            (mk_rel_path("test_dirs/bar"), true),
+            (mk_rel_path("test_dirs/BAR"), true),
         ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
+        paths.sort_by_cached_key(|(path, is_file)| HumanRelPath::new(path.clone(), *is_file));
         assert_eq!(
             paths,
             vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/bar"), true),
-                (Path::new("test_dirs/BAR"), true),
-                (Path::new("test_dirs/foo_1"), true),
-                (Path::new("test_dirs/foo_2"), true),
-                (Path::new("test_DIRS"), false),
-                (Path::new("test_DIRS/bar"), true),
-                (Path::new("test_DIRS/BAR"), true),
-                (Path::new("test_DIRS/foo_1"), true),
-                (Path::new("test_DIRS/foo_2"), true),
+                (mk_rel_path("test_dirs"), false),
+                (mk_rel_path("test_dirs/bar"), true),
+                (mk_rel_path("test_dirs/BAR"), true),
+                (mk_rel_path("test_dirs/foo_1"), true),
+                (mk_rel_path("test_dirs/foo_2"), true),
+                (mk_rel_path("test_DIRS"), false),
+                (mk_rel_path("test_DIRS/bar"), true),
+                (mk_rel_path("test_DIRS/BAR"), true),
+                (mk_rel_path("test_DIRS/foo_1"), true),
+                (mk_rel_path("test_DIRS/foo_2"), true),
             ]
         );
     }
