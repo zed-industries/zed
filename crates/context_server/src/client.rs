@@ -319,7 +319,14 @@ impl Client {
     /// Continuously reads and logs any error messages from the server.
     async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
-            log::info!("context server stderr: {}", err.trim());
+            let err_trimmed = err.trim();
+
+            // Don't treat HTTP errors as fatal - they're often expected for notifications
+            if err_trimmed.contains("HTTP error") {
+                log::info!("context server stderr: {}", err_trimmed);
+            } else if !err_trimmed.is_empty() {
+                log::info!("context server stderr: {}", err_trimmed);
+            }
         }
 
         Ok(())
