@@ -360,7 +360,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-enter": "agent::Chat",
-      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
       "shift-tab": "agent::CycleModeSelector"
