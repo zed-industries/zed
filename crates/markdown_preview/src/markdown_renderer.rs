@@ -519,7 +519,7 @@ fn render_markdown_table_row(
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let mut items = vec![];
+    let mut items = Vec::with_capacity(parsed.children.len());
 
     for (index, cell) in parsed.children.iter().enumerate() {
         let alignment = alignments
@@ -547,7 +547,11 @@ fn render_markdown_table_row(
         if is_header {
             cell = cell.border_2()
         } else {
-            cell = cell.border_1()
+            cell = cell.border_1().border_t_0()
+        }
+
+        if parsed.children.len().saturating_sub(1) > index {
+            cell = cell.border_r_0();
         }
 
         items.push(cell);
@@ -636,7 +640,7 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
-    let mut any_element = vec![];
+    let mut any_element = Vec::with_capacity(parsed_new.len());
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
