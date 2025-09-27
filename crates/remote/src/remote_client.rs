@@ -801,6 +801,18 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward)
     }
 
+    pub fn build_forward_port_command(
+        &self,
+        local_port: u16,
+        host: String,
+        remote_port: u16,
+    ) -> Result<CommandTemplate> {
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no ssh connection"));
+        };
+        connection.build_forward_port_command(local_port, host, remote_port)
+    }
+
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
@@ -1068,6 +1080,12 @@ pub(crate) trait RemoteConnection: Send + Sync {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+    ) -> Result<CommandTemplate>;
+    fn build_forward_port_command(
+        &self,
+        local_port: u16,
+        remote: String,
+        remote_port: u16,
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
@@ -1445,6 +1463,23 @@ mod fake {
                 program: "ssh".into(),
                 args: ssh_args,
                 env: env.clone(),
+            })
+        }
+
+        fn build_forward_port_command(
+            &self,
+            local_port: u16,
+            host: String,
+            remote_port: u16,
+        ) -> anyhow::Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "ssh".into(),
+                args: vec![
+                    "-N".into(),
+                    "-L".into(),
+                    format!("{local_port}:{host}:{remote_port}"),
+                ],
+                env: Default::default(),
             })
         }
 

@@ -401,6 +401,12 @@ impl DapStore {
             });
         }
 
+        let remote_client = match &self.mode {
+            DapStoreMode::Local(_) => None,
+            DapStoreMode::Remote(remote_dap_store) => Some(remote_dap_store.remote_client.clone()),
+            DapStoreMode::Collab => None,
+        };
+
         let session = Session::new(
             self.breakpoint_store.clone(),
             session_id,
@@ -409,6 +415,7 @@ impl DapStore {
             adapter,
             task_context,
             quirks,
+            remote_client,
             cx,
         );
 

@@ -31,21 +31,27 @@ use dap::{
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
     StartDebuggingRequestArgumentsRequest, VariablePresentationHint, WriteMemoryArguments,
 };
-use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::{mpsc, oneshot};
+use futures::compat::CompatSink;
 use futures::{FutureExt, future::Shared};
+use futures::{SinkExt, StreamExt};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Task, WeakEntity,
 };
 
+use gpui_tokio::Tokio;
+use remote::RemoteClient;
 use rpc::ErrorExt;
+use serde::Deserialize;
 use serde_json::Value;
-use smol::stream::StreamExt;
+use smol::net::TcpListener;
 use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
+use std::pin::Pin;
+use std::process::Stdio;
 use std::u64;
 use std::{
     any::Any,
@@ -56,6 +62,7 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
+use util::command::new_smol_command;
 use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
@@ -696,6 +703,7 @@ pub struct Session {
     task_context: TaskContext,
     memory: memory::Memory,
     quirks: SessionQuirks,
+    remote_client: Option<Entity<RemoteClient>>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -812,6 +820,7 @@ impl Session {
         adapter: DebugAdapterName,
         task_context: TaskContext,
         quirks: SessionQuirks,
+        remote_client: Option<Entity<RemoteClient>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -867,6 +876,7 @@ impl Session {
                 task_context,
                 memory: memory::Memory::new(),
                 quirks,
+                remote_client,
             }
         })
     }
@@ -1558,8 +1568,19 @@ impl Session {
             Events::ProgressUpdate(_) => {}
             Events::Invalidated(_) => {}
             Events::Other(event) => {
+                // FIXME handle killRemoteBrowser too
                 if event.event == "launchBrowserInCompanion" {
-                    // TODO
+                    let Some(request) = serde_json::from_value(event.body).ok() else {
+                        log::error!("failed to deserialize launchBrowserInCompanion event");
+                        return;
+                    };
+                    let Some(remote_client) = self.remote_client.clone() else {
+                        log::error!(
+                            "no remote client so not handling launchBrowserInCompanion event"
+                        );
+                        return;
+                    };
+                    self.launch_browser_for_remote_server(remote_client, request, cx);
                 }
             }
         }
@@ -2720,4 +2741,145 @@ impl Session {
     pub fn quirks(&self) -> SessionQuirks {
         self.quirks
     }
+
+    fn launch_browser_for_remote_server(
+        &mut self,
+        remote_client: Entity<RemoteClient>,
+        request: LaunchBrowserInCompanionParams,
+        cx: &mut Context<Self>,
+    ) {
+        let task = cx.spawn(async move |_, cx| {
+            let (port, _child) =
+                if remote_client.read_with(cx, |client, _| client.shares_network_interface())? {
+                    (request.server_port, None)
+                } else {
+                    let port = TcpListener::bind("127.0.0.1").await?.local_addr()?.port();
+                    let child = remote_client.update(cx, |client, _| {
+                        let command = client.build_forward_port_command(
+                            port,
+                            "localhost".into(),
+                            request.server_port,
+                        )?;
+                        let child = new_smol_command(command.program)
+                            .args(command.args)
+                            .envs(command.env)
+                            .kill_on_drop(true)
+                            .spawn()
+                            .context("spawning port forwarding process")?;
+                        anyhow::Ok(child)
+                    })??;
+                    (port, Some(child))
+                };
+
+            let (_child, browser_stream) = spawn_browser(&request)?;
+
+            Tokio::spawn(cx, async move {
+                let path = request.path;
+                let url = format!("ws://localhost:{port}{path}");
+                log::info!("will connect to DAP running on remote at {url}");
+                let (dap_stream, _response) = tokio_tungstenite::connect_async(&url).await?;
+                let (mut dap_in, mut dap_out) = dap_stream.split();
+                log::info!("established websocket connection to DAP running on remote");
+
+                // FIXME what url to use here?
+                let (browser_stream, _response) =
+                    tokio_tungstenite::client_async("ws://localhost", browser_stream).await?;
+                let (mut browser_in, mut browser_out) = browser_stream.split();
+
+                let down_task = tokio::spawn(async move {
+                    while let Some(message) = dap_out.next().await {
+                        let message = message?;
+                        browser_in.send(message).await?;
+                    }
+                    anyhow::Ok(())
+                });
+                let up_task = tokio::spawn(async move {
+                    while let Some(message) = browser_out.next().await {
+                        let message = message?;
+                        dap_in.send(message).await?;
+                    }
+                    anyhow::Ok(())
+                });
+                down_task.await.ok();
+                up_task.await.ok();
+                anyhow::Ok(())
+            })?
+            .await??;
+            anyhow::Ok(())
+        });
+        self.background_tasks.push(cx.spawn(async move |_, _| {
+            task.await.ok();
+        }));
+    }
+}
+
+struct BrowserStream {
+    browser_in: async_compat::Compat<smol::Unblock<std::io::PipeWriter>>,
+    browser_out: async_compat::Compat<smol::Unblock<std::io::PipeReader>>,
+}
+
+impl BrowserStream {
+    fn new() -> Result<(Self, std::io::PipeWriter, std::io::PipeReader)> {
+        todo!()
+    }
+}
+
+impl tokio::io::AsyncRead for BrowserStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let browser_out = unsafe { Pin::new_unchecked(&mut self.browser_out) };
+        browser_out.poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for BrowserStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::result::Result<usize, std::io::Error>> {
+        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
+        browser_in.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), std::io::Error>> {
+        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
+        browser_in.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), std::io::Error>> {
+        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
+        browser_in.poll_shutdown(cx)
+    }
+}
+
+#[cfg(windows)]
+fn spawn_browser(
+    request: &LaunchBrowserInCompanionParams,
+) -> Result<(smol::process::Child, Pin<Box<BrowserStream>>)> {
+    let (stream, child_in, child_out) = BrowserStream::new()?;
+
+    // create process
+    // DuplicateHandle or w/e
+    Box::pin(stream)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchBrowserInCompanionParams {
+    r#type: String,
+    browser_args: Vec<String>,
+    server_port: u16,
+    path: String,
+    launch_id: u64,
+    params: serde_json::Value,
 }
