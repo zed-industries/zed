@@ -455,7 +455,11 @@ impl CommitModal {
                                 if can_commit {
                                     Tooltip::with_meta_in(
                                         tooltip,
-                                        Some(if is_amend_pending { &git::Amend } else { &git::Commit }),
+                                        Some(if is_amend_pending {
+                                            &git::Amend
+                                        } else {
+                                            &git::Commit
+                                        }),
                                         format!(
                                             "git commit{}{}",
                                             if is_amend_pending { " --amend" } else { "" },
