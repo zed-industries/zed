@@ -517,10 +517,14 @@ impl Vim {
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
-            Some(Operator::ChangeSurrounds { target: None }) => {
+            Some(Operator::ChangeSurrounds {
+                target: None,
+                character: None,
+            }) => {
                 if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
+                        character: None,
                     });
                 }
             }
