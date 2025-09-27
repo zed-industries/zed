@@ -117,16 +117,34 @@ fn create_responses_request_body(request: &Request) -> Result<String, serde_json
             .tools
             .iter()
             .map(|tool| match tool {
-                Tool::Function { function } => json!({
-                    "type": "function",
-                    "name": function.name,
-                    "description": function.description,
-                    "parameters": normalize_tool_parameters(&function.parameters),
-                    "strict": false
-                }),
+                Tool::Function { function } => {
+                    log::debug!(
+                        "GPT-5-Codex tool definition: name={}, description={}, original_parameters={}",
+                        function.name,
+                        function.description,
+                        serde_json::to_string_pretty(&function.parameters).unwrap_or_default()
+                    );
+                    let normalized_params = normalize_tool_parameters(&function.parameters);
+                    log::debug!(
+                        "GPT-5-Codex normalized parameters for {}: {}",
+                        function.name,
+                        serde_json::to_string_pretty(&normalized_params).unwrap_or_default()
+                    );
+                    json!({
+                        "type": "function",
+                        "name": function.name,
+                        "description": function.description,
+                        "parameters": normalized_params,
+                        "strict": false
+                    })
+                }
             })
             .collect();
         responses_request["tools"] = json!(responses_tools);
+        log::debug!(
+            "GPT-5-Codex final tools sent to API: {}",
+            serde_json::to_string_pretty(&responses_request["tools"]).unwrap_or_default()
+        );
     }
 
     // Add tool_choice if present
@@ -146,27 +164,41 @@ fn create_responses_request_body(request: &Request) -> Result<String, serde_json
 fn normalize_tool_parameters(parameters: &serde_json::Value) -> serde_json::Value {
     match parameters {
         serde_json::Value::Object(map) => {
-            if map.contains_key("type") {
-                serde_json::Value::Object(map.clone())
-            } else {
-                let mut normalized = map.clone();
+            let mut normalized = map.clone();
+
+            // Ensure the schema has a type field
+            if !normalized.contains_key("type") {
                 normalized.insert(
                     "type".to_string(),
                     serde_json::Value::String("object".to_string()),
                 );
-                if !normalized.contains_key("properties") {
-                    normalized.insert(
-                        "properties".to_string(),
-                        serde_json::Value::Object(Default::default()),
-                    );
-                }
-                serde_json::Value::Object(normalized)
             }
+
+            // Ensure the schema has a properties field
+            if !normalized.contains_key("properties") {
+                normalized.insert(
+                    "properties".to_string(),
+                    serde_json::Value::Object(Default::default()),
+                );
+            }
+
+            // Ensure required fields are preserved - this is crucial for GPT-5-Codex
+            // The original schema should already have the required array, but let's make sure it's not lost
+            log::debug!(
+                "Tool schema normalization: input has required field = {}, required = {:?}",
+                map.contains_key("required"),
+                map.get("required")
+            );
+
+            serde_json::Value::Object(normalized)
         }
-        _ => json!({
-            "type": "object",
-            "properties": {}
-        }),
+        _ => {
+            log::warn!("Tool parameters are not an object, creating default schema");
+            json!({
+                "type": "object",
+                "properties": {}
+            })
+        }
     }
 }
 
@@ -184,6 +216,9 @@ fn tool_chunk_from_function_call(
     call_id: Option<String>,
     name: Option<String>,
     function: Value,
+    arguments: Option<String>,
+    arguments_delta: Option<String>,
+    arguments_json_patch: Option<Value>,
 ) -> Option<ToolCallChunk> {
     let fallback_id = call_id.clone().or_else(|| Some(item_id.clone()));
 
@@ -201,6 +236,21 @@ fn tool_chunk_from_function_call(
         function_map
             .entry("name".to_string())
             .or_insert(Value::String(name_value.clone()));
+    }
+
+    if let Some(arguments) = arguments {
+        function_map.insert("arguments".to_string(), Value::String(arguments));
+    }
+
+    if let Some(arguments_delta) = arguments_delta {
+        function_map.insert(
+            "arguments_delta".to_string(),
+            Value::String(arguments_delta),
+        );
+    }
+
+    if let Some(arguments_json_patch) = arguments_json_patch {
+        function_map.insert("arguments_json_patch".to_string(), arguments_json_patch);
     }
 
     let mut container = Map::new();
@@ -921,6 +971,12 @@ pub enum ResponsesApiOutput {
         #[serde(default)]
         function: Value,
         #[serde(default)]
+        arguments: Option<String>,
+        #[serde(default)]
+        arguments_delta: Option<String>,
+        #[serde(default)]
+        arguments_json_patch: Option<Value>,
+        #[serde(default)]
         status: Option<String>,
     },
     #[serde(rename = "reasoning")]
@@ -1028,16 +1084,27 @@ impl ResponsesApiStreamEvent {
                         call_id,
                         name,
                         function,
+                        arguments,
+                        arguments_delta,
+                        arguments_json_patch,
                         ..
                     }) => {
-                        let chunk =
-                            tool_chunk_from_function_call(index, id, call_id, name, function)
-                                .or_else(|| {
-                                    self.tool.as_ref().and_then(|value| {
-                                        tool_chunk_from_value(
-                                            index,
-                                            self.tool_call_id.clone(),
-                                            value,
+                        let chunk = tool_chunk_from_function_call(
+                            index,
+                            id,
+                            call_id,
+                            name,
+                            function,
+                            arguments,
+                            arguments_delta,
+                            arguments_json_patch,
+                        )
+                        .or_else(|| {
+                            self.tool.as_ref().and_then(|value| {
+                                tool_chunk_from_value(
+                                    index,
+                                    self.tool_call_id.clone(),
+                                    value,
                                         )
                                     })
                                 });
@@ -1093,16 +1160,27 @@ impl ResponsesApiStreamEvent {
                         call_id,
                         name,
                         function,
+                        arguments,
+                        arguments_delta,
+                        arguments_json_patch,
                         ..
                     }) => {
-                        let chunk =
-                            tool_chunk_from_function_call(index, id, call_id, name, function)
-                                .or_else(|| {
-                                    self.tool.as_ref().and_then(|value| {
-                                        tool_chunk_from_value(
-                                            index,
-                                            self.tool_call_id.clone(),
-                                            value,
+                        let chunk = tool_chunk_from_function_call(
+                            index,
+                            id,
+                            call_id,
+                            name,
+                            function,
+                            arguments,
+                            arguments_delta,
+                            arguments_json_patch,
+                        )
+                        .or_else(|| {
+                            self.tool.as_ref().and_then(|value| {
+                                tool_chunk_from_value(
+                                    index,
+                                    self.tool_call_id.clone(),
+                                    value,
                                         )
                                     })
                                 });
@@ -1194,6 +1272,9 @@ impl ResponsesApiStreamEvent {
                             call_id,
                             name,
                             function,
+                            arguments,
+                            arguments_delta,
+                            arguments_json_patch,
                             ..
                         } => {
                             let chunk = tool_chunk_from_function_call(
@@ -1202,6 +1283,9 @@ impl ResponsesApiStreamEvent {
                                 call_id,
                                 name,
                                 function,
+                                arguments,
+                                arguments_delta,
+                                arguments_json_patch,
                             )
                             .or_else(|| {
                                 self.tool.as_ref().and_then(|value| {
@@ -1903,13 +1987,25 @@ async fn stream_completion_inner(
                                                                 message: None,
                                                             })
                                                         }
-                                                        ResponsesApiOutput::FunctionCall { id, call_id, name, function, .. } => {
+                                                        ResponsesApiOutput::FunctionCall {
+                                                            id,
+                                                            call_id,
+                                                            name,
+                                                            function,
+                                                            arguments,
+                                                            arguments_delta,
+                                                            arguments_json_patch,
+                                                            ..
+                                                        } => {
                                                             tool_chunk_from_function_call(
                                                                 index,
                                                                 id,
                                                                 call_id,
                                                                 name,
                                                                 function,
+                                                                arguments,
+                                                                arguments_delta,
+                                                                arguments_json_patch,
                                                             )
                                                             .map(|chunk| {
                                                                 log::debug!(
@@ -2048,9 +2144,19 @@ async fn stream_completion_inner(
                                     call_id,
                                     name,
                                     function,
+                                    arguments,
+                                    arguments_delta,
+                                    arguments_json_patch,
                                     ..
                                 } => tool_chunk_from_function_call(
-                                    index, id, call_id, name, function,
+                                    index,
+                                    id,
+                                    call_id,
+                                    name,
+                                    function,
+                                    arguments,
+                                    arguments_delta,
+                                    arguments_json_patch,
                                 )
                                 .map(|chunk| ResponseChoice {
                                     index,

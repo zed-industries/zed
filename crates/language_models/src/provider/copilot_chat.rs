@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr as _;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -15,6 +14,7 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{Action, AnyView, App, AsyncApp, Entity, Render, Subscription, Task, svg};
+use json_patch;
 use language::language_settings::all_language_settings;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -353,6 +353,65 @@ pub fn map_to_language_model_completion_events(
         arguments: String,
     }
 
+    fn is_json_patch_array(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Array(items) => items.iter().all(|item| {
+                item.as_object()
+                    .and_then(|obj| obj.get("op"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some()
+            }),
+            _ => false,
+        }
+    }
+
+    fn parse_tool_arguments(raw: &str) -> Result<serde_json::Value, serde_json::Error> {
+        if raw.trim().is_empty() {
+            log::info!("Copilot tool arguments empty string -> using empty object");
+            return Ok(serde_json::Value::Object(serde_json::Map::new()));
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(raw)?;
+        if is_json_patch_array(&parsed) {
+            let mut target = serde_json::Value::Object(serde_json::Map::new());
+            match serde_json::from_value::<json_patch::Patch>(parsed.clone()) {
+                Ok(patch) => {
+                    if let Err(err) = json_patch::patch(&mut target, &patch) {
+                        log::warn!(
+                            "Failed to apply tool arguments JSON patch: {} (error: {})",
+                            raw,
+                            err
+                        );
+                    } else {
+                        log::info!(
+                            "Copilot tool arguments parsed from JSON patch -> {}",
+                            target
+                        );
+                        return Ok(target);
+                    }
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Failed to apply tool arguments JSON patch: {} (error: {})",
+                        raw,
+                        err
+                    );
+                }
+            }
+        }
+
+        if !parsed.is_object() {
+            log::info!(
+                "Copilot tool arguments parsed non-object value {:?}; wrapping if needed",
+                parsed
+            );
+        } else {
+            log::info!("Copilot tool arguments parsed object {}", parsed);
+        }
+
+        Ok(parsed)
+    }
+
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
@@ -374,6 +433,7 @@ pub fn map_to_language_model_completion_events(
                             ));
                         };
 
+                        let finish_reason = choice.finish_reason.as_deref();
                         let delta = if is_streaming {
                             choice.delta.as_ref()
                         } else {
@@ -404,11 +464,29 @@ pub fn map_to_language_model_completion_events(
 
                             if let Some(function) = tool_call.function.as_ref() {
                                 if let Some(name) = function.name.clone() {
+                                    log::debug!(
+                                        "Copilot tool call chunk index {} name fragment {:?}",
+                                        tool_call.index,
+                                        name
+                                    );
                                     entry.name = name;
                                 }
 
                                 if let Some(arguments) = function.arguments.clone() {
-                                    entry.arguments.push_str(&arguments);
+                                    log::debug!(
+                                        "Copilot tool call chunk index {} arguments fragment {}",
+                                        tool_call.index,
+                                        arguments
+                                    );
+                                    if matches!(finish_reason, Some("tool_calls"))
+                                        && !arguments.is_empty()
+                                    {
+                                        entry.arguments = arguments;
+                                    } else if entry.arguments.is_empty() {
+                                        entry.arguments = arguments;
+                                    } else {
+                                        entry.arguments.push_str(&arguments);
+                                    }
                                 }
                             }
                         }
@@ -437,21 +515,25 @@ pub fn map_to_language_model_completion_events(
                                         // to indicate the absence of arguments.
                                         // When that happens, create an empty
                                         // object instead.
-                                        let arguments = if tool_call.arguments.is_empty() {
-                                            Ok(serde_json::Value::Object(Default::default()))
-                                        } else {
-                                            serde_json::Value::from_str(&tool_call.arguments)
-                                        };
+                                        let arguments = parse_tool_arguments(&tool_call.arguments);
                                         match arguments {
-                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_call.id.clone().into(),
-                                                name: tool_call.name.as_str().into(),
-                                                is_input_complete: true,
-                                                input,
-                                                raw_input: tool_call.arguments.clone(),
-                                            },
-                                        )),
+                                        Ok(input) => {
+                                            log::info!(
+                                                "Copilot tool call ready -> id={}, name={}, payload={}",
+                                                tool_call.id,
+                                                tool_call.name,
+                                                input
+                                            );
+                                            Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.clone().into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
+                                                    input,
+                                                    raw_input: tool_call.arguments.clone(),
+                                                },
+                                            ))
+                                        }
                                         Err(error) => Ok(
                                             LanguageModelCompletionEvent::ToolUseJsonParseError {
                                                 id: tool_call.id.into(),
