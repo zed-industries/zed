@@ -259,6 +259,22 @@ pub fn main() {
             .unwrap_or("unknown"),
     );
 
+    #[cfg(windows)]
+    {
+        if let Ok(conpty_install_path) = std::env::var("ZED_CONPTY_INSTALL_PATH") {
+            use windows::{Win32::System::LibraryLoader::SetDllDirectoryW, core::PCWSTR};
+            log::info!("Setting conpty.dll search directory to {conpty_install_path}");
+            let conpty_install_path_utf16: Vec<u16> = conpty_install_path.encode_utf16().collect();
+            if let Err(err) =
+                unsafe { SetDllDirectoryW(PCWSTR::from_raw(conpty_install_path_utf16.as_ptr())) }
+            {
+                log::error!(
+                    "Failed to set conpty.dll search directory to {conpty_install_path} with error: {err}"
+                );
+            }
+        }
+    }
+
     let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();

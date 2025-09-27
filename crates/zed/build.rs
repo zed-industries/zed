@@ -78,20 +78,32 @@ fn main() {
             std::process::exit(1);
         }
 
-        // Download conpty.dll and OpenConsole.exe if not already downloaded
-        let out_dir = std::env::var("OUT_DIR").unwrap();
-        let dest_path = std::path::Path::new(&out_dir).join("conpty");
-        if dest_path.exists() {
-            println!(
-                "cargo:warning=conpty nuget package already downloaded: {}. Skipping",
-                out_dir
-            );
-        } else {
-            if let Err(e) = conpty::download_conpty_nuget_package(&dest_path) {
-                println!("cargo:warning=Failed to download conpty nuget package: {e}");
-            };
-            conpty::install_conpty_nuget_package(&dest_path, &conpty::get_target_dir().unwrap())
-                .unwrap();
+        if std::env::var("ZED_CONPTY_INSTALL_PATH").ok().is_none() {
+            // If ZED_CONPTY_INSTALL_PATH was not set by the user with a custom installation path
+            // of conpty.dll, we will attempt to download it from the official Microsoft NuGet repo
+            // and install it ourselves.
+            // We will be a good cargo citizen and install the artifacts to whatever cargo set
+            // OUT_DIR env var to. Then, we will set ZED_CONPTY_INSTALL_PATH for consumption by
+            // the zed binary at runtime.
+            'error: {
+                let out_dir = std::env::var("OUT_DIR").unwrap();
+                let dest_path = std::path::Path::new(&out_dir).join("conpty");
+                if dest_path.exists() {
+                    println!(
+                        "cargo:warning=conpty nuget package already downloaded: {}. Skipping",
+                        dest_path.display()
+                    );
+                } else {
+                    if let Err(e) = conpty::download_conpty_nuget_package(&dest_path) {
+                        println!("cargo:warning=Failed to download conpty nuget package: {e}");
+                        break 'error;
+                    };
+                }
+                println!(
+                    "cargo:rustc-env=ZED_CONPTY_INSTALL_PATH={}",
+                    dest_path.display()
+                );
+            }
         }
     }
 }
@@ -103,7 +115,7 @@ mod conpty {
     use reqwest::blocking::get;
     use std::{
         io::{Cursor, Read},
-        path::{Path, PathBuf},
+        path::Path,
     };
     use zip::ZipArchive;
 
@@ -129,21 +141,6 @@ mod conpty {
         extract_dll(&mut zip, &path).context("Failed to extract conpty.dll")?;
         extract_runtimes(&mut zip, &path).context("Failed to extract OpenConsole.exe runtimes")?;
 
-        Ok(())
-    }
-
-    pub(super) fn install_conpty_nuget_package(
-        dest_path: &Path,
-        target_dir: &Path,
-    ) -> anyhow::Result<()> {
-        std::fs::copy(dest_path.join("conpty.dll"), target_dir.join("conpty.dll"))?;
-        for arch in &["x64", "x86", "arm64"] {
-            std::fs::create_dir_all(target_dir.join(arch))?;
-            std::fs::copy(
-                dest_path.join(arch).join("OpenConsole.exe"),
-                target_dir.join(arch).join("OpenConsole.exe"),
-            )?;
-        }
         Ok(())
     }
 
@@ -180,13 +177,5 @@ mod conpty {
             buf.clear();
         }
         Ok(())
-    }
-
-    pub(super) fn get_target_dir() -> anyhow::Result<PathBuf> {
-        let cwd = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-        let profile = std::env::var("PROFILE").unwrap();
-        let root = cwd.parent().unwrap().parent().unwrap();
-        let target_dir = root.join("target").join(profile);
-        Ok(PathBuf::from(target_dir))
     }
 }
