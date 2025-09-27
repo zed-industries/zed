@@ -839,8 +839,8 @@ pub fn compare_rel_paths(
                         .unwrap_or_default();
                     let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
 
-                    let (b_stem, b_extension) = a_is_file
-                        .then(|| stem_and_extension(component_a))
+                    let (b_stem, b_extension) = b_is_file
+                        .then(|| stem_and_extension(component_b))
                         .unwrap_or_default();
                     let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
 
