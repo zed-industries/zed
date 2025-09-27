@@ -78,7 +78,14 @@ fn main() {
             std::process::exit(1);
         }
 
-        if std::env::var("ZED_CONPTY_INSTALL_PATH").ok().is_none() {
+        println!("cargo:rerun-if-env-changed=ZED_CONPTY_SKIP_INSTALL");
+        println!("cargo:rerun-if-env-changed=ZED_CONPTY_INSTALL_PATH");
+
+        let conpty_skip_install = std::env::var("ZED_CONPTY_SKIP_INSTALL")
+            .ok()
+            .map_or(false, |v| v == "1" || v == "true" || v == "yes");
+
+        if !conpty_skip_install && std::env::var("ZED_CONPTY_INSTALL_PATH").ok().is_none() {
             // If ZED_CONPTY_INSTALL_PATH was not set by the user with a custom installation path
             // of conpty.dll, we will attempt to download it from the official Microsoft NuGet repo
             // and install it ourselves.
