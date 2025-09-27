@@ -27,10 +27,23 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
+    should_restore_scroll: bool,
+    dismiss_via_cancel: bool,
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToLine {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        if !self.dismiss_via_cancel {
+            self.should_restore_scroll = false;
+        }
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -133,6 +146,8 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
+            should_restore_scroll: true,
+            dismiss_via_cancel: false,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
@@ -141,8 +156,10 @@ impl GoToLine {
         let scroll_position = self.prev_scroll_position.take();
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
-            if let Some(scroll_position) = scroll_position {
-                editor.set_scroll_position(scroll_position, window, cx);
+            if self.should_restore_scroll {
+                if let Some(scroll_position) = scroll_position {
+                    editor.set_scroll_position(scroll_position, window, cx);
+                }
             }
             cx.notify();
         })
@@ -243,6 +260,7 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_via_cancel = true;
         cx.emit(DismissEvent);
     }
 
@@ -707,6 +725,304 @@ mod tests {
         });
         cx.simulate_input(&format!("{}:{}", new_point.line, new_point.character));
         cx.dispatch_action(menu::Confirm);
+    }
+
+    #[gpui::test]
+    async fn test_scroll_restoration_on_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Wait for the input to be processed and highlighting to trigger
+        cx.executor().advance_clock(Duration::from_millis(100));
+
+        // Verify that line 15 is highlighted (this confirms the input was processed)
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![14], // Line 15 is display row 14 (0-indexed)
+            "Line 15 should be highlighted after typing '15'"
+        );
+
+        // Check if scroll position changed - for this test we don't care if it scrolled
+        // The important part is that it should restore the scroll position after cancel
+        let _scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Cancel with Escape
+        cx.dispatch_action(menu::Cancel);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {}); // Force update
+
+        // Verify scroll position is restored to initial
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            initial_scroll, final_scroll,
+            "Scroll position should be restored after canceling with Escape"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_persistence_on_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let _initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Wait for the input to be processed and highlighting to trigger
+        cx.executor().advance_clock(Duration::from_millis(100));
+
+        // Verify that line 15 is highlighted (this confirms the input was processed)
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![14], // Line 15 is display row 14 (0-indexed)
+            "Line 15 should be highlighted after typing '15'"
+        );
+
+        // Get scroll position after highlighting (may or may not have changed)
+        let scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Confirm with Enter
+        cx.dispatch_action(menu::Confirm);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {}); // Force update
+
+        // Verify scroll position stays at line 15 (not restored)
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            scrolled_position, final_scroll,
+            "Scroll position should persist after confirming with Enter"
+        );
+
+        // Also verify cursor is at line 15
+        assert_single_caret_at_row(&editor, 14, cx); // Line 15 is row 14 (0-indexed)
+    }
+
+    #[gpui::test]
+    async fn test_scroll_persistence_on_click_outside(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let _initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let _go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Wait for the input to be processed and highlighting to trigger
+        cx.executor().advance_clock(Duration::from_millis(100));
+
+        // Verify that line 15 is highlighted (this confirms the input was processed)
+        assert_eq!(
+            highlighted_display_rows(&editor, cx),
+            vec![14], // Line 15 is display row 14 (0-indexed)
+            "Line 15 should be highlighted after typing '15'"
+        );
+
+        // Get scroll position after highlighting (may or may not have changed)
+        let scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Simulate clicking outside by focusing the main editor
+        // This should trigger the focus_out event on the modal, causing it to dismiss
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window);
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+
+        // The modal should be dismissed now
+        let modal_gone = workspace.update(cx, |workspace, cx| {
+            workspace.active_modal::<GoToLine>(cx).is_none()
+        });
+        assert!(modal_gone, "Modal should be dismissed after clicking outside");
+
+        // Verify scroll position stays at line 15 (not restored)
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            scrolled_position, final_scroll,
+            "Scroll position should persist after clicking outside the modal"
+        );
     }
 
     fn open_go_to_line_view(
