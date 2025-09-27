@@ -58,7 +58,9 @@ actions!(
         /// Toggles the file filter menu.
         ToggleFilterMenu,
         /// Toggles the split direction menu.
-        ToggleSplitMenu
+        ToggleSplitMenu,
+        /// Opens the selected file without dismissing the file finder.
+        OpenWithoutDismiss
     ]
 );
 
@@ -348,6 +350,18 @@ impl FileFinder {
         })
     }
 
+    fn open_without_dismiss(
+        &mut self,
+        _: &OpenWithoutDismiss,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            let delegate = &mut picker.delegate;
+            delegate.confirm_without_dismiss(false, window, cx);
+        });
+    }
+
     pub fn modal_max_width(width_setting: FileFinderWidth, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
         let small_width = rems(34.).to_pixels(window.rem_size());
@@ -389,6 +403,7 @@ impl Render for FileFinder {
             .on_action(cx.listener(Self::go_to_file_split_right))
             .on_action(cx.listener(Self::go_to_file_split_up))
             .on_action(cx.listener(Self::go_to_file_split_down))
+            .on_action(cx.listener(Self::open_without_dismiss))
             .child(self.picker.clone())
     }
 }
@@ -1255,6 +1270,156 @@ impl FileFinderDelegate {
         }
         key_context
     }
+
+    /// Helper function to open a file with configurable behavior for focus and dismissal
+    fn open_selected_file(
+        &mut self,
+        secondary: bool,
+        focus_item: bool,
+        activate_item: bool,
+        dismiss_after_open: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        if let Some(m) = self.matches.get(self.selected_index())
+            && let Some(workspace) = self.workspace.upgrade()
+        {
+            let open_task = workspace.update(cx, |workspace, cx| {
+                let split_or_open =
+                    |workspace: &mut Workspace,
+                     project_path,
+                     window: &mut Window,
+                     cx: &mut Context<Workspace>| {
+                        let allow_preview =
+                            PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+                        if secondary {
+                            workspace.split_path_preview(
+                                project_path,
+                                allow_preview,
+                                None,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            workspace.open_path_preview(
+                                project_path,
+                                None,
+                                focus_item,
+                                allow_preview,
+                                activate_item,
+                                window,
+                                cx,
+                            )
+                        }
+                    };
+
+                match &m {
+                    Match::CreateNew(project_path) => {
+                        // Create a new file with the given filename
+                        workspace.open_path_preview(
+                            project_path.clone(),
+                            None,
+                            focus_item,
+                            false,
+                            activate_item,
+                            window,
+                            cx,
+                        )
+                    }
+
+                    Match::History { path, .. } => {
+                        let worktree_id = path.project.worktree_id;
+                        if workspace
+                            .project()
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)
+                            .is_some()
+                        {
+                            split_or_open(
+                                workspace,
+                                ProjectPath {
+                                    worktree_id,
+                                    path: Arc::clone(&path.project.path),
+                                },
+                                window,
+                                cx,
+                            )
+                        } else if secondary {
+                            workspace.split_abs_path(path.absolute.clone(), false, window, cx)
+                        } else {
+                            workspace.open_abs_path(
+                                path.absolute.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
+                        }
+                    }
+                    Match::Search(m) => split_or_open(
+                        workspace,
+                        ProjectPath {
+                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                            path: m.0.path.clone(),
+                        },
+                        window,
+                        cx,
+                    ),
+                }
+            });
+
+            let row = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|query| query.path_position.row)
+                .map(|row| row.saturating_sub(1));
+            let col = self
+                .latest_search_query
+                .as_ref()
+                .and_then(|query| query.path_position.column)
+                .unwrap_or(0)
+                .saturating_sub(1);
+
+            if dismiss_after_open {
+                let finder = self.file_finder.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    let item = open_task.await.notify_async_err(cx)?;
+                    if let Some(row) = row
+                        && let Some(active_editor) = item.downcast::<Editor>()
+                    {
+                        active_editor
+                            .downgrade()
+                            .update_in(cx, |editor, window, cx| {
+                                editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                            })
+                            .log_err();
+                    }
+                    finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
+                    Some(())
+                })
+                .detach();
+            } else {
+                cx.spawn_in(window, async move |_, cx| {
+                    let item = open_task.await.notify_async_err(cx)?;
+                    if let Some(row) = row
+                        && let Some(active_editor) = item.downcast::<Editor>()
+                    {
+                        active_editor
+                            .downgrade()
+                            .update_in(cx, |editor, window, cx| {
+                                editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                            })
+                            .log_err();
+                    }
+                    // Note: We intentionally do NOT emit DismissEvent here to keep the finder open
+                    Some(())
+                })
+                .detach();
+            }
+        }
+    }
 }
 
 fn full_path_budget(
@@ -1401,135 +1566,16 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
-        if let Some(m) = self.matches.get(self.selected_index())
-            && let Some(workspace) = self.workspace.upgrade()
-        {
-            let open_task = workspace.update(cx, |workspace, cx| {
-                let split_or_open =
-                    |workspace: &mut Workspace,
-                     project_path,
-                     window: &mut Window,
-                     cx: &mut Context<Workspace>| {
-                        let allow_preview =
-                            PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
-                        if secondary {
-                            workspace.split_path_preview(
-                                project_path,
-                                allow_preview,
-                                None,
-                                window,
-                                cx,
-                            )
-                        } else {
-                            workspace.open_path_preview(
-                                project_path,
-                                None,
-                                true,
-                                allow_preview,
-                                true,
-                                window,
-                                cx,
-                            )
-                        }
-                    };
-                match &m {
-                    Match::CreateNew(project_path) => {
-                        // Create a new file with the given filename
-                        if secondary {
-                            workspace.split_path_preview(
-                                project_path.clone(),
-                                false,
-                                None,
-                                window,
-                                cx,
-                            )
-                        } else {
-                            workspace.open_path_preview(
-                                project_path.clone(),
-                                None,
-                                true,
-                                false,
-                                true,
-                                window,
-                                cx,
-                            )
-                        }
-                    }
+        self.open_selected_file(secondary, true, true, true, window, cx);
+    }
 
-                    Match::History { path, .. } => {
-                        let worktree_id = path.project.worktree_id;
-                        if workspace
-                            .project()
-                            .read(cx)
-                            .worktree_for_id(worktree_id, cx)
-                            .is_some()
-                        {
-                            split_or_open(
-                                workspace,
-                                ProjectPath {
-                                    worktree_id,
-                                    path: Arc::clone(&path.project.path),
-                                },
-                                window,
-                                cx,
-                            )
-                        } else if secondary {
-                            workspace.split_abs_path(path.absolute.clone(), false, window, cx)
-                        } else {
-                            workspace.open_abs_path(
-                                path.absolute.clone(),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
-                        }
-                    }
-                    Match::Search(m) => split_or_open(
-                        workspace,
-                        ProjectPath {
-                            worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                            path: m.0.path.clone(),
-                        },
-                        window,
-                        cx,
-                    ),
-                }
-            });
-
-            let row = self
-                .latest_search_query
-                .as_ref()
-                .and_then(|query| query.path_position.row)
-                .map(|row| row.saturating_sub(1));
-            let col = self
-                .latest_search_query
-                .as_ref()
-                .and_then(|query| query.path_position.column)
-                .unwrap_or(0)
-                .saturating_sub(1);
-            let finder = self.file_finder.clone();
-
-            cx.spawn_in(window, async move |_, cx| {
-                let item = open_task.await.notify_async_err(cx)?;
-                if let Some(row) = row
-                    && let Some(active_editor) = item.downcast::<Editor>()
-                {
-                    active_editor
-                        .downgrade()
-                        .update_in(cx, |editor, window, cx| {
-                            editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
-                        })
-                        .log_err();
-                }
-                finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
-
-                Some(())
-            })
-            .detach();
-        }
+    fn confirm_without_dismiss(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        self.open_selected_file(secondary, false, false, false, window, cx);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
@@ -1714,6 +1760,21 @@ impl PickerDelegate for FileFinderDelegate {
                                             }
                                         }))
                                     }
+                                }),
+                        )
+                        .child(
+                            Button::new("open-without-dismiss", "Open (Keep Open)")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &OpenWithoutDismiss,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(OpenWithoutDismiss.boxed_clone(), cx)
                                 }),
                         )
                         .child(

@@ -1124,7 +1124,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "file_finder::ToggleSplitMenu",
-      "cmd-shift-i": "file_finder::ToggleFilterMenu"
+      "cmd-shift-i": "file_finder::ToggleFilterMenu",
+      "cmd-shift-enter": "file_finder::OpenWithoutDismiss"
     }
   },
   {

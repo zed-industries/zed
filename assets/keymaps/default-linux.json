@@ -1053,7 +1053,8 @@
     "bindings": {
       "ctrl-p": "file_finder::Toggle",
       "ctrl-shift-a": "file_finder::ToggleSplitMenu",
-      "ctrl-shift-i": "file_finder::ToggleFilterMenu"
+      "ctrl-shift-i": "file_finder::ToggleFilterMenu",
+      "ctrl-shift-enter": "file_finder::OpenWithoutDismiss"
     }
   },
   {
