@@ -68,13 +68,11 @@ enum ResponseInputContent {
     ImageUrl {
         #[serde(rename = "type")]
         type_field: String, // "image_url"
-        image_url: ImageUrlContent,
+        #[serde(rename = "image_url")]
+        image_url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ImageUrlContent {
-    url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -455,9 +453,8 @@ fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInpu
                             ChatMessagePart::Image { image_url } => {
                                 ResponseInputContent::ImageUrl {
                                     type_field: "input_image".to_string(),
-                                    image_url: ImageUrlContent {
-                                        url: image_url.url.clone(),
-                                    },
+                                    image_url: image_url.url.clone(),
+                                    detail: None,
                                 }
                             }
                         })
@@ -545,9 +542,8 @@ fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInpu
                                 ChatMessagePart::Image { image_url } => {
                                     image_contents.push(ResponseInputContent::ImageUrl {
                                         type_field: "input_image".to_string(),
-                                        image_url: ImageUrlContent {
-                                            url: image_url.url.clone(),
-                                        },
+                                        image_url: image_url.url.clone(),
+                                        detail: None,
                                     });
                                 }
                             }
