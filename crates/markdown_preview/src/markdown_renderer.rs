@@ -471,6 +471,10 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         for (index, cell) in row.children.iter().enumerate() {
             let length = paragraph_len(cell);
 
+            if index >= max_lengths.len() {
+                max_lengths.resize(index + 1, length);
+            }
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
