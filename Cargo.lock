@@ -6270,6 +6270,7 @@ dependencies = [
  "bitflags 2.9.0",
  "core-foundation 0.10.0",
  "fsevent-sys 3.1.0",
+ "log",
  "parking_lot",
  "tempfile",
  "workspace-hack",
@@ -20398,6 +20399,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_extension_api"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.41.0",
+]
+
+[[package]]
 name = "zed_glsl"
 version = "0.1.0"
 dependencies = [
@@ -20406,9 +20418,9 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
