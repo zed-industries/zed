@@ -158,6 +158,9 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    supports_images: model.supports_images,
+                    supports_tools: model.supports_tools,
+                    parallel_tool_calls: model.parallel_tool_calls,
                 },
             );
         }

@@ -301,6 +301,9 @@ pub struct XaiAvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub supports_images: Option<bool>,
+    pub supports_tools: Option<bool>,
+    pub parallel_tool_calls: Option<bool>,
 }
 
 #[skip_serializing_none]
