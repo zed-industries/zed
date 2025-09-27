@@ -81,6 +81,10 @@
     ]* @context
     name: (_) @name) @item
 
+(pair
+    key: (_) @name
+    value: (arrow_function)) @item
+
 ; Add support for (node:test, bun:test and Jest) runnable
 (
     (call_expression
