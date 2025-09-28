@@ -5,6 +5,8 @@ use std::time::Duration;
 use ui::prelude::*;
 use language::language_settings::{all_language_settings};
 
+use language::{ToOffset, ToPoint};
+
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
 /// Adds inline reference-count hints next to symbols in the active editor and logs counts.
@@ -41,7 +43,8 @@ impl SymbolRefHints {
         cx: &mut Context<Self>,
         event: &EditorEvent,
     ) {
-        // Special-case: if the toggle just disabled core inlays, clear immediately without debounce
+        // Respect our toggle and core inlay hints
+        // If core inlay hints were just disabled, clear immediately.
         if let EditorEvent::InlayHintsToggled { enabled } = event {
             if !enabled {
                 self.refresh_rev = self.refresh_rev.wrapping_add(1);
@@ -54,7 +57,7 @@ impl SymbolRefHints {
                 return;
             }
         }
-        // Respect our toggle and core inlay hints
+
         let inlay_enabled = editor.read(cx).inlay_hints_enabled();
         if !(self.enabled && inlay_enabled) {
             self.refresh_rev = self.refresh_rev.wrapping_add(1);
@@ -138,13 +141,77 @@ impl SymbolRefHints {
             let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
             if invalidated { return; }
 
-            // For each outline item, request references at the start anchor of the item.
-            let mut counts: Vec<usize> = Vec::with_capacity(items.len());
-            for item in &items {
-                let position_anchor = item.range.start;
+            // Prefer querying references at the symbol's identifier using LSP document symbols,
+            // falling back to the outline item's start if we can't find a matching symbol.
+            let doc_symbols = if let Some(task) = project
+                .update(cx, |p, cx| p.document_symbols(&buffer, cx))
+                .ok()
+            {
+                match task.await {
+                    Ok(symbols) => symbols,
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
 
+            // Flatten nested document symbols for easier matching.
+            let mut flat_syms: Vec<project::DocumentSymbol> = Vec::new();
+            let mut stack: Vec<project::DocumentSymbol> = doc_symbols;
+            while let Some(sym) = stack.pop() {
+                if !sym.children.is_empty() {
+                    for child in sym.children.iter().cloned() {
+                        stack.push(child);
+                    }
+                }
+                let mut sym_no_children = sym.clone();
+                sym_no_children.children.clear();
+                flat_syms.push(sym_no_children);
+            }
+
+            // Compute, for each outline item, the position at which to ask for references.
+            // We do this inside a read_with closure to access the App and buffer snapshot.
+            let positions = editor_handle
+                .read_with(cx, |ed, app| {
+                    let snapshot = buffer.read(app).snapshot();
+                    items
+                        .iter()
+                        .map(|item| {
+                            let item_off = item.range.start.to_offset(&snapshot);
+                            // Find the smallest containing document symbol (closest match)
+                            let mut best_sym: Option<&project::DocumentSymbol> = None;
+                            for s in &flat_syms {
+                                let rs = s.range.start.to_offset(&snapshot);
+                                let re = s.range.end.to_offset(&snapshot);
+                                if rs <= item_off && item_off < re {
+                                    match &best_sym {
+                                        None => best_sym = Some(s),
+                                        Some(prev) => {
+                                            let prev_span = prev.range.end.to_offset(&snapshot)
+                                                - prev.range.start.to_offset(&snapshot);
+                                            let this_span = re - rs;
+                                            if this_span <= prev_span {
+                                                best_sym = Some(s);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // Return a Point for the symbol selection if found; otherwise, the outline start.
+                            match best_sym {
+                                Some(sym) => sym.selection_range.start.to_point(&snapshot),
+                                None => item.range.start.to_point(&snapshot),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            // Query references for each position and count the results.
+            let mut counts: Vec<usize> = Vec::with_capacity(items.len());
+            for pos in &positions {
                 let n = if let Some(task) = project
-                    .update(cx, |p, cx| p.references(&buffer, position_anchor, cx))
+                    .update(cx, |p, cx| p.references(&buffer, *pos, cx))
                     .ok()
                 {
                     match task.await {
