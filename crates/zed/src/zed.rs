@@ -674,7 +674,9 @@ fn register_actions(
                 store.override_global(self::symbol_ref_hints::SymbolRefHintsSettings { enabled: new_enabled });
             });
             if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                if !new_enabled {
+                // Also require core inlay hints enabled to show our hints
+                let core_inlays_on = editor.read(cx).inlay_hints_enabled();
+                if !new_enabled || !core_inlays_on {
                     // Immediate effect: when disabling, remove our custom inlays
                     let _ = editor.update(cx, |ed, cx| {
                         let to_remove: Vec<editor::InlayId> = (0..1024)

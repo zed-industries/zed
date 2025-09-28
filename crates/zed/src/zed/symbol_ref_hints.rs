@@ -5,6 +5,8 @@ use project::Project;
 use settings::Settings; // for try_read_global
 use std::time::Duration;
 use ui::prelude::*;
+use language::language_settings::{all_language_settings};
+
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
 /// Adds inline reference-count hints next to symbols in the active editor and logs counts.
@@ -49,10 +51,12 @@ impl SymbolRefHints {
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
-        _event: &EditorEvent,
+        event: &EditorEvent,
     ) {
-        // Respect user setting (default: true)
-        if !SymbolRefHintsSettings::get_global(cx).enabled {
+        // Respect both settings: global inlay hints + our feature flag
+        let our_enabled = SymbolRefHintsSettings::get_global(cx).enabled;
+        let inlay_enabled = editor.read(cx).inlay_hints_enabled();
+        if !(our_enabled && inlay_enabled) {
             // Immediately clear any existing inlays and invalidate in-flight tasks
             self.refresh_rev = self.refresh_rev.wrapping_add(1);
             let _ = editor.update(cx, |ed, cx| {
@@ -69,7 +73,21 @@ impl SymbolRefHints {
         if !is_singleton {
             return;
         }
-        self.refresh_symbol_ref_hints(editor, window, cx);
+
+        // Use inlay-hint-like debounce: scroll vs edit
+        let (edit_ms, scroll_ms) = editor.read_with(cx, |_ed, app| {
+            let als = all_language_settings(None, app);
+            let s = &als.defaults.inlay_hints;
+            // Don't block if the editor itself disables debounce (0)
+            let edit_ms = if s.edit_debounce_ms == 0 { 0 } else { s.edit_debounce_ms };
+            let scroll_ms = if s.scroll_debounce_ms == 0 { 0 } else { s.scroll_debounce_ms };
+            (edit_ms, scroll_ms)
+        });
+        let debounce = match event {
+            EditorEvent::ScrollPositionChanged { .. } => Duration::from_millis(scroll_ms),
+            _ => Duration::from_millis(edit_ms),
+        };
+        self.refresh_symbol_ref_hints(editor, window, cx, debounce);
     }
 
     fn refresh_symbol_ref_hints(
@@ -77,6 +95,7 @@ impl SymbolRefHints {
         editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
+        debounce: Duration,
     ) {
         // Capture the active excerpt, buffer and its outline items synchronously.
         let maybe_data = editor.read(cx).active_excerpt(cx).and_then(|(excerpt_id, buffer, _)| {
@@ -87,15 +106,15 @@ impl SymbolRefHints {
         let project = self.project.clone();
         let editor_handle = editor.clone();
 
-        // Debounce a bit to avoid excessive LSP traffic while typing rapidly.
-        let debounce = Duration::from_millis(150);
+        // Debounce to align with inlay-hints cadence
         let rev = self.refresh_rev;
         self.ongoing_task = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(debounce).await;
 
             // If disabled or invalidated since we started, do nothing.
-            let enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
-            if !enabled { return; }
+            let our_enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
+            let inlay_enabled = editor_handle.read_with(cx, |ed, _| ed.inlay_hints_enabled()).unwrap_or(false);
+            if !(our_enabled && inlay_enabled) { return; }
             let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
             if invalidated { return; }
 
@@ -147,8 +166,9 @@ impl SymbolRefHints {
                 .unwrap_or_default();
 
             // If disabled or invalidated since we computed, skip applying.
-            let enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
-            if inlays.is_empty() || !enabled { return; }
+            let our_enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
+            let inlay_enabled = editor_handle.read_with(cx, |ed, _| ed.inlay_hints_enabled()).unwrap_or(false);
+            if inlays.is_empty() || !(our_enabled && inlay_enabled) { return; }
             let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
             if invalidated { return; }
 
@@ -183,7 +203,8 @@ impl StatusItemView for SymbolRefHints {
                     | EditorEvent::ExcerptsEdited { .. }
                     | EditorEvent::Edited { .. }
                     | EditorEvent::BufferEdited
-                    | EditorEvent::Saved => {
+                    | EditorEvent::Saved
+                    | EditorEvent::ScrollPositionChanged { .. } => {
                         this.on_symbols_changed(&editor, window, cx, event);
                     }
                     _ => {}
@@ -192,9 +213,10 @@ impl StatusItemView for SymbolRefHints {
 
             // Observe settings changes to apply/remove hints immediately.
             let editor_for_settings = editor.clone();
-            self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
-                let enabled = SymbolRefHintsSettings::get_global(cx).enabled;
-                if !enabled {
+            self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
+                let our_enabled = SymbolRefHintsSettings::get_global(cx).enabled;
+                let inlay_enabled = editor_for_settings.read(cx).inlay_hints_enabled();
+                if !(our_enabled && inlay_enabled) {
                     this.refresh_rev = this.refresh_rev.wrapping_add(1);
                     let _ = editor_for_settings.update(cx, |ed, cx| {
                         let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
@@ -204,12 +226,33 @@ impl StatusItemView for SymbolRefHints {
                     });
                 } else {
                     // Request immediate refresh when enabling
-                    this.refresh_symbol_ref_hints(&editor_for_settings, _window, cx);
+                    let (edit_ms, _) = editor_for_settings.read_with(cx, |_ed, app| {
+                        let als = all_language_settings(None, app);
+                        let s = &als.defaults.inlay_hints;
+                        (s.edit_debounce_ms, s.scroll_debounce_ms)
+                    });
+                    this.refresh_symbol_ref_hints(&editor_for_settings, window, cx, Duration::from_millis(edit_ms));
                 }
             }));
 
             // Prime once on activation.
-            self.refresh_symbol_ref_hints(&editor, window, cx);
+            let (edit_ms, _) = editor.read_with(cx, |_ed, app| {
+                let als = all_language_settings(None, app);
+                let s = &als.defaults.inlay_hints;
+                (s.edit_debounce_ms, s.scroll_debounce_ms)
+            });
+            self.refresh_symbol_ref_hints(&editor, window, cx, Duration::from_millis(edit_ms));
+
+            // Ensure a follow-up refresh after initial parse by triggering a reparse now.
+            if SymbolRefHintsSettings::get_global(cx).enabled && editor.read(cx).inlay_hints_enabled() {
+                let _ = editor.update(cx, |ed, cx| {
+                    ed.buffer().update(cx, |mb, cx| {
+                        if let Some(buffer) = mb.as_singleton() {
+                            buffer.update(cx, |b, cx| b.reparse(cx));
+                        }
+                    });
+                });
+            }
         } else {
             // Clear subscription when no active editor.
             self._observe_active_editor = None;
