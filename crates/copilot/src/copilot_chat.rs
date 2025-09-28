@@ -233,7 +233,7 @@ fn tool_chunk_from_function_call(
     if let Some(name_value) = name.clone() {
         function_map
             .entry("name".to_string())
-            .or_insert(Value::String(name_value.clone()));
+            .or_insert(Value::String(name_value));
     }
 
     if let Some(arguments) = arguments {
