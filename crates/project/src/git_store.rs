@@ -449,28 +449,13 @@ impl GitStore {
         matches!(self.state, GitStoreState::Local { .. })
     }
     pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
-        if let Some(worktree) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        {
-            let abs_file_path = worktree
-                .read(cx)
-                .abs_path()
-                .join(project_path.path.as_ref());
-
-            for (id, repo) in &self.repositories {
-                let repo_path = repo.read(cx).work_directory_abs_path.clone();
-                if abs_file_path.starts_with(&repo_path) {
-                    if self.active_repo_id != Some(*id) {
-                        self.active_repo_id = Some(*id);
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(*id)));
-                    }
-                    return;
-                }
+        if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
+            let id = repo.read(cx).id;
+            if self.active_repo_id != Some(id) {
+                self.active_repo_id = Some(id);
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
             }
         }
-
     }
 
 
@@ -1316,10 +1301,6 @@ impl GitStore {
                     diffs.remove(buffer_id);
                 }
             }
-            BufferStoreEvent::BufferOpened { project_path, .. } => {
-                self.set_active_repo_for_path(project_path, cx);
-            }
-
 
             _ => {}
         }
