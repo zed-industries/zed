@@ -437,7 +437,12 @@ message Envelope {
         OpenImageResponse open_image_response = 392;
         CreateImageForPeer create_image_for_peer = 393;
 
-        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394; // current max
+        ExternalExtensionAgentsUpdated external_extension_agents_updated = 394;
+
+        SemanticTokensFull semantic_tokens_full = 395;
+        SemanticTokensFullResponse semantic_tokens_full_response = 396;
+        SemanticTokensDelta semantic_tokens_delta = 397;
+        SemanticTokensDeltaResponse semantic_tokens_delta_response = 398; // current max
     }
 
     reserved 87 to 88;

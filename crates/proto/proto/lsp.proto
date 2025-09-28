@@ -146,6 +146,39 @@ message InlayHintsResponse {
     repeated VectorClockEntry version = 2;
 }
 
+message SemanticTokensFull {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message SemanticTokensFullResponse {
+    repeated uint32 data = 1;
+    optional string result_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message SemanticTokensDelta {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    string previous_result_id = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message SemanticTokensDeltaResponse {
+    // Only `data` or `edits` may be set.
+    repeated uint32 data = 1;
+    repeated SemanticTokensEdit edits = 2;
+    optional string result_id = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message SemanticTokensEdit {
+    uint32 start = 1;
+    uint32 delete_count = 2;
+    repeated uint32 data = 3;
+}
+
 message PointUtf16 {
     uint32 row = 1;
     uint32 column = 2;
