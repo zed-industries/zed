@@ -4180,7 +4180,7 @@ pub mod tests {
         perform_search(search_view, "ONE", cx);
         search_view.update(cx, |search_view, _, cx| {
             let project_search = search_view.entity.read(cx);
-            let file_count = project_search.excerpts.read(cx).all_buffers().len();
+            let file_count = project_search.excerpts.read(cx).len();
             let match_quantity = project_search.match_ranges.len();
 
             // Verify we have the expected number of files and matches
@@ -4191,11 +4191,6 @@ pub mod tests {
             assert!(!project_search.no_results.unwrap_or(true), "Should have results");
             assert!(project_search.pending_search.is_none(), "Search should be complete");
             assert!(search_view.active_match_index.is_some(), "Should have an active match index");
-
-            // The UI will display file count based on these values, so we verify the state
-            // that drives the UI display rather than re-implementing the formatting logic
-            assert!(file_count > 0, "Should have files to display in the status");
-            assert!(match_quantity > 0, "Should have matches to display in the status");
         }).unwrap();
 
         // Test file count display with no matches
@@ -4209,14 +4204,9 @@ pub mod tests {
             assert!(project_search.no_results.unwrap_or(false), "Should have no results");
             assert!(project_search.pending_search.is_none(), "Search should be complete");
 
-            // When there are no results, excerpts are cleared, so we need to get file count from project
-            let file_count = project_search.project.read(cx).worktrees(cx).count();
-            assert_eq!(file_count, 1, "Should have 1 worktree in the project");
-
-            // The UI will display "0/0 in {file_count} files" based on this state
-            // Since the actual UI implementation uses excerpts.all_buffers().len() which is 0 when no results,
-            // we need to test the state that would lead to the correct file count display
-            assert!(file_count > 0, "Should have worktrees even when no matches");
+            // When there are no results, excerpts should be empty
+            let file_count = project_search.excerpts.read(cx).len();
+            assert_eq!(file_count, 0, "Should have 0 files in excerpts when no results");
         }).unwrap();
     }
 
