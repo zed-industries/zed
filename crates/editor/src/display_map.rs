@@ -56,6 +56,7 @@ use multi_buffer::{
 };
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+use theme::SyntaxTheme;
 
 use std::{
     any::TypeId,
@@ -69,7 +70,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ActiveTheme, SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -1532,6 +1533,153 @@ impl ToDisplayPoint for Point {
 impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
+    }
+}
+
+struct SemanticTokenStylizer<'a> {
+    token_types: Vec<&'a str>,
+    modifier_mask: HashMap<&'a str, u32>,
+}
+
+impl<'a> SemanticTokenStylizer<'a> {
+    pub fn new(legend: &'a lsp::SemanticTokensLegend) -> Self {
+        let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
+        let modifier_mask = legend
+            .token_modifiers
+            .iter()
+            .enumerate()
+            .map(|(i, modifier)| (modifier.as_str(), 1 << i))
+            .collect();
+        SemanticTokenStylizer {
+            token_types,
+            modifier_mask,
+        }
+    }
+
+    pub fn token_type(&self, token_type: u32) -> Option<&'a str> {
+        self.token_types.get(token_type as usize).copied()
+    }
+
+    pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
+        let Some(mask) = self.modifier_mask.get(modifier) else {
+            return false;
+        };
+        (token_modifiers & mask) != 0
+    }
+
+    pub fn convert(
+        &self,
+        theme: &'a SyntaxTheme,
+        token_type: u32,
+        modifiers: u32,
+    ) -> Option<HighlightStyle> {
+        let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
+
+        // See the VSCode docs [1] and the LSP Spec [2]
+        //
+        // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
+        // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+        let choices: &[&str] = match self.token_type(token_type)? {
+            // Types
+            "namespace" => &["namespace", "module", "type"],
+            "class" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.class.definition",
+                "type.definition",
+                "type.class",
+                "class",
+                "type",
+            ],
+            "class" => &["type.class", "class", "type"],
+            "enum" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.enum.definition",
+                "type.definition",
+                "type.enum",
+                "enum",
+                "type",
+            ],
+            "enum" => &["type.enum", "enum", "type"],
+            "interface" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.interface.definition",
+                "type.definition",
+                "type.interface",
+                "interface",
+                "type",
+            ],
+            "interface" => &["type.interface", "interface", "type"],
+            "struct" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.struct.definition",
+                "type.definition",
+                "type.struct",
+                "struct",
+                "type",
+            ],
+            "struct" => &["type.struct", "struct", "type"],
+            "typeParameter" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.parameter.definition",
+                "type.definition",
+                "type.parameter",
+                "type",
+            ],
+            "typeParameter" => &["type.parameter", "type"],
+            "type" if has_modifier("declaration") || has_modifier("definition") => {
+                &["type.definition", "type"]
+            }
+            "type" => &["type"],
+
+            // References
+            "parameter" => &["parameter"],
+            "variable" if has_modifier("defaultLibrary") && has_modifier("constant") => {
+                &["constant.builtin", "constant"]
+            }
+            "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
+            "variable" if has_modifier("constant") => &["constant"],
+            "variable" => &["variable"],
+            "property" => &["property"],
+            "enumMember" => &["type.enum.member", "type.enum", "variant"],
+            "decorator" => &["function.decorator", "function.annotation"],
+
+            // Declarations in the docs, but in practice, also references
+            "function" if has_modifier("defaultLibrary") => &["function.builtin", "function"],
+            "function" => &["function"],
+            "method" if has_modifier("defaultLibrary") => {
+                &["function.builtin", "function.method", "function"]
+            }
+            "method" => &["function.method", "function"],
+            "macro" => &["function.macro", "function"],
+            "label" => &["label"],
+
+            // Tokens
+            "comment" if has_modifier("documentation") => {
+                &["comment.documentation", "comment.doc", "comment"]
+            }
+            "comment" => &["comment"],
+            "string" => &["string"],
+            "keyword" => &["keyword"],
+            "number" => &["number"],
+            "regexp" => &["string.regexp", "string"],
+            "operator" => &["operator"],
+
+            // Not in the VS Code docs, but in the LSP spec.
+            "modifier" => &["keyword.modifier"],
+
+            // Language specific bits.
+
+            // C#. This is part of the spec, but not used elsewhere.
+            "event" => &["type.event", "type"],
+
+            // Rust
+            "lifetime" => &["symbol", "type.parameter", "type"],
+
+            _ => return None,
+        };
+
+        for choice in choices {
+            if let Some(style) = theme.get_opt(choice) {
+                return Some(style);
+            }
+        }
+
+        None
     }
 }
 
