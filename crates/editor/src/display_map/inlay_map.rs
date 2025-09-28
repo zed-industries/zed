@@ -1074,6 +1074,7 @@ impl InlaySnapshot {
             buffer_range,
             language_aware,
             highlights.text_highlights,
+            highlights.semantic_tokens,
             &self.buffer,
         );
 
@@ -2079,6 +2080,7 @@ mod tests {
         let highlights = crate::display_map::Highlights {
             text_highlights: None,
             inlay_highlights: Some(&inlay_highlights),
+            semantic_tokens: None,
             styles: crate::display_map::HighlightStyles::default(),
         };
 
@@ -2194,6 +2196,7 @@ mod tests {
             let highlights = crate::display_map::Highlights {
                 text_highlights: None,
                 inlay_highlights: Some(&inlay_highlights),
+                semantic_tokens: None,
                 styles: crate::display_map::HighlightStyles::default(),
             };
 
