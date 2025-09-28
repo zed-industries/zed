@@ -1942,7 +1942,7 @@ impl Render for ProjectSearchBar {
             _ => None,
         };
 
-        let file_count = project_search.excerpts.read(cx).all_buffers().len();
+        let file_count = project_search.excerpts.read(cx).len();
         let match_text = search
             .active_match_index
             .and_then(|index| {
