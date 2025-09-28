@@ -15,7 +15,7 @@ use markdown::{Markdown, MarkdownElement};
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, ext::NumericalDuration};
 use time_format::format_local_timestamp;
 use ui::{ContextMenu, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
@@ -42,7 +42,7 @@ impl BlameRenderer for GitBlameRenderer {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let (time_color, relative_timestamp) = blame_entry_relative_timestamp(cx, &blame_entry);
         let short_commit_id = blame_entry.sha.display_short();
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
@@ -80,7 +80,7 @@ impl BlameRenderer for GitBlameRenderer {
                                 .children(avatar)
                                 .child(name),
                         )
-                        .child(relative_timestamp)
+                        .child(div().text_color(time_color).child(relative_timestamp))
                         .hover(|style| style.bg(cx.theme().colors().element_hover))
                         .cursor_pointer()
                         .on_mouse_down(MouseButton::Right, {
@@ -150,7 +150,7 @@ impl BlameRenderer for GitBlameRenderer {
         blame_entry: BlameEntry,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
+        let (_, relative_timestamp) = blame_entry_relative_timestamp(cx, &blame_entry);
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
@@ -415,17 +415,32 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
+fn blame_entry_relative_timestamp(cx: &App, blame_entry: &BlameEntry) -> (Hsla, String) {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
+            let mut color = cx.theme().colors().version_control_blame_age_new;
             let local = chrono::Local::now().offset().local_minus_utc();
-            time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                time::UtcOffset::from_whole_seconds(local).unwrap(),
-                time_format::TimestampFormat::Relative,
+            let now = time::OffsetDateTime::now_utc();
+
+            // Gradient over ~2 years
+            let recency = ((now - timestamp - 2.hours()).as_seconds_f32()
+                / 106.weeks().as_seconds_f32())
+            .clamp(0.0, 1.0);
+            // Sqrt to make more recent colors change more strongly
+            color.l *= 1. - 0.45 * recency.sqrt();
+            (
+                color,
+                time_format::format_localized_timestamp(
+                    timestamp,
+                    now,
+                    time::UtcOffset::from_whole_seconds(local).unwrap(),
+                    time_format::TimestampFormat::Relative,
+                ),
             )
         }
-        Err(_) => "Error parsing date".to_string(),
+        Err(_) => (
+            cx.theme().colors().terminal_ansi_bright_red,
+            "Error parsing date".to_string(),
+        ),
     }
 }

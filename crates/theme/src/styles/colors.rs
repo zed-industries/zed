@@ -286,6 +286,11 @@ pub struct ThemeColors {
     pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
     pub version_control_conflict_marker_theirs: Hsla,
+
+    /// Blame gutter color for new revisions.
+    pub version_control_blame_age_new: Hsla,
+    /// Blame gutter color for old revisions.
+    pub version_control_blame_age_old: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]

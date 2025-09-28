@@ -777,6 +777,14 @@ pub struct ThemeColorsContent {
     /// Deprecated in favor of `version_control_conflict_marker_theirs`.
     #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
+
+    /// Blame gutter color for new revisions.
+    #[serde(rename = "version_control.blame.age_new")]
+    pub version_control_blame_age_new: Option<String>,
+
+    /// Blame gutter color for old revisions.
+    #[serde(rename = "version_control.blame.age_old")]
+    pub version_control_blame_age_old: Option<String>,
 }
 
 #[skip_serializing_none]
