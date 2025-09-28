@@ -670,6 +670,33 @@ mod tests {
         }
     }
 
+    /// Returns a (biased) random string whose UTF-8 length is no more than `len`.
+    fn random_string_with_utf8_len(rng: &mut StdRng, len: usize) -> String {
+        let mut str = String::new();
+        let mut chars = RandomCharIter::new(rng);
+        loop {
+            let ch = chars.next().unwrap();
+            if str.len() + ch.len_utf8() > len {
+                break;
+            }
+            str.push(ch);
+        }
+        str
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn append_random_strings(mut rng: StdRng) {
+        let len1 = rng.random_range(0..=MAX_BASE);
+        let len2 = rng.random_range(0..=MAX_BASE).saturating_sub(len1);
+        let str1 = random_string_with_utf8_len(&mut rng, len1);
+        let str2 = random_string_with_utf8_len(&mut rng, len2);
+        let mut chunk1 = Chunk::new(&str1);
+        let chunk2 = Chunk::new(&str2);
+        chunk1.append(chunk2.as_slice());
+
+        verify_chunk(chunk1.as_slice(), &(str1 + &str2));
+    }
+
     fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
         let mut offset = 0;
         let mut offset_utf16 = OffsetUtf16(0);
