@@ -1956,11 +1956,7 @@ impl Render for ProjectSearchBar {
                         Some(format!("{index}/{match_quantity} in {file_count} files"))
                     }
                 } else {
-                    if file_count > 0 {
-                        Some(format!("0/0 in {file_count} files"))
-                    } else {
-                        Some("0/0".to_string())
-                    }
+                    None
                 }
             })
             .unwrap_or_else(|| {
