@@ -27,6 +27,7 @@ use crate::{
     lsp_store::{
         self,
         log_store::{GlobalLogStore, LanguageServerKind},
+        semantic_tokens::SemanticTokens,
     },
     manifest_tree::{
         LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
@@ -3501,6 +3502,7 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
+    lsp_semantic_tokens: HashMap<BufferId, SemanticTokensData>,
     running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
 }
 
@@ -3526,6 +3528,12 @@ struct CodeLensData {
     lens_for_version: Global,
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
+}
+
+#[derive(Debug, Default)]
+struct SemanticTokensData {
+    result_id: Option<String>,
+    semantic_tokens: Arc<SemanticTokens>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -3774,6 +3782,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
+            lsp_semantic_tokens: HashMap::default(),
             running_lsp_requests: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
@@ -3835,6 +3844,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
+            lsp_semantic_tokens: HashMap::default(),
             running_lsp_requests: HashMap::default(),
             active_entry: None,
 
@@ -4034,6 +4044,7 @@ impl LspStore {
                     if refcount == 0 {
                         lsp_store.lsp_document_colors.remove(&buffer_id);
                         lsp_store.lsp_code_lens.remove(&buffer_id);
+                        lsp_store.lsp_semantic_tokens.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
                         local.buffers_opened_in_servers.remove(&buffer_id);
@@ -6428,6 +6439,142 @@ impl LspStore {
                     .await
                     .context("waiting for inlay hint request range edits")?;
                 lsp_request_task.await.context("inlay hints LSP request")
+            })
+        }
+    }
+
+    pub fn semantic_tokens(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Arc<SemanticTokens>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        match self.lsp_semantic_tokens.get(&buffer_id) {
+            Some(SemanticTokensData {
+                result_id: Some(result_id),
+                ..
+            }) if self.is_capable_for_proto_request(
+                &buffer,
+                &SemanticTokensDelta {
+                    previous_result_id: result_id.clone(),
+                },
+                cx,
+            ) =>
+            {
+                self.send_semantic_tokens_request(
+                    buffer,
+                    cx,
+                    SemanticTokensDelta {
+                        previous_result_id: result_id.clone(),
+                    },
+                    move |response, store| {
+                        if let Some(existing) = store.lsp_semantic_tokens.get_mut(&buffer_id) {
+                            let semantic_tokens = match response {
+                                SemanticTokensDeltaResponse::Full {
+                                    data,
+                                    id,
+                                    server_id,
+                                } => {
+                                    let mut semantic_tokens = SemanticTokens::from_full(data);
+                                    semantic_tokens.server_id = server_id;
+                                    existing.result_id = id;
+                                    semantic_tokens
+                                }
+                                SemanticTokensDeltaResponse::Delta {
+                                    edits,
+                                    id,
+                                    server_id,
+                                } => {
+                                    let mut semantic_tokens = (*existing.semantic_tokens).clone();
+                                    semantic_tokens.apply(&edits);
+                                    semantic_tokens.server_id = server_id;
+                                    existing.result_id = id;
+                                    semantic_tokens
+                                }
+                            };
+                            existing.semantic_tokens = Arc::new(semantic_tokens);
+                        }
+                    },
+                )
+            }
+            _ => self.send_semantic_tokens_request(
+                buffer,
+                cx,
+                SemanticTokensFull,
+                move |response, store| {
+                    let data = store.lsp_semantic_tokens.entry(buffer_id).or_default();
+                    let mut semantic_tokens = SemanticTokens::from_full(response.data);
+                    semantic_tokens.server_id = response.server_id;
+                    data.semantic_tokens = Arc::new(semantic_tokens);
+                    data.result_id = response.id;
+                },
+            ),
+        }
+    }
+
+    fn send_semantic_tokens_request<R: LspCommand>(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+        request: R,
+        handle_response: impl FnOnce(<R as LspCommand>::Response, &mut LspStore) + 'static,
+    ) -> Task<anyhow::Result<Arc<SemanticTokens>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some((client, project_id)) = self.upstream_client() {
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+                return Task::ready(Ok(Default::default()));
+            }
+
+            let proto_request = LspCommand::to_proto(&request, project_id, buffer.read(cx));
+            cx.spawn(async move |store, cx| {
+                let response = client
+                    .request(proto_request)
+                    .await
+                    .context("semantic tokens full proto request")?;
+
+                let response = LspCommand::response_from_proto(
+                    request,
+                    response,
+                    store.upgrade().context("No lsp store")?,
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await
+                .context("semantic tokens proto response conversion")?;
+
+                store.upgrade().unwrap().update(cx, move |store, _| {
+                    handle_response(response, store);
+
+                    store
+                        .lsp_semantic_tokens
+                        .get(&buffer_id)
+                        .map(|tokens| tokens.semantic_tokens.clone())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("No semantic tokens after response handling")
+                        })
+                })?
+            })
+        } else {
+            let lsp_request_task =
+                self.request_lsp(buffer, LanguageServerToQuery::FirstCapable, request, cx);
+            cx.spawn(async move |store, cx| {
+                let response = lsp_request_task
+                    .await
+                    .context("semantic tokens LSP request")?;
+
+                store.upgrade().unwrap().update(cx, move |store, _| {
+                    handle_response(response, store);
+
+                    store
+                        .lsp_semantic_tokens
+                        .get(&buffer_id)
+                        .map(|tokens| tokens.semantic_tokens.clone())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("No semantic tokens after response handling")
+                        })
+                })?
             })
         }
     }

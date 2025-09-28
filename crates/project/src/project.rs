@@ -38,7 +38,7 @@ use task::Shell;
 use crate::{
     agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
-    lsp_store::{SymbolLocation, log_store::LogKind},
+    lsp_store::{SymbolLocation, log_store::LogKind, semantic_tokens::SemanticTokens},
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
@@ -3911,6 +3911,16 @@ impl Project {
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(buffer_handle, range, cx)
+        })
+    }
+
+    pub fn semantic_tokens(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Arc<SemanticTokens>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer_handle, cx)
         })
     }
 
