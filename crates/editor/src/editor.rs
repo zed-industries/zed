@@ -155,7 +155,7 @@ use project::{
     git_store::GitStoreEvent,
     lsp_store::{
         CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
-        OpenLspBufferHandle,
+        OpenLspBufferHandle, semantic_tokens::BufferSemanticTokens,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -23096,6 +23096,12 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>>;
 
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>>;
+
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
@@ -23671,6 +23677,16 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
         }))
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Shared<Task<std::result::Result<Arc<BufferSemanticTokens>, Arc<anyhow::Error>>>> {
+        self.read(cx)
+            .lsp_store()
+            .update(cx, |lsp_store, cx| lsp_store.semantic_tokens(buffer, cx))
     }
 
     fn range_for_rename(
