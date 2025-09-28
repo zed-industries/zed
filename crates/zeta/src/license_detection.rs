@@ -435,7 +435,7 @@ mod tests {
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
                 continue;
             };
-            let path_string = entry.path().to_string_lossy().to_string();
+            let path_string = entry.path().to_string_lossy().into_owned();
             let license = detect_license(&contents);
             match license {
                 Some(license) => detected.push((license, path_string)),

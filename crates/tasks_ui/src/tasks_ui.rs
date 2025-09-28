@@ -379,7 +379,7 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
     let mut task_variables = TaskVariables::default();
     task_variables.insert(
         VariableName::WorktreeRoot,
-        worktree_abs_path.to_string_lossy().to_string(),
+        worktree_abs_path.to_string_lossy().into_owned(),
     );
     TaskContext {
         cwd: Some(worktree_abs_path.to_path_buf()),

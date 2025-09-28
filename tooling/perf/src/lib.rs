@@ -1,5 +1,7 @@
 //! Some constants and datatypes used in the Zed perf profiler. Should only be
 //! consumed by the crate providing the matching macros.
+//!
+//! For usage documentation, see the docs on this crate's binary.
 
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -274,7 +276,7 @@ impl Output {
                         continue;
                     };
                     let shift =
-                        (s_timings.iters_per_sec(s_iters) / o_timings.iters_per_sec(o_iters)) - 1.;
+                        (o_timings.iters_per_sec(o_iters) / s_timings.iters_per_sec(s_iters)) - 1.;
                     if shift > max {
                         max = shift;
                     }

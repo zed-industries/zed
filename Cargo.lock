@@ -3696,6 +3696,7 @@ dependencies = [
  "paths",
  "project",
  "rpc",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -6269,6 +6270,7 @@ dependencies = [
  "bitflags 2.9.0",
  "core-foundation 0.10.0",
  "fsevent-sys 3.1.0",
+ "log",
  "parking_lot",
  "tempfile",
  "workspace-hack",
@@ -8390,6 +8392,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_schema_store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "extension",
+ "gpui",
+ "language",
+ "paths",
+ "project",
+ "schemars 1.0.1",
+ "serde",
+ "serde_json",
+ "settings",
+ "snippet_provider",
+ "task",
+ "theme",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8476,6 +8500,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "itertools 0.14.0",
+ "json_schema_store",
  "language",
  "log",
  "menu",
@@ -8793,17 +8818,16 @@ dependencies = [
  "async-trait",
  "chrono",
  "collections",
- "dap",
  "futures 0.3.31",
  "gpui",
  "http_client",
  "itertools 0.14.0",
+ "json_schema_store",
  "language",
  "log",
  "lsp",
  "node_runtime",
  "parking_lot",
- "paths",
  "pet",
  "pet-conda",
  "pet-core",
@@ -8816,7 +8840,6 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -8824,7 +8847,6 @@ dependencies = [
  "sha2",
  "shlex",
  "smol",
- "snippet_provider",
  "task",
  "tempfile",
  "text",
@@ -13042,6 +13064,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "http_client",
+ "json_schema_store",
  "language",
  "language_extension",
  "language_model",
@@ -14809,6 +14832,7 @@ dependencies = [
  "paths",
  "schemars 1.0.1",
  "serde",
+ "serde_json",
  "serde_json_lenient",
  "snippet",
  "util",
@@ -20239,6 +20263,7 @@ dependencies = [
  "install_cli",
  "itertools 0.14.0",
  "journal",
+ "json_schema_store",
  "keymap_editor",
  "language",
  "language_extension",
@@ -20314,6 +20339,7 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
+ "util_macros",
  "uuid",
  "vim",
  "vim_mode_setting",
@@ -20373,6 +20399,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_extension_api"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0729d50b4ca0a7e28e590bbe32e3ca0194d97ef654961451a424c661a366fca0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen 0.41.0",
+]
+
+[[package]]
 name = "zed_glsl"
 version = "0.1.0"
 dependencies = [
@@ -20381,9 +20418,9 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
- "zed_extension_api 0.1.0",
+ "zed_extension_api 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

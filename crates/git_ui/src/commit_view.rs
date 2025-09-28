@@ -522,6 +522,29 @@ impl Item for CommitView {
             editor.added_to_workspace(workspace, window, cx)
         });
     }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<workspace::WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new(|cx| {
+            let editor = cx.new(|cx| {
+                self.editor
+                    .update(cx, |editor, cx| editor.clone(window, cx))
+            });
+            let multibuffer = editor.read(cx).buffer().clone();
+            Self {
+                editor,
+                multibuffer,
+                commit: self.commit.clone(),
+            }
+        }))
+    }
 }
 
 impl Render for CommitView {
