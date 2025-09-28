@@ -2544,7 +2544,7 @@ impl MultiBuffer {
         self.buffers.borrow().keys().copied().collect()
     }
 
-    pub fn len(&self) -> usize {
+    pub fn buffer_count(&self) -> usize {
         self.buffers.borrow().len()
     }
 

@@ -1942,7 +1942,7 @@ impl Render for ProjectSearchBar {
             _ => None,
         };
 
-        let file_count = project_search.excerpts.read(cx).len();
+        let file_count = project_search.excerpts.read(cx).buffer_count();
         let match_text = search
             .active_match_index
             .and_then(|index| {
@@ -4180,7 +4180,7 @@ pub mod tests {
         perform_search(search_view, "ONE", cx);
         search_view.update(cx, |search_view, _, cx| {
             let project_search = search_view.entity.read(cx);
-            let file_count = project_search.excerpts.read(cx).len();
+            let file_count = project_search.excerpts.read(cx).buffer_count();
             let match_quantity = project_search.match_ranges.len();
 
             // Verify we have the expected number of files and matches
@@ -4205,7 +4205,7 @@ pub mod tests {
             assert!(project_search.pending_search.is_none(), "Search should be complete");
 
             // When there are no results, excerpts should be empty
-            let file_count = project_search.excerpts.read(cx).len();
+            let file_count = project_search.excerpts.read(cx).buffer_count();
             assert_eq!(file_count, 0, "Should have 0 files in excerpts when no results");
         }).unwrap();
     }
