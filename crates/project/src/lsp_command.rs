@@ -240,6 +240,48 @@ pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug)]
+pub(crate) struct SemanticTokensFull;
+
+#[derive(Debug)]
+pub(crate) struct SemanticTokensDelta {
+    pub previous_result_id: String,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct SemanticTokensFullResponse {
+    pub data: Vec<u32>,
+    pub id: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) enum SemanticTokensDeltaResponse {
+    Full {
+        data: Vec<u32>,
+        id: Option<String>,
+    },
+    Delta {
+        edits: Vec<SemanticTokensEdit>,
+        id: Option<String>,
+    },
+}
+
+impl Default for SemanticTokensDeltaResponse {
+    fn default() -> Self {
+        SemanticTokensDeltaResponse::Delta {
+            edits: vec![],
+            id: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SemanticTokensEdit {
+    pub start: u32,
+    pub delete_count: u32,
+    pub data: Vec<u32>,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
 
@@ -3454,6 +3496,323 @@ impl LspCommand for InlayHints {
 }
 
 #[async_trait(?Send)]
+impl LspCommand for SemanticTokensFull {
+    type Response = SemanticTokensFullResponse;
+    type LspRequest = lsp_semantic_tokens::SemanticTokensFullRequest;
+    type ProtoRequest = proto::SemanticTokensFull;
+
+    fn display_name(&self) -> &str {
+        "Semantic tokens full"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .is_some_and(|semantic_tokens_provider| {
+                let options = match semantic_tokens_provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => opts,
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options,
+                };
+
+                match options.full {
+                    Some(lsp::SemanticTokensFullOptions::Bool(is_supported)) => is_supported,
+                    Some(lsp::SemanticTokensFullOptions::Delta { .. }) => true,
+                    None => false,
+                }
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::SemanticTokensParams> {
+        Ok(lsp::SemanticTokensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp_semantic_tokens::SemanticTokensFullResult>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensFullResponse> {
+        match message {
+            Some(lsp_semantic_tokens::SemanticTokensFullResult::Tokens(tokens)) => {
+                Ok(SemanticTokensFullResponse {
+                    data: tokens.data,
+                    id: tokens.result_id,
+                })
+            }
+            Some(lsp_semantic_tokens::SemanticTokensFullResult::Partial(_)) => {
+                anyhow::bail!(
+                    "Unexpected semantic tokens response with partial result for inlay hints"
+                )
+            }
+            None => Ok(Default::default()),
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokensFull {
+        proto::SemanticTokensFull {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::SemanticTokensFull,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: SemanticTokensFullResponse,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::SemanticTokensFullResponse {
+        proto::SemanticTokensFullResponse {
+            data: response.data,
+            result_id: response.id,
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::SemanticTokensFullResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensFullResponse> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(SemanticTokensFullResponse {
+            data: message.data,
+            id: message.result_id,
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::SemanticTokensFull) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for SemanticTokensDelta {
+    type Response = SemanticTokensDeltaResponse;
+    type LspRequest = lsp_semantic_tokens::SemanticTokensFullDeltaRequest;
+    type ProtoRequest = proto::SemanticTokensDelta;
+
+    fn display_name(&self) -> &str {
+        "Semantic tokens delta"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .semantic_tokens_provider
+            .as_ref()
+            .is_some_and(|semantic_tokens_provider| {
+                let options = match semantic_tokens_provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => opts,
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options,
+                };
+
+                match options.full {
+                    Some(lsp::SemanticTokensFullOptions::Delta { delta }) => delta.unwrap_or(false),
+                    // `full: true` (instead of `full: { delta: true }`) means no support for delta.
+                    _ => false,
+                }
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::SemanticTokensDeltaParams> {
+        Ok(lsp::SemanticTokensDeltaParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            previous_result_id: self.previous_result_id.clone(),
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<lsp_semantic_tokens::SemanticTokensFullDeltaResult>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensDeltaResponse> {
+        match message {
+            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::Tokens(tokens)) => {
+                Ok(SemanticTokensDeltaResponse::Full {
+                    data: tokens.data,
+                    id: tokens.result_id,
+                })
+            }
+            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::TokensDelta(delta)) => {
+                Ok(SemanticTokensDeltaResponse::Delta {
+                    edits: delta
+                        .edits
+                        .into_iter()
+                        .map(|e| SemanticTokensEdit {
+                            start: e.start,
+                            delete_count: e.delete_count,
+                            data: e.data.unwrap_or_default(),
+                        })
+                        .collect(),
+                    id: delta.result_id,
+                })
+            }
+            Some(lsp_semantic_tokens::SemanticTokensFullDeltaResult::PartialTokensDelta {
+                ..
+            }) => {
+                anyhow::bail!(
+                    "Unexpected semantic tokens response with partial result for inlay hints"
+                )
+            }
+            None => Ok(Default::default()),
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::SemanticTokensDelta {
+        proto::SemanticTokensDelta {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            previous_result_id: self.previous_result_id.clone(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::SemanticTokensDelta,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        Ok(SemanticTokensDelta {
+            previous_result_id: message.previous_result_id,
+        })
+    }
+
+    fn response_to_proto(
+        response: SemanticTokensDeltaResponse,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::SemanticTokensDeltaResponse {
+        match response {
+            SemanticTokensDeltaResponse::Full { data, id } => proto::SemanticTokensDeltaResponse {
+                data,
+                edits: vec![],
+                result_id: id,
+                version: serialize_version(buffer_version),
+            },
+            SemanticTokensDeltaResponse::Delta { edits, id } => {
+                proto::SemanticTokensDeltaResponse {
+                    data: vec![],
+                    edits: edits
+                        .into_iter()
+                        .map(|edit| proto::SemanticTokensEdit {
+                            start: edit.start,
+                            delete_count: edit.delete_count,
+                            data: edit.data,
+                        })
+                        .collect(),
+                    result_id: id,
+                    version: serialize_version(buffer_version),
+                }
+            }
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::SemanticTokensDeltaResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<SemanticTokensDeltaResponse> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
+        if !message.data.is_empty() {
+            Ok(SemanticTokensDeltaResponse::Full {
+                data: message.data,
+                id: message.result_id,
+            })
+        } else {
+            Ok(SemanticTokensDeltaResponse::Delta {
+                edits: message
+                    .edits
+                    .into_iter()
+                    .map(|edit| SemanticTokensEdit {
+                        start: edit.start,
+                        delete_count: edit.delete_count,
+                        data: edit.data,
+                    })
+                    .collect(),
+                id: message.result_id,
+            })
+        }
+    }
+
+    fn buffer_id_from_proto(message: &proto::SemanticTokensDelta) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
 impl LspCommand for GetCodeLens {
     type Response = Vec<CodeAction>;
     type LspRequest = lsp::CodeLensRequest;
@@ -4480,6 +4839,78 @@ fn process_full_diagnostics_report(
                 },
             });
         }
+    }
+}
+
+// Copy of the semantic tokens types, except using `Vec<u32>` instead
+// of `Vec<SemanticToken>`. This is so that servers can send a delta
+// that only modifies part of a token.
+mod lsp_semantic_tokens {
+    use serde::{Deserialize, Serialize};
+
+    pub enum SemanticTokensFullRequest {}
+
+    impl lsp::request::Request for SemanticTokensFullRequest {
+        type Params = lsp::SemanticTokensParams;
+        type Result = Option<SemanticTokensFullResult>;
+        const METHOD: &'static str = "textDocument/semanticTokens/full";
+    }
+
+    pub enum SemanticTokensFullDeltaRequest {}
+
+    impl lsp::request::Request for SemanticTokensFullDeltaRequest {
+        type Params = lsp::SemanticTokensDeltaParams;
+        type Result = Option<SemanticTokensFullDeltaResult>;
+        const METHOD: &'static str = "textDocument/semanticTokens/full/delta";
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    #[serde(untagged)]
+    pub enum SemanticTokensFullResult {
+        Tokens(SemanticTokens),
+        Partial(SemanticTokensPartialResult),
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    #[serde(untagged)]
+    pub enum SemanticTokensFullDeltaResult {
+        Tokens(SemanticTokens),
+        TokensDelta(SemanticTokensDelta),
+        PartialTokensDelta { edits: Vec<SemanticTokensEdit> },
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SemanticTokens {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub result_id: Option<String>,
+        pub data: Vec<u32>,
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SemanticTokensDelta {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub result_id: Option<String>,
+        pub edits: Vec<SemanticTokensEdit>,
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SemanticTokensPartialResult {
+        pub data: Vec<u32>,
+    }
+
+    #[derive(Debug, Eq, PartialEq, Clone, Default, serde::Deserialize, serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SemanticTokensEdit {
+        pub start: u32,
+        pub delete_count: u32,
+
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub data: Option<Vec<u32>>,
     }
 }
 
