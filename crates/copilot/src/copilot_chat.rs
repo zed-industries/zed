@@ -1144,13 +1144,9 @@ impl ResponsesApiStreamEvent {
                         )
                         .or_else(|| {
                             self.tool.as_ref().and_then(|value| {
-                                tool_chunk_from_value(
-                                    index,
-                                    self.tool_call_id.clone(),
-                                    value,
-                                        )
-                                    })
-                                });
+                                tool_chunk_from_value(index, self.tool_call_id.clone(), value)
+                            })
+                        });
 
                         if let Some(mut chunk) = chunk {
                             if chunk.id.is_none() {
@@ -1220,13 +1216,9 @@ impl ResponsesApiStreamEvent {
                         )
                         .or_else(|| {
                             self.tool.as_ref().and_then(|value| {
-                                tool_chunk_from_value(
-                                    index,
-                                    self.tool_call_id.clone(),
-                                    value,
-                                        )
-                                    })
-                                });
+                                tool_chunk_from_value(index, self.tool_call_id.clone(), value)
+                            })
+                        });
 
                         if let Some(mut chunk) = chunk {
                             if chunk.id.is_none() {
