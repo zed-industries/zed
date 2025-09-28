@@ -1007,6 +1007,15 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
+fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+    if let Some(venv) = venv {
+        venv.strip_prefix(wr)
+            .map_or(usize::MAX, |p| p.components().count())
+    } else {
+        usize::MAX
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -1069,12 +1078,7 @@ impl ToolchainLister for PythonToolchainProvider {
             let proj_ordering = || {
                 let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
                 let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                match (&lhs_project, &rhs_project) {
-                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                    (Some(l), None) if l == &wr => Ordering::Less,
-                    (None, Some(r)) if r == &wr => Ordering::Greater,
-                    _ => Ordering::Equal,
-                }
+                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
             };
 
             // Compare environment priorities
