@@ -417,6 +417,14 @@ actions!(
         SwapPaneUp,
         /// Swaps the current pane with the one below.
         SwapPaneDown,
+        /// Move the current pane to be at the far left.
+        MovePaneLeft,
+        /// Move the current pane to be at the far right.
+        MovePaneRight,
+        /// Move the current pane to be at the very top.
+        MovePaneUp,
+        /// Move the current pane to be at the very bottom.
+        MovePaneDown,
     ]
 );
 
@@ -3840,6 +3848,16 @@ impl Workspace {
         }
     }
 
+    pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self
+            .center
+            .move_to_border(&self.active_pane, direction)
+            .unwrap()
+        {
+            cx.notify();
+        }
+    }
+
     pub fn resize_pane(
         &mut self,
         axis: gpui::Axis,
@@ -5633,6 +5651,18 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
                 workspace.swap_pane_in_direction(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneLeft, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneRight, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneUp, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &MovePaneDown, _, cx| {
+                workspace.move_pane_to_border(SplitDirection::Down, cx)
             }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
