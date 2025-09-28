@@ -63,8 +63,8 @@ impl SymbolRefHints {
         cx: &mut Context<Self>,
     ) -> Duration {
         let (edit_ms, scroll_ms) = editor.read_with(cx, |_ed, app| {
-            let als = all_language_settings(None, app);
-            let s = &als.defaults.inlay_hints;
+            let all_settings = all_language_settings(None, app);
+            let s = &all_settings.defaults.inlay_hints;
             (s.edit_debounce_ms, s.scroll_debounce_ms)
         });
         match event {
@@ -75,8 +75,8 @@ impl SymbolRefHints {
 
     fn edit_debounce(&self, editor: &Entity<Editor>, cx: &mut Context<Self>) -> Duration {
         let (edit_ms, _) = editor.read_with(cx, |_ed, app| {
-            let als = all_language_settings(None, app);
-            let s = &als.defaults.inlay_hints;
+            let all_settings = all_language_settings(None, app);
+            let s = &all_settings.defaults.inlay_hints;
             (s.edit_debounce_ms, s.scroll_debounce_ms)
         });
         Duration::from_millis(edit_ms)
