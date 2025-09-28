@@ -159,7 +159,10 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    lsp_store::{
+        CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle,
+        semantic_tokens::SemanticTokens,
+    },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
@@ -22590,6 +22593,12 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
 
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Arc<SemanticTokens>>>>;
+
     fn resolve_inlay_hint(
         &self,
         hint: InlayHint,
@@ -23100,6 +23109,14 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.inlay_hints(buffer_handle, range, cx)
         }))
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Arc<SemanticTokens>>>> {
+        Some(self.update(cx, |project, cx| project.semantic_tokens(buffer_handle, cx)))
     }
 
     fn resolve_inlay_hint(
