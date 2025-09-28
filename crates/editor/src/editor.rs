@@ -23734,6 +23734,50 @@ impl SemanticsProvider for Entity<Project> {
     }
 }
 
+struct SemanticTokenStylizer<'a> {
+    token_types: Vec<&'a str>,
+    modifier_mask: HashMap<&'a str, u32>,
+}
+
+impl<'a> SemanticTokenStylizer<'a> {
+    pub fn new(legend: &'a lsp::SemanticTokensLegend) -> Self {
+        let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
+        let modifier_mask = legend
+            .token_modifiers
+            .iter()
+            .enumerate()
+            .map(|(i, modifier)| (modifier.as_str(), 1 << i))
+            .collect();
+        SemanticTokenStylizer {
+            token_types,
+            modifier_mask,
+        }
+    }
+
+    pub fn token_type(&self, token_type: u32) -> Option<&'a str> {
+        self.token_types.get(token_type as usize).copied()
+    }
+
+    pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
+        let Some(mask) = self.modifier_mask.get(modifier) else {
+            return false;
+        };
+        (token_modifiers & mask) != 0
+    }
+
+    pub fn convert(
+        &self,
+        theme: &'a SyntaxTheme,
+        token_type: u32,
+        modifiers: u32,
+    ) -> Option<HighlightStyle> {
+        let _ = (theme, token_type, modifiers);
+        // TODO: Configs.
+
+        None
+    }
+}
+
 fn consume_contiguous_rows(
     contiguous_row_selections: &mut Vec<Selection<Point>>,
     selection: &Selection<Point>,

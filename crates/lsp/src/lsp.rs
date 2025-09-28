@@ -312,6 +312,56 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
+// See the VSCode docs [1] and the LSP Spec [2]
+//
+// [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
+// [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
+    SemanticTokenType::NAMESPACE,
+    SemanticTokenType::CLASS,
+    SemanticTokenType::ENUM,
+    SemanticTokenType::INTERFACE,
+    SemanticTokenType::STRUCT,
+    SemanticTokenType::TYPE_PARAMETER,
+    SemanticTokenType::TYPE,
+    SemanticTokenType::PARAMETER,
+    SemanticTokenType::VARIABLE,
+    SemanticTokenType::PROPERTY,
+    SemanticTokenType::ENUM_MEMBER,
+    SemanticTokenType::DECORATOR,
+    SemanticTokenType::FUNCTION,
+    SemanticTokenType::METHOD,
+    SemanticTokenType::MACRO,
+    SemanticTokenType::new("label"), // Not in the spec, but in the docs.
+    SemanticTokenType::COMMENT,
+    SemanticTokenType::STRING,
+    SemanticTokenType::KEYWORD,
+    SemanticTokenType::NUMBER,
+    SemanticTokenType::REGEXP,
+    SemanticTokenType::OPERATOR,
+    SemanticTokenType::MODIFIER, // Only in the spec, not in the docs.
+    // Language specific things below.
+    // C#
+    SemanticTokenType::EVENT,
+    // Rust
+    SemanticTokenType::new("lifetime"),
+];
+pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
+    SemanticTokenModifier::DECLARATION,
+    SemanticTokenModifier::DEFINITION,
+    SemanticTokenModifier::READONLY,
+    SemanticTokenModifier::STATIC,
+    SemanticTokenModifier::DEPRECATED,
+    SemanticTokenModifier::ABSTRACT,
+    SemanticTokenModifier::ASYNC,
+    SemanticTokenModifier::MODIFICATION,
+    SemanticTokenModifier::DOCUMENTATION,
+    SemanticTokenModifier::DEFAULT_LIBRARY,
+    // Language specific things below.
+    // Rust
+    SemanticTokenModifier::new("constant"),
+];
+
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -815,6 +865,22 @@ impl LanguageServer {
                             ],
                         }),
                         dynamic_registration: Some(true),
+                    }),
+                    semantic_tokens: Some(SemanticTokensClientCapabilities {
+                        dynamic_registration: Some(true),
+                        requests: SemanticTokensClientCapabilitiesRequests {
+                            range: None,
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        },
+                        token_types: SEMANTIC_TOKEN_TYPES.to_vec(),
+                        token_modifiers: SEMANTIC_TOKEN_MODIFIERS.to_vec(),
+                        formats: vec![TokenFormat::RELATIVE],
+                        overlapping_token_support: Some(true),
+                        multiline_token_support: Some(true),
+                        server_cancel_support: Some(true),
+                        // We apply semantic tokens over tree-sitter highlighting, so
+                        // let the server know that we are augmenting existing tokens.
+                        augments_syntax_tokens: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
