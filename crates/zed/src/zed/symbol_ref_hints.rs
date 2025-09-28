@@ -36,6 +36,72 @@ impl SymbolRefHints {
         }
     }
 
+    // --- Helpers to reduce duplication while preserving behavior ---
+    fn removal_ids() -> Vec<InlayId> {
+        (0..MAX_REMOVE)
+            .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
+            .collect()
+    }
+
+    fn bump_and_clear(&mut self, editor: &Entity<Editor>, cx: &mut Context<Self>) {
+        self.refresh_rev = self.refresh_rev.wrapping_add(1);
+        let _ = editor.update(cx, |ed, cx| ed.splice_inlays(&Self::removal_ids(), Vec::new(), cx));
+    }
+
+    fn is_singleton(editor: &Entity<Editor>, cx: &mut Context<Self>) -> bool {
+        editor
+            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some())
+    }
+
+    fn inlays_enabled(&self, editor: &Entity<Editor>, cx: &mut Context<Self>) -> bool {
+        self.enabled && editor.read(cx).inlay_hints_enabled()
+    }
+
+    fn debounce_for_event(
+        &self,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        cx: &mut Context<Self>,
+    ) -> Duration {
+        let (edit_ms, scroll_ms) = editor.read_with(cx, |_ed, app| {
+            let als = all_language_settings(None, app);
+            let s = &als.defaults.inlay_hints;
+            (s.edit_debounce_ms, s.scroll_debounce_ms)
+        });
+        match event {
+            EditorEvent::ScrollPositionChanged { .. } => Duration::from_millis(scroll_ms),
+            _ => Duration::from_millis(edit_ms),
+        }
+    }
+
+    fn edit_debounce(&self, editor: &Entity<Editor>, cx: &mut Context<Self>) -> Duration {
+        let (edit_ms, _) = editor.read_with(cx, |_ed, app| {
+            let als = all_language_settings(None, app);
+            let s = &als.defaults.inlay_hints;
+            (s.edit_debounce_ms, s.scroll_debounce_ms)
+        });
+        Duration::from_millis(edit_ms)
+    }
+
+    fn flatten_document_symbols(
+        mut doc_symbols: Vec<project::DocumentSymbol>,
+    ) -> Vec<project::DocumentSymbol> {
+        let mut flat_syms: Vec<project::DocumentSymbol> = Vec::new();
+        let mut stack: Vec<project::DocumentSymbol> = Vec::new();
+        stack.append(&mut doc_symbols);
+        while let Some(mut sym) = stack.pop() {
+            if !sym.children.is_empty() {
+                for child in sym.children.iter().cloned() {
+                    stack.push(child);
+                }
+            }
+            sym.children.clear();
+            flat_syms.push(sym);
+        }
+        flat_syms
+    }
+
+
     fn on_symbols_changed(
         &mut self,
         editor: &Entity<Editor>,
@@ -47,55 +113,24 @@ impl SymbolRefHints {
         // If core inlay hints were just disabled, clear immediately.
         if let EditorEvent::InlayHintsToggled { enabled } = event {
             if !enabled {
-                self.refresh_rev = self.refresh_rev.wrapping_add(1);
-                let _ = editor.update(cx, |ed, cx| {
-                    let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                        .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                        .collect();
-                    ed.splice_inlays(&to_remove, Vec::new(), cx);
-                });
+                self.bump_and_clear(editor, cx);
                 return;
             }
         }
 
-        let inlay_enabled = editor.read(cx).inlay_hints_enabled();
-        if !(self.enabled && inlay_enabled) {
-            self.refresh_rev = self.refresh_rev.wrapping_add(1);
-            let _ = editor.update(cx, |ed, cx| {
-                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                    .collect();
-                ed.splice_inlays(&to_remove, Vec::new(), cx);
-            });
+        if !self.inlays_enabled(editor, cx) {
+            self.bump_and_clear(editor, cx);
             return;
         }
+
         // Skip and clear when MultiBuffer contains more than one excerpt (multi-buffer sources)
-        let is_singleton = editor
-            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
-        if !is_singleton {
-            self.refresh_rev = self.refresh_rev.wrapping_add(1);
-            let _ = editor.update(cx, |ed, cx| {
-                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                    .collect();
-                ed.splice_inlays(&to_remove, Vec::new(), cx);
-            });
+        if !Self::is_singleton(editor, cx) {
+            self.bump_and_clear(editor, cx);
             return;
         }
 
         // Use inlay-hint-like debounce: scroll vs edit
-        let (edit_ms, scroll_ms) = editor.read_with(cx, |_ed, app| {
-            let als = all_language_settings(None, app);
-            let s = &als.defaults.inlay_hints;
-            // Don't block if the editor itself disables debounce (0)
-            let edit_ms = if s.edit_debounce_ms == 0 { 0 } else { s.edit_debounce_ms };
-            let scroll_ms = if s.scroll_debounce_ms == 0 { 0 } else { s.scroll_debounce_ms };
-            (edit_ms, scroll_ms)
-        });
-        let debounce = match event {
-            EditorEvent::ScrollPositionChanged { .. } => Duration::from_millis(scroll_ms),
-            _ => Duration::from_millis(edit_ms),
-        };
+        let debounce = self.debounce_for_event(editor, event, cx);
         self.refresh_symbol_ref_hints(editor, window, cx, debounce);
     }
 
@@ -107,16 +142,8 @@ impl SymbolRefHints {
         debounce: Duration,
     ) {
         // If not a singleton multibuffer, clear and bail.
-        let is_singleton = editor
-            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
-        if !is_singleton {
-            self.refresh_rev = self.refresh_rev.wrapping_add(1);
-            let _ = editor.update(cx, |ed, cx| {
-                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                    .collect();
-                ed.splice_inlays(&to_remove, Vec::new(), cx);
-            });
+        if !Self::is_singleton(editor, cx) {
+            self.bump_and_clear(editor, cx);
             return;
         }
 
@@ -156,23 +183,12 @@ impl SymbolRefHints {
             };
 
             // Flatten nested document symbols for easier matching.
-            let mut flat_syms: Vec<project::DocumentSymbol> = Vec::new();
-            let mut stack: Vec<project::DocumentSymbol> = doc_symbols;
-            while let Some(sym) = stack.pop() {
-                if !sym.children.is_empty() {
-                    for child in sym.children.iter().cloned() {
-                        stack.push(child);
-                    }
-                }
-                let mut sym_no_children = sym.clone();
-                sym_no_children.children.clear();
-                flat_syms.push(sym_no_children);
-            }
+            let flat_syms = Self::flatten_document_symbols(doc_symbols);
 
             // Compute, for each outline item, the position at which to ask for references.
             // We do this inside a read_with closure to access the App and buffer snapshot.
             let positions = editor_handle
-                .read_with(cx, |ed, app| {
+                .read_with(cx, |_, app| {
                     let snapshot = buffer.read(app).snapshot();
                     items
                         .iter()
@@ -248,11 +264,7 @@ impl SymbolRefHints {
             let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
             if invalidated { return; }
 
-            let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                .collect();
-
-            let _ = editor_handle.update(cx, |ed, cx| ed.splice_inlays(&to_remove, inlays, cx));
+            let _ = editor_handle.update(cx, |ed, cx| ed.splice_inlays(&Self::removal_ids(), inlays, cx));
         });
     }
 }
@@ -296,31 +308,17 @@ impl StatusItemView for SymbolRefHints {
                 let is_singleton = editor_for_settings
                     .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
                 if !(our_enabled && inlay_enabled) || !is_singleton {
-                    this.refresh_rev = this.refresh_rev.wrapping_add(1);
-                    let _ = editor_for_settings.update(cx, |ed, cx| {
-                        let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
-                            .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
-                            .collect();
-                        ed.splice_inlays(&to_remove, Vec::new(), cx);
-                    });
+                    this.bump_and_clear(&editor_for_settings, cx);
                 } else {
                     // Request immediate refresh when enabling
-                    let (edit_ms, _) = editor_for_settings.read_with(cx, |_ed, app| {
-                        let als = all_language_settings(None, app);
-                        let s = &als.defaults.inlay_hints;
-                        (s.edit_debounce_ms, s.scroll_debounce_ms)
-                    });
-                    this.refresh_symbol_ref_hints(&editor_for_settings, window, cx, Duration::from_millis(edit_ms));
+                    let debounce = this.edit_debounce(&editor_for_settings, cx);
+                    this.refresh_symbol_ref_hints(&editor_for_settings, window, cx, debounce);
                 }
             }));
 
             // Prime once on activation.
-            let (edit_ms, _) = editor.read_with(cx, |_ed, app| {
-                let als = all_language_settings(None, app);
-                let s = &als.defaults.inlay_hints;
-                (s.edit_debounce_ms, s.scroll_debounce_ms)
-            });
-            self.refresh_symbol_ref_hints(&editor, window, cx, Duration::from_millis(edit_ms));
+            let debounce = self.edit_debounce(&editor, cx);
+            self.refresh_symbol_ref_hints(&editor, window, cx, debounce);
 
             // Ensure a follow-up refresh after initial parse by triggering a reparse now.
             if self.enabled && editor.read(cx).inlay_hints_enabled() {
