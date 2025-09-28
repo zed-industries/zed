@@ -435,23 +435,23 @@ mod tests {
                       "max_context_window_tokens": 8192,
                       "max_output_tokens": 8192
                     },
-                    "object": "model_capabilities",
                     "supports": {
-                      "reasoning": false,
-                      "tool_calling": true,
+                      "tool_calls": true,
                       "vision": false
                     },
                     "tokenizer": "cl100k_base",
                     "type": "text"
                   },
-                  "endpoints": ["chat/completions"],
+                  "supported_endpoints": ["chat/completions"],
                   "id": "gpt-4",
                   "name": "GPT-4",
-                  "object": "model",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
                   "policy": {
                     "state": "allowed"
                   },
-                  "vendor": "unknown"
+                  "vendor": "SomeUnknownVendor"
                 }
               ]
         }"#;
