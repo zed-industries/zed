@@ -696,6 +696,31 @@ fn register_actions(
                 }
             }
         })
+        .register_action(|workspace, _: &editor::actions::ToggleInlayHints, _window, cx| {
+            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                let before = editor.read(cx).inlay_hints_enabled();
+                let new_enabled = !before;
+                // Consider our feature flag too: only show our hints if both are enabled
+                let our_feature_enabled = self::symbol_ref_hints::SymbolRefHintsSettings::get_global(cx).enabled;
+                if !new_enabled || !our_feature_enabled {
+                    let _ = editor.update(cx, |ed, cx| {
+                        let to_remove: Vec<editor::InlayId> = (0..1024)
+                            .map(|i| editor::InlayId::DebuggerValue(900_000_000 + i))
+                            .collect();
+                        ed.splice_inlays(&to_remove, Vec::new(), cx);
+                    });
+                } else {
+                    // Enabling: trigger a reparse to refresh our hints now
+                    let _ = editor.update(cx, |ed, cx| {
+                        ed.buffer().update(cx, |mb, cx| {
+                            if let Some(buffer) = mb.as_singleton() {
+                                buffer.update(cx, |b, cx| b.reparse(cx));
+                            }
+                        });
+                    });
+                }
+            }
+        })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![action.url.clone()],

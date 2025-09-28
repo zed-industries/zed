@@ -5147,8 +5147,10 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let new_enabled = !self.inlay_hints_enabled();
+        cx.emit(EditorEvent::InlayHintsToggled { enabled: new_enabled });
         self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
+            InlayHintRefreshReason::Toggle(new_enabled),
             cx,
         );
     }
@@ -23397,6 +23399,9 @@ pub enum EditorEvent {
         utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
     },
+        InlayHintsToggled {
+            enabled: bool,
+        },
     ExcerptsAdded {
         buffer: Entity<Buffer>,
         predecessor: ExcerptId,

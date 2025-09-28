@@ -67,10 +67,17 @@ impl SymbolRefHints {
             });
             return;
         }
-        // Skip when MultiBuffer contains more than one excerpt (multi-buffer sources)
+        // Skip and clear when MultiBuffer contains more than one excerpt (multi-buffer sources)
         let is_singleton = editor
             .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
         if !is_singleton {
+            self.refresh_rev = self.refresh_rev.wrapping_add(1);
+            let _ = editor.update(cx, |ed, cx| {
+                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
+                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
+                    .collect();
+                ed.splice_inlays(&to_remove, Vec::new(), cx);
+            });
             return;
         }
 
@@ -97,6 +104,20 @@ impl SymbolRefHints {
         cx: &mut Context<Self>,
         debounce: Duration,
     ) {
+        // If not a singleton multibuffer, clear and bail.
+        let is_singleton = editor
+            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
+        if !is_singleton {
+            self.refresh_rev = self.refresh_rev.wrapping_add(1);
+            let _ = editor.update(cx, |ed, cx| {
+                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
+                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
+                    .collect();
+                ed.splice_inlays(&to_remove, Vec::new(), cx);
+            });
+            return;
+        }
+
         // Capture the active excerpt, buffer and its outline items synchronously.
         let maybe_data = editor.read(cx).active_excerpt(cx).and_then(|(excerpt_id, buffer, _)| {
             let items = buffer.read(cx).snapshot().outline(None).items;
@@ -204,7 +225,8 @@ impl StatusItemView for SymbolRefHints {
                     | EditorEvent::Edited { .. }
                     | EditorEvent::BufferEdited
                     | EditorEvent::Saved
-                    | EditorEvent::ScrollPositionChanged { .. } => {
+                    | EditorEvent::ScrollPositionChanged { .. }
+                    | EditorEvent::InlayHintsToggled { .. } => {
                         this.on_symbols_changed(&editor, window, cx, event);
                     }
                     _ => {}
@@ -216,7 +238,9 @@ impl StatusItemView for SymbolRefHints {
             self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
                 let our_enabled = SymbolRefHintsSettings::get_global(cx).enabled;
                 let inlay_enabled = editor_for_settings.read(cx).inlay_hints_enabled();
-                if !(our_enabled && inlay_enabled) {
+                let is_singleton = editor_for_settings
+                    .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
+                if !(our_enabled && inlay_enabled) || !is_singleton {
                     this.refresh_rev = this.refresh_rev.wrapping_add(1);
                     let _ = editor_for_settings.update(cx, |ed, cx| {
                         let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
