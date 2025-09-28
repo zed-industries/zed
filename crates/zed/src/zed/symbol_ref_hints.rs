@@ -2,6 +2,7 @@ use editor::{display_map::Inlay, Editor, EditorEvent, InlayId};
 use gpui::{Context, Entity, Render, Subscription, Task, Window};
 use log::info;
 use project::Project;
+use settings::Settings; // for try_read_global
 use std::time::Duration;
 use ui::prelude::*;
 use workspace::{ItemHandle, StatusItemView, Workspace};
@@ -10,7 +11,23 @@ use workspace::{ItemHandle, StatusItemView, Workspace};
 pub struct SymbolRefHints {
     project: Entity<Project>,
     _observe_active_editor: Option<Subscription>,
+    _observe_settings: Option<Subscription>,
     ongoing_task: Task<()>,
+    refresh_rev: u64,
+}
+
+
+#[derive(Clone, Debug)]
+pub struct SymbolRefHintsSettings {
+    pub enabled: bool,
+}
+
+impl settings::Settings for SymbolRefHintsSettings {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut gpui::App) -> Self {
+        SymbolRefHintsSettings {
+            enabled: content.symbol_ref_hints.unwrap_or(true),
+        }
+    }
 }
 
 const HINT_BASE_ID: usize = 900_000_000; // avoid collisions with other inlays
@@ -21,7 +38,9 @@ impl SymbolRefHints {
         Self {
             project: workspace.project().clone(),
             _observe_active_editor: None,
+            _observe_settings: None,
             ongoing_task: Task::ready(()),
+            refresh_rev: 0,
         }
     }
 
@@ -32,6 +51,24 @@ impl SymbolRefHints {
         cx: &mut Context<Self>,
         _event: &EditorEvent,
     ) {
+        // Respect user setting (default: true)
+        if !SymbolRefHintsSettings::get_global(cx).enabled {
+            // Immediately clear any existing inlays and invalidate in-flight tasks
+            self.refresh_rev = self.refresh_rev.wrapping_add(1);
+            let _ = editor.update(cx, |ed, cx| {
+                let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
+                    .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
+                    .collect();
+                ed.splice_inlays(&to_remove, Vec::new(), cx);
+            });
+            return;
+        }
+        // Skip when MultiBuffer contains more than one excerpt (multi-buffer sources)
+        let is_singleton = editor
+            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
+        if !is_singleton {
+            return;
+        }
         self.refresh_symbol_ref_hints(editor, window, cx);
     }
 
@@ -52,8 +89,15 @@ impl SymbolRefHints {
 
         // Debounce a bit to avoid excessive LSP traffic while typing rapidly.
         let debounce = Duration::from_millis(150);
-        self.ongoing_task = cx.spawn_in(window, async move |_this, cx| {
+        let rev = self.refresh_rev;
+        self.ongoing_task = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(debounce).await;
+
+            // If disabled or invalidated since we started, do nothing.
+            let enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
+            if !enabled { return; }
+            let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
+            if invalidated { return; }
 
             // For each outline item, request references at the start anchor of the item.
             let mut counts: Vec<usize> = Vec::with_capacity(items.len());
@@ -102,7 +146,11 @@ impl SymbolRefHints {
                 })
                 .unwrap_or_default();
 
-            if inlays.is_empty() { return; }
+            // If disabled or invalidated since we computed, skip applying.
+            let enabled = SymbolRefHintsSettings::try_read_global(cx, |s| s.enabled).unwrap_or(true);
+            if inlays.is_empty() || !enabled { return; }
+            let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
+            if invalidated { return; }
 
             let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
                 .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
@@ -141,11 +189,31 @@ impl StatusItemView for SymbolRefHints {
                     _ => {}
                 }
             }));
+
+            // Observe settings changes to apply/remove hints immediately.
+            let editor_for_settings = editor.clone();
+            self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
+                let enabled = SymbolRefHintsSettings::get_global(cx).enabled;
+                if !enabled {
+                    this.refresh_rev = this.refresh_rev.wrapping_add(1);
+                    let _ = editor_for_settings.update(cx, |ed, cx| {
+                        let to_remove: Vec<InlayId> = (0..MAX_REMOVE)
+                            .map(|i| InlayId::DebuggerValue(HINT_BASE_ID + i))
+                            .collect();
+                        ed.splice_inlays(&to_remove, Vec::new(), cx);
+                    });
+                } else {
+                    // Request immediate refresh when enabling
+                    this.refresh_symbol_ref_hints(&editor_for_settings, _window, cx);
+                }
+            }));
+
             // Prime once on activation.
             self.refresh_symbol_ref_hints(&editor, window, cx);
         } else {
             // Clear subscription when no active editor.
             self._observe_active_editor = None;
+            self._observe_settings = None;
         }
         cx.notify();
     }

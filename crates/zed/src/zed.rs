@@ -6,7 +6,7 @@ pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
-mod symbol_ref_hints;
+pub(crate) mod symbol_ref_hints;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -121,6 +121,8 @@ actions!(
         ToggleFullScreen,
         /// Zooms the window.
         Zoom,
+        /// Toggle Symbol Ref Hints (inline symbol reference-count hints)
+        ToggleSymbolRefHints,
         /// Triggers a test panic for debugging.
         TestPanic,
         /// Triggers a hard crash for debugging.
@@ -664,6 +666,33 @@ fn register_actions(
         })
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
+        })
+        .register_action(|workspace, _: &ToggleSymbolRefHints, _window, cx| {
+            let enabled = self::symbol_ref_hints::SymbolRefHintsSettings::get_global(cx).enabled;
+            let new_enabled = !enabled;
+            settings::SettingsStore::update(cx, |store, _cx| {
+                store.override_global(self::symbol_ref_hints::SymbolRefHintsSettings { enabled: new_enabled });
+            });
+            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                if !new_enabled {
+                    // Immediate effect: when disabling, remove our custom inlays
+                    let _ = editor.update(cx, |ed, cx| {
+                        let to_remove: Vec<editor::InlayId> = (0..1024)
+                            .map(|i| editor::InlayId::DebuggerValue(900_000_000 + i))
+                            .collect();
+                        ed.splice_inlays(&to_remove, Vec::new(), cx);
+                    });
+                } else {
+                    // Immediate effect: when enabling, trigger a reparse to refresh hints now
+                    let _ = editor.update(cx, |ed, cx| {
+                        ed.buffer().update(cx, |mb, cx| {
+                            if let Some(buffer) = mb.as_singleton() {
+                                buffer.update(cx, |b, cx| b.reparse(cx));
+                            }
+                        });
+                    });
+                }
+            }
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {

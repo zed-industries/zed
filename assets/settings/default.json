@@ -24,6 +24,8 @@
   // 6. "TextMate"
   "base_keymap": "VSCode",
   // Features that can be globally enabled or disabled
+  // Whether to show inline symbol reference-count hints next to symbols in the editor.
+  "symbol_ref_hints": false,
   "features": {
     // Which edit prediction provider to use.
     "edit_prediction_provider": "zed"
