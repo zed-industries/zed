@@ -6,6 +6,7 @@ pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
+mod symbol_ref_hints;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
@@ -413,6 +414,7 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let symbol_ref_hints = cx.new(|_| symbol_ref_hints::SymbolRefHints::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -424,6 +426,8 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
+            // Invisible utility that logs reference counts and shows inline hints in the active file.
+            status_bar.add_right_item(symbol_ref_hints, window, cx);
         });
 
         let handle = cx.entity().downgrade();
