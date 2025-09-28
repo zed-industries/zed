@@ -34,6 +34,12 @@ impl SymbolRefHints {
         }
     }
 
+
+        fn cancel_task(&mut self) {
+            // Replace any ongoing task with a completed one, dropping captured handles.
+            self.ongoing_task = Task::ready(());
+        }
+
     // --- Helpers to reduce duplication while preserving behavior ---
     fn removal_ids() -> Vec<InlayId> {
         (0..MAX_REMOVE)
@@ -142,6 +148,7 @@ impl SymbolRefHints {
         // If not a singleton multibuffer, clear and bail.
         if !Self::is_singleton(editor, cx) {
             self.bump_and_clear(editor, cx);
+            self.cancel_task();
             return;
         }
 
@@ -302,6 +309,8 @@ impl StatusItemView for SymbolRefHints {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Cancel any previous pending task tied to a different editor.
+        self.cancel_task();
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             // Observe editor events related to syntax/outline updates.
             self._observe_active_editor = Some(cx.subscribe_in(
@@ -332,6 +341,7 @@ impl StatusItemView for SymbolRefHints {
                         .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
                     if !(our_enabled && inlay_enabled) || !is_singleton {
                         this.bump_and_clear(&editor_for_settings, cx);
+                        this.cancel_task();
                     } else {
                         // Request immediate refresh when enabling
                         let debounce = this.edit_debounce(&editor_for_settings, cx);
@@ -355,9 +365,10 @@ impl StatusItemView for SymbolRefHints {
                 });
             }
         } else {
-            // Clear subscription when no active editor.
+            // Clear subscription when no active editor and cancel any pending task
             self._observe_active_editor = None;
             self._observe_settings = None;
+            self.cancel_task();
         }
         cx.notify();
     }
