@@ -382,8 +382,6 @@ pub fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
-        // Register custom settings for symbol reference hints (default true)
-        crate::zed::symbol_ref_hints::SymbolRefHintsSettings::register(cx);
         zlog_settings::init(cx);
         handle_settings_file_changes(
             user_settings_file_rx,

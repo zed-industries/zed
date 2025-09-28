@@ -417,6 +417,7 @@ pub fn initialize_workspace(
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let symbol_ref_hints = cx.new(|_| symbol_ref_hints::SymbolRefHints::new(workspace));
+        let symbol_ref_hints_for_status = symbol_ref_hints.clone();
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -428,9 +429,39 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
-            // Invisible utility that logs reference counts and shows inline hints in the active file.
-            status_bar.add_right_item(symbol_ref_hints, window, cx);
+            // Invisible utility that shows inline symbol reference-count hints in the active file.
+            status_bar.add_right_item(symbol_ref_hints_for_status, window, cx);
         });
+        // Register actions that depend on the status item handle
+        workspace.register_action({
+            let symbol_ref_hints = symbol_ref_hints.clone();
+            move |workspace, _: &ToggleSymbolRefHints, _window, cx| {
+                let new_enabled = symbol_ref_hints.update(cx, |s, _| {
+                    s.enabled = !s.enabled;
+                    s.enabled
+                });
+                if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
+                    let core_inlays_on = editor.read(cx).inlay_hints_enabled();
+                    if !new_enabled || !core_inlays_on {
+                        let _ = editor.update(cx, |ed, cx| {
+                            let to_remove: Vec<editor::InlayId> = (0..1024)
+                                .map(|i| editor::InlayId::DebuggerValue(900_000_000 + i))
+                                .collect();
+                            ed.splice_inlays(&to_remove, Vec::new(), cx);
+                        });
+                    } else {
+                        let _ = editor.update(cx, |ed, cx| {
+                            ed.buffer().update(cx, |mb, cx| {
+                                if let Some(buffer) = mb.as_singleton() {
+                                    buffer.update(cx, |b, cx| b.reparse(cx));
+                                }
+                            });
+                        });
+                    }
+                }
+            }
+        });
+
 
         let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -666,60 +697,6 @@ fn register_actions(
         })
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
-        })
-        .register_action(|workspace, _: &ToggleSymbolRefHints, _window, cx| {
-            let enabled = self::symbol_ref_hints::SymbolRefHintsSettings::get_global(cx).enabled;
-            let new_enabled = !enabled;
-            settings::SettingsStore::update(cx, |store, _cx| {
-                store.override_global(self::symbol_ref_hints::SymbolRefHintsSettings { enabled: new_enabled });
-            });
-            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                // Also require core inlay hints enabled to show our hints
-                let core_inlays_on = editor.read(cx).inlay_hints_enabled();
-                if !new_enabled || !core_inlays_on {
-                    // Immediate effect: when disabling, remove our custom inlays
-                    let _ = editor.update(cx, |ed, cx| {
-                        let to_remove: Vec<editor::InlayId> = (0..1024)
-                            .map(|i| editor::InlayId::DebuggerValue(900_000_000 + i))
-                            .collect();
-                        ed.splice_inlays(&to_remove, Vec::new(), cx);
-                    });
-                } else {
-                    // Immediate effect: when enabling, trigger a reparse to refresh hints now
-                    let _ = editor.update(cx, |ed, cx| {
-                        ed.buffer().update(cx, |mb, cx| {
-                            if let Some(buffer) = mb.as_singleton() {
-                                buffer.update(cx, |b, cx| b.reparse(cx));
-                            }
-                        });
-                    });
-                }
-            }
-        })
-        .register_action(|workspace, _: &editor::actions::ToggleInlayHints, _window, cx| {
-            if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let before = editor.read(cx).inlay_hints_enabled();
-                let new_enabled = !before;
-                // Consider our feature flag too: only show our hints if both are enabled
-                let our_feature_enabled = self::symbol_ref_hints::SymbolRefHintsSettings::get_global(cx).enabled;
-                if !new_enabled || !our_feature_enabled {
-                    let _ = editor.update(cx, |ed, cx| {
-                        let to_remove: Vec<editor::InlayId> = (0..1024)
-                            .map(|i| editor::InlayId::DebuggerValue(900_000_000 + i))
-                            .collect();
-                        ed.splice_inlays(&to_remove, Vec::new(), cx);
-                    });
-                } else {
-                    // Enabling: trigger a reparse to refresh our hints now
-                    let _ = editor.update(cx, |ed, cx| {
-                        ed.buffer().update(cx, |mb, cx| {
-                            if let Some(buffer) = mb.as_singleton() {
-                                buffer.update(cx, |b, cx| b.reparse(cx));
-                            }
-                        });
-                    });
-                }
-            }
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {

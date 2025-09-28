@@ -158,9 +158,6 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
-    /// Whether to show inline symbol reference-count hints next to symbols in the editor.
-    pub symbol_ref_hints: Option<bool>,
-
 }
 
 impl SettingsContent {
