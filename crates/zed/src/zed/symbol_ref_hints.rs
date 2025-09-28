@@ -34,11 +34,10 @@ impl SymbolRefHints {
         }
     }
 
-
-        fn cancel_task(&mut self) {
-            // Replace any ongoing task with a completed one, dropping captured handles.
-            self.ongoing_task = Task::ready(());
-        }
+    fn cancel_task(&mut self) {
+        // Replace any ongoing task with a completed one, dropping captured handles.
+        self.ongoing_task = Task::ready(());
+    }
 
     // --- Helpers to reduce duplication while preserving behavior ---
     fn removal_ids() -> Vec<InlayId> {
