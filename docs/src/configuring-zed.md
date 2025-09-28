@@ -1,6 +1,7 @@
 # Configuring Zed
 
-Zed is designed to be configured: we want to fit your workflow and preferences exactly. We provide default settings that are designed to be a comfortable starting point for as many people as possible, but we hope you will enjoy tweaking it to make it feel incredible.
+Zed is designed t
+o be configured: we want to fit your workflow and preferences exactly. We provide default settings that are designed to be a comfortable starting point for as many people as possible, but we hope you will enjoy tweaking it to make it feel incredible.
 
 In addition to the settings described here, you may also want to change your [theme](./themes.md), configure your [key bindings](./key-bindings.md), set up [tasks](./tasks.md) or install [extensions](https://github.com/zed-industries/extensions).
 
@@ -66,13 +67,13 @@ Non-negative `float` values
 
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Description: Control the layout of the bottom dock, relative to the left and right docks.
 - Setting: `bottom_dock_layout`
 - Default: `"contained"`
 
 **Options**
 
-1. Contain the bottom dock, giving the full height of the window to the left and right docks
+1. Contain the bottom dock, giving the full height of the window to the left and right docks.
 
 ```json
 {
@@ -80,7 +81,7 @@ Non-negative `float` values
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks
+2. Give the bottom dock the full width of the window, truncating the left and right docks.
 
 ```json
 {
@@ -88,7 +89,7 @@ Non-negative `float` values
 }
 ```
 
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
 
 ```json
 {
@@ -96,7 +97,7 @@ Non-negative `float` values
 }
 ```
 
-3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
 ```json
 {
