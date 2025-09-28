@@ -108,21 +108,22 @@ pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     // Use PowerShell to get environment variables in the directory context
-    let mut command = std::process::Command::new(crate::get_windows_system_shell());
-    command
-        .arg("-NonInteractive")
-        .arg("-NoProfile")
-        .arg("-Command")
-        .arg(format!(
-            "Set-Location '{}'; & '{}' --printenv",
-            directory.display(),
-            zed_path.display()
-        ))
+    let output = crate::command::new_smol_command(crate::get_windows_system_shell())
+        .args([
+            "-NonInteractive",
+            "-NoProfile",
+            "-Command",
+            &format!(
+                "Set-Location '{}'; & '{}' --printenv",
+                directory.display(),
+                zed_path.display()
+            ),
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = smol::process::Command::from(command).output().await?;
+        .stderr(Stdio::piped())
+        .output()
+        .await?;
 
     anyhow::ensure!(
         output.status.success(),
