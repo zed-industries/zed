@@ -434,7 +434,6 @@ pub fn initialize_workspace(
         });
         // Register actions that depend on the status item handle
         workspace.register_action({
-            let symbol_ref_hints = symbol_ref_hints.clone();
             move |workspace, _: &ToggleSymbolRefHints, _window, cx| {
                 let new_enabled = symbol_ref_hints.update(cx, |s, _| {
                     s.enabled = !s.enabled;

@@ -148,9 +148,9 @@ impl SymbolRefHints {
         }
 
         // Capture the active excerpt, buffer and its outline items synchronously.
-        let maybe_data = editor.read(cx).active_excerpt(cx).and_then(|(excerpt_id, buffer, _)| {
+        let maybe_data = editor.read(cx).active_excerpt(cx).map(|(excerpt_id, buffer, _)| {
             let items = buffer.read(cx).snapshot().outline(None).items;
-            Some((excerpt_id, buffer, items))
+            (excerpt_id, buffer, items)
         });
         let Some((excerpt_id, buffer, items)) = maybe_data else { return; };
         let project = self.project.clone();
@@ -174,10 +174,7 @@ impl SymbolRefHints {
                 .update(cx, |p, cx| p.document_symbols(&buffer, cx))
                 .ok()
             {
-                match task.await {
-                    Ok(symbols) => symbols,
-                    Err(_) => Vec::new(),
-                }
+                (task.await).unwrap_or_default()
             } else {
                 Vec::new()
             };
