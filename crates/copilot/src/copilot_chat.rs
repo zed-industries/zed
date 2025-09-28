@@ -2347,4 +2347,3 @@ async fn stream_completion_inner(
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
 }
-
