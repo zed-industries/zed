@@ -1048,7 +1048,6 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     this.end_slot(IconButton::new(id, IconName::Trash).on_click(cx.listener(
                         move |this, _, _, cx| {
                             this.delegate.project.update(cx, |this, cx| {
-                                println!("Clicked Trash can!");
                                 this.remove_toolchain(toolchain.clone(), scope.clone(), cx)
                             });
 
