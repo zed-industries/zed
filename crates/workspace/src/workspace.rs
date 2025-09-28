@@ -4336,8 +4336,9 @@ impl Workspace {
     fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
-        self.project
-            .update(cx, |project, cx| project.set_active_path(active_entry.clone(), cx));
+        self.project.update(cx, |project, cx| {
+            project.set_active_path(active_entry.clone(), cx)
+        });
 
         if let Some(project_path) = &active_entry {
             let git_store_entity = self.project.read(cx).git_store().clone();

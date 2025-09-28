@@ -458,7 +458,6 @@ impl GitStore {
         }
     }
 
-
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
             GitStoreState::Ssh {
