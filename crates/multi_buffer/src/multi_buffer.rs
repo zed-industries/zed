@@ -2544,6 +2544,10 @@ impl MultiBuffer {
         self.buffers.borrow().keys().copied().collect()
     }
 
+    pub fn len(&self) -> usize {
+        self.buffers.borrow().len()
+    }
+
     pub fn buffer(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
         self.buffers
             .borrow()
