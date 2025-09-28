@@ -3687,7 +3687,6 @@ dependencies = [
  "http_client",
  "indoc",
  "itertools 0.14.0",
- "json-patch",
  "language",
  "log",
  "lsp",
