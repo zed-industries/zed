@@ -461,7 +461,6 @@ pub fn initialize_workspace(
             }
         });
 
-
         let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             handle

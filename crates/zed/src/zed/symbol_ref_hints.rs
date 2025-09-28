@@ -1,9 +1,9 @@
-use editor::{display_map::Inlay, Editor, EditorEvent, InlayId};
+use editor::{Editor, EditorEvent, InlayId, display_map::Inlay};
 use gpui::{Context, Entity, Render, Subscription, Task, Window};
+use language::language_settings::all_language_settings;
 use project::Project;
 use std::time::Duration;
 use ui::prelude::*;
-use language::language_settings::{all_language_settings};
 
 use language::{ToOffset, ToPoint};
 
@@ -18,8 +18,6 @@ pub struct SymbolRefHints {
     ongoing_task: Task<()>,
     refresh_rev: u64,
 }
-
-
 
 const HINT_BASE_ID: usize = 900_000_000; // avoid collisions with other inlays
 const MAX_REMOVE: usize = 1024; // remove up to this many old hints each refresh
@@ -45,12 +43,13 @@ impl SymbolRefHints {
 
     fn bump_and_clear(&mut self, editor: &Entity<Editor>, cx: &mut Context<Self>) {
         self.refresh_rev = self.refresh_rev.wrapping_add(1);
-        let _ = editor.update(cx, |ed, cx| ed.splice_inlays(&Self::removal_ids(), Vec::new(), cx));
+        let _ = editor.update(cx, |ed, cx| {
+            ed.splice_inlays(&Self::removal_ids(), Vec::new(), cx)
+        });
     }
 
     fn is_singleton(editor: &Entity<Editor>, cx: &mut Context<Self>) -> bool {
-        editor
-            .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some())
+        editor.read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some())
     }
 
     fn inlays_enabled(&self, editor: &Entity<Editor>, cx: &mut Context<Self>) -> bool {
@@ -101,7 +100,6 @@ impl SymbolRefHints {
         flat_syms
     }
 
-
     fn on_symbols_changed(
         &mut self,
         editor: &Entity<Editor>,
@@ -148,11 +146,16 @@ impl SymbolRefHints {
         }
 
         // Capture the active excerpt, buffer and its outline items synchronously.
-        let maybe_data = editor.read(cx).active_excerpt(cx).map(|(excerpt_id, buffer, _)| {
-            let items = buffer.read(cx).snapshot().outline(None).items;
-            (excerpt_id, buffer, items)
-        });
-        let Some((excerpt_id, buffer, items)) = maybe_data else { return; };
+        let maybe_data = editor
+            .read(cx)
+            .active_excerpt(cx)
+            .map(|(excerpt_id, buffer, _)| {
+                let items = buffer.read(cx).snapshot().outline(None).items;
+                (excerpt_id, buffer, items)
+            });
+        let Some((excerpt_id, buffer, items)) = maybe_data else {
+            return;
+        };
         let project = self.project.clone();
         let editor_handle = editor.clone();
 
@@ -162,11 +165,19 @@ impl SymbolRefHints {
             cx.background_executor().timer(debounce).await;
 
             // If disabled or invalidated since we started, do nothing.
-            let inlay_enabled = editor_handle.read_with(cx, |ed, _| ed.inlay_hints_enabled()).unwrap_or(false);
+            let inlay_enabled = editor_handle
+                .read_with(cx, |ed, _| ed.inlay_hints_enabled())
+                .unwrap_or(false);
             let our_enabled = this.update(cx, |this, _| this.enabled).unwrap_or(true);
-            if !(our_enabled && inlay_enabled) { return; }
-            let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
-            if invalidated { return; }
+            if !(our_enabled && inlay_enabled) {
+                return;
+            }
+            let invalidated = this
+                .update(cx, |this, _| this.refresh_rev != rev)
+                .unwrap_or(true);
+            if invalidated {
+                return;
+            }
 
             // Prefer querying references at the symbol's identifier using LSP document symbols,
             // falling back to the outline item's start if we can't find a matching symbol.
@@ -246,7 +257,8 @@ impl SymbolRefHints {
                         .into_iter()
                         .enumerate()
                         .filter_map(|(i, item)| {
-                            let pos = mb_snapshot.anchor_in_excerpt(excerpt_id, item.range.start)?;
+                            let pos =
+                                mb_snapshot.anchor_in_excerpt(excerpt_id, item.range.start)?;
                             let text = format!("{} ", counts[i]);
                             Some(Inlay::debugger(HINT_BASE_ID + i, pos, text))
                         })
@@ -255,13 +267,23 @@ impl SymbolRefHints {
                 .unwrap_or_default();
 
             // If disabled or invalidated since we computed, skip applying.
-            let inlay_enabled = editor_handle.read_with(cx, |ed, _| ed.inlay_hints_enabled()).unwrap_or(false);
+            let inlay_enabled = editor_handle
+                .read_with(cx, |ed, _| ed.inlay_hints_enabled())
+                .unwrap_or(false);
             let our_enabled = this.update(cx, |this, _| this.enabled).unwrap_or(true);
-            if inlays.is_empty() || !(our_enabled && inlay_enabled) { return; }
-            let invalidated = this.update(cx, |this, _| this.refresh_rev != rev).unwrap_or(true);
-            if invalidated { return; }
+            if inlays.is_empty() || !(our_enabled && inlay_enabled) {
+                return;
+            }
+            let invalidated = this
+                .update(cx, |this, _| this.refresh_rev != rev)
+                .unwrap_or(true);
+            if invalidated {
+                return;
+            }
 
-            let _ = editor_handle.update(cx, |ed, cx| ed.splice_inlays(&Self::removal_ids(), inlays, cx));
+            let _ = editor_handle.update(cx, |ed, cx| {
+                ed.splice_inlays(&Self::removal_ids(), inlays, cx)
+            });
         });
     }
 }
@@ -282,8 +304,10 @@ impl StatusItemView for SymbolRefHints {
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             // Observe editor events related to syntax/outline updates.
-            self._observe_active_editor = Some(cx.subscribe_in(&editor, window, |this, editor, event: &EditorEvent, window, cx| {
-                match event {
+            self._observe_active_editor = Some(cx.subscribe_in(
+                &editor,
+                window,
+                |this, editor, event: &EditorEvent, window, cx| match event {
                     EditorEvent::Reparsed(_)
                     | EditorEvent::ExcerptsEdited { .. }
                     | EditorEvent::Edited { .. }
@@ -294,24 +318,27 @@ impl StatusItemView for SymbolRefHints {
                         this.on_symbols_changed(&editor, window, cx, event);
                     }
                     _ => {}
-                }
-            }));
+                },
+            ));
 
             // Observe settings changes to apply/remove hints immediately.
             let editor_for_settings = editor.clone();
-            self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
-                let our_enabled = this.enabled;
-                let inlay_enabled = editor_for_settings.read(cx).inlay_hints_enabled();
-                let is_singleton = editor_for_settings
-                    .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
-                if !(our_enabled && inlay_enabled) || !is_singleton {
-                    this.bump_and_clear(&editor_for_settings, cx);
-                } else {
-                    // Request immediate refresh when enabling
-                    let debounce = this.edit_debounce(&editor_for_settings, cx);
-                    this.refresh_symbol_ref_hints(&editor_for_settings, window, cx, debounce);
-                }
-            }));
+            self._observe_settings = Some(cx.observe_global_in::<settings::SettingsStore>(
+                window,
+                move |this, window, cx| {
+                    let our_enabled = this.enabled;
+                    let inlay_enabled = editor_for_settings.read(cx).inlay_hints_enabled();
+                    let is_singleton = editor_for_settings
+                        .read_with(cx, |ed, app| ed.buffer().read(app).as_singleton().is_some());
+                    if !(our_enabled && inlay_enabled) || !is_singleton {
+                        this.bump_and_clear(&editor_for_settings, cx);
+                    } else {
+                        // Request immediate refresh when enabling
+                        let debounce = this.edit_debounce(&editor_for_settings, cx);
+                        this.refresh_symbol_ref_hints(&editor_for_settings, window, cx, debounce);
+                    }
+                },
+            ));
 
             // Prime once on activation.
             let debounce = self.edit_debounce(&editor, cx);
@@ -335,4 +362,3 @@ impl StatusItemView for SymbolRefHints {
         cx.notify();
     }
 }
-

@@ -5148,12 +5148,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let new_enabled = !self.inlay_hints_enabled();
-        cx.emit(EditorEvent::InlayHintsToggled { enabled: new_enabled });
+        cx.emit(EditorEvent::InlayHintsToggled {
+            enabled: new_enabled,
+        });
 
-        self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(new_enabled),
-            cx,
-        );
+        self.refresh_inlay_hints(InlayHintRefreshReason::Toggle(new_enabled), cx);
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
