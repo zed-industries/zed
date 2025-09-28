@@ -1,4 +1,4 @@
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use gpui::HighlightStyle;
 use language::Chunk;
 use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
@@ -6,10 +6,12 @@ use std::{
     cmp,
     iter::{self, Peekable},
     ops::Range,
+    sync::Arc,
     vec,
 };
+use text::BufferId;
 
-use crate::display_map::{HighlightKey, TextHighlights};
+use crate::display_map::{HighlightKey, PositionedSemanticTokens, TextHighlights};
 
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
@@ -20,6 +22,7 @@ pub struct CustomHighlightsChunks<'a> {
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<HighlightKey, HighlightStyle>,
     text_highlights: Option<&'a TextHighlights>,
+    semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -34,6 +37,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<usize>,
         language_aware: bool,
         text_highlights: Option<&'a TextHighlights>,
+        semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -45,16 +49,22 @@ impl<'a> CustomHighlightsChunks<'a> {
             highlight_endpoints: create_highlight_endpoints(
                 &range,
                 text_highlights,
+                semantic_tokens,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
             multibuffer_snapshot,
+            semantic_tokens,
         }
     }
 
     pub fn seek(&mut self, new_range: Range<usize>) {
-        self.highlight_endpoints =
-            create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
+        self.highlight_endpoints = create_highlight_endpoints(
+            &new_range,
+            self.text_highlights,
+            self.semantic_tokens,
+            self.multibuffer_snapshot,
+        );
         self.offset = new_range.start;
         self.buffer_chunks.seek(new_range);
         self.buffer_chunk.take();
@@ -65,6 +75,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
+    _semantic_tokens: Option<&HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -253,8 +264,13 @@ mod tests {
         }
 
         // Get all chunks and verify their bitmaps
-        let chunks =
-            CustomHighlightsChunks::new(0..buffer_snapshot.len(), false, None, &buffer_snapshot);
+        let chunks = CustomHighlightsChunks::new(
+            0..buffer_snapshot.len(),
+            false,
+            None,
+            None,
+            &buffer_snapshot,
+        );
 
         for chunk in chunks {
             let chunk_text = chunk.text;

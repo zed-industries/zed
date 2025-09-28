@@ -42,6 +42,7 @@ pub use fold_map::{
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 
+use clock::Global;
 use collections::{HashMap, HashSet};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 use language::{
@@ -119,12 +120,27 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// The semantic tokens from the language server.
+    pub semantic_tokens: HashMap<BufferId, Arc<PositionedSemanticTokens>>,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
+}
+
+#[derive(Debug, Default)]
+pub struct PositionedSemanticTokens {
+    pub tokens: Vec<PositionedSemanticToken>,
+    pub version: Global,
+}
+
+/// A `SemanticToken`, but positioned to an offset in a buffer, and stylized.
+#[derive(Debug)]
+pub struct PositionedSemanticToken {
+    pub range: Range<usize>,
+    pub style: HighlightStyle,
 }
 
 impl DisplayMap {
@@ -165,6 +181,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
+            semantic_tokens: Default::default(),
             clip_at_line_ends: false,
             masked: false,
         }
@@ -189,6 +206,7 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
+            semantic_tokens: self.semantic_tokens.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -618,6 +636,7 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub semantic_tokens: Option<&'a HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
     pub styles: HighlightStyles,
 }
 
@@ -751,6 +770,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    semantic_tokens: HashMap<BufferId, Arc<PositionedSemanticTokens>>,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -958,6 +978,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                semantic_tokens: Some(&self.semantic_tokens),
                 styles: highlight_styles,
             },
         )
