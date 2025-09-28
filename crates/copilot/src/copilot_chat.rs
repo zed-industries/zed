@@ -419,6 +419,88 @@ mod tests {
             Some("{\"path\":\"src/lib.rs\"}")
         );
     }
+
+    #[test]
+    fn test_resilient_model_schema_deserialize() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 0
+                  },
+                  "capabilities": {
+                    "family": "gpt-4",
+                    "limits": {
+                      "max_context_window_tokens": 8192,
+                      "max_output_tokens": 8192
+                    },
+                    "object": "model_capabilities",
+                    "supports": {
+                      "reasoning": false,
+                      "tool_calling": true,
+                      "vision": false
+                    },
+                    "tokenizer": "cl100k_base",
+                    "type": "text"
+                  },
+                  "endpoints": ["chat/completions"],
+                  "id": "gpt-4",
+                  "name": "GPT-4",
+                  "object": "model",
+                  "policy": {
+                    "state": "allowed"
+                  },
+                  "vendor": "unknown"
+                }
+              ]
+        }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
+    }
+
+    #[test]
+    fn test_unknown_vendor_resilience() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 1
+                  },
+                  "capabilities": {
+                    "family": "future-model",
+                    "limits": {
+                      "max_context_window_tokens": 128000,
+                      "max_output_tokens": 8192,
+                      "max_prompt_tokens": 120000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "future-model-v1",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Future Model v1",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "SomeNewVendor",
+                  "version": "v1.0"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "future-model-v1");
+        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
+    }
 }
 
 fn map_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<ResponseInputItem> {
@@ -2266,140 +2348,3 @@ async fn stream_completion_inner(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_resilient_model_schema_deserialize() {
-        let json = r#"{
-              "data": [
-                {
-                  "billing": {
-                    "is_premium": false,
-                    "multiplier": 0
-                  },
-                  "capabilities": {
-                    "family": "gpt-4",
-                    "limits": {
-                      "max_context_window_tokens": 32768,
-                      "max_output_tokens": 4096,
-                      "max_prompt_tokens": 32768
-                    },
-                    "object": "model_capabilities",
-                    "supports": { "streaming": true, "tool_calls": true },
-                    "tokenizer": "cl100k_base",
-                    "type": "chat"
-                  },
-                  "id": "gpt-4",
-                  "is_chat_default": false,
-                  "is_chat_fallback": false,
-                  "model_picker_enabled": false,
-                  "name": "GPT 4",
-                  "object": "model",
-                  "preview": false,
-                  "vendor": "Azure OpenAI",
-                  "version": "gpt-4-0613"
-                },
-                {
-                    "some-unknown-field": 123
-                },
-                {
-                  "billing": {
-                    "is_premium": true,
-                    "multiplier": 1,
-                    "restricted_to": [
-                      "pro",
-                      "pro_plus",
-                      "business",
-                      "enterprise"
-                    ]
-                  },
-                  "capabilities": {
-                    "family": "claude-3.7-sonnet",
-                    "limits": {
-                      "max_context_window_tokens": 200000,
-                      "max_output_tokens": 16384,
-                      "max_prompt_tokens": 90000,
-                      "vision": {
-                        "max_prompt_image_size": 3145728,
-                        "max_prompt_images": 1,
-                        "supported_media_types": ["image/jpeg", "image/png", "image/webp"]
-                      }
-                    },
-                    "object": "model_capabilities",
-                    "supports": {
-                      "parallel_tool_calls": true,
-                      "streaming": true,
-                      "tool_calls": true,
-                      "vision": true
-                    },
-                    "tokenizer": "o200k_base",
-                    "type": "chat"
-                  },
-                  "id": "claude-3.7-sonnet",
-                  "is_chat_default": false,
-                  "is_chat_fallback": false,
-                  "model_picker_enabled": true,
-                  "name": "Claude 3.7 Sonnet",
-                  "object": "model",
-                  "policy": {
-                    "state": "enabled",
-                    "terms": "Enable access to the latest Claude 3.7 Sonnet model from Anthropic. [Learn more about how GitHub Copilot serves Claude 3.7 Sonnet](https://docs.github.com/copilot/using-github-copilot/using-claude-sonnet-in-github-copilot)."
-                  },
-                  "preview": false,
-                  "vendor": "Anthropic",
-                  "version": "claude-3.7-sonnet"
-                }
-              ],
-              "object": "list"
-            }"#;
-
-        let schema: ModelSchema = serde_json::from_str(json).unwrap();
-
-        assert_eq!(schema.data.len(), 2);
-        assert_eq!(schema.data[0].id, "gpt-4");
-        assert_eq!(schema.data[1].id, "claude-3.7-sonnet");
-    }
-
-    #[test]
-    fn test_unknown_vendor_resilience() {
-        let json = r#"{
-              "data": [
-                {
-                  "billing": {
-                    "is_premium": false,
-                    "multiplier": 1
-                  },
-                  "capabilities": {
-                    "family": "future-model",
-                    "limits": {
-                      "max_context_window_tokens": 128000,
-                      "max_output_tokens": 8192,
-                      "max_prompt_tokens": 120000
-                    },
-                    "object": "model_capabilities",
-                    "supports": { "streaming": true, "tool_calls": true },
-                    "type": "chat"
-                  },
-                  "id": "future-model-v1",
-                  "is_chat_default": false,
-                  "is_chat_fallback": false,
-                  "model_picker_enabled": true,
-                  "name": "Future Model v1",
-                  "object": "model",
-                  "preview": false,
-                  "vendor": "SomeNewVendor",
-                  "version": "v1.0"
-                }
-              ],
-              "object": "list"
-            }"#;
-
-        let schema: ModelSchema = serde_json::from_str(json).unwrap();
-
-        assert_eq!(schema.data.len(), 1);
-        assert_eq!(schema.data[0].id, "future-model-v1");
-        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
-    }
-}
