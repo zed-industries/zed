@@ -217,7 +217,6 @@ impl PickerDelegate for OutlineViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
-        println!("Selected index: {}", ix);
         self.set_selected_index(ix, true, cx);
     }
 
