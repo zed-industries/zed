@@ -614,6 +614,7 @@ impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities {
+            meta: None,
             image,
             audio: false,
             embedded_context: true,
@@ -728,6 +729,7 @@ impl Thread {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
+                    meta: None,
                     id: acp::ToolCallId(tool_use.id.to_string().into()),
                     title: tool_use.name.to_string(),
                     kind: acp::ToolKind::Other,
@@ -877,27 +879,11 @@ impl Thread {
             .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, _| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
-
-            let mut unsaved_buffers = Vec::new();
-            cx.update(|app_cx| {
-                let buffer_store = project.read(app_cx).buffer_store();
-                for buffer_handle in buffer_store.read(app_cx).buffers() {
-                    let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty()
-                        && let Some(file) = buffer.file()
-                    {
-                        let path = file.path().to_string_lossy().to_string();
-                        unsaved_buffers.push(path);
-                    }
-                }
-            })
-            .ok();
 
             Arc::new(ProjectSnapshot {
                 worktree_snapshots,
-                unsaved_buffer_paths: unsaved_buffers,
                 timestamp: Utc::now(),
             })
         })
@@ -912,7 +898,7 @@ impl Thread {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().to_string();
+                let path = worktree.abs_path().to_string_lossy().into_owned();
                 let snapshot = worktree.snapshot();
                 (path, snapshot)
             });
@@ -2333,6 +2319,7 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
+            meta: None,
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
@@ -2352,6 +2339,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp::ToolCallUpdate {
+                    meta: None,
                     id: acp::ToolCallId(tool_use_id.to_string().into()),
                     fields,
                 }
@@ -2437,6 +2425,7 @@ impl ToolCallEventStream {
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
                     tool_call: acp::ToolCallUpdate {
+                        meta: None,
                         id: acp::ToolCallId(self.tool_use_id.to_string().into()),
                         fields: acp::ToolCallUpdateFields {
                             title: Some(title.into()),
@@ -2448,16 +2437,19 @@ impl ToolCallEventStream {
                             id: acp::PermissionOptionId("always_allow".into()),
                             name: "Always Allow".into(),
                             kind: acp::PermissionOptionKind::AllowAlways,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("allow".into()),
                             name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("deny".into()),
                             name: "Deny".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
+                            meta: None,
                         },
                     ],
                     response: response_tx,
@@ -2469,8 +2461,11 @@ impl ToolCallEventStream {
             "always_allow" => {
                 if let Some(fs) = fs.clone() {
                     cx.update(|cx| {
-                        update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
-                            settings.set_always_allow_tool_actions(true);
+                        update_settings_file(fs, cx, |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_always_allow_tool_actions(true);
                         });
                     })?;
                 }
@@ -2611,17 +2606,21 @@ impl From<UserMessageContent> for acp::ContentBlock {
             UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
                 text,
                 annotations: None,
+                meta: None,
             }),
             UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
                 data: image.source.to_string(),
                 mime_type: "image/png".to_string(),
+                meta: None,
                 annotations: None,
                 uri: None,
             }),
             UserMessageContent::Mention { uri, content } => {
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    meta: None,
                     resource: acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents {
+                            meta: None,
                             mime_type: None,
                             text: content,
                             uri: uri.to_uri().to_string(),

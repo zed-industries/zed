@@ -47,75 +47,84 @@ impl BlameRenderer for GitBlameRenderer {
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
         Some(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .font_family(style.font().family)
-                .line_height(style.line_height)
-                .id(("blame", ix))
-                .text_color(cx.theme().status().hint)
-                .pr_2()
-                .gap_2()
+            div()
+                .mr_2()
                 .child(
                     h_flex()
-                        .items_center()
+                        .w_full()
+                        .justify_between()
+                        .font_family(style.font().family)
+                        .line_height(style.line_height)
+                        .id(("blame", ix))
+                        .text_color(cx.theme().status().hint)
                         .gap_2()
-                        .child(div().text_color(sha_color).child(short_commit_id))
-                        .child(name),
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().text_color(sha_color).child(short_commit_id))
+                                .child(name),
+                        )
+                        .child(relative_timestamp)
+                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Right, {
+                            let blame_entry = blame_entry.clone();
+                            let details = details.clone();
+                            move |event, window, cx| {
+                                deploy_blame_entry_context_menu(
+                                    &blame_entry,
+                                    details.as_ref(),
+                                    editor.clone(),
+                                    event.position,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .on_click({
+                            let blame_entry = blame_entry.clone();
+                            let repository = repository.clone();
+                            let workspace = workspace.clone();
+                            move |_, window, cx| {
+                                CommitView::open(
+                                    CommitSummary {
+                                        sha: blame_entry.sha.to_string().into(),
+                                        subject: blame_entry
+                                            .summary
+                                            .clone()
+                                            .unwrap_or_default()
+                                            .into(),
+                                        commit_timestamp: blame_entry
+                                            .committer_time
+                                            .unwrap_or_default(),
+                                        author_name: blame_entry
+                                            .committer_name
+                                            .clone()
+                                            .unwrap_or_default()
+                                            .into(),
+                                        has_parent: true,
+                                    },
+                                    repository.downgrade(),
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .hoverable_tooltip(move |_window, cx| {
+                            cx.new(|cx| {
+                                CommitTooltip::blame_entry(
+                                    &blame_entry,
+                                    details.clone(),
+                                    repository.clone(),
+                                    workspace.clone(),
+                                    cx,
+                                )
+                            })
+                            .into()
+                        }),
                 )
-                .child(relative_timestamp)
-                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Right, {
-                    let blame_entry = blame_entry.clone();
-                    let details = details.clone();
-                    move |event, window, cx| {
-                        deploy_blame_entry_context_menu(
-                            &blame_entry,
-                            details.as_ref(),
-                            editor.clone(),
-                            event.position,
-                            window,
-                            cx,
-                        );
-                    }
-                })
-                .on_click({
-                    let blame_entry = blame_entry.clone();
-                    let repository = repository.clone();
-                    let workspace = workspace.clone();
-                    move |_, window, cx| {
-                        CommitView::open(
-                            CommitSummary {
-                                sha: blame_entry.sha.to_string().into(),
-                                subject: blame_entry.summary.clone().unwrap_or_default().into(),
-                                commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
-                                author_name: blame_entry
-                                    .committer_name
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .into(),
-                                has_parent: true,
-                            },
-                            repository.downgrade(),
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .hoverable_tooltip(move |_window, cx| {
-                    cx.new(|cx| {
-                        CommitTooltip::blame_entry(
-                            &blame_entry,
-                            details.clone(),
-                            repository.clone(),
-                            workspace.clone(),
-                            cx,
-                        )
-                    })
-                    .into()
-                })
                 .into_any(),
         )
     }
@@ -130,7 +139,8 @@ impl BlameRenderer for GitBlameRenderer {
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
-            .show_inline_commit_summary();
+            .inline_blame
+            .show_commit_summary;
 
         let text = match blame_entry.summary.as_ref() {
             Some(summary) if summary_enabled => {

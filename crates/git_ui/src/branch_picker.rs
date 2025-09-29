@@ -454,7 +454,7 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = &self.matches[ix];
+        let entry = &self.matches.get(ix)?;
 
         let (commit_time, author_name, subject) = entry
             .branch
@@ -521,6 +521,14 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
+                .tooltip({
+                    let branch_name = entry.branch.name().to_string();
+                    if entry.is_new {
+                        Tooltip::text(format!("Create branch \"{}\"", branch_name))
+                    } else {
+                        Tooltip::text(branch_name)
+                    }
+                })
                 .child(
                     v_flex()
                         .w_full()
@@ -556,7 +564,6 @@ impl PickerDelegate for BranchListDelegate {
                                     let show_author_name = ProjectSettings::get_global(cx)
                                         .git
                                         .branch_picker
-                                        .unwrap_or_default()
                                         .show_author_name;
 
                                     subject.map_or("no commits found".into(), |subject| {

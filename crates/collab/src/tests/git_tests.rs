@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::Path;
 
 use call::ActiveCall;
 use git::status::{FileStatus, StatusCode, TrackedStatus};
@@ -9,7 +6,7 @@ use git_ui::project_diff::ProjectDiff;
 use gpui::{TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::Workspace;
 
 //
@@ -41,13 +38,13 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
         )
         .await;
 
-    client_a.fs().set_git_content_for_repo(
+    client_a.fs().set_head_and_index_for_repo(
         Path::new(path!("/a/.git")),
         &[
-            ("changed.txt".into(), "before\n".to_string(), None),
-            ("unchanged.txt".into(), "unchanged\n".to_string(), None),
-            ("deleted.txt".into(), "deleted\n".to_string(), None),
-            ("secret.pem".into(), "shh\n".to_string(), None),
+            ("changed.txt", "before\n".to_string()),
+            ("unchanged.txt", "unchanged\n".to_string()),
+            ("deleted.txt", "deleted\n".to_string()),
+            ("secret.pem", "shh\n".to_string()),
         ],
     );
     let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
@@ -109,7 +106,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     project_b.update(cx_b, |project, cx| {
         let project_path = ProjectPath {
             worktree_id,
-            path: Arc::from(PathBuf::from("unchanged.txt")),
+            path: rel_path("unchanged.txt").into(),
         };
         let status = project.project_path_git_status(&project_path, cx);
         assert_eq!(

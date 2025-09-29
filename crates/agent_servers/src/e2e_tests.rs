@@ -83,6 +83,7 @@ where
                     acp::ContentBlock::Text(acp::TextContent {
                         text: "Read the file ".into(),
                         annotations: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::ResourceLink(acp::ResourceLink {
                         uri: "foo.rs".into(),
@@ -92,10 +93,12 @@ where
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::Text(acp::TextContent {
                         text: " and tell me what the content of the println! is".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 ],
                 cx,

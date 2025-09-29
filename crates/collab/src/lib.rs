@@ -7,7 +7,6 @@ pub mod llm;
 pub mod migrations;
 pub mod rpc;
 pub mod seed;
-pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
@@ -157,7 +156,6 @@ pub struct Config {
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
-    pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
 
 impl Config {
@@ -211,7 +209,6 @@ impl Config {
             migrations_path: None,
             seed_path: None,
             supermaven_admin_api_key: None,
-            user_backfiller_github_access_token: None,
             kinesis_region: None,
             kinesis_access_key: None,
             kinesis_secret_key: None,

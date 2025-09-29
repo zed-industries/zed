@@ -289,7 +289,7 @@ impl PickerDelegate for AttachModalDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let candidate = self.candidates.get(hit.candidate_id)?;
 
         Some(
@@ -373,7 +373,7 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
                     command: process
                         .cmd()
                         .iter()
-                        .map(|s| s.to_string_lossy().to_string())
+                        .map(|s| s.to_string_lossy().into_owned())
                         .collect::<Vec<_>>(),
                 }
             })

@@ -1,27 +1,15 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use collections::HashMap;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
 
 use crate::provider::{
-    self,
-    anthropic::AnthropicSettings,
-    bedrock::AmazonBedrockSettings,
-    cloud::{self, ZedDotDevSettings},
-    deepseek::DeepSeekSettings,
-    google::GoogleSettings,
-    lmstudio::LmStudioSettings,
-    mistral::MistralSettings,
-    ollama::OllamaSettings,
-    open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings,
-    open_router::OpenRouterSettings,
-    vercel::VercelSettings,
-    x_ai::XAiSettings,
+    anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
+    deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
+    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
+    vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -29,7 +17,6 @@ pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
-#[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
@@ -46,281 +33,88 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
 }
 
-#[derive(
-    Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, SettingsUi, SettingsKey,
-)]
-#[settings_key(key = "language_models")]
-pub struct AllLanguageModelSettingsContent {
-    pub anthropic: Option<AnthropicSettingsContent>,
-    pub bedrock: Option<AmazonBedrockSettingsContent>,
-    pub deepseek: Option<DeepseekSettingsContent>,
-    pub google: Option<GoogleSettingsContent>,
-    pub lmstudio: Option<LmStudioSettingsContent>,
-    pub mistral: Option<MistralSettingsContent>,
-    pub ollama: Option<OllamaSettingsContent>,
-    pub open_router: Option<OpenRouterSettingsContent>,
-    pub openai: Option<OpenAiSettingsContent>,
-    pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
-    pub vercel: Option<VercelSettingsContent>,
-    pub x_ai: Option<XAiSettingsContent>,
-    #[serde(rename = "zed.dev")]
-    pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct AnthropicSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::anthropic::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct AmazonBedrockSettingsContent {
-    available_models: Option<Vec<provider::bedrock::AvailableModel>>,
-    endpoint_url: Option<String>,
-    region: Option<String>,
-    profile: Option<String>,
-    authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OllamaSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::ollama::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct LmStudioSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct DeepseekSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct MistralSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenAiSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenAiCompatibleSettingsContent {
-    pub api_url: String,
-    pub available_models: Vec<provider::open_ai_compatible::AvailableModel>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct VercelSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::vercel::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct GoogleSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::google::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct XAiSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::x_ai::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct ZedDotDevSettingsContent {
-    available_models: Option<Vec<cloud::AvailableModel>>,
-}
-
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct OpenRouterSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<provider::open_router::AvailableModel>>,
-}
-
 impl settings::Settings for AllLanguageModelSettings {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
-    type FileContent = AllLanguageModelSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        fn merge<T>(target: &mut T, value: Option<T>) {
-            if let Some(value) = value {
-                *target = value;
-            }
-        }
-
-        let mut settings = AllLanguageModelSettings::default();
-
-        for value in sources.defaults_and_customizations() {
-            // Anthropic
-            let anthropic = value.anthropic.clone();
-            merge(
-                &mut settings.anthropic.api_url,
-                anthropic.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.anthropic.available_models,
-                anthropic.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // Bedrock
-            let bedrock = value.bedrock.clone();
-            merge(
-                &mut settings.bedrock.profile_name,
-                bedrock.as_ref().map(|s| s.profile.clone()),
-            );
-            merge(
-                &mut settings.bedrock.authentication_method,
-                bedrock.as_ref().map(|s| s.authentication_method.clone()),
-            );
-            merge(
-                &mut settings.bedrock.region,
-                bedrock.as_ref().map(|s| s.region.clone()),
-            );
-            merge(
-                &mut settings.bedrock.endpoint,
-                bedrock.as_ref().map(|s| s.endpoint_url.clone()),
-            );
-
-            // Ollama
-            let ollama = value.ollama.clone();
-
-            merge(
-                &mut settings.ollama.api_url,
-                value.ollama.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.ollama.available_models,
-                ollama.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // LM Studio
-            let lmstudio = value.lmstudio.clone();
-
-            merge(
-                &mut settings.lmstudio.api_url,
-                value.lmstudio.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.lmstudio.available_models,
-                lmstudio.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // DeepSeek
-            let deepseek = value.deepseek.clone();
-
-            merge(
-                &mut settings.deepseek.api_url,
-                value.deepseek.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.deepseek.available_models,
-                deepseek.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // OpenAI
-            let openai = value.openai.clone();
-            merge(
-                &mut settings.openai.api_url,
-                openai.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.openai.available_models,
-                openai.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // OpenAI Compatible
-            if let Some(openai_compatible) = value.openai_compatible.clone() {
-                for (id, openai_compatible_settings) in openai_compatible {
-                    settings.openai_compatible.insert(
-                        id,
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let language_models = content.language_models.clone().unwrap();
+        let anthropic = language_models.anthropic.unwrap();
+        let bedrock = language_models.bedrock.unwrap();
+        let deepseek = language_models.deepseek.unwrap();
+        let google = language_models.google.unwrap();
+        let lmstudio = language_models.lmstudio.unwrap();
+        let mistral = language_models.mistral.unwrap();
+        let ollama = language_models.ollama.unwrap();
+        let open_router = language_models.open_router.unwrap();
+        let openai = language_models.openai.unwrap();
+        let openai_compatible = language_models.openai_compatible.unwrap();
+        let vercel = language_models.vercel.unwrap();
+        let x_ai = language_models.x_ai.unwrap();
+        let zed_dot_dev = language_models.zed_dot_dev.unwrap();
+        Self {
+            anthropic: AnthropicSettings {
+                api_url: anthropic.api_url.unwrap(),
+                available_models: anthropic.available_models.unwrap_or_default(),
+            },
+            bedrock: AmazonBedrockSettings {
+                available_models: bedrock.available_models.unwrap_or_default(),
+                region: bedrock.region,
+                endpoint: bedrock.endpoint_url, // todo(should be api_url)
+                profile_name: bedrock.profile,
+                role_arn: None, // todo(was never a setting for this...)
+                authentication_method: bedrock.authentication_method.map(Into::into),
+            },
+            deepseek: DeepSeekSettings {
+                api_url: deepseek.api_url.unwrap(),
+                available_models: deepseek.available_models.unwrap_or_default(),
+            },
+            google: GoogleSettings {
+                api_url: google.api_url.unwrap(),
+                available_models: google.available_models.unwrap_or_default(),
+            },
+            lmstudio: LmStudioSettings {
+                api_url: lmstudio.api_url.unwrap(),
+                available_models: lmstudio.available_models.unwrap_or_default(),
+            },
+            mistral: MistralSettings {
+                api_url: mistral.api_url.unwrap(),
+                available_models: mistral.available_models.unwrap_or_default(),
+            },
+            ollama: OllamaSettings {
+                api_url: ollama.api_url.unwrap(),
+                available_models: ollama.available_models.unwrap_or_default(),
+            },
+            open_router: OpenRouterSettings {
+                api_url: open_router.api_url.unwrap(),
+                available_models: open_router.available_models.unwrap_or_default(),
+            },
+            openai: OpenAiSettings {
+                api_url: openai.api_url.unwrap(),
+                available_models: openai.available_models.unwrap_or_default(),
+            },
+            openai_compatible: openai_compatible
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        key,
                         OpenAiCompatibleSettings {
-                            api_url: openai_compatible_settings.api_url,
-                            available_models: openai_compatible_settings.available_models,
+                            api_url: value.api_url,
+                            available_models: value.available_models,
                         },
-                    );
-                }
-            }
-
-            // Vercel
-            let vercel = value.vercel.clone();
-            merge(
-                &mut settings.vercel.api_url,
-                vercel.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.vercel.available_models,
-                vercel.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // XAI
-            let x_ai = value.x_ai.clone();
-            merge(
-                &mut settings.x_ai.api_url,
-                x_ai.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.x_ai.available_models,
-                x_ai.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // ZedDotDev
-            merge(
-                &mut settings.zed_dot_dev.available_models,
-                value
-                    .zed_dot_dev
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
-            );
-            merge(
-                &mut settings.google.api_url,
-                value.google.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.google.available_models,
-                value
-                    .google
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
-            );
-
-            // Mistral
-            let mistral = value.mistral.clone();
-            merge(
-                &mut settings.mistral.api_url,
-                mistral.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.mistral.available_models,
-                mistral.as_ref().and_then(|s| s.available_models.clone()),
-            );
-
-            // OpenRouter
-            let open_router = value.open_router.clone();
-            merge(
-                &mut settings.open_router.api_url,
-                open_router.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.open_router.available_models,
-                open_router
-                    .as_ref()
-                    .and_then(|s| s.available_models.clone()),
-            );
+                    )
+                })
+                .collect(),
+            vercel: VercelSettings {
+                api_url: vercel.api_url.unwrap(),
+                available_models: vercel.available_models.unwrap_or_default(),
+            },
+            x_ai: XAiSettings {
+                api_url: x_ai.api_url.unwrap(),
+                available_models: x_ai.available_models.unwrap_or_default(),
+            },
+            zed_dot_dev: ZedDotDevSettings {
+                available_models: zed_dot_dev.available_models.unwrap_or_default(),
+            },
         }
-
-        Ok(settings)
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

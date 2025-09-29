@@ -513,10 +513,11 @@ impl MacWindowState {
 
     fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
-        let screen_frame = unsafe {
-            let screen = NSWindow::screen(self.native_window);
-            NSScreen::frame(screen)
-        };
+        let screen = unsafe { NSWindow::screen(self.native_window) };
+        if screen == nil {
+            return Bounds::new(point(px(0.), px(0.)), crate::DEFAULT_WINDOW_SIZE);
+        }
+        let screen_frame = unsafe { NSScreen::frame(screen) };
 
         // Flip the y coordinate to be top-left origin
         window_frame.origin.y =
@@ -1565,7 +1566,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
         if screen.is_null() {
-            return 1.0;
+            return 2.0;
         }
         NSScreen::backingScaleFactor(screen) as f32
     };

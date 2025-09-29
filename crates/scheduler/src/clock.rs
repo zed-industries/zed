@@ -24,6 +24,11 @@ impl TestClock {
         }))
     }
 
+    pub fn set_utc_now(&self, now: DateTime<Utc>) {
+        let mut state = self.0.lock();
+        state.utc_now = now;
+    }
+
     pub fn advance(&self, duration: Duration) {
         let mut state = self.0.lock();
         state.now += duration;

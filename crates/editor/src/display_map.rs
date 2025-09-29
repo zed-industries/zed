@@ -37,13 +37,13 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
+use fold_map::FoldSnapshot;
 pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
-use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
-use inlay_map::{InlayMap, InlaySnapshot};
+use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
@@ -66,11 +66,13 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, TreeMap};
-use tab_map::{TabMap, TabSnapshot};
+use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
+
+pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -703,9 +705,8 @@ impl<'a> HighlightedChunk<'a> {
                         }),
                         ..Default::default()
                     };
-                    let invisible_style = if let Some(mut style) = style {
-                        style.highlight(invisible_highlight);
-                        style
+                    let invisible_style = if let Some(style) = style {
+                        style.highlight(invisible_highlight)
                     } else {
                         invisible_highlight
                     };
@@ -726,9 +727,8 @@ impl<'a> HighlightedChunk<'a> {
                         }),
                         ..Default::default()
                     };
-                    let invisible_style = if let Some(mut style) = style {
-                        style.highlight(invisible_highlight);
-                        style
+                    let invisible_style = if let Some(style) = style {
+                        style.highlight(invisible_highlight)
                     } else {
                         invisible_highlight
                     };
@@ -962,62 +962,59 @@ impl DisplaySnapshot {
             },
         )
         .flat_map(|chunk| {
-            let mut highlight_style = chunk
+            let highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
 
-            if let Some(chunk_highlight) = chunk.highlight_style {
-                // For color inlays, blend the color with the editor background
-                let mut processed_highlight = chunk_highlight;
-                if chunk.is_inlay
-                    && let Some(inlay_color) = chunk_highlight.color
-                {
-                    // Only blend if the color has transparency (alpha < 1.0)
-                    if inlay_color.a < 1.0 {
-                        let blended_color = editor_style.background.blend(inlay_color);
-                        processed_highlight.color = Some(blended_color);
-                    }
+            let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+                HighlightStyle {
+                    // For color inlays, blend the color with the editor background
+                    // if the color has transparency (alpha < 1.0)
+                    color: chunk_highlight.color.map(|color| {
+                        if chunk.is_inlay && !color.is_opaque() {
+                            editor_style.background.blend(color)
+                        } else {
+                            color
+                        }
+                    }),
+                    ..chunk_highlight
                 }
+            });
 
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(processed_highlight);
-                } else {
-                    highlight_style = Some(processed_highlight);
-                }
-            }
+            let diagnostic_highlight = chunk
+                .diagnostic_severity
+                .filter(|severity| {
+                    self.diagnostics_max_severity
+                        .into_lsp()
+                        .is_some_and(|max_severity| severity <= &max_severity)
+                })
+                .map(|severity| HighlightStyle {
+                    fade_out: chunk
+                        .is_unnecessary
+                        .then_some(editor_style.unnecessary_code_fade),
+                    underline: (chunk.underline
+                        && editor_style.show_underlines
+                        && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+                        .then(|| {
+                            let diagnostic_color =
+                                super::diagnostic_style(severity, &editor_style.status);
+                            UnderlineStyle {
+                                color: Some(diagnostic_color),
+                                thickness: 1.0.into(),
+                                wavy: true,
+                            }
+                        }),
+                    ..Default::default()
+                });
 
-            let mut diagnostic_highlight = HighlightStyle::default();
-
-            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
-                self.diagnostics_max_severity
-                    .into_lsp()
-                    .is_some_and(|max_severity| severity <= &max_severity)
-            }) {
-                if chunk.is_unnecessary {
-                    diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
-                }
-                if chunk.underline
-                    && editor_style.show_underlines
-                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
-                {
-                    let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
-                    diagnostic_highlight.underline = Some(UnderlineStyle {
-                        color: Some(diagnostic_color),
-                        thickness: 1.0.into(),
-                        wavy: true,
-                    });
-                }
-            }
-
-            if let Some(highlight_style) = highlight_style.as_mut() {
-                highlight_style.highlight(diagnostic_highlight);
-            } else {
-                highlight_style = Some(diagnostic_highlight);
-            }
+            let style = [highlight_style, chunk_highlight, diagnostic_highlight]
+                .into_iter()
+                .flatten()
+                .reduce(|acc, highlight| acc.highlight(highlight));
 
             HighlightedChunk {
                 text: chunk.text,
-                style: highlight_style,
+                style,
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
@@ -1532,12 +1529,11 @@ pub mod tests {
     use language::{
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
     };
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
-    use settings::SettingsStore;
+    use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
@@ -1567,7 +1563,9 @@ pub mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            init_test(cx, |s| s.defaults.tab_size = NonZeroU32::new(tab_size));
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size)
+            });
         });
 
         let buffer = cx.update(|cx| {
@@ -1626,8 +1624,9 @@ pub mod tests {
                     log::info!("setting tab size to {:?}", tab_size);
                     cx.update(|cx| {
                         cx.update_global::<SettingsStore, _>(|store, cx| {
-                            store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                            store.update_user_settings(cx, |s| {
+                                s.project.all_languages.defaults.tab_size =
+                                    NonZeroU32::new(tab_size);
                             });
                         });
                     });
@@ -2087,7 +2086,11 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
+        cx.update(|cx| {
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = Some(2.try_into().unwrap())
+            })
+        });
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2609,7 +2612,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
+        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»«:» B = "c «d»""#, false);
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2658,7 +2661,7 @@ pub mod tests {
             [
                 ("const ".to_string(), None, None),
                 ("a".to_string(), None, Some(Hsla::blue())),
-                (":".to_string(), Some(Hsla::red()), None),
+                (":".to_string(), Some(Hsla::red()), Some(Hsla::blue())),
                 (" B = ".to_string(), None, None),
                 ("\"c ".to_string(), Some(Hsla::green()), None),
                 ("d".to_string(), Some(Hsla::green()), Some(Hsla::blue())),
@@ -2913,7 +2916,7 @@ pub mod tests {
         chunks
     }
 
-    fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
+    fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         workspace::init_settings(cx);
@@ -2922,7 +2925,7 @@ pub mod tests {
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, f);
+            store.update_user_settings(cx, f);
         });
     }
 }

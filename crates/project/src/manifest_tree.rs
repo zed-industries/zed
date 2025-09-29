@@ -7,7 +7,7 @@ mod manifest_store;
 mod path_trie;
 mod server_tree;
 
-use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, path::Path, sync::Arc};
+use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, sync::Arc};
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Subscription};
@@ -15,6 +15,7 @@ use language::{ManifestDelegate, ManifestName, ManifestQuery};
 pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
+use util::rel_path::RelPath;
 use worktree::{Event as WorktreeEvent, Snapshot, Worktree};
 
 use crate::{
@@ -184,7 +185,7 @@ impl ManifestTree {
             .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
             .unwrap_or_else(|| ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("")),
+                path: RelPath::empty().into(),
             })
     }
 
@@ -211,7 +212,7 @@ impl ManifestQueryDelegate {
 }
 
 impl ManifestDelegate for ManifestQueryDelegate {
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
+    fn exists(&self, path: &RelPath, is_dir: Option<bool>) -> bool {
         self.worktree.entry_for_path(path).is_some_and(|entry| {
             is_dir.is_none_or(|is_required_to_be_dir| is_required_to_be_dir == entry.is_dir())
         })

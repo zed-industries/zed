@@ -38,6 +38,7 @@ use settings::Settings;
 use std::{
     cmp::Reverse,
     collections::HashSet,
+    ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -45,7 +46,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 
 pub struct EditFileTool;
@@ -146,11 +147,11 @@ impl Tool for EditFileTool {
 
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
         if path
             .components()
-            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
+            .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
         {
             return true;
         }
@@ -195,10 +196,10 @@ impl Tool for EditFileTool {
                 let mut description = input.display_description.clone();
 
                 // Add context about why confirmation may be needed
-                let local_settings_folder = paths::local_settings_folder_relative_path();
+                let local_settings_folder = paths::local_settings_folder_name();
                 if path
                     .components()
-                    .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
+                    .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
                 {
                     description.push_str(" (local settings)");
                 } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
@@ -377,7 +378,7 @@ impl Tool for EditFileTool {
                 .await;
 
             let output = EditFileToolOutput {
-                original_path: project_path.path.to_path_buf(),
+                original_path: project_path.path.as_std_path().to_owned(),
                 new_text,
                 old_text,
                 raw_output: Some(agent_output),
@@ -549,10 +550,11 @@ fn resolve_path(
             let file_name = input
                 .path
                 .file_name()
+                .and_then(|file_name| file_name.to_str())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(file_name)),
+                path: parent.path.join(RelPath::unix(file_name).unwrap()),
                 ..parent
             });
 
@@ -1236,7 +1238,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::fs;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -1355,14 +1357,10 @@ mod tests {
         cx.update(|cx| resolve_path(&input, project, cx))
     }
 
+    #[track_caller]
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-        let actual = path
-            .expect("Should return valid path")
-            .path
-            .to_str()
-            .unwrap()
-            .replace("\\", "/"); // Naive Windows paths normalization
-        assert_eq!(actual, expected);
+        let actual = path.expect("Should return valid path").path;
+        assert_eq!(actual.as_ref(), rel_path(expected));
     }
 
     #[test]
@@ -1445,8 +1443,8 @@ mod tests {
 
     fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
         cx.update(|cx| {
-            // Set custom data directory (config will be under data_dir/config)
             paths::set_custom_data_dir(data_dir.to_str().unwrap());
+            // Set custom data directory (config will be under data_dir/config)
 
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1537,14 +1535,11 @@ mod tests {
         // First, test with format_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::On);
-                        settings.defaults.formatter =
-                            Some(language::language_settings::SelectedFormatter::Auto);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save = Some(FormatOnSave::On);
+                    settings.project.all_languages.defaults.formatter =
+                        Some(language::language_settings::SelectedFormatter::Auto);
+                });
             });
         });
 
@@ -1603,12 +1598,10 @@ mod tests {
         // Next, test with format_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::Off);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save =
+                        Some(FormatOnSave::Off);
+                });
             });
         });
 
@@ -1679,12 +1672,13 @@ mod tests {
         // First, test with remove_trailing_whitespace_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(true);
+                });
             });
         });
 
@@ -1741,12 +1735,13 @@ mod tests {
         // Next, test with remove_trailing_whitespace_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(false);
+                });
             });
         });
 
@@ -1979,25 +1974,22 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/home/user/myproject").as_ref()], cx).await;
 
         // Get the actual local settings folder name
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
 
         // Test various config path patterns
         let test_cases = vec![
             (
-                format!("{}/settings.json", local_settings_folder.display()),
+                format!("{local_settings_folder}/settings.json"),
                 true,
                 "Top-level local settings file".to_string(),
             ),
             (
-                format!(
-                    "myproject/{}/settings.json",
-                    local_settings_folder.display()
-                ),
+                format!("myproject/{local_settings_folder}/settings.json"),
                 true,
                 "Local settings in project path".to_string(),
             ),
             (
-                format!("src/{}/config.toml", local_settings_folder.display()),
+                format!("src/{local_settings_folder}/config.toml"),
                 true,
                 "Local settings in subdirectory".to_string(),
             ),
@@ -2208,12 +2200,7 @@ mod tests {
             ("", false, "Empty path is treated as project root"),
             // Root directory
             ("/", true, "Root directory should be outside project"),
-            // Parent directory references - find_project_path resolves these
-            (
-                "project/../other",
-                false,
-                "Path with .. is resolved by find_project_path",
-            ),
+            ("project/../other", true, "Path with .. is outside project"),
             (
                 "project/./src/file.rs",
                 false,

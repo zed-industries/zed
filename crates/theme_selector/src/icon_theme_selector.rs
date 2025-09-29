@@ -180,8 +180,8 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_icon_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_icon_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector
@@ -287,7 +287,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let theme_match = &self.matches[ix];
+        let theme_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)

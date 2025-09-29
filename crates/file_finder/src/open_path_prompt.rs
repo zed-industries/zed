@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::Settings;
 use std::{
-    path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{self, Path, PathBuf},
     sync::{
         Arc,
         atomic::{self, AtomicBool},
@@ -217,7 +217,7 @@ impl OpenPathPrompt {
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::current());
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::local());
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
@@ -695,14 +695,15 @@ impl PickerDelegate for OpenPathDelegate {
             if !settings.file_icons {
                 return None;
             }
+
+            let path = path::Path::new(&candidate.path.string);
             let icon = if candidate.is_dir {
                 if is_current_dir_candidate {
                     return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
                 } else {
-                    FileIcons::get_folder_icon(false, cx)?
+                    FileIcons::get_folder_icon(false, path, cx)?
                 }
             } else {
-                let path = path::Path::new(&candidate.path.string);
                 FileIcons::get_icon(path, cx)?
             };
             Some(Icon::from_path(icon).color(Color::Muted))
@@ -821,7 +822,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+        Arc::from(format!("[directory{}]filename.ext", self.path_style.separator()).as_str())
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {

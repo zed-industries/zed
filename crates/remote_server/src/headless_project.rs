@@ -1,4 +1,3 @@
-use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
 use lsp::LanguageServerId;
 
@@ -34,7 +33,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 use sysinfo::System;
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -85,7 +84,7 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
@@ -153,7 +152,6 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -198,7 +196,7 @@ impl HeadlessProject {
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store =
                 AgentServerStore::local(node_runtime.clone(), fs.clone(), environment, cx);
-            agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+            agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             agent_server_store
         });
 
@@ -406,7 +404,7 @@ impl HeadlessProject {
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
         let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
+        let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -444,7 +442,7 @@ impl HeadlessProject {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().into_owned(),
             }
         })?;
 
@@ -493,16 +491,11 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::<Path>::from_proto(message.payload.path),
-                    },
-                    cx,
-                )
+                buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
             });
             anyhow::Ok((buffer_store, buffer))
         })??;
@@ -591,7 +584,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
+                        path: path,
                     },
                     cx,
                 )
@@ -631,7 +624,10 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
+        let query = SearchQuery::from_proto(
+            message.query.context("missing query field")?,
+            PathStyle::local(),
+        )?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
@@ -663,7 +659,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
         let check_info = envelope
             .payload
             .config
@@ -676,7 +672,7 @@ impl HeadlessProject {
         while let Some(path) = response.next().await {
             let path = path?;
             if let Some(file_name) = path.file_name() {
-                entries.push(file_name.to_string_lossy().to_string());
+                entries.push(file_name.to_string_lossy().into_owned());
                 if check_info {
                     let is_dir = fs.is_dir(&path).await;
                     entry_info.push(proto::EntryInfo { is_dir });
@@ -695,7 +691,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
@@ -703,7 +699,7 @@ impl HeadlessProject {
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_proto(),
+            path: expanded.to_string_lossy().into_owned(),
         })
     }
 
@@ -747,7 +743,7 @@ impl HeadlessProject {
             let command = process
                 .cmd()
                 .iter()
-                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| s.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
 
             processes.push(proto::ProcessInfo {

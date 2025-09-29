@@ -17,7 +17,6 @@
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
-      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "shift-alt-enter": "menu::Restart",
@@ -249,7 +248,10 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-y": "agent::AllowOnce",
+      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-d": "agent::RejectOnce"
     }
   },
   {
@@ -343,10 +345,21 @@
     }
   },
   {
-    "context": "AcpThread > Editor",
+    "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
+    }
+  },
+  {
+    "context": "AcpThread > Editor && use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "agent::Chat",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",
@@ -462,8 +475,8 @@
       "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       "alt--": "pane::GoBack",
-      "alt-=": "pane::GoForward",
       "forward": "pane::GoForward",
+      "alt-=": "pane::GoForward",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPreviousMatch",
       "ctrl-shift-f": "project_search::ToggleFocus",
@@ -605,8 +618,6 @@
       "shift-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
       "shift-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
       "shift-alt-0": "workspace::ResetOpenDocksSize",
-      "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
-      "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
@@ -639,7 +650,9 @@
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
-      "ctrl-shift-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "ctrl-shift-r": ["task::Rerun", { "reevaluate_context": false }],
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
       "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],
@@ -1088,6 +1101,13 @@
     }
   },
   {
+    "context": "StashList || (StashList > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+    }
+  },
+  {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {
@@ -1101,6 +1121,7 @@
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-n": "workspace::NewTerminal",
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
@@ -1144,6 +1165,13 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "ContextServerToolsModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   },
   {
@@ -1230,8 +1258,8 @@
       "ctrl-1": "onboarding::ActivateBasicsPage",
       "ctrl-2": "onboarding::ActivateEditingPage",
       "ctrl-3": "onboarding::ActivateAISetupPage",
-      "ctrl-escape": "onboarding::Finish",
-      "alt-tab": "onboarding::SignIn",
+      "ctrl-enter": "onboarding::Finish",
+      "alt-shift-l": "onboarding::SignIn",
       "shift-alt-a": "onboarding::OpenAccount"
     }
   }

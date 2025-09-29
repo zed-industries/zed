@@ -1,5 +1,6 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -13,7 +14,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::lsp_store::CompletionDocumentation;
+use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
     ProjectPath, Symbol, WorktreeId,
@@ -22,6 +23,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::AgentPanel;
@@ -68,7 +70,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
@@ -78,7 +80,7 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
@@ -187,7 +189,7 @@ impl ContextPickerCompletionProvider {
 
     pub(crate) fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         source_range: Range<Anchor>,
@@ -195,10 +197,12 @@ impl ContextPickerCompletionProvider {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = project.read(cx).path_style(cx);
         let (file_name, directory) =
             crate::context_picker::file_context_picker::extract_file_name_and_directory(
                 &project_path.path,
                 path_prefix,
+                path_style,
             );
 
         let label =
@@ -250,7 +254,15 @@ impl ContextPickerCompletionProvider {
 
         let label = CodeLabel::plain(symbol.name.clone(), None);
 
-        let abs_path = project.read(cx).absolute_path(&symbol.path, cx)?;
+        let abs_path = match &symbol.path {
+            SymbolLocation::InProject(project_path) => {
+                project.read(cx).absolute_path(&project_path, cx)?
+            }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature: _,
+            } => PathBuf::from(abs_path.as_ref()),
+        };
         let uri = MentionUri::Symbol {
             abs_path,
             name: symbol.name.clone(),
@@ -600,7 +612,7 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        if self.prompt_capabilities.get().embedded_context {
+        if self.prompt_capabilities.borrow().embedded_context {
             const RECENT_COUNT: usize = 2;
             let threads = self
                 .history_store
@@ -622,7 +634,7 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let embedded_context = self.prompt_capabilities.borrow().embedded_context;
         let mut entries = if embedded_context {
             vec![
                 ContextPickerEntry::Mode(ContextPickerMode::File),
@@ -694,7 +706,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
         });
         let Some(state) = state else {
@@ -896,7 +908,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
@@ -1108,6 +1120,12 @@ impl MentionCompletion {
             match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
                 Some(whitespace_count) => {
                     if let Some(argument_text) = parts.next() {
+                        // If mode wasn't recognized but we have an argument, don't suggest completions
+                        // (e.g. '@something word')
+                        if mode.is_none() && !argument_text.is_empty() {
+                            return None;
+                        }
+
                         argument = Some(argument_text.to_string());
                         end += whitespace_count + argument_text.len();
                     }
@@ -1265,6 +1283,17 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @main ", 0),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem @main m", 0), None);
+
         assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
 
         // Allowed non-file mentions
@@ -1279,14 +1308,9 @@ mod tests {
         );
 
         // Disallowed non-file mentions
-
         assert_eq!(
             MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
-            Some(MentionCompletion {
-                source_range: 6..18,
-                mode: None,
-                argument: Some("main".to_string()),
-            })
+            None
         );
 
         assert_eq!(

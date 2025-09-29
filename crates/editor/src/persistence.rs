@@ -35,7 +35,7 @@ impl Bind for SerializedEditor {
             &self
                 .abs_path
                 .as_ref()
-                .map(|p| p.to_string_lossy().to_string()),
+                .map(|p| p.to_string_lossy().into_owned()),
             start_index,
         )?;
         let start_index = statement.bind(&self.contents, start_index)?;

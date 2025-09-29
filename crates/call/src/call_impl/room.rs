@@ -9,6 +9,7 @@ use client::{
     proto::{self, PeerId},
 };
 use collections::{BTreeMap, HashMap, HashSet};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
@@ -22,8 +23,8 @@ use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration};
-use util::{ResultExt, TryFutureExt, post_inc};
+use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
+use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -85,6 +86,7 @@ pub struct Room {
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
+    created: Instant,
 }
 
 impl EventEmitter<Event> for Room {}
@@ -156,6 +158,7 @@ impl Room {
             maintain_connection: Some(maintain_connection),
             room_update_completed_tx,
             room_update_completed_rx,
+            created: cx.background_executor().now(),
         }
     }
 
@@ -826,7 +829,17 @@ impl Room {
                                 },
                             );
 
-                            Audio::play_sound(Sound::Joined, cx);
+                            // When joining a room start_room_connection gets
+                            // called but we have already played the join sound.
+                            // Dont play extra sounds over that.
+                            if this.created.elapsed() > Duration::from_millis(100) {
+                                if let proto::ChannelRole::Guest = role {
+                                    Audio::play_sound(Sound::GuestJoined, cx);
+                                } else {
+                                    Audio::play_sound(Sound::Joined, cx);
+                                }
+                            }
+
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
                                     .get(&ParticipantIdentity(user.id.to_string()))
@@ -1162,6 +1175,7 @@ impl Room {
             room_id: self.id(),
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
+            windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
         });
 
         cx.spawn(async move |this, cx| {
@@ -1322,8 +1336,18 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
+        let is_staff = cx.is_staff();
+        let user_name = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .and_then(|user| user.name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         cx.spawn(async move |this, cx| {
-            let publication = room.publish_local_microphone_track(cx).await;
+            let publication = room
+                .publish_local_microphone_track(user_name, is_staff, cx)
+                .await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit

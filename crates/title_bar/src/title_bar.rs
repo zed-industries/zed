@@ -23,25 +23,24 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
     Subscription, WeakEntity, Window, actions, div,
 };
-use keymap_editor;
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -309,10 +308,11 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
-            options.nickname.map(|nick| nick.into())
-        } else {
-            None
+        let (nickname, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => {
+                (options.nickname.map(|nick| nick.into()), IconName::Server)
+            }
+            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
@@ -350,9 +350,7 @@ impl TitleBar {
                         .max_w_32()
                         .child(
                             IconWithIndicator::new(
-                                Icon::new(IconName::Server)
-                                    .size(IconSize::Small)
-                                    .color(icon_color),
+                                Icon::new(icon).size(IconSize::Small).color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
@@ -441,13 +439,13 @@ impl TitleBar {
                 let worktree = worktree.read(cx);
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
 
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.root_name(),
+                    None => worktree.root_name_str(),
                 }
             })
             .next();
@@ -597,9 +595,9 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
+                    Some(AutoUpdateStatus::Idle)
+                    | Some(AutoUpdateStatus::Errored { .. })
+                    | None => "Please update Zed to Collaborate",
                 };
 
                 Some(
@@ -669,13 +667,13 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(Plan::ZedFree | Plan::ZedFreeV2) => {
+                            None | Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)) => {
                                 ("Free", Color::Default, free_chip_bg)
                             }
-                            Some(Plan::ZedProTrial | Plan::ZedProTrialV2) => {
+                            Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)) => {
                                 ("Pro Trial", Color::Accent, pro_chip_bg)
                             }
-                            Some(Plan::ZedPro | Plan::ZedProV2) => {
+                            Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)) => {
                                 ("Pro", Color::Accent, pro_chip_bg)
                             }
                         };
@@ -705,7 +703,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Keymap Editor", Box::new(keymap_editor::OpenKeymapEditor))
+                        .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -753,7 +751,7 @@ impl TitleBar {
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
-                            .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                            .action("Key Bindings", Box::new(zed_actions::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

@@ -218,7 +218,7 @@
     }
   },
   {
-    "context": "Editor && !agent_diff",
+    "context": "Editor && !agent_diff && !AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-alt-z": "git::Restore",
@@ -286,7 +286,10 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "cmd-y": "agent::AllowOnce",
+      "cmd-alt-y": "agent::AllowAlways",
+      "cmd-d": "agent::RejectOnce"
     }
   },
   {
@@ -547,6 +550,8 @@
       "cmd-ctrl-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
       "cmd-ctrl-right": "editor::SelectLargerSyntaxNode", // Expand selection
       "cmd-ctrl-up": "editor::SelectPreviousSyntaxNode", // Move selection up
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand selection (VSCode version)
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink selection (VSCode version)
       "cmd-ctrl-down": "editor::SelectNextSyntaxNode", // Move selection down
       "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch / find_under_expand
       "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
@@ -721,7 +726,9 @@
     "bindings": {
       "cmd-n": "workspace::NewFile",
       "cmd-shift-r": "task::Spawn",
-      "cmd-alt-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "cmd-alt-r": ["task::Rerun", { "reevaluate_context": false }],
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
@@ -1142,6 +1149,13 @@
     }
   },
   {
+    "context": "StashList || (StashList > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+    }
+  },
+  {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {
@@ -1230,6 +1244,13 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "cmd-enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "ContextServerToolsModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   },
   {

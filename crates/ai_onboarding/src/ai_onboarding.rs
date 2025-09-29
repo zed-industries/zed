@@ -10,7 +10,7 @@ pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProvider
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
 pub use ai_upsell_card::AiUpsellCard;
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use plan_definitions::PlanDefinitions;
 pub use young_account_banner::YoungAccountBanner;
@@ -18,7 +18,6 @@ pub use young_account_banner::YoungAccountBanner;
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement};
 use ui::{Divider, RegisterComponent, Tooltip, prelude::*};
 
@@ -85,7 +84,7 @@ impl ZedAiOnboarding {
         self
     }
 
-    fn render_sign_in_disclaimer(&self, cx: &mut App) -> AnyElement {
+    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
@@ -96,7 +95,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), false))
+            .child(PlanDefinitions.pro_plan(true, false))
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -307,14 +306,14 @@ impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
-                None => self.render_free_plan_state(cx.has_flag::<BillingV2FeatureFlag>(), cx),
-                Some(plan @ (Plan::ZedFree | Plan::ZedFreeV2)) => {
+                None => self.render_free_plan_state(true, cx),
+                Some(plan @ (Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))) => {
                     self.render_free_plan_state(plan.is_v2(), cx)
                 }
-                Some(plan @ (Plan::ZedProTrial | Plan::ZedProTrialV2)) => {
+                Some(plan @ (Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial))) => {
                     self.render_trial_state(plan.is_v2(), cx)
                 }
-                Some(plan @ (Plan::ZedPro | Plan::ZedProV2)) => {
+                Some(plan @ (Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))) => {
                     self.render_pro_plan_state(plan.is_v2(), cx)
                 }
             }
@@ -370,15 +369,27 @@ impl Component for ZedAiOnboarding {
                     ),
                     single_example(
                         "Free Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V2(PlanV2::ZedFree)),
+                            false,
+                        ),
                     ),
                     single_example(
                         "Pro Trial",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V2(PlanV2::ZedProTrial)),
+                            false,
+                        ),
                     ),
                     single_example(
                         "Pro Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V2(PlanV2::ZedPro)),
+                            false,
+                        ),
                     ),
                 ])
                 .into_any_element(),

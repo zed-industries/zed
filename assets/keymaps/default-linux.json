@@ -247,7 +247,10 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-y": "agent::AllowOnce",
+      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-d": "agent::RejectOnce"
     }
   },
   {
@@ -459,8 +462,8 @@
       "ctrl-k ctrl-w": "workspace::CloseAllItemsAndPanes",
       "back": "pane::GoBack",
       "ctrl-alt--": "pane::GoBack",
-      "ctrl-alt-_": "pane::GoForward",
       "forward": "pane::GoForward",
+      "ctrl-alt-_": "pane::GoForward",
       "ctrl-alt-g": "search::SelectNextMatch",
       "f3": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPreviousMatch",
@@ -646,7 +649,9 @@
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
-      "ctrl-shift-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "ctrl-shift-r": ["task::Rerun", { "reevaluate_context": false }],
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn",
@@ -1071,6 +1076,12 @@
     }
   },
   {
+    "context": "StashList || (StashList > Picker > Editor)",
+    "bindings": {
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+    }
+  },
+  {
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
@@ -1127,6 +1138,13 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "ContextServerToolsModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   },
   {
