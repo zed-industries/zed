@@ -279,15 +279,15 @@ impl InlineValueCache {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
-    EditPrediction(usize),
-    DebuggerValue(usize),
+    EditPrediction(u32),
+    DebuggerValue(u32),
     // LSP
-    Hint(usize),
-    Color(usize),
+    Hint(u32),
+    Color(u32),
 }
 
 impl InlayId {
-    fn id(&self) -> usize {
+    fn id(&self) -> u32 {
         match self {
             Self::EditPrediction(id) => *id,
             Self::DebuggerValue(id) => *id,
@@ -1118,7 +1118,8 @@ pub struct Editor {
     edit_prediction_indent_conflict: bool,
     edit_prediction_requires_modifier_in_indent_conflict: bool,
     inlay_hint_cache: InlayHintCache,
-    next_inlay_id: usize,
+    next_inlay_id: u32,
+    next_color_inlay_id: u32,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_dimensions: GutterDimensions,
@@ -1182,7 +1183,6 @@ pub struct Editor {
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
     selection_drag_state: SelectionDragState,
-    next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
@@ -12339,7 +12339,7 @@ impl Editor {
                 }
             });
         });
-        let item = self.cut_common(true, window, cx);
+        let item = self.cut_common(false, window, cx);
         cx.set_global(KillRing(item))
     }
 
@@ -20532,7 +20532,7 @@ impl Editor {
                                     Anchor::in_buffer(excerpt_id, buffer_id, hint.position),
                                     hint.text(),
                                 );
-                                if !inlay.text.chars().contains(&'\n') {
+                                if !inlay.text().chars().contains(&'\n') {
                                     new_inlays.push(inlay);
                                 }
                             });
