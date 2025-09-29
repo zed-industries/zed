@@ -34,7 +34,7 @@ use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
     utils::SearchInputWidth,
 };
-use util::ResultExt;
+use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
@@ -1214,6 +1214,8 @@ impl BufferSearchBar {
                 {
                     search
                 } else {
+                    // Value doesn't matter, we only construct empty matchers with it
+
                     if self.search_options.contains(SearchOptions::REGEX) {
                         match SearchQuery::regex(
                             query,
@@ -1222,8 +1224,8 @@ impl BufferSearchBar {
                             false,
                             self.search_options
                                 .contains(SearchOptions::ONE_MATCH_PER_LINE),
-                            Default::default(),
-                            Default::default(),
+                            PathMatcher::default(),
+                            PathMatcher::default(),
                             false,
                             None,
                         ) {
@@ -1241,8 +1243,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
-                            Default::default(),
-                            Default::default(),
+                            PathMatcher::default(),
+                            PathMatcher::default(),
                             false,
                             None,
                         ) {

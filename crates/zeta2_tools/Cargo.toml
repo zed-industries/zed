@@ -14,6 +14,7 @@ path = "src/zeta2_tools.rs"
 [dependencies]
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 edit_prediction_context.workspace = true
 editor.workspace = true

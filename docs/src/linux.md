@@ -368,3 +368,15 @@ xrandr --dpi 192
 ```
 
 Replace `192` with your desired DPI value. This affects the system globally and will be used by Zed's automatic RandR detection when `Xft.dpi` is not set.
+
+### Font rendering parameters
+
+When using Blade rendering (Linux platforms and self-compiled builds with the Blade renderer enabled), Zed reads `ZED_FONTS_GAMMA` and `ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` environment variables for the values to use for font rendering.
+
+`ZED_FONTS_GAMMA` corresponds to [getgamma](https://learn.microsoft.com/en-us/windows/win32/api/dwrite/nf-dwrite-idwriterenderingparams-getgamma) values.
+Allowed range [1.0, 2.2], other values are clipped.
+Default: 1.8
+
+`ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST` corresponds to [getgrayscaleenhancedcontrast](https://learn.microsoft.com/en-us/windows/win32/api/dwrite_1/nf-dwrite_1-idwriterenderingparams1-getgrayscaleenhancedcontrast) values.
+Allowed range: [0.0, ..), other values are clipped.
+Default: 1.0

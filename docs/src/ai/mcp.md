@@ -55,27 +55,29 @@ From there, you can add it through the modal that appears when you click the "Ad
 
 ## Using MCP Servers
 
-### Installation Check
+### Configuration Check
 
-Regardless of whether you're using MCP servers as an extension or adding them directly, most servers out there need some sort of configuration as part of the set up process.
+Regardless of how you've installed MCP servers, whether as an extension or adding them directly, most servers out there still require some sort of configuration as part of the set up process.
 
-In the case of extensions, Zed will show a modal displaying what is required for you to properly set up a given server.
+In the case of server extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
 For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.
 
-To check whether your MCP server is properly installed, go to the Agent Panel's settings view and watch the indicator dot next to its name.
+To check if your MCP server is properly configured, go to the Agent Panel's settings view and watch the indicator dot next to its name.
 If they're running correctly, the indicator will be green and its tooltip will say "Server is active".
 If not, other colors and tooltip messages will indicate what is happening.
 
-### Using in the Agent Panel
+### Using it in the Agent Panel
 
 Once installation is complete, you can return to the Agent Panel and start prompting.
-Mentioning your MCP server by name helps the agent pick it up.
 
-If you want to ensure a given server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) by turning off the built-in tools (either all of them or the ones that would cause conflicts) and turning on only the tools coming from the MCP server.
+Some models are better than others when it comes to picking up tools from MCP servers.
+Mentioning your server by name always helps the model to pick it up.
 
-As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#add-container-use-agent-profile-optional) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
+However, if you want to ensure a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+
+As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
 ```json
 "agent": {

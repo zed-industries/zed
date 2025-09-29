@@ -170,6 +170,7 @@ pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -261,7 +262,7 @@ pub struct LanguageSettingsContent {
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
     ///
     /// Default: "•" for spaces, "→" for tabs.
-    pub whitespace_map: Option<WhitespaceMap>,
+    pub whitespace_map: Option<WhitespaceMapContent>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -354,23 +355,9 @@ pub enum ShowWhitespaceSetting {
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct WhitespaceMap {
-    pub space: Option<String>,
-    pub tab: Option<String>,
-}
-
-impl WhitespaceMap {
-    pub fn space(&self) -> SharedString {
-        self.space
-            .as_ref()
-            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
-    }
-
-    pub fn tab(&self) -> SharedString {
-        self.tab
-            .as_ref()
-            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
-    }
+pub struct WhitespaceMapContent {
+    pub space: Option<char>,
+    pub tab: Option<char>,
 }
 
 /// The behavior of `editor::Rewrap`.

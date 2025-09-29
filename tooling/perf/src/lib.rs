@@ -1,5 +1,7 @@
 //! Some constants and datatypes used in the Zed perf profiler. Should only be
 //! consumed by the crate providing the matching macros.
+//!
+//! For usage documentation, see the docs on this crate's binary.
 
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
@@ -261,8 +263,8 @@ impl Output {
                 // Only compare categories where both           meow
                 // runs have data.                              /
                 let mut other_data = other_categories.remove(&cat)?;
-                let mut max = 0.;
-                let mut min = 0.;
+                let mut max = f64::MIN;
+                let mut min = f64::MAX;
 
                 // Running totals for averaging out tests.
                 let mut r_total_numerator = 0.;
@@ -274,7 +276,7 @@ impl Output {
                         continue;
                     };
                     let shift =
-                        (s_timings.iters_per_sec(s_iters) / o_timings.iters_per_sec(o_iters)) - 1.;
+                        (o_timings.iters_per_sec(o_iters) / s_timings.iters_per_sec(s_iters)) - 1.;
                     if shift > max {
                         max = shift;
                     }
@@ -284,10 +286,15 @@ impl Output {
                     r_total_numerator += shift * f64::from(weight);
                     r_total_denominator += u32::from(weight);
                 }
-                let mean = r_total_numerator / f64::from(r_total_denominator);
-                // TODO: also aggregate standard deviation? That's harder to keep
-                // meaningful, though, since we dk which tests are correlated.
-                Some((cat, PerfDelta { max, mean, min }))
+                // There were no runs here!
+                if r_total_denominator == 0 {
+                    None
+                } else {
+                    let mean = r_total_numerator / f64::from(r_total_denominator);
+                    // TODO: also aggregate standard deviation? That's harder to keep
+                    // meaningful, though, since we dk which tests are correlated.
+                    Some((cat, PerfDelta { max, mean, min }))
+                }
             })
             .collect();
 

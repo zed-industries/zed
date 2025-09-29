@@ -6,16 +6,6 @@ impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-pub struct BillingV2FeatureFlag {}
-
-impl FeatureFlag for BillingV2FeatureFlag {
-    const NAME: &'static str = "billing-v2";
-
-    fn enabled_for_all() -> bool {
-        true
-    }
-}
-
 pub struct NotebookFeatureFlag;
 
 impl FeatureFlag for NotebookFeatureFlag {

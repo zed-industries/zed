@@ -32,7 +32,7 @@ impl ExtensionEvents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Event {
     ExtensionInstalled(Arc<ExtensionManifest>),
     ExtensionUninstalled(Arc<ExtensionManifest>),

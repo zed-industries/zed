@@ -753,7 +753,7 @@ impl LanguageRegistry {
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
-        let filename = path.file_name().and_then(|name| name.to_str());
+        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`

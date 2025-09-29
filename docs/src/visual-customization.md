@@ -58,7 +58,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": "",
     "font_size": 15,
     // Terminal line height: comfortable (1.618), standard(1.3) or `{ "custom": 2 }`
-    "line_height": "comfortable",
+    "line_height": "standard",
   },
 
   // Agent Panel Font Settings

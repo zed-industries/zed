@@ -1509,7 +1509,7 @@ mod fake {
         }
 
         fn path_style(&self) -> PathStyle {
-            PathStyle::current()
+            PathStyle::local()
         }
 
         fn shell(&self) -> String {

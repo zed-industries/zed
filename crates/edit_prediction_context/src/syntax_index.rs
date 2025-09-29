@@ -324,7 +324,7 @@ impl SyntaxIndex {
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
                 let language = language_registry
-                    .language_for_file_path(&project_path.path)
+                    .language_for_file_path(&project_path.path.as_std_path())
                     .await
                     .ok();
 
@@ -549,7 +549,7 @@ impl SyntaxIndexState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, sync::Arc};
+    use std::sync::Arc;
 
     use gpui::TestAppContext;
     use indoc::indoc;
@@ -558,7 +558,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use text::OffsetRangeExt as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use crate::syntax_index::SyntaxIndex;
 
@@ -739,7 +739,7 @@ mod tests {
                 .read(cx)
                 .path_for_entry(*project_entry_id, cx)
                 .unwrap();
-            assert_eq!(project_path.path.as_ref(), Path::new(path),);
+            assert_eq!(project_path.path.as_ref(), rel_path(path),);
             declaration
         } else {
             panic!("Expected a buffer declaration, found {:?}", declaration);
@@ -764,7 +764,7 @@ mod tests {
                     .unwrap()
                     .path
                     .as_ref(),
-                Path::new(path),
+                rel_path(path),
             );
             declaration
         } else {

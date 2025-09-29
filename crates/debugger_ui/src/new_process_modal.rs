@@ -32,7 +32,7 @@ use ui::{
     SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div,
     h_flex, relative, rems, v_flex,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
@@ -1026,29 +1026,27 @@ impl DebugDelegate {
                     let mut path = if worktrees.len() > 1
                         && let Some(worktree) = project.worktree_for_id(*worktree_id, cx)
                     {
-                        let worktree_path = worktree.read(cx).abs_path();
-                        let full_path = worktree_path.join(directory_in_worktree);
-                        full_path
+                        worktree
+                            .read(cx)
+                            .root_name()
+                            .join(directory_in_worktree)
+                            .to_rel_path_buf()
                     } else {
-                        directory_in_worktree.clone()
+                        directory_in_worktree.to_rel_path_buf()
                     };
 
-                    match path
-                        .components()
-                        .next_back()
-                        .and_then(|component| component.as_os_str().to_str())
-                    {
+                    match path.components().next_back() {
                         Some(".zed") => {
-                            path.push("debug.json");
+                            path.push(RelPath::unix("debug.json").unwrap());
                         }
                         Some(".vscode") => {
-                            path.push("launch.json");
+                            path.push(RelPath::unix("launch.json").unwrap());
                         }
                         _ => {}
                     }
-                    Some(path.display().to_string())
+                    path.display(project.path_style(cx)).to_string()
                 })
-                .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
+                .ok(),
             Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
                 Some(abs_path.to_string_lossy().into_owned())
             }
@@ -1135,7 +1133,7 @@ impl DebugDelegate {
                         id: _,
                         directory_in_worktree: dir,
                         id_base: _,
-                    } => dir.ends_with(".zed"),
+                    } => dir.ends_with(RelPath::unix(".zed").unwrap()),
                     _ => false,
                 });
 
@@ -1154,7 +1152,10 @@ impl DebugDelegate {
                                     id: _,
                                     directory_in_worktree: dir,
                                     id_base: _,
-                                } => !(hide_vscode && dir.ends_with(".vscode")),
+                                } => {
+                                    !(hide_vscode
+                                        && dir.ends_with(RelPath::unix(".vscode").unwrap()))
+                                }
                                 _ => true,
                             })
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
@@ -1577,7 +1578,7 @@ impl PickerDelegate for DebugDelegate {
 
 pub(crate) fn resolve_path(path: &mut String) {
     if path.starts_with('~') {
-        let home = paths::home_dir().to_string_lossy().to_string();
+        let home = paths::home_dir().to_string_lossy().into_owned();
         let trimmed_path = path.trim().to_owned();
         *path = trimmed_path.replacen('~', &home, 1);
     } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {

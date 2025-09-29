@@ -16,7 +16,7 @@ use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_default_system_shell, get_system_shell, maybe};
+use util::{get_default_system_shell, get_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
 
@@ -68,7 +68,7 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
@@ -118,7 +118,7 @@ impl Project {
                     .map(|wt| wt.read(cx).id())
                     .map(|worktree_id| ProjectPath {
                         worktree_id,
-                        path: Arc::from(Path::new("")),
+                        path: Arc::from(RelPath::empty()),
                     }),
             );
         let toolchains = project_path_contexts
@@ -298,7 +298,7 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
@@ -325,7 +325,7 @@ impl Project {
                     .map(|wt| wt.read(cx).id())
                     .map(|worktree_id| ProjectPath {
                         worktree_id,
-                        path: Arc::from(Path::new("")),
+                        path: RelPath::empty().into(),
                     }),
             );
         let toolchains = project_path_contexts
@@ -464,13 +464,13 @@ impl Project {
         {
             settings_location = Some(SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path,
+                path: RelPath::empty(),
             });
         }
         TerminalSettings::get(settings_location, cx)
     }
 
-    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<std::process::Command> {
+    pub fn exec_in_shell(&self, command: String, cx: &App) -> Result<smol::process::Command> {
         let path = self.first_project_directory(cx);
         let remote_client = self.remote_client.as_ref();
         let settings = self.terminal_settings(&path, cx).clone();
@@ -508,6 +508,10 @@ impl Project {
                 Ok(command)
             }
         }
+        .map(|mut process| {
+            util::set_pre_exec_to_start_new_session(&mut process);
+            smol::process::Command::from(process)
+        })
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {

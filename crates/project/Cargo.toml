@@ -58,7 +58,6 @@ lsp.workspace = true
 markdown.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
-pathdiff.workspace = true
 paths.workspace = true
 postage.workspace = true
 prettier.workspace = true

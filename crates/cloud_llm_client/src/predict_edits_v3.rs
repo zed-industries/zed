@@ -1,6 +1,11 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
-use std::{ops::Range, path::PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use strum::EnumIter;
 use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
@@ -10,7 +15,7 @@ use crate::PredictEditsGitInfo;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
     pub excerpt: String,
-    pub excerpt_path: PathBuf,
+    pub excerpt_path: Arc<Path>,
     /// Within file
     pub excerpt_range: Range<usize>,
     /// Within `excerpt`
@@ -32,10 +37,39 @@ pub struct PredictEditsRequest {
     // Only available to staff
     #[serde(default)]
     pub debug_info: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_max_bytes: Option<usize>,
+    #[serde(default)]
+    pub prompt_format: PromptFormat,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum PromptFormat {
+    #[default]
+    MarkedExcerpt,
+    LabeledSections,
+    /// Prompt format intended for use via zeta_cli
+    OnlySnippets,
+}
+
+impl PromptFormat {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+}
+
+impl std::fmt::Display for PromptFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
+            PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
+            PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -59,7 +93,7 @@ pub struct Signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferencedDeclaration {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub text: String,
     pub text_is_truncated: bool,
     /// Range of `text` within file, possibly truncated according to `text_is_truncated`
@@ -69,13 +103,13 @@ pub struct ReferencedDeclaration {
     /// Index within `signatures`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parent_index: Option<usize>,
-    pub score_components: ScoreComponents,
+    pub score_components: DeclarationScoreComponents,
     pub signature_score: f32,
     pub declaration_score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoreComponents {
+pub struct DeclarationScoreComponents {
     pub is_same_file: bool,
     pub is_referenced_nearby: bool,
     pub is_referenced_in_breadcrumb: bool,
@@ -85,12 +119,12 @@ pub struct ScoreComponents {
     pub reference_line_distance: u32,
     pub declaration_line_distance: u32,
     pub declaration_line_distance_rank: usize,
-    pub containing_range_vs_item_jaccard: f32,
-    pub containing_range_vs_signature_jaccard: f32,
+    pub excerpt_vs_item_jaccard: f32,
+    pub excerpt_vs_signature_jaccard: f32,
     pub adjacent_vs_item_jaccard: f32,
     pub adjacent_vs_signature_jaccard: f32,
-    pub containing_range_vs_item_weighted_overlap: f32,
-    pub containing_range_vs_signature_weighted_overlap: f32,
+    pub excerpt_vs_item_weighted_overlap: f32,
+    pub excerpt_vs_signature_weighted_overlap: f32,
     pub adjacent_vs_item_weighted_overlap: f32,
     pub adjacent_vs_signature_weighted_overlap: f32,
 }
@@ -117,7 +151,7 @@ pub struct DebugInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edit {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub range: Range<usize>,
     pub content: String,
 }

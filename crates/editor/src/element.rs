@@ -43,7 +43,7 @@ use gpui::{
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
     DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    KeybindingKeystroke, Length, ModifiersChangedEvent, MouseButton, MouseClickEvent,
+    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
     Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
@@ -86,7 +86,7 @@ use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
-    right_click_menu, scrollbars::ShowScrollbar,
+    right_click_menu, scrollbars::ShowScrollbar, text_for_keystroke,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
@@ -1371,7 +1371,7 @@ impl EditorElement {
 
                     let layout = SelectionLayout::new(
                         selection,
-                        editor.selections.line_mode,
+                        editor.selections.line_mode(),
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -3149,7 +3149,7 @@ impl EditorElement {
                 let newest = editor.selections.newest::<Point>(cx);
                 SelectionLayout::new(
                     newest,
-                    editor.selections.line_mode,
+                    editor.selections.line_mode(),
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,
@@ -3779,14 +3779,20 @@ impl EditorElement {
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(for_excerpt.buffer.file());
-        let relative_path = for_excerpt.buffer.resolve_file_path(cx, include_root);
-        let filename = relative_path
-            .as_ref()
-            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-        let parent_path = relative_path.as_ref().and_then(|path| {
-            Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
-        });
+        let file = for_excerpt.buffer.file();
+        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let path_style = file.map(|file| file.path_style(cx));
+        let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
+        let (parent_path, filename) = if let Some(path) = &relative_path {
+            if let Some(path_style) = path_style {
+                let (dir, file_name) = path_style.split(path);
+                (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
+            } else {
+                (None, Some(path.clone()))
+            }
+        } else {
+            (None, None)
+        };
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
@@ -3838,11 +3844,14 @@ impl EditorElement {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
-                                                    if cfg!(target_os = "macos") {
-                                                        "Option+click to toggle all"
-                                                    } else {
-                                                        "Alt+click to toggle all"
-                                                    },
+                                                    format!(
+                                                        "{} to toggle all",
+                                                        text_for_keystroke(
+                                                            &Modifiers::alt(),
+                                                            "click",
+                                                            cx
+                                                        )
+                                                    ),
                                                     &focus_handle,
                                                     window,
                                                     cx,
@@ -3990,12 +3999,13 @@ impl EditorElement {
                         && let Some(worktree) =
                             project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
                     {
+                        let path_style = file.path_style(cx);
                         let worktree = worktree.read(cx);
                         let relative_path = file.path();
                         let entry_for_path = worktree.entry_for_path(relative_path);
                         let abs_path = entry_for_path.map(|e| {
                             e.canonical_path.as_deref().map_or_else(
-                                || worktree.abs_path().join(relative_path),
+                                || worktree.absolutize(relative_path),
                                 Path::to_path_buf,
                             )
                         });
@@ -4020,7 +4030,7 @@ impl EditorElement {
                                     Some(Box::new(zed_actions::workspace::CopyPath)),
                                     window.handler_for(&editor, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            abs_path.to_string_lossy().to_string(),
+                                            abs_path.to_string_lossy().into_owned(),
                                         ));
                                     }),
                                 )
@@ -4031,7 +4041,7 @@ impl EditorElement {
                                     Some(Box::new(zed_actions::workspace::CopyRelativePath)),
                                     window.handler_for(&editor, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            relative_path.to_string_lossy().to_string(),
+                                            relative_path.display(path_style).to_string(),
                                         ));
                                     }),
                                 )
@@ -9324,7 +9334,7 @@ impl Element for EditorElement {
                         .language_settings(cx)
                         .whitespace_map;
 
-                    let tab_char = whitespace_map.tab();
+                    let tab_char = whitespace_map.tab.clone();
                     let tab_len = tab_char.len();
                     let tab_invisible = window.text_system().shape_line(
                         tab_char,
@@ -9340,7 +9350,7 @@ impl Element for EditorElement {
                         None,
                     );
 
-                    let space_char = whitespace_map.space();
+                    let space_char = whitespace_map.space.clone();
                     let space_len = space_char.len();
                     let space_invisible = window.text_system().shape_line(
                         space_char,

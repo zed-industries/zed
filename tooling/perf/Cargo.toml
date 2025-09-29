@@ -23,6 +23,7 @@ allow_attributes_without_reason = "deny" # This covers `expect` also, since we d
 let_underscore_must_use = "forbid"
 undocumented_unsafe_blocks = "forbid"
 missing_safety_doc = "forbid"
+disallowed_methods = { level = "allow", priority = 1}
 
 [dependencies]
 collections.workspace = true

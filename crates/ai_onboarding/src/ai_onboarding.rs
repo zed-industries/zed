@@ -18,7 +18,6 @@ pub use young_account_banner::YoungAccountBanner;
 use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
-use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement};
 use ui::{Divider, RegisterComponent, Tooltip, prelude::*};
 
@@ -85,7 +84,7 @@ impl ZedAiOnboarding {
         self
     }
 
-    fn render_sign_in_disclaimer(&self, cx: &mut App) -> AnyElement {
+    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
@@ -96,7 +95,7 @@ impl ZedAiOnboarding {
                     .color(Color::Muted)
                     .mb_2(),
             )
-            .child(PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), false))
+            .child(PlanDefinitions.pro_plan(true, false))
             .child(
                 Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
@@ -120,7 +119,7 @@ impl ZedAiOnboarding {
                 .max_w_full()
                 .gap_1()
                 .child(Headline::new("Welcome to Zed AI"))
-                .child(YoungAccountBanner::new(is_v2))
+                .child(YoungAccountBanner)
                 .child(
                     v_flex()
                         .mt_2()
@@ -307,7 +306,7 @@ impl RenderOnce for ZedAiOnboarding {
     fn render(self, _window: &mut ui::Window, cx: &mut App) -> impl IntoElement {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
-                None => self.render_free_plan_state(cx.has_flag::<BillingV2FeatureFlag>(), cx),
+                None => self.render_free_plan_state(true, cx),
                 Some(plan @ (Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))) => {
                     self.render_free_plan_state(plan.is_v2(), cx)
                 }
