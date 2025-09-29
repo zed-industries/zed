@@ -529,9 +529,9 @@ impl SettingsStore {
             }
             found_file = true;
 
-            if let SettingsFile::Local((wt_id, _)) = file
-                && let SettingsFile::Local((target_wt_id, _)) = target_file
-                && (wt_id != target_wt_id)
+            if let SettingsFile::Local((wt_id, ref path)) = file
+                && let SettingsFile::Local((target_wt_id, ref target_path)) = target_file
+                && (wt_id != target_wt_id || !target_path.starts_with(&path))
             {
                 // if requesting value from a local file, don't return values from local files in different worktrees
                 continue;
@@ -1797,6 +1797,54 @@ mod tests {
             store.get_value_from_file(SettingsFile::Local(local_2_child.clone()), (), get),
             (SettingsFile::Local(local_2.clone()), &2)
         );
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), (), get),
+            (SettingsFile::Local(local_1.clone()), &1)
+        );
+
+        // adjacent children should be treated as siblings not inherit from each other
+        let local_1_adjacent_child = (local_1.0, rel_path("adjacent_child").into_arc());
+        store
+            .set_local_settings(
+                local_1_adjacent_child.0,
+                local_1_adjacent_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_1_child.0,
+                local_1_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 3}"#),
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), (), get),
+            (SettingsFile::Local(local_1.clone()), &1)
+        );
+        store
+            .set_local_settings(
+                local_1_adjacent_child.0,
+                local_1_adjacent_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 3}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_1_child.0,
+                local_1_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), (), get),
             (SettingsFile::Local(local_1.clone()), &1)
