@@ -88,11 +88,7 @@ impl ZedPromptRenderer {
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_action_id > 0 {
-            self.active_action_id -= 1;
-        } else {
-            self.active_action_id = self.actions.len().saturating_sub(1);
-        }
+        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 
@@ -102,7 +98,11 @@ impl ZedPromptRenderer {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active_action_id = (self.active_action_id + 1) % self.actions.len();
+        if self.active_action_id > 0 {
+            self.active_action_id -= 1;
+        } else {
+            self.active_action_id = self.actions.len().saturating_sub(1);
+        }
         cx.notify();
     }
 }
@@ -110,8 +110,8 @@ impl ZedPromptRenderer {
 impl Render for ZedPromptRenderer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.ui_font_size(cx).into();
-        let prompt = v_flex()
+
+        let dialog = v_flex()
             .key_context("Prompt")
             .cursor_default()
             .track_focus(&self.focus)
@@ -121,11 +121,11 @@ impl Render for ZedPromptRenderer {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
-            .elevation_3(cx)
-            .w_72()
-            .overflow_hidden()
+            .w_80()
             .p_4()
             .gap_4()
+            .elevation_3(cx)
+            .overflow_hidden()
             .font_family(settings.ui_font.family.clone())
             .child(div().w_full().child(MarkdownElement::new(
                 self.message.clone(),
@@ -159,22 +159,14 @@ impl Render for ZedPromptRenderer {
             .occlude()
             .bg(gpui::black().opacity(0.2))
             .child(
-                div()
+                v_flex()
                     .size_full()
                     .absolute()
                     .top_0()
                     .left_0()
-                    .flex()
-                    .flex_col()
-                    .justify_around()
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_row()
-                            .justify_around()
-                            .child(prompt),
-                    ),
+                    .items_center()
+                    .justify_center()
+                    .child(dialog),
             )
     }
 }
