@@ -16,14 +16,14 @@ pub enum Direction {
 
 #[derive(Clone)]
 pub enum EditPrediction {
+    /// Edits within the buffer that requested the prediction
     Local {
-        /// The ID of the completion, if it has one.
         id: Option<SharedString>,
         edits: Vec<(Range<language::Anchor>, String)>,
         edit_preview: Option<language::EditPreview>,
     },
+    /// Jump to a different file from the one that requested the prediction
     Jump {
-        /// The ID of the completion, if it has one.
         id: Option<SharedString>,
         snapshot: language::BufferSnapshot,
         target: language::Anchor,
