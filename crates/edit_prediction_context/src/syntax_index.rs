@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
-use futures::StreamExt;
 use futures::channel::mpsc;
 use futures::lock::Mutex;
+use futures::{FutureExt as _, StreamExt, future};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::{Buffer, BufferEvent};
@@ -26,6 +26,8 @@ use crate::outline::declarations_in_buffer;
 //
 // * Also queue / debounce buffer changes. A challenge for this is that use of
 // `buffer_declarations_containing_range` assumes that the index is always immediately up to date.
+//
+// * Add a per language configuration for skipping indexing.
 
 // Potential future improvements:
 //
@@ -36,11 +38,9 @@ use crate::outline::declarations_in_buffer;
 
 // Potential future optimizations:
 //
-// * Index files on multiple threads. Currently it's intentionally single threaded (with most of the
-// work on the background executor) to reduce the risk of causing visible delays. Adding some kind
-// of priority system to the background executor could help.
-//
-// * Cache of buffers for files
+// * Index files on multiple threads in Zed (currently only parallel for the CLI). Adding some kind
+// of priority system to the background executor could help - it's single threaded for now to avoid
+// interfering with other work.
 //
 // * Parse files directly instead of loading into a Rope.
 //
@@ -446,23 +446,43 @@ impl SyntaxIndex {
         };
         let project = project.read(cx);
 
-        let Some(language) = project
-            .languages()
-            .language_for_file_path(project_path.path.as_std_path())
+        let language_registry = project.languages();
+        let Some(available_language) =
+            language_registry.language_for_file_path(project_path.path.as_std_path())
         else {
             return Task::ready(());
+        };
+        let language = if let Some(Ok(Ok(language))) = language_registry
+            .load_language(&available_language)
+            .now_or_never()
+        {
+            if language
+                .grammar()
+                .is_none_or(|grammar| grammar.outline_config.is_none())
+            {
+                return Task::ready(());
+            }
+            future::Either::Left(async { Ok(language) })
+        } else {
+            let language_registry = language_registry.clone();
+            future::Either::Right(async move {
+                anyhow::Ok(
+                    language_registry
+                        .load_language(&available_language)
+                        .await??,
+                )
+            })
         };
 
         let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
             return Task::ready(());
         };
 
-        let language_registry = project.languages().clone();
         let snapshot_task = worktree.update(cx, |worktree, cx| {
             let load_task = worktree.load_file(&project_path.path, cx);
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
-                let language = language_registry.load_language(&language).await??;
+                let language = language.await?;
 
                 let buffer = cx.new(|cx| {
                     let mut buffer = Buffer::local(loaded_file.text, cx);
