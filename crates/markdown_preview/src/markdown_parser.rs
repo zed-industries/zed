@@ -261,7 +261,7 @@ impl<'a> MarkdownParser<'a> {
                             code: false,
                             link: Some(link),
                         });
-                        style.underline = true;
+                        style.link = true;
                         prev_len
                     } else {
                         // Manually scan for links
@@ -329,7 +329,7 @@ impl<'a> MarkdownParser<'a> {
                         highlights.push((
                             prev_len..text.len(),
                             MarkdownHighlight::Style(MarkdownHighlightStyle {
-                                underline: true,
+                                link: true,
                                 ..Default::default()
                             }),
                         ));
