@@ -329,7 +329,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             cx.background_executor().clone(),
         ));
         self.matches.sort_unstable_by(|a, b| {
-            b.score.partial_cmp(&a.score) // Descending score
+            b.score
+                .partial_cmp(&a.score) // Descending score
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.candidate_id.cmp(&b.candidate_id)) // Ascending candidate_id for ties
         });
