@@ -53,6 +53,13 @@
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (object)) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
         ; Multiple names may be exported - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
@@ -77,6 +84,13 @@
         (variable_declarator
             name: (identifier) @name
             value: (call_expression)) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (object)) @item))
 
 (program
     (lexical_declaration
@@ -112,6 +126,13 @@
         (variable_declarator
             name: (identifier) @name
             value: (call_expression)) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (object)) @item))
 
 (statement_block
     (lexical_declaration
