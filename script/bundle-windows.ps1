@@ -29,8 +29,6 @@ $env:ZED_RELEASE_CHANNEL = $channel
 $env:RELEASE_CHANNEL = $channel
 Pop-Location
 
-$env:ZED_CONPTY_SKIP_INSTALL = "true"
-
 function CheckEnvironmentVariables {
     $requiredVars = @(
         'ZED_WORKSPACE', 'RELEASE_VERSION', 'ZED_RELEASE_CHANNEL',

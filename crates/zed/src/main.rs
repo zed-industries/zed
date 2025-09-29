@@ -260,20 +260,7 @@ pub fn main() {
     );
 
     #[cfg(windows)]
-    {
-        if let Ok(conpty_install_path) = std::env::var("ZED_CONPTY_INSTALL_PATH") {
-            use windows::{Win32::System::LibraryLoader::SetDllDirectoryW, core::PCWSTR};
-            log::info!("Setting conpty.dll search directory to {conpty_install_path}");
-            let conpty_install_path_utf16: Vec<u16> = conpty_install_path.encode_utf16().collect();
-            if let Err(err) =
-                unsafe { SetDllDirectoryW(PCWSTR::from_raw(conpty_install_path_utf16.as_ptr())) }
-            {
-                log::error!(
-                    "Failed to set conpty.dll search directory to {conpty_install_path} with error: {err}"
-                );
-            }
-        }
-    }
+    check_for_conpty_dll();
 
     let app = Application::new().with_assets(Assets);
 
@@ -1474,4 +1461,13 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(windows)]
+fn check_for_conpty_dll() {
+    use windows_sys::{Win32::System::LibraryLoader::LoadLibraryW, w};
+    let hmodule = unsafe { LoadLibraryW(w!("conpty.dll")) };
+    if hmodule.is_null() {
+        log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
 }
