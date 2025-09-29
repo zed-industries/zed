@@ -362,9 +362,11 @@ You can also switch between them in the menu, and the order of the models in the
 
 The settings allows for configuring Ollama's API url too, so one can use Ollama either locally or hosted. The Edit Prediction menu includes a shortcut for it that will open the settings file where the url is set.
 
-### Authentication
+### API key for Ollama Cloud and proxy servers
 
-Ollama itself doesn't require an API key, but when running it remotely it's a good idea and common practice to setup a proxy server in front of it that does. When sending edit prediction requests to it, Zed will forward the API key as an authentication header so the proxy can authenticate against it:
+Running Ollama locally doesn't require an API key, but running it on [Ollama Cloud](https://ollama.com/cloud) does, and when running in our own hosted instance it's a good idea, and common practice, to use a proxy server requiring it in front of it.
+
+If you have an OLLAMA_API_KEY defined in your environment, Zed will forward it as an authentication header in edit prediction requests to the url configured in the settings file:
 
 ```bash
 export OLLAMA_API_KEY=your_api_key_here
