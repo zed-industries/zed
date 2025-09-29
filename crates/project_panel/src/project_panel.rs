@@ -59,11 +59,7 @@ use ui::{
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
 };
-use util::{
-    ResultExt, TakeUntilExt, TryFutureExt, maybe,
-    paths::{HumanRelPath, compare_paths},
-    rel_path::RelPath,
-};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -5979,7 +5975,7 @@ pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
 }
 
 pub fn par_sort_worktree_entries(entries: &mut Vec<GitEntry>) {
-    entries.par_sort_by_cached_key(|lhs| HumanRelPath::new(lhs.path.clone(), lhs.is_file()));
+    entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
 #[cfg(test)]
