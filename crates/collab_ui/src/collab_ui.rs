@@ -1,5 +1,4 @@
 pub mod channel_view;
-pub mod chat_panel;
 pub mod collab_panel;
 pub mod notification_panel;
 pub mod notifications;
@@ -12,10 +11,7 @@ use gpui::{
     App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowKind, WindowOptions, point,
 };
-use panel_settings::MessageEditorSettings;
-pub use panel_settings::{
-    ChatPanelButton, ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
-};
+pub use panel_settings::{CollaborationPanelSettings, NotificationPanelSettings};
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use ui::px;
@@ -23,12 +19,9 @@ use workspace::AppState;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     CollaborationPanelSettings::register(cx);
-    ChatPanelSettings::register(cx);
     NotificationPanelSettings::register(cx);
-    MessageEditorSettings::register(cx);
 
     channel_view::init(cx);
-    chat_panel::init(cx);
     collab_panel::init(cx);
     notification_panel::init(cx);
     notifications::init(app_state, cx);

@@ -20,12 +20,12 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
-use settings::Settings;
+use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
-    ToggleButton, Tooltip, prelude::*,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, ToggleButton, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -290,7 +290,6 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    scrollbar_state: ScrollbarState,
 }
 
 impl ExtensionsPage {
@@ -327,7 +326,7 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", cx);
+                input.set_placeholder_text("Search extensions...", window, cx);
                 if let Some(id) = focus_extension_id {
                     input.set_text(format!("id:{id}"), window, cx);
                 }
@@ -339,7 +338,7 @@ impl ExtensionsPage {
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
-                list: scroll_handle.clone(),
+                list: scroll_handle,
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
@@ -351,7 +350,6 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -1271,17 +1269,17 @@ impl ExtensionsPage {
         Label::new(message)
     }
 
-    fn update_settings<T: Settings>(
+    fn update_settings(
         &mut self,
         selection: &ToggleState,
 
         cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+        callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
+            settings::update_settings_file(fs, cx, move |settings, _| {
                 let value = match selection {
                     ToggleState::Unselected => false,
                     ToggleState::Selected => true,
@@ -1342,11 +1340,9 @@ impl ExtensionsPage {
                         },
                         cx.listener(move |this, selection, _, cx| {
                             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
-                            this.update_settings::<VimModeSetting>(
-                                selection,
-                                cx,
-                                |setting, value| *setting = Some(value),
-                            );
+                            this.update_settings(selection, cx, |setting, value| {
+                                setting.vim_mode = Some(value)
+                            });
                         }),
                     )),
                 Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!")
@@ -1375,7 +1371,7 @@ impl ExtensionsPage {
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1520,25 +1516,24 @@ impl Render for ExtensionsPage {
                         }
 
                         if count == 0 {
-                            return this.py_4().child(self.render_empty_state(cx));
-                        }
-
-                        let scroll_handle = self.list.clone();
-                        this.child(
-                            uniform_list("entries", count, cx.processor(Self::render_extensions))
+                            this.py_4()
+                                .child(self.render_empty_state(cx))
+                                .into_any_element()
+                        } else {
+                            let scroll_handle = self.list.clone();
+                            this.child(
+                                uniform_list(
+                                    "entries",
+                                    count,
+                                    cx.processor(Self::render_extensions),
+                                )
                                 .flex_grow()
                                 .pb_4()
-                                .track_scroll(scroll_handle),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .right_1()
-                                .top_0()
-                                .bottom_0()
-                                .w(px(12.))
-                                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-                        )
+                                .track_scroll(scroll_handle.clone()),
+                            )
+                            .vertical_scrollbar_for(scroll_handle, window, cx)
+                            .into_any_element()
+                        }
                     }),
             )
     }

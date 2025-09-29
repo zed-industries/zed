@@ -59,6 +59,7 @@ impl Connection {
             let mut store_completed_migration = self
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
+            let mut did_migrate = false;
             for (index, migration) in migrations.iter().enumerate() {
                 let migration =
                     sqlformat::format(migration, &sqlformat::QueryParams::None, Default::default());
@@ -70,9 +71,7 @@ impl Connection {
                         &sqlformat::QueryParams::None,
                         Default::default(),
                     );
-                    if completed_migration == migration
-                        || migration.trim().starts_with("-- ALLOW_MIGRATION_CHANGE")
-                    {
+                    if completed_migration == migration {
                         // Migration already run. Continue
                         continue;
                     } else if should_allow_migration_change(index, &completed_migration, &migration)
@@ -91,11 +90,57 @@ impl Connection {
                 }
 
                 self.eager_exec(&migration)?;
+                did_migrate = true;
                 store_completed_migration((domain, index, migration))?;
+            }
+
+            if did_migrate {
+                self.delete_rows_with_orphaned_foreign_key_references()?;
+                self.exec("PRAGMA foreign_key_check;")?()?;
             }
 
             Ok(())
         })
+    }
+
+    /// Delete any rows that were orphaned by a migration. This is needed
+    /// because we disable foreign key constraints during migrations, so
+    /// that it's possible to re-create a table with the same name, without
+    /// deleting all associated data.
+    fn delete_rows_with_orphaned_foreign_key_references(&self) -> Result<()> {
+        let foreign_key_info: Vec<(String, String, String, String)> = self.select(
+            r#"
+                SELECT DISTINCT
+                    schema.name as child_table,
+                    foreign_keys.[from] as child_key,
+                    foreign_keys.[table] as parent_table,
+                    foreign_keys.[to] as parent_key
+                FROM sqlite_schema schema
+                JOIN pragma_foreign_key_list(schema.name) foreign_keys
+                WHERE
+                    schema.type = 'table' AND
+                    schema.name NOT LIKE "sqlite_%"
+            "#,
+        )?()?;
+
+        if !foreign_key_info.is_empty() {
+            log::info!(
+                "Found {} foreign key relationships to check",
+                foreign_key_info.len()
+            );
+        }
+
+        for (child_table, child_key, parent_table, parent_key) in foreign_key_info {
+            self.exec(&format!(
+                "
+                DELETE FROM {child_table}
+                WHERE {child_key} IS NOT NULL and {child_key} NOT IN
+                (SELECT {parent_key} FROM {parent_table})
+                "
+            ))?()?;
+        }
+
+        Ok(())
     }
 }
 

@@ -130,12 +130,9 @@ fn display_ranges<'a>(
     display_map: &'a DisplaySnapshot,
     selections: &'a SelectionsCollection,
 ) -> impl Iterator<Item = Range<DisplayPoint>> + 'a {
-    let pending = selections
-        .pending
-        .as_ref()
-        .map(|pending| &pending.selection);
+    let pending = selections.pending_anchor();
     selections
-        .disjoint
+        .disjoint_anchors()
         .iter()
         .chain(pending)
         .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))

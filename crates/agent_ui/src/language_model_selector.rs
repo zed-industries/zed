@@ -1,8 +1,6 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use cloud_llm_client::Plan;
 use collections::{HashSet, IndexMap};
-use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
@@ -12,8 +10,6 @@ use language_model::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{ListItem, ListItemSpacing, prelude::*};
-
-const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -531,13 +527,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn render_footer(
         &self,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
-        use feature_flags::FeatureFlagAppExt;
-
-        let plan = Plan::ZedPro;
-
         Some(
             h_flex()
                 .w_full()
@@ -546,28 +538,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
-                    this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                            .icon(IconName::ZedAssistant)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
-                            }),
-                        Plan::ZedFree | Plan::ZedProTrial => Button::new(
-                            "try-pro",
-                            if plan == Plan::ZedProTrial {
-                                "Upgrade to Pro"
-                            } else {
-                                "Try Pro"
-                            },
-                        )
-                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
-                    })
-                })
                 .child(
                     Button::new("configure", "Configure")
                         .icon(IconName::Settings)

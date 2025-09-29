@@ -1,11 +1,14 @@
 mod base_keymap_setting;
 mod editable_setting_control;
 mod keymap_file;
+pub mod merge_from;
+mod settings_content;
 mod settings_file;
 mod settings_json;
 mod settings_store;
-mod settings_ui_core;
 mod vscode_import;
+
+pub use settings_content::*;
 
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
@@ -21,12 +24,10 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsFile, SettingsKey, SettingsLocation,
     SettingsStore,
 };
-pub use settings_ui_core::*;
-// Re-export the derive macro
-pub use settings_ui_macros::SettingsUi;
+
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,10 +76,7 @@ impl fmt::Display for WorktreeId {
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut App) {
-    let mut settings = SettingsStore::new(cx);
-    settings
-        .set_default_settings(&default_settings(), cx)
-        .unwrap();
+    let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
     BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();

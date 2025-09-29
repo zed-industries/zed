@@ -1,7 +1,7 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{Context as _, Result, anyhow};
 use cloud_api_client::{AuthenticatedUser, GetAuthenticatedUserResponse, PlanInfo};
-use cloud_llm_client::{CurrentUsage, Plan, UsageData, UsageLimit};
+use cloud_llm_client::{CurrentUsage, PlanV1, UsageData, UsageLimit};
 use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use http_client::{AsyncBody, Method, Request, http};
@@ -269,7 +269,8 @@ pub fn make_get_authenticated_user_response(
         },
         feature_flags: vec![],
         plan: PlanInfo {
-            plan: Plan::ZedPro,
+            plan: PlanV1::ZedPro,
+            plan_v2: None,
             subscription_period: None,
             usage: CurrentUsage {
                 model_requests: UsageData {

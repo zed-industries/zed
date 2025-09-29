@@ -52,7 +52,11 @@ impl AgentTool for DeletePathTool {
         ToolKind::Delete
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             format!("Delete “`{}`”", input.path).into()
         } else {

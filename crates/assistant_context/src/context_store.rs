@@ -24,6 +24,7 @@ use rpc::AnyProtoClient;
 use std::sync::LazyLock;
 use std::{cmp::Reverse, ffi::OsStr, mem, path::Path, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt};
+use zed_env_vars::ZED_STATELESS;
 
 pub(crate) fn init(client: &AnyProtoClient) {
     client.add_entity_message_handler(ContextStore::handle_advertise_contexts);
@@ -788,8 +789,6 @@ impl ContextStore {
     fn reload(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
-            pub static ZED_STATELESS: LazyLock<bool> =
-                LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
             if *ZED_STATELESS {
                 return Ok(());
             }

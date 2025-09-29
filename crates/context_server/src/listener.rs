@@ -438,13 +438,3 @@ struct RawRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<Box<serde_json::value::RawValue>>,
 }
-
-#[derive(Serialize, Deserialize)]
-struct RawResponse {
-    jsonrpc: &'static str,
-    id: RequestId,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<crate::client::Error>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Box<serde_json::value::RawValue>>,
-}

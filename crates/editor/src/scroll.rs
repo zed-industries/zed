@@ -12,7 +12,7 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{Along, App, Axis, Context, Global, Pixels, Task, Window, point, px};
+use gpui::{Along, App, Axis, Context, Pixels, Task, Window, point, px};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -21,6 +21,7 @@ use std::{
     cmp::Ordering,
     time::{Duration, Instant},
 };
+use ui::scrollbars::ScrollbarAutoHide;
 use util::ResultExt;
 use workspace::{ItemId, WorkspaceId};
 
@@ -28,11 +29,6 @@ pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct WasScrolled(pub(crate) bool);
-
-#[derive(Default)]
-pub struct ScrollbarAutoHide(pub bool);
-
-impl Global for ScrollbarAutoHide {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
@@ -327,7 +323,7 @@ impl ScrollManager {
             cx.notify();
         }
 
-        if cx.default_global::<ScrollbarAutoHide>().0 {
+        if cx.default_global::<ScrollbarAutoHide>().should_hide() {
             self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)

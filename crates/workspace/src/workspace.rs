@@ -52,10 +52,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{
-    Buffer, LanguageRegistry, Rope,
-    language_settings::{AllLanguageSettings, all_language_settings},
-};
+use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -72,13 +69,15 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    toolchain_store::ToolchainStoreEvent,
 };
 use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -105,7 +104,12 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
+use util::{
+    ResultExt, TryFutureExt,
+    paths::{PathStyle, SanitizedPath},
+    rel_path::RelPath,
+    serde::default_true,
+};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -626,7 +630,7 @@ impl ProjectItemRegistry {
                     match project_item.await.with_context(|| {
                         format!(
                             "opening project path {:?}",
-                            entry_abs_path.as_deref().unwrap_or(&project_path.path)
+                            entry_abs_path.as_deref().unwrap_or(&project_path.path.as_std_path())
                         )
                     }) {
                         Ok(project_item) => {
@@ -1030,8 +1034,10 @@ pub enum Event {
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
-    ItemRemoved,
     ActiveItemChanged,
+    ItemRemoved {
+        item_id: EntityId,
+    },
     UserSavedItem {
         pane: WeakEntity<Pane>,
         item: Box<dyn WeakItemHandle>,
@@ -1046,7 +1052,6 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
-    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -1274,6 +1279,19 @@ impl Workspace {
             },
         )
         .detach();
+        if let Some(toolchain_store) = project.read(cx).toolchain_store() {
+            cx.subscribe_in(
+                &toolchain_store,
+                window,
+                |workspace, _, event, window, cx| match event {
+                    ToolchainStoreEvent::CustomToolchainsModified => {
+                        workspace.serialize_workspace(window, cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        }
 
         cx.on_focus_lost(window, |this, window, cx| {
             let focus_handle = this.focus_handle(cx);
@@ -1564,6 +1582,16 @@ impl Workspace {
                     })?
                     .await;
             }
+            if let Some(workspace) = serialized_workspace.as_ref() {
+                project_handle.update(cx, |this, cx| {
+                    for (scope, toolchains) in &workspace.user_toolchains {
+                        for toolchain in toolchains {
+                            this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                        }
+                    }
+                })?;
+            }
+
             let window = if let Some(window) = requesting_window {
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -1669,8 +1697,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let fs = self.project().read(cx).fs();
-        settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
+            content.workspace.bottom_dock_layout = Some(layout);
         });
 
         cx.notify();
@@ -1729,6 +1757,10 @@ impl Workspace {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.project.read(cx).path_style(cx)
     }
 
     pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
@@ -2599,7 +2631,10 @@ impl Workspace {
                                     .strip_prefix(worktree_abs_path.as_ref())
                                     .ok()
                                     .and_then(|relative_path| {
-                                        worktree.entry_for_path(relative_path)
+                                        let relative_path =
+                                            RelPath::new(relative_path, PathStyle::local())
+                                                .log_err()?;
+                                        worktree.entry_for_path(&relative_path)
                                     })
                             }
                             .map(|entry| entry.id);
@@ -2645,7 +2680,7 @@ impl Workspace {
                 self.open_path(project_path, None, true, window, cx)
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
-                path,
+                PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
@@ -2734,7 +2769,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.into(),
+                    path: path,
                 },
             ))
         })
@@ -3089,6 +3124,16 @@ impl Workspace {
                     dock.set_open(true, window, cx);
                 });
             }
+        }
+    }
+
+    pub fn close_panel<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks().iter() {
+            dock.update(cx, |dock, cx| {
+                if dock.panel::<T>().is_some() {
+                    dock.set_open(false, window, cx)
+                }
+            })
         }
     }
 
@@ -3893,8 +3938,15 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split(direction) => {
-                self.split_and_clone(pane.clone(), *direction, window, cx);
+            pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if *clone_active_item {
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                } else {
+                    self.split_and_move(pane.clone(), *direction, window, cx);
+                }
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -3939,7 +3991,6 @@ impl Workspace {
                 }
                 serialize_workspace = false;
             }
-            pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
@@ -3948,6 +3999,9 @@ impl Workspace {
                 {
                     entry.remove();
                 }
+                cx.emit(Event::ItemRemoved {
+                    item_id: item.item_id(),
+                });
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
@@ -4004,6 +4058,24 @@ impl Workspace {
             .unwrap();
         cx.notify();
         new_pane
+    }
+
+    pub fn split_and_move(
+        &mut self,
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx)) else {
+            return;
+        };
+        let new_pane = self.add_pane(window, cx);
+        new_pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, None, window, cx)
+        });
+        self.center.split(&pane, &new_pane, direction).unwrap();
+        cx.notify();
     }
 
     pub fn split_and_clone(
@@ -4104,7 +4176,6 @@ impl Workspace {
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
             .unwrap_or_else(|| {
                 self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
             })
@@ -4339,7 +4410,19 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
+        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
+            let name = {
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: RelPath::empty(),
+                };
+
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.read(cx).root_name_str(),
+                }
+            };
             if i > 0 {
                 title.push_str(", ");
             }
@@ -4351,18 +4434,14 @@ impl Workspace {
         }
 
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-            let filename = path
-                .path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .or_else(|| {
-                    Some(Cow::Borrowed(
-                        project
-                            .worktree_for_id(path.worktree_id, cx)?
-                            .read(cx)
-                            .root_name(),
-                    ))
-                });
+            let filename = path.path.file_name().or_else(|| {
+                Some(
+                    project
+                        .worktree_for_id(path.worktree_id, cx)?
+                        .read(cx)
+                        .root_name_str(),
+                )
+            });
 
             if let Some(filename) = filename {
                 title.push_str(" — ");
@@ -5227,10 +5306,16 @@ impl Workspace {
                         .read(cx)
                         .all_source_breakpoints(cx)
                 });
+                let user_toolchains = self
+                    .project
+                    .read(cx)
+                    .user_toolchains(cx)
+                    .unwrap_or_default();
 
                 let center_group = build_serialized_pane_group(&self.center.root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
@@ -5243,6 +5328,7 @@ impl Workspace {
                     session_id: self.session_id.clone(),
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
+                    user_toolchains,
                 };
 
                 window.spawn(cx, async move |_| {
@@ -5927,8 +6013,8 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs().clone();
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        update_settings_file(fs, cx, move |file, _| {
+            file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -8095,6 +8181,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::rel_path::rel_path;
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -8189,7 +8276,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8204,7 +8291,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("two.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8220,7 +8307,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8591,8 +8678,8 @@ mod tests {
         // Autosave on window change.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
             });
             item.is_dirty = true;
@@ -8611,13 +8698,12 @@ mod tests {
         item.update_in(cx, |item, window, cx| {
             cx.focus_self(window);
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
         });
-
         // Blurring the item saves the file.
         item.update_in(cx, |_, window, _| window.blur());
         cx.executor().run_until_parked();
@@ -8634,8 +8720,9 @@ mod tests {
         // Autosave after delay.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave =
+                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
             });
             item.is_dirty = true;
@@ -8650,11 +8737,41 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(250));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
 
+        // Autosave after delay, should save earlier than delay if tab is closed
+        item.update(cx, |item, cx| {
+            item.is_dirty = true;
+            cx.emit(ItemEvent::Edit);
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // // Ensure auto save with delay saves the item on close, even if the timer hasn't yet run out.
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+        })
+        .await
+        .unwrap();
+        assert!(!cx.has_pending_prompt());
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
+        // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+        item.update_in(cx, |item, _window, cx| {
+            item.is_dirty = true;
+            for project_item in &mut item.project_items {
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+            }
+        });
+        cx.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
@@ -8669,7 +8786,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8683,7 +8800,7 @@ mod tests {
             window.blur();
         });
         cx.run_until_parked();
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
@@ -8691,7 +8808,7 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
     }
 
     #[gpui::test]
@@ -9657,8 +9774,8 @@ mod tests {
 
         // Enable the close_on_disk_deletion setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9725,8 +9842,8 @@ mod tests {
 
         // Ensure close_on_disk_deletion is disabled (default)
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(false);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(false);
             });
         });
 
@@ -9802,8 +9919,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9875,8 +9992,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -10556,7 +10673,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10570,7 +10687,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "two.ipynb");
+                    let project_path = (worktree_id, rel_path("two.ipynb"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10583,7 +10700,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10618,7 +10735,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10632,7 +10749,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10646,7 +10763,7 @@ mod tests {
             .flat_map(|item| {
                 item.project_paths(cx)
                     .into_iter()
-                    .map(|path| path.path.to_string_lossy().to_string())
+                    .map(|path| path.path.display(PathStyle::local()).into_owned())
             })
             .collect()
     }

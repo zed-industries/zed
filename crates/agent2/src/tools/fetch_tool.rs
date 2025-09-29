@@ -126,7 +126,11 @@ impl AgentTool for FetchTool {
         acp::ToolKind::Fetch
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         match input {
             Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)).into(),
             Err(_) => "Fetch URL".into(),

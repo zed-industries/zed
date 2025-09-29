@@ -29,7 +29,9 @@ pub fn refresh_matching_bracket_highlights(
     if (editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow)
         && head < snapshot.buffer_snapshot.len()
     {
-        tail += 1;
+        if let Some(tail_ch) = snapshot.buffer_snapshot.chars_at(tail).next() {
+            tail += tail_ch.len_utf8();
+        }
     }
 
     if let Some((opening_range, closing_range)) = snapshot

@@ -5,6 +5,7 @@
 (primitive_type) @type.builtin
 (self) @variable.special
 (field_identifier) @property
+(shorthand_field_identifier) @property
 
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)

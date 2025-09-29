@@ -229,6 +229,7 @@ impl Render for CommitTooltip {
                         .into()
                 }),
             commit_timestamp: self.commit.commit_time.unix_timestamp(),
+            author_name: self.commit.author_name.clone(),
             has_parent: false,
         };
 

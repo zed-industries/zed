@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use gpui::actions;
-use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
+use language::language_settings::EditPredictionProvider;
 use project::DisableAiSettings;
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::App;
@@ -44,15 +44,14 @@ pub fn init(cx: &mut App) {
         );
 
         workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
-            update_settings_file::<AllLanguageSettings>(
-                workspace.app_state().fs.clone(),
-                cx,
-                move |file, _| {
-                    file.features
-                        .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::None)
-                },
-            );
+            update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {
+                settings
+                    .project
+                    .all_languages
+                    .features
+                    .get_or_insert_default()
+                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+            });
         });
     })
     .detach();
@@ -86,7 +85,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
             if is_ai_disabled {
                 filter.hide_action_types(&zeta_all_action_types);
             } else if has_feature_flag {
-                filter.show_action_types(rate_completion_action_types.iter());
+                filter.show_action_types(&rate_completion_action_types);
             } else {
                 filter.hide_action_types(&rate_completion_action_types);
             }
@@ -98,7 +97,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
         if !DisableAiSettings::get_global(cx).disable_ai {
             if is_enabled {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(rate_completion_action_types.iter());
+                    filter.show_action_types(&rate_completion_action_types);
                 });
             } else {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {

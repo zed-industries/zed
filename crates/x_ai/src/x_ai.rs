@@ -18,7 +18,7 @@ pub enum Model {
     Grok3Fast,
     #[serde(rename = "grok-3-mini-fast-latest")]
     Grok3MiniFast,
-    #[serde(rename = "grok-4-latest")]
+    #[serde(rename = "grok-4", alias = "grok-4-latest")]
     Grok4,
     #[serde(rename = "grok-code-fast-1")]
     GrokCodeFast1,
@@ -30,6 +30,9 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
+        supports_images: Option<bool>,
+        supports_tools: Option<bool>,
+        parallel_tool_calls: Option<bool>,
     },
 }
 
@@ -40,6 +43,7 @@ impl Model {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
+            "grok-4" => Ok(Self::Grok4),
             "grok-2-vision" => Ok(Self::Grok2Vision),
             "grok-3" => Ok(Self::Grok3),
             "grok-3-mini" => Ok(Self::Grok3Mini),
@@ -106,6 +110,10 @@ impl Model {
             | Self::Grok3Fast
             | Self::Grok3MiniFast
             | Self::Grok4 => true,
+            Self::Custom {
+                parallel_tool_calls: Some(support),
+                ..
+            } => *support,
             Self::GrokCodeFast1 | Model::Custom { .. } => false,
         }
     }
@@ -123,11 +131,22 @@ impl Model {
             | Self::Grok3MiniFast
             | Self::Grok4
             | Self::GrokCodeFast1 => true,
+            Self::Custom {
+                supports_tools: Some(support),
+                ..
+            } => *support,
             Model::Custom { .. } => false,
         }
     }
 
     pub fn supports_images(&self) -> bool {
-        matches!(self, Self::Grok2Vision)
+        match self {
+            Self::Grok2Vision => true,
+            Self::Custom {
+                supports_images: Some(support),
+                ..
+            } => *support,
+            _ => false,
+        }
     }
 }

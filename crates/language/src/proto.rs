@@ -90,6 +90,15 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                     language_server_id: server_id.to_proto(),
                 },
             ),
+
+            crate::Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateLineEnding(proto::operation::UpdateLineEnding {
+                replica_id: lamport_timestamp.replica_id as u32,
+                lamport_timestamp: lamport_timestamp.value,
+                line_ending: serialize_line_ending(*line_ending) as i32,
+            }),
         }),
     }
 }
@@ -341,6 +350,18 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     server_id: LanguageServerId::from_proto(message.language_server_id),
                 }
             }
+            proto::operation::Variant::UpdateLineEnding(message) => {
+                crate::Operation::UpdateLineEnding {
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
+                    line_ending: deserialize_line_ending(
+                        proto::LineEnding::from_i32(message.line_ending)
+                            .context("missing line_ending")?,
+                    ),
+                }
+            }
         },
     )
 }
@@ -493,6 +514,10 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
             value = op.lamport_timestamp;
         }
         proto::operation::Variant::UpdateCompletionTriggers(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateLineEnding(op) => {
             replica_id = op.replica_id;
             value = op.lamport_timestamp;
         }

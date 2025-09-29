@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use anyhow::{Context as _, Result, anyhow};
+use askpass::EncryptedPassword;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -60,7 +61,12 @@ pub struct CommandTemplate {
 }
 
 pub trait RemoteClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
+    fn ask_password(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<EncryptedPassword>,
+        cx: &mut AsyncApp,
+    );
     fn get_download_params(
         &self,
         platform: RemotePlatform,
@@ -769,13 +775,15 @@ impl RemoteClient {
     }
 
     pub fn shell(&self) -> Option<String> {
-        Some(self.state.as_ref()?.remote_connection()?.shell())
+        Some(self.remote_connection()?.shell())
+    }
+
+    pub fn default_system_shell(&self) -> Option<String> {
+        Some(self.remote_connection()?.default_system_shell())
     }
 
     pub fn shares_network_interface(&self) -> bool {
-        self.state
-            .as_ref()
-            .and_then(|state| state.remote_connection())
+        self.remote_connection()
             .map_or(false, |connection| connection.shares_network_interface())
     }
 
@@ -787,12 +795,8 @@ impl RemoteClient {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        let Some(connection) = self
-            .state
-            .as_ref()
-            .and_then(|state| state.remote_connection())
-        else {
-            return Err(anyhow!("no connection"));
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no ssh connection"));
         };
         connection.build_command(program, args, env, working_dir, port_forward)
     }
@@ -803,11 +807,7 @@ impl RemoteClient {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let Some(connection) = self
-            .state
-            .as_ref()
-            .and_then(|state| state.remote_connection())
-        else {
+        let Some(connection) = self.remote_connection() else {
             return Task::ready(Err(anyhow!("no ssh connection")));
         };
         connection.upload_directory(src_path, dest_path, cx)
@@ -915,6 +915,12 @@ impl RemoteClient {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+        self.state
+            .as_ref()
+            .and_then(|state| state.remote_connection())
     }
 }
 
@@ -1066,6 +1072,7 @@ pub(crate) trait RemoteConnection: Send + Sync {
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
+    fn default_system_shell(&self) -> String;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1372,6 +1379,7 @@ mod fake {
     use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
     use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
     use anyhow::Result;
+    use askpass::EncryptedPassword;
     use async_trait::async_trait;
     use collections::HashMap;
     use futures::{
@@ -1501,10 +1509,14 @@ mod fake {
         }
 
         fn path_style(&self) -> PathStyle {
-            PathStyle::current()
+            PathStyle::local()
         }
 
         fn shell(&self) -> String {
+            "sh".to_owned()
+        }
+
+        fn default_system_shell(&self) -> String {
             "sh".to_owned()
         }
     }
@@ -1512,7 +1524,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl RemoteClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
+        fn ask_password(&self, _: String, _: oneshot::Sender<EncryptedPassword>, _: &mut AsyncApp) {
             unreachable!()
         }
 

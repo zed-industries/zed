@@ -14,7 +14,6 @@ use crate::{
     session::running::memory_view::MemoryView,
 };
 
-use super::DebugPanelItemEvent;
 use anyhow::{Context as _, Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
@@ -1027,7 +1026,7 @@ impl RunningState {
                 };
 
                 let builder = ShellBuilder::new(remote_shell.as_deref(), &task.resolved.shell);
-                let command_label = builder.command_label(&task.resolved.command_label);
+                let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
 
@@ -1825,8 +1824,6 @@ impl RunningState {
         self.panes.invert_axies();
     }
 }
-
-impl EventEmitter<DebugPanelItemEvent> for RunningState {}
 
 impl Focusable for RunningState {
     fn focus_handle(&self, _: &App) -> FocusHandle {

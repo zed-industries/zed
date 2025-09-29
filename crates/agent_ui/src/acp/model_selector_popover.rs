@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use acp_thread::AgentModelSelector;
-use agent_client_protocol as acp;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{
-    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, Tooltip, Window, prelude::*,
+    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, TintColor, Tooltip, Window,
+    prelude::*,
 };
 use zed_actions::agent::ToggleModelSelector;
 
@@ -19,7 +19,6 @@ pub struct AcpModelSelectorPopover {
 
 impl AcpModelSelectorPopover {
     pub(crate) fn new(
-        session_id: acp::SessionId,
         selector: Rc<dyn AgentModelSelector>,
         menu_handle: PopoverMenuHandle<AcpModelSelector>,
         focus_handle: FocusHandle,
@@ -27,7 +26,7 @@ impl AcpModelSelectorPopover {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            selector: cx.new(move |cx| acp_model_selector(session_id, selector, window, cx)),
+            selector: cx.new(move |cx| acp_model_selector(selector, window, cx)),
             menu_handle,
             focus_handle,
         }
@@ -58,15 +57,22 @@ impl Render for AcpModelSelectorPopover {
 
         let focus_handle = self.focus_handle.clone();
 
+        let color = if self.menu_handle.is_deployed() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(model_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     Label::new(model_name)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )

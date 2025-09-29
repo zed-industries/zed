@@ -1,6 +1,6 @@
 use assets::Assets;
 use gpui::{Application, Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
-use language::{LanguageRegistry, language_settings::AllLanguageSettings};
+use language::LanguageRegistry;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
@@ -39,18 +39,16 @@ pub fn main() {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
-        SettingsStore::update(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
         cx.bind_keys([KeyBinding::new("cmd-c", markdown::Copy, None)]);
 
         let node_runtime = NodeRuntime::unavailable();
         theme::init(LoadThemes::JustBase, cx);
 
+        let fs = fs::FakeFs::new(cx.background_executor().clone());
         let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
-        languages::init(language_registry.clone(), node_runtime, cx);
+        languages::init(language_registry.clone(), fs, node_runtime, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);

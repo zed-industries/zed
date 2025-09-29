@@ -3,7 +3,8 @@ use std::{path::Path, sync::Arc};
 use gpui::{EventEmitter, FocusHandle, Focusable};
 use ui::{
     App, Button, ButtonCommon, ButtonStyle, Clickable, Context, FluentBuilder, InteractiveElement,
-    KeyBinding, ParentElement, Render, SharedString, Styled as _, Window, h_flex, v_flex,
+    KeyBinding, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, Styled as _,
+    Window, h_flex, v_flex,
 };
 use zed_actions::workspace::OpenWithSystem;
 
@@ -30,7 +31,7 @@ impl InvalidBufferView {
         Self {
             is_local,
             abs_path: Arc::from(abs_path),
-            error: format!("{e}").into(),
+            error: format!("{}", e.root_cause()).into(),
             focus_handle: cx.focus_handle(),
         }
     }
@@ -88,7 +89,12 @@ impl Render for InvalidBufferView {
                     v_flex()
                         .justify_center()
                         .gap_2()
-                        .child(h_flex().justify_center().child("Unsupported file type"))
+                        .child(h_flex().justify_center().child("Could not open file"))
+                        .child(
+                            h_flex()
+                                .justify_center()
+                                .child(Label::new(self.error.clone()).size(LabelSize::Small)),
+                        )
                         .when(self.is_local, |contents| {
                             contents.child(
                                 h_flex().justify_center().child(

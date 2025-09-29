@@ -39,7 +39,6 @@ globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 imara-diff.workspace = true
-inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true

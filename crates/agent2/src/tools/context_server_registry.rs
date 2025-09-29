@@ -145,7 +145,7 @@ impl AnyAgentTool for ContextServerTool {
         ToolKind::Other
     }
 
-    fn initial_title(&self, _input: serde_json::Value) -> SharedString {
+    fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
         format!("Run MCP tool `{}`", self.tool.name).into()
     }
 
@@ -176,7 +176,7 @@ impl AnyAgentTool for ContextServerTool {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let authorize = event_stream.authorize(self.initial_title(input.clone()), cx);
+        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
 
         cx.spawn(async move |_cx| {
             authorize.await?;

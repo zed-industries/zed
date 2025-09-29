@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use collections::HashMap;
+use collections::{HashMap, IndexSet};
 use db::{
     query,
     sqlez::{connection::Connection, domain::Domain},
@@ -18,17 +18,17 @@ use db::{
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
-use language::{LanguageName, Toolchain};
+use language::{LanguageName, Toolchain, ToolchainScope};
 use project::WorktreeId;
 use remote::{RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions};
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
-    statement::{SqlType, Statement},
+    statement::Statement,
     thread_safe_connection::ThreadSafeConnection,
 };
 
-use ui::{App, px};
-use util::{ResultExt, maybe};
+use ui::{App, SharedString, px};
+use util::{ResultExt, maybe, rel_path::RelPath};
 use uuid::Uuid;
 
 use crate::{
@@ -169,6 +169,7 @@ impl From<BreakpointState> for BreakpointStateWrapper<'static> {
         BreakpointStateWrapper(Cow::Owned(kind))
     }
 }
+
 impl StaticColumnCount for BreakpointStateWrapper<'_> {
     fn column_count() -> usize {
         1
@@ -192,11 +193,6 @@ impl Column for BreakpointStateWrapper<'_> {
         }
     }
 }
-
-/// This struct is used to implement traits on Vec<breakpoint>
-#[derive(Debug)]
-#[allow(dead_code)]
-struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
@@ -243,26 +239,6 @@ impl Column for Breakpoint {
             },
             next_index,
         ))
-    }
-}
-
-impl Column for Breakpoints {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let mut breakpoints = Vec::new();
-        let mut index = start_index;
-
-        loop {
-            match statement.column_type(index) {
-                Ok(SqlType::Null) => break,
-                _ => {
-                    let (breakpoint, next_index) = Breakpoint::column(statement, index)?;
-
-                    breakpoints.push(breakpoint);
-                    index = next_index;
-                }
-            }
-        }
-        Ok((Breakpoints(breakpoints), index))
     }
 }
 
@@ -711,6 +687,21 @@ impl Domain for WorkspaceDb {
 
             CREATE UNIQUE INDEX ix_workspaces_location ON workspaces(remote_connection_id, paths);
         ),
+        sql!(CREATE TABLE user_toolchains (
+            remote_connection_id INTEGER,
+            workspace_id INTEGER NOT NULL,
+            worktree_id INTEGER NOT NULL,
+            relative_worktree_path TEXT NOT NULL,
+            language_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            raw_json TEXT NOT NULL,
+
+            PRIMARY KEY (workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json)
+        ) STRICT;),
+        sql!(
+            DROP TABLE ssh_connections;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -831,6 +822,7 @@ impl WorkspaceDb {
             session_id: None,
             breakpoints: self.breakpoints(workspace_id),
             window_id,
+            user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
         })
     }
 
@@ -878,6 +870,76 @@ impl WorkspaceDb {
                 Default::default()
             }
         }
+    }
+
+    fn user_toolchains(
+        &self,
+        workspace_id: WorkspaceId,
+        remote_connection_id: Option<RemoteConnectionId>,
+    ) -> BTreeMap<ToolchainScope, IndexSet<Toolchain>> {
+        type RowKind = (WorkspaceId, u64, String, String, String, String, String);
+
+        let toolchains: Vec<RowKind> = self
+            .select_bound(sql! {
+                SELECT workspace_id, worktree_id, relative_worktree_path,
+                language_name, name, path, raw_json
+                FROM user_toolchains WHERE remote_connection_id IS ?1 AND (
+                      workspace_id IN (0, ?2)
+                )
+            })
+            .and_then(|mut statement| {
+                (statement)((remote_connection_id.map(|id| id.0), workspace_id))
+            })
+            .unwrap_or_default();
+        let mut ret = BTreeMap::<_, IndexSet<_>>::default();
+
+        for (
+            _workspace_id,
+            worktree_id,
+            relative_worktree_path,
+            language_name,
+            name,
+            path,
+            raw_json,
+        ) in toolchains
+        {
+            // INTEGER's that are primary keys (like workspace ids, remote connection ids and such) start at 1, so we're safe to
+            let scope = if _workspace_id == WorkspaceId(0) {
+                debug_assert_eq!(worktree_id, u64::MAX);
+                debug_assert_eq!(relative_worktree_path, String::default());
+                ToolchainScope::Global
+            } else {
+                debug_assert_eq!(workspace_id, _workspace_id);
+                debug_assert_eq!(
+                    worktree_id == u64::MAX,
+                    relative_worktree_path == String::default()
+                );
+
+                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
+                    continue;
+                };
+                if worktree_id != u64::MAX && relative_worktree_path != String::default() {
+                    ToolchainScope::Subproject(
+                        WorktreeId::from_usize(worktree_id as usize),
+                        relative_path.into(),
+                    )
+                } else {
+                    ToolchainScope::Project
+                }
+            };
+            let Ok(as_json) = serde_json::from_str(&raw_json) else {
+                continue;
+            };
+            let toolchain = Toolchain {
+                name: SharedString::from(name),
+                path: SharedString::from(path),
+                language_name: LanguageName::from_proto(language_name),
+                as_json,
+            };
+            ret.entry(scope).or_default().insert(toolchain);
+        }
+
+        ret
     }
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
@@ -932,6 +994,29 @@ impl WorkspaceDb {
                                 log::error!("{err}");
                                 continue;
                             }
+                        }
+                    }
+                }
+
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM user_toolchains WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old user toolchains")?;
+
+                for (scope, toolchains) in workspace.user_toolchains {
+                    for toolchain in toolchains {
+                        let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
+                        let (workspace_id, worktree_id, relative_worktree_path) = match scope {
+                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.as_unix_str().to_owned())),
+                            ToolchainScope::Project => (Some(workspace.id), None, None),
+                            ToolchainScope::Global => (None, None, None),
+                        };
+                        let args = (remote_connection_id, workspace_id.unwrap_or(WorkspaceId(0)), worktree_id.map_or(usize::MAX,|id| id.to_usize()), relative_worktree_path.unwrap_or_default(),
+                        toolchain.language_name.as_ref().to_owned(), toolchain.name.to_string(), toolchain.path.to_string(), toolchain.as_json.to_string());
+                        if let Err(err) = conn.exec_bound(query)?(args) {
+                            log::error!("{err}");
+                            continue;
                         }
                     }
                 }
@@ -1562,25 +1647,41 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
-        relative_worktree_path: String,
+        relative_worktree_path: Arc<RelPath>,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_worktree_path = ?
+                    SELECT
+                        name, path, raw_json
+                    FROM toolchains
+                    WHERE
+                        workspace_id = ? AND
+                        language_name = ? AND
+                        worktree_id = ? AND
+                        relative_worktree_path = ?
                 ))
                 .context("select toolchain")?;
 
-            let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_worktree_path))?;
+            let toolchain: Vec<(String, String, String)> = select((
+                workspace_id,
+                language_name.as_ref().to_string(),
+                worktree_id.to_usize(),
+                relative_worktree_path.as_unix_str().to_string(),
+            ))?;
 
-            Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
-                name: name.into(),
-                path: path.into(),
-                language_name,
-                as_json: serde_json::Value::from_str(&raw_json).ok()?,
-            })))
+            Ok(toolchain
+                .into_iter()
+                .next()
+                .and_then(|(name, path, raw_json)| {
+                    Some(Toolchain {
+                        name: name.into(),
+                        path: path.into(),
+                        language_name,
+                        as_json: serde_json::Value::from_str(&raw_json).ok()?,
+                    })
+                }))
         })
         .await
     }
@@ -1588,31 +1689,46 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
+    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<RelPath>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
+                    SELECT
+                        name, path, worktree_id, relative_worktree_path, language_name, raw_json
+                    FROM toolchains
+                    WHERE workspace_id = ?
                 ))
                 .context("select toolchains")?;
 
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
-                name: name.into(),
-                path: path.into(),
-                language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?,
-            }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
+            Ok(toolchain
+                .into_iter()
+                .filter_map(
+                    |(name, path, worktree_id, relative_worktree_path, language, json)| {
+                        Some((
+                            Toolchain {
+                                name: name.into(),
+                                path: path.into(),
+                                language_name: LanguageName::new(&language),
+                                as_json: serde_json::Value::from_str(&json).ok()?,
+                            },
+                            WorktreeId::from_proto(worktree_id),
+                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                        ))
+                    },
+                )
+                .collect())
         })
         .await
     }
+
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
-        relative_worktree_path: String,
+        relative_worktree_path: Arc<RelPath>,
         toolchain: Toolchain,
     ) -> Result<()> {
         log::debug!(
@@ -1634,7 +1750,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
-                relative_worktree_path,
+                relative_worktree_path.as_unix_str(),
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
@@ -1797,6 +1913,7 @@ mod tests {
             },
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -1917,6 +2034,7 @@ mod tests {
             },
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -1950,6 +2068,7 @@ mod tests {
             breakpoints: collections::BTreeMap::default(),
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -2047,6 +2166,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -2061,6 +2181,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2167,6 +2288,7 @@ mod tests {
             centered_layout: false,
             session_id: None,
             window_id: Some(999),
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -2200,6 +2322,7 @@ mod tests {
             centered_layout: false,
             session_id: None,
             window_id: Some(1),
+            user_toolchains: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -2214,6 +2337,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: None,
             window_id: Some(2),
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2255,6 +2379,7 @@ mod tests {
             centered_layout: false,
             session_id: None,
             window_id: Some(3),
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -2292,6 +2417,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
+            user_toolchains: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -2306,6 +2432,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
+            user_toolchains: Default::default(),
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -2320,6 +2447,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
+            user_toolchains: Default::default(),
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -2334,6 +2462,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         };
 
         let connection_id = db
@@ -2359,6 +2488,7 @@ mod tests {
             breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
+            user_toolchains: Default::default(),
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -2373,6 +2503,7 @@ mod tests {
             centered_layout: false,
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
+            user_toolchains: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -2424,6 +2555,7 @@ mod tests {
             centered_layout: false,
             session_id: None,
             window_id: None,
+            user_toolchains: Default::default(),
         }
     }
 
@@ -2458,6 +2590,7 @@ mod tests {
             session_id: Some("one-session".to_owned()),
             breakpoints: Default::default(),
             window_id: Some(window_id),
+            user_toolchains: Default::default(),
         })
         .collect::<Vec<_>>();
 
@@ -2555,6 +2688,7 @@ mod tests {
             session_id: Some("one-session".to_owned()),
             breakpoints: Default::default(),
             window_id: Some(window_id),
+            user_toolchains: Default::default(),
         })
         .collect::<Vec<_>>();
 
