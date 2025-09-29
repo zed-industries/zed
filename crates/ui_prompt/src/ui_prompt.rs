@@ -1,16 +1,12 @@
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled,
-    TextStyleRefinement, Window, div,
+    App, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle, PromptLevel,
+    PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window, div,
+    prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
-use ui::{
-    ActiveTheme, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder, LabelSize,
-    StyledExt, TintColor, h_flex, v_flex,
-};
+use ui::{FluentBuilder, TintColor, prelude::*};
 use workspace::WorkspaceSettings;
 
 pub fn init(cx: &mut App) {
