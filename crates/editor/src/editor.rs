@@ -1196,6 +1196,7 @@ pub struct Editor {
     folding_newlines: Task<()>,
     select_next_is_case_sensitive: Option<bool>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    update_semantic_tokens_task: Task<()>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
@@ -2334,6 +2335,7 @@ impl Editor {
             folding_newlines: Task::ready(()),
             lookup_key: None,
             select_next_is_case_sensitive: None,
+            update_semantic_tokens_task: Task::ready(()),
         };
 
         if is_minimap {
@@ -6692,6 +6694,66 @@ impl Editor {
                 cx.notify();
             })
         }));
+    }
+
+    pub(crate) fn update_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for buffer in self.buffer.read(cx).all_buffers() {
+            self.update_buffer_semantic_tokens(&buffer, window, cx);
+        }
+    }
+
+    pub(crate) fn update_buffer_semantic_tokens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.mode.is_full() {
+            return;
+        }
+
+        let Some(sema) = self.semantics_provider.as_ref() else {
+            return;
+        };
+
+        let buffer_id = buffer.read(cx).remote_id();
+        // `semantic_tokens` gets debounced, so we can call this frequently.
+        let task = sema.semantic_tokens(buffer.clone(), cx);
+
+        self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
+            let tokens = task.await;
+
+            this.update(cx, |this, cx| {
+                if let (Some(tokens), Some(project)) = (tokens.log_err(), this.project()) {
+                    this.display_map.update(cx, |display_map, cx| {
+                        let lsp_store = project.read(cx).lsp_store().read(cx);
+                        let legends = tokens.servers.keys().filter_map(|&server| {
+                            let caps = lsp_store.lsp_server_capabilities.get(&server)?;
+                            let provider = caps.semantic_tokens_provider.as_ref()?;
+                            let legend = match provider {
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
+                            };
+                            Some((server, legend))
+                        });
+
+                        if let Some(buffer) = this.buffer.read(cx).buffer(buffer_id) {
+                            let view = PositionedSemanticTokens::new(
+                                buffer.read(cx),
+                                &tokens,
+                                legends,
+                                cx,
+                            );
+                            display_map
+                                .semantic_tokens
+                                .insert(buffer_id, Arc::new(view));
+                        }
+                    });
+                    cx.notify();
+                }
+            })
+            .log_err();
+        });
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -21256,6 +21318,8 @@ impl Editor {
                 }
 
                 if let Some(buffer) = edited_buffer {
+                    self.update_buffer_semantic_tokens(buffer, window, cx);
+
                     if buffer.read(cx).file().is_none() {
                         cx.emit(EditorEvent::TitleChanged);
                     }
