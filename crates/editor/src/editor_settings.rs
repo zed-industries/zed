@@ -1,14 +1,15 @@
 use core::num;
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, time::Duration};
 
+use crate::BlinkAnimation;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
-    GoToDefinitionFallback, HideMouseMode, MinimapThumb, MinimapThumbBorder, MultiCursorModifier,
-    ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
-    VsCodeSettings,
+    BlinkAnimationSetting, CurrentLineHighlight, DisplayIn, DocumentColorsRenderMode,
+    DoubleClickInMultibuffer, GoToDefinitionFallback, HideMouseMode, MinimapThumb,
+    MinimapThumbBorder, MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder, VsCodeSettings,
 };
 use settings::{Settings, SettingsContent};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
@@ -18,6 +19,7 @@ use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 #[derive(Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    pub cursor_blink_animation: BlinkAnimation,
     pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
@@ -176,6 +178,32 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
+impl From<BlinkAnimationSetting> for BlinkAnimation {
+    fn from(setting: BlinkAnimationSetting) -> Self {
+        match setting {
+            BlinkAnimationSetting::Instant => BlinkAnimation::Instant,
+            BlinkAnimationSetting::Fade => BlinkAnimation::Fade {
+                duration: Duration::from_millis(150),
+            },
+            BlinkAnimationSetting::Pulse => BlinkAnimation::Pulse {
+                fade_in_duration: Duration::from_millis(100),
+                hold_duration: Duration::from_millis(150),
+                fade_out_duration: Duration::from_millis(200),
+            },
+            BlinkAnimationSetting::Zoom => BlinkAnimation::Zoom {
+                duration: Duration::from_millis(250),
+                scale_factor: 0.3,
+            },
+            BlinkAnimationSetting::Slide => BlinkAnimation::Slide {
+                duration: Duration::from_millis(200),
+            },
+            BlinkAnimationSetting::Breathe => BlinkAnimation::Breathe {
+                duration: Duration::from_millis(800),
+            },
+        }
+    }
+}
+
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
@@ -201,6 +229,10 @@ impl Settings for EditorSettings {
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
+            cursor_blink_animation: editor
+                .cursor_blink_animation
+                .map(|anim| anim.into())
+                .unwrap_or_default(),
             cursor_shape: editor.cursor_shape.map(Into::into),
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
@@ -299,6 +331,21 @@ impl Settings for EditorSettings {
                 _ => None,
             },
         );
+
+        // Import VSCode cursor blinking style as animation type
+        vscode.enum_setting(
+            "editor.cursorBlinking",
+            &mut current.editor.cursor_blink_animation,
+            |s| match s {
+                "blink" => Some(BlinkAnimationSetting::Instant),
+                "solid" => Some(BlinkAnimationSetting::Instant),
+                "phase" => Some(BlinkAnimationSetting::Fade),
+                "expand" => Some(BlinkAnimationSetting::Zoom),
+                "smooth" => Some(BlinkAnimationSetting::Zoom),
+                _ => None,
+            },
+        );
+
         vscode.enum_setting(
             "editor.cursorStyle",
             &mut current.editor.cursor_shape,

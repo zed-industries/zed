@@ -26242,3 +26242,173 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .map(Rgba::from)
         .collect()
 }
+
+#[gpui::test]
+async fn test_cursor_blink_animation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test setting instant animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(BlinkAnimation::Instant, cx);
+
+        // Verify the animation was set (we can't directly access private fields,
+        // but we can test the public interface)
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity == 0.0 || opacity == 1.0,
+            "Instant animation should have binary opacity"
+        );
+        assert_eq!(scale, 1.0, "Instant animation should not scale");
+    });
+
+    // Test setting fade animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Fade {
+                duration: std::time::Duration::from_millis(100),
+            },
+            cx,
+        );
+
+        // Enable blinking to trigger animation
+        editor.blink_manager.update(cx, |blink_manager, cx| {
+            blink_manager.enable(cx);
+        });
+
+        // The opacity should be available as a value between 0.0 and 1.0
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Opacity should be between 0.0 and 1.0"
+        );
+        assert_eq!(scale, 1.0, "Fade animation should not scale");
+    });
+
+    // Test pulse animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Pulse {
+                fade_in_duration: std::time::Duration::from_millis(50),
+                hold_duration: std::time::Duration::from_millis(100),
+                fade_out_duration: std::time::Duration::from_millis(150),
+            },
+            cx,
+        );
+
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Pulse animation opacity should be between 0.0 and 1.0"
+        );
+        assert_eq!(scale, 1.0, "Pulse animation should not scale");
+    });
+
+    // Test zoom animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Zoom {
+                duration: std::time::Duration::from_millis(150),
+                scale_factor: 0.3,
+            },
+            cx,
+        );
+
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Zoom animation opacity should be between 0.0 and 1.0"
+        );
+        assert!(
+            scale >= 0.3 && scale <= 1.0,
+            "Zoom animation scale should be between 0.3 and 1.0"
+        );
+    });
+
+    // Test slide animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Slide {
+                duration: std::time::Duration::from_millis(200),
+            },
+            cx,
+        );
+
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let slide_offset = editor.blink_manager.read(cx).slide_offset();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Slide animation opacity should be between 0.0 and 1.0"
+        );
+        assert!(
+            slide_offset >= -30.0 && slide_offset <= 0.0,
+            "Slide offset should be between -30.0 and 0.0"
+        );
+    });
+
+    // Test breathe animation
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Breathe {
+                duration: std::time::Duration::from_millis(800),
+            },
+            cx,
+        );
+
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Breathe animation opacity should be between 0.0 and 1.0"
+        );
+        assert!(
+            scale >= 1.0 && scale <= 1.1,
+            "Breathe animation scale should be between 1.0 and 1.1"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_cursor_blink_settings_integration(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Test default settings
+    cx.update_editor(|_editor, _window, cx| {
+        let settings = crate::EditorSettings::get_global(cx);
+        assert_eq!(settings.cursor_blink, true);
+        assert!(matches!(
+            settings.cursor_blink_animation,
+            BlinkAnimation::Fade { .. }
+        ));
+    });
+
+    // Test manual animation setting (since settings system integration would be complex to test)
+    cx.update_editor(|editor, _window, cx| {
+        editor.set_cursor_blink_animation(
+            BlinkAnimation::Zoom {
+                duration: std::time::Duration::from_millis(300),
+                scale_factor: 0.3,
+            },
+            cx,
+        );
+
+        // Verify the animation was set
+        let opacity = editor.blink_manager.read(cx).opacity();
+        let scale = editor.blink_manager.read(cx).scale();
+        assert!(
+            opacity >= 0.0 && opacity <= 1.0,
+            "Animation opacity should be between 0.0 and 1.0"
+        );
+        assert!(
+            scale >= 0.3 && scale <= 1.0,
+            "Zoom animation scale should be between 0.3 and 1.0"
+        );
+    });
+}

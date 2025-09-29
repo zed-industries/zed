@@ -8,6 +8,30 @@ use settings_macros::MergeFrom;
 
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
+/// Animation settings for cursor blinking
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum BlinkAnimationSetting {
+    /// Instant toggle between visible/invisible (no animation)
+    Instant,
+    /// Fade in/out animation with smooth opacity transition
+    Fade,
+    /// Pulse animation with distinct phases (fade in → hold → fade out)
+    Pulse,
+    /// Zoom animation that scales cursor size with opacity
+    Zoom,
+    /// Slide animation that moves cursor horizontally
+    Slide,
+    /// Breathe animation with organic pulsing
+    Breathe,
+}
+
+impl Default for BlinkAnimationSetting {
+    fn default() -> Self {
+        BlinkAnimationSetting::Fade
+    }
+}
+
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
@@ -15,6 +39,31 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// The animation type used for cursor blinking.
+    /// Controls how the cursor transitions between visible and invisible states.
+    /// The system automatically uses appropriate timing values for each animation type.
+    ///
+    /// Available animation types:
+    /// - "instant": Binary on/off switching (classic behavior)
+    /// - "fade": Smooth opacity transition
+    /// - "pulse": Three-phase animation with fade in → hold → fade out
+    /// - "zoom": Synchronized fade and scale animation with position-aware anchoring
+    /// - "slide": Horizontal sliding animation
+    /// - "breathe": Organic pulsing animation
+    ///
+    /// Default: "fade"
+    ///
+    /// Examples:
+    /// ```json
+    /// "cursor_blink_animation": "instant"
+    /// ```
+    /// ```json
+    /// "cursor_blink_animation": "fade"
+    /// ```
+    /// ```json
+    /// "cursor_blink_animation": "zoom"
+    /// ```
+    pub cursor_blink_animation: Option<BlinkAnimationSetting>,
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underline", or "hollow".
     ///

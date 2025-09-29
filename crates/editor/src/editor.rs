@@ -14,6 +14,7 @@
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
 mod blink_manager;
+pub use blink_manager::BlinkAnimation;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
@@ -215,7 +216,7 @@ use crate::{
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
-const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
@@ -1853,7 +1854,7 @@ impl Editor {
         let selections = SelectionsCollection::new(display_map.clone(), buffer.clone());
 
         let blink_manager = cx.new(|cx| {
-            let mut blink_manager = BlinkManager::new(CURSOR_BLINK_INTERVAL, cx);
+            let mut blink_manager = BlinkManager::new(cx);
             if is_minimap {
                 blink_manager.disable(cx);
             }
@@ -2878,6 +2879,16 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::show_cursor);
 
         cx.notify();
+    }
+
+    pub fn set_cursor_blink_animation(
+        &mut self,
+        animation: BlinkAnimation,
+        cx: &mut Context<Self>,
+    ) {
+        self.blink_manager.update(cx, |blink_manager, _| {
+            blink_manager.set_animation(animation);
+        });
     }
 
     pub fn set_current_line_highlight(

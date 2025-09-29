@@ -1585,6 +1585,9 @@ impl EditorElement {
             let mut cursors = Vec::new();
 
             let show_local_cursors = editor.show_local_cursors(window, cx);
+            let cursor_opacity = editor.blink_manager.read(cx).opacity();
+            let cursor_scale = editor.blink_manager.read(cx).scale();
+            let cursor_slide_offset = editor.blink_manager.read(cx).slide_offset();
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1695,11 +1698,49 @@ impl EditorElement {
                         }
                     }
 
+                    let mut cursor_color = player_color.cursor;
+                    let mut scaled_block_width = block_width;
+                    let mut scaled_line_height = line_height;
+                    let mut cursor_x = x;
+                    let mut cursor_y = y;
+
+                    if selection.is_local {
+                        cursor_color = cursor_color.opacity(cursor_opacity);
+
+                        // Apply scaling for zoom animations
+                        if cursor_scale != 1.0 {
+                            scaled_block_width = block_width * cursor_scale;
+                            scaled_line_height = line_height * cursor_scale;
+
+                            // Position-aware scaling based on cursor shape
+                            match selection.cursor_shape {
+                                CursorShape::Bar => {
+                                    // For bar cursors, anchor to the left side so it appears to shrink horizontally
+                                    cursor_x = x; // Keep left edge fixed
+                                    cursor_y = y + (line_height - scaled_line_height) / 2.0; // Center vertically
+                                }
+                                CursorShape::Underline => {
+                                    // For underline cursors, anchor to the bottom so it appears to shrink upward
+                                    cursor_x = x + (block_width - scaled_block_width) / 2.0; // Center horizontally
+                                    cursor_y = y + (line_height - scaled_line_height); // Align to bottom
+                                }
+                                CursorShape::Block | CursorShape::Hollow => {
+                                    // For block cursors, center scaling looks natural
+                                    cursor_x = x + (block_width - scaled_block_width) / 2.0;
+                                    cursor_y = y + (line_height - scaled_line_height) / 2.0;
+                                }
+                            }
+                        }
+
+                        // Apply slide offset for slide animations (independent of scaling)
+                        cursor_x += px(cursor_slide_offset);
+                    }
+
                     let mut cursor = CursorLayout {
-                        color: player_color.cursor,
-                        block_width,
-                        origin: point(x, y),
-                        line_height,
+                        color: cursor_color,
+                        block_width: scaled_block_width,
+                        origin: point(cursor_x, cursor_y),
+                        line_height: scaled_line_height,
                         shape: selection.cursor_shape,
                         block_text,
                         cursor_name: None,
