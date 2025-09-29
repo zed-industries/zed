@@ -110,8 +110,8 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         }
 
         if let Some(current) = zeta.current_prediction_for_buffer(&buffer, &self.project, cx)
-            && let Some(local) = current.as_local()
-            && local.interpolate(buffer.read(cx)).is_some()
+            && let BufferEditPrediction::Local { prediction } = current
+            && prediction.interpolate(buffer.read(cx)).is_some()
         {
             return;
         }

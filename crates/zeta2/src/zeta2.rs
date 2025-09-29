@@ -137,15 +137,6 @@ enum BufferEditPrediction<'a> {
     Jump { prediction: &'a EditPrediction },
 }
 
-impl BufferEditPrediction<'_> {
-    pub fn as_local(&self) -> Option<&EditPrediction> {
-        match self {
-            BufferEditPrediction::Local { prediction } => Some(prediction),
-            BufferEditPrediction::Jump { .. } => None,
-        }
-    }
-}
-
 struct RegisteredBuffer {
     snapshot: BufferSnapshot,
     _subscriptions: [gpui::Subscription; 2],
