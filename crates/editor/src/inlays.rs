@@ -1,6 +1,8 @@
 /// TODO kb docs, inlays-vs-inlay hints.
 pub mod inlay_hints;
 
+use std::{any::TypeId, sync::OnceLock};
+
 use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
 use multi_buffer::Anchor;
 use project::{InlayHint, InlayId};

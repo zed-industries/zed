@@ -593,7 +593,7 @@ impl Editor {
                                                     inlay: hovered_hint.id,
                                                     inlay_position: hovered_hint.position,
                                                     range: extra_shift_left
-                                                        ..hovered_hint.text.len()
+                                                        ..hovered_hint.text().len()
                                                             + extra_shift_right,
                                                 },
                                             },
