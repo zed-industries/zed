@@ -277,7 +277,7 @@ impl LanguageModelProvider for AnthropicVertexLanguageModelProvider {
 
     fn configuration_view(
         &self,
-        configuration_view_target_agent: ConfigurationViewTargetAgent,
+        _configuration_view_target_agent: ConfigurationViewTargetAgent,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
