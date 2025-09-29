@@ -538,27 +538,27 @@ impl OpenAiEventMapper {
             return events;
         };
 
-        if let Some(content) = choice.delta.content.clone() {
-            if !content.is_empty() {
+        if let Some(delta) = choice.delta.as_ref() {
+            if let Some(content) = delta.content.clone() {
                 events.push(Ok(LanguageModelCompletionEvent::Text(content)));
             }
-        }
 
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-            for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+            if let Some(tool_calls) = delta.tool_calls.as_ref() {
+                for tool_call in tool_calls {
+                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
-                }
-
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
-                        entry.name = name;
+                    if let Some(tool_id) = tool_call.id.clone() {
+                        entry.id = tool_id;
                     }
 
-                    if let Some(arguments) = function.arguments.clone() {
-                        entry.arguments.push_str(&arguments);
+                    if let Some(function) = tool_call.function.as_ref() {
+                        if let Some(name) = function.name.clone() {
+                            entry.name = name;
+                        }
+
+                        if let Some(arguments) = function.arguments.clone() {
+                            entry.arguments.push_str(&arguments);
+                        }
                     }
                 }
             }
