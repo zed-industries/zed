@@ -260,7 +260,7 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
                 EditPrediction::Edit { .. } => {
                     // This is expected for non-Zed providers
                 }
-                EditPrediction::Move { .. } | EditPrediction::Jump { .. } => {
+                EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => {
                     panic!(
                         "Non-Zed providers should not show Move predictions (jump functionality)"
                     );
@@ -298,7 +298,7 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let EditPrediction::Move { target, .. } = &completion_state.completion {
+        if let EditPrediction::MoveWithin { target, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");

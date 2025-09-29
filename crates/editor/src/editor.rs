@@ -628,12 +628,12 @@ enum EditPrediction {
         snapshot: BufferSnapshot,
     },
     /// Move to a specific location in the active editor
-    Move {
+    MoveWithin {
         target: Anchor,
         snapshot: BufferSnapshot,
     },
-    /// Jump to a specific location in another editor, not the currently active one
-    Jump {
+    /// Move to a specific location in a different editor (not the active one)
+    MoveOutside {
         target: language::Anchor,
         snapshot: BufferSnapshot,
     },
@@ -7413,7 +7413,7 @@ impl Editor {
         };
 
         match &active_edit_prediction.completion {
-            EditPrediction::Move { target, .. } => {
+            EditPrediction::MoveWithin { target, .. } => {
                 let target = *target;
 
                 if let Some(position_map) = &self.last_position_map {
@@ -7453,6 +7453,12 @@ impl Editor {
                         );
                         self.request_autoscroll(Autoscroll::fit(), cx);
                     }
+                }
+            }
+            EditPrediction::MoveOutside { snapshot, target } => {
+                if let Some(workspace) = self.workspace() {
+                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                        .detach_and_log_err(cx);
                 }
             }
             EditPrediction::Edit { edits, .. } => {
@@ -7496,12 +7502,6 @@ impl Editor {
 
                 cx.notify();
             }
-            EditPrediction::Jump { snapshot, target } => {
-                if let Some(workspace) = self.workspace() {
-                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }
         }
 
         self.edit_prediction_requires_modifier_in_indent_conflict = false;
@@ -7521,7 +7521,7 @@ impl Editor {
         }
 
         match &active_edit_prediction.completion {
-            EditPrediction::Move { target, .. } => {
+            EditPrediction::MoveWithin { target, .. } => {
                 let target = *target;
                 self.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
@@ -7531,6 +7531,12 @@ impl Editor {
                         selections.select_anchor_ranges([target..target]);
                     },
                 );
+            }
+            EditPrediction::MoveOutside { snapshot, target } => {
+                if let Some(workspace) = self.workspace() {
+                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
             }
             EditPrediction::Edit { edits, .. } => {
                 self.report_edit_prediction_event(
@@ -7576,12 +7582,6 @@ impl Editor {
                     cx.notify();
                 } else {
                     self.accept_edit_prediction(&Default::default(), window, cx);
-                }
-            }
-            EditPrediction::Jump { snapshot, target } => {
-                if let Some(workspace) = self.workspace() {
-                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
-                        .detach_and_log_err(cx);
                 }
             }
         }
@@ -7938,7 +7938,7 @@ impl Editor {
                 self.stale_edit_prediction_in_menu = None;
                 self.active_edit_prediction = Some(EditPredictionState {
                     inlay_ids: vec![],
-                    completion: EditPrediction::Jump { snapshot, target },
+                    completion: EditPrediction::MoveOutside { snapshot, target },
                     completion_id: id,
                     invalidation_range: None,
                 });
@@ -7992,7 +7992,7 @@ impl Editor {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
-            EditPrediction::Move { target, snapshot }
+            EditPrediction::MoveWithin { target, snapshot }
         } else {
             let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
                 && !self.edit_predictions_hidden_for_vim_mode;
@@ -8645,7 +8645,7 @@ impl Editor {
         }
 
         match &active_edit_prediction.completion {
-            EditPrediction::Move { target, .. } => {
+            EditPrediction::MoveWithin { target, .. } => {
                 let target_display_point = target.to_display_point(editor_snapshot);
 
                 if self.edit_prediction_requires_modifier() {
@@ -8730,7 +8730,7 @@ impl Editor {
                 window,
                 cx,
             ),
-            EditPrediction::Jump { snapshot, .. } => {
+            EditPrediction::MoveOutside { snapshot, .. } => {
                 let file_name = snapshot
                     .file()
                     .map(|file| file.file_name(cx))
@@ -9365,7 +9365,7 @@ impl Editor {
                             .rounded_tl(px(0.))
                             .overflow_hidden()
                             .child(div().px_1p5().child(match &prediction.completion {
-                                EditPrediction::Move { target, snapshot } => {
+                                EditPrediction::MoveWithin { target, snapshot } => {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(snapshot).row > cursor_point.row
                                     {
@@ -9374,11 +9374,11 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
-                                EditPrediction::Jump { .. } => {
+                                EditPrediction::MoveOutside { .. } => {
                                     // TODO [zeta2] custom icon for external jump?
                                     Icon::new(provider_icon)
                                 }
+                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
                             }))
                             .child(
                                 h_flex()
@@ -9560,7 +9560,7 @@ impl Editor {
             .unwrap_or(true);
 
         match &completion.completion {
-            EditPrediction::Move {
+            EditPrediction::MoveWithin {
                 target, snapshot, ..
             } => {
                 if !supports_jump {
@@ -9582,8 +9582,7 @@ impl Editor {
                         .child(Label::new("Jump to Edit")),
                 )
             }
-
-            EditPrediction::Jump { snapshot, .. } => {
+            EditPrediction::MoveOutside { snapshot, .. } => {
                 let file_name = snapshot
                     .file()
                     .map(|file| file.file_name(cx))
@@ -9597,7 +9596,6 @@ impl Editor {
                         .child(Label::new(format!("Jump to {file_name}"))),
                 )
             }
-
             EditPrediction::Edit {
                 edits,
                 edit_preview,
