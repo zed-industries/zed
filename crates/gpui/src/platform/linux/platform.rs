@@ -73,6 +73,15 @@ pub trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    fn window_identifier(
+        &self,
+    ) -> futures::channel::oneshot::Receiver<Option<ashpd::WindowIdentifier>> {
+        let (sources_tx, sources_rx) = futures::channel::oneshot::channel();
+        sources_tx.send(None).ok();
+        sources_rx
+    }
 }
 
 #[derive(Default)]
@@ -291,6 +300,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn(async move {
                 let title = if options.directories {
@@ -298,8 +310,10 @@ impl<P: LinuxClient + 'static> Platform for P {
                 } else {
                     "Open File"
                 };
+                let identifier = identifier.await.ok().flatten();
 
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
+                    .identifier(identifier)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
@@ -347,14 +361,20 @@ impl<P: LinuxClient + 'static> Platform for P {
         let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
+        let identifier = self.window_identifier();
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
                 let suggested_name = suggested_name.map(|s| s.to_owned());
 
                 async move {
+                    let identifier = identifier.await.ok().flatten();
+
                     let mut request_builder =
                         ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .identifier(identifier)
                             .modal(true)
                             .title("Save File")
                             .current_folder(directory)

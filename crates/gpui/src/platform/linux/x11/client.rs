@@ -1,5 +1,6 @@
 use crate::{Capslock, xcb_flush};
 use anyhow::{Context as _, anyhow};
+use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -1659,6 +1660,21 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+
+    fn window_identifier(&self) -> futures::channel::oneshot::Receiver<Option<WindowIdentifier>> {
+        let (done_tx, done_rx) = futures::channel::oneshot::channel();
+        let state = self.0.borrow();
+        if let Some(window) = state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+        {
+            let window_identifier = WindowIdentifier::from_xid(window.window.x_window as u64);
+            done_tx.send(Some(window_identifier)).ok();
+        } else {
+            done_tx.send(None).ok();
+        }
+        done_rx
     }
 }
 
