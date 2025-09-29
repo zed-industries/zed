@@ -9,10 +9,11 @@ use settings_macros::MergeFrom;
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
 /// Animation settings for cursor blinking
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BlinkAnimationSetting {
     /// Instant toggle between visible/invisible (no animation)
+    #[default]
     Instant,
     /// Fade in/out animation with smooth opacity transition
     Fade,
@@ -24,12 +25,6 @@ pub enum BlinkAnimationSetting {
     Slide,
     /// Breathe animation with organic pulsing
     Breathe,
-}
-
-impl Default for BlinkAnimationSetting {
-    fn default() -> Self {
-        BlinkAnimationSetting::Fade
-    }
 }
 
 #[skip_serializing_none]
