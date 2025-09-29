@@ -34,10 +34,49 @@
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern) @name) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern) @name) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression)) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
         ; Multiple names may be exported - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (_) @name) @item))
+            name: (identifier) @name
+            !value) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern) @name) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern) @name) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression)) @item))
 
 (program
     (lexical_declaration
@@ -45,14 +84,41 @@
         ; Multiple names may be defined - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (_) @name) @item))
+            name: (identifier) @name
+            !value) @item))
 
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (_) @name
+            name: (identifier) @name
             value: (arrow_function)) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern) @name) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern) @name) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (call_expression)) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            !value) @item))
 
 (class_declaration
     "class" @context
