@@ -227,14 +227,31 @@ async fn load_shell_environment(
 
 #[cfg(all(target_os = "windows", not(any(test, feature = "test-support"))))]
 async fn load_shell_environment(
-    _dir: &Path,
+    dir: &Path,
     _load_direnv: &DirenvSettings,
 ) -> (
     Option<HashMap<String, String>>,
     Option<EnvironmentErrorMessage>,
 ) {
-    // TODO the current code works with Unix $SHELL only, implement environment loading on windows
-    (None, None)
+    use util::shell_env;
+
+    let envs = match shell_env::capture(dir).await {
+        Ok(envs) => envs,
+        Err(err) => {
+            util::log_err(&err);
+            return (
+                None,
+                Some(EnvironmentErrorMessage(format!(
+                    "Failed to load environment variables: {}",
+                    err
+                ))),
+            );
+        }
+    };
+
+    // Note: direnv is not available on Windows, so we skip direnv processing
+    // and just return the shell environment
+    (Some(envs), None)
 }
 
 #[cfg(not(any(target_os = "windows", test, feature = "test-support")))]

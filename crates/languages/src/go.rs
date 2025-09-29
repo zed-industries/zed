@@ -528,7 +528,7 @@ impl ContextProvider for GoContextProvider {
                 let module_dir = buffer_dir
                     .ancestors()
                     .find(|dir| dir.join("go.mod").is_file())
-                    .map(|dir| dir.to_string_lossy().to_string())
+                    .map(|dir| dir.to_string_lossy().into_owned())
                     .unwrap_or_else(|| ".".to_string());
 
                 (GO_MODULE_ROOT_TASK_VARIABLE.clone(), module_dir)

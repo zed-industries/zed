@@ -4030,7 +4030,7 @@ impl EditorElement {
                                     Some(Box::new(zed_actions::workspace::CopyPath)),
                                     window.handler_for(&editor, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            abs_path.to_string_lossy().to_string(),
+                                            abs_path.to_string_lossy().into_owned(),
                                         ));
                                     }),
                                 )

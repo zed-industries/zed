@@ -70,10 +70,14 @@ impl EventStream {
                     path_bytes.len() as cf::CFIndex,
                     false,
                 );
-                let cf_path = cf::CFURLCopyFileSystemPath(cf_url, cf::kCFURLPOSIXPathStyle);
-                cf::CFArrayAppendValue(cf_paths, cf_path);
-                cf::CFRelease(cf_path);
-                cf::CFRelease(cf_url);
+                if !cf_url.is_null() {
+                    let cf_path = cf::CFURLCopyFileSystemPath(cf_url, cf::kCFURLPOSIXPathStyle);
+                    cf::CFArrayAppendValue(cf_paths, cf_path);
+                    cf::CFRelease(cf_path);
+                    cf::CFRelease(cf_url);
+                } else {
+                    log::error!("Failed to create CFURL for path: {}", path.display());
+                }
             }
 
             let mut state = Box::new(State {

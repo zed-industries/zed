@@ -2085,7 +2085,7 @@ impl GitPanel {
                             .to_string()
                             .into()
                     } else {
-                        worktree_abs_path.to_string_lossy().to_string().into()
+                        worktree_abs_path.to_string_lossy().into_owned().into()
                     }
                 })
                 .collect_vec();
@@ -3527,7 +3527,7 @@ impl GitPanel {
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .max_w(relative(0.85))
+                        .line_clamp(1)
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
