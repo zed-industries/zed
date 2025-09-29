@@ -22,6 +22,7 @@ denoise = { path = "../denoise" }
 log.workspace = true
 parking_lot.workspace = true
 rodio = { workspace = true, features = [ "wav", "playback", "wav_output" ] }
+rubato = "0.16.2"
 serde.workspace = true
 settings.workspace = true
 smol.workspace = true
