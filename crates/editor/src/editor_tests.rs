@@ -6742,6 +6742,14 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
+    cx.set_state(indoc! {"The quick brownˇ"});
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state(indoc! {"The quick brownˇ"});
+
+    cx.set_state(indoc! {"The emacs foxˇ"});
+    cx.update_editor(|e, window, cx| e.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state(indoc! {"The emacs foxˇ"});
+
     cx.set_state(indoc! {"
         The quick« brownˇ»
         fox jumps overˇ
@@ -8264,7 +8272,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
                 edit_preview: None,

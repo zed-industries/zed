@@ -1,34 +1,17 @@
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
 
+use anyhow::Context as _;
 use cloud_llm_client::predict_edits_v3;
-use language::{Anchor, BufferSnapshot, EditPreview, OffsetRangeExt, text_diff};
+use gpui::{App, AsyncApp, Entity};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
+};
+use project::Project;
+use util::ResultExt;
 use uuid::Uuid;
-
-#[derive(Clone)]
-pub struct EditPrediction {
-    pub id: EditPredictionId,
-    pub edits: Arc<[(Range<Anchor>, String)]>,
-    pub snapshot: BufferSnapshot,
-    pub edit_preview: EditPreview,
-}
-
-impl EditPrediction {
-    pub fn interpolate(
-        &self,
-        new_snapshot: &BufferSnapshot,
-    ) -> Option<Vec<(Range<Anchor>, String)>> {
-        interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
-    }
-}
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(Uuid);
-
-impl From<Uuid> for EditPredictionId {
-    fn from(value: Uuid) -> Self {
-        EditPredictionId(value)
-    }
-}
 
 impl From<EditPredictionId> for gpui::ElementId {
     fn from(value: EditPredictionId) -> Self {
@@ -42,9 +25,122 @@ impl std::fmt::Display for EditPredictionId {
     }
 }
 
+#[derive(Clone)]
+pub struct EditPrediction {
+    pub id: EditPredictionId,
+    pub path: Arc<Path>,
+    pub edits: Arc<[(Range<Anchor>, String)]>,
+    pub snapshot: BufferSnapshot,
+    pub edit_preview: EditPreview,
+    // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
+    _buffer: Entity<Buffer>,
+}
+
+impl EditPrediction {
+    pub async fn from_response(
+        response: predict_edits_v3::PredictEditsResponse,
+        active_buffer_old_snapshot: &TextBufferSnapshot,
+        active_buffer: &Entity<Buffer>,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Option<Self> {
+        // TODO only allow cloud to return one path
+        let Some(path) = response.edits.first().map(|e| e.path.clone()) else {
+            return None;
+        };
+
+        let is_same_path = active_buffer
+            .read_with(cx, |buffer, cx| buffer_path_eq(buffer, &path, cx))
+            .ok()?;
+
+        let (buffer, edits, snapshot, edit_preview_task) = if is_same_path {
+            active_buffer
+                .read_with(cx, |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+                    let edits = edits_from_response(&response.edits, &active_buffer_old_snapshot);
+                    let edits: Arc<[_]> =
+                        interpolate_edits(active_buffer_old_snapshot, &new_snapshot, edits)?.into();
+
+                    Some((
+                        active_buffer.clone(),
+                        edits.clone(),
+                        new_snapshot,
+                        buffer.preview_edits(edits, cx),
+                    ))
+                })
+                .ok()??
+        } else {
+            let buffer_handle = project
+                .update(cx, |project, cx| {
+                    let project_path = project
+                        .find_project_path(&path, cx)
+                        .context("Failed to find project path for zeta edit")?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })
+                .ok()?
+                .log_err()?
+                .await
+                .context("Failed to open buffer for zeta edit")
+                .log_err()?;
+
+            buffer_handle
+                .read_with(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let edits = edits_from_response(&response.edits, &snapshot);
+                    if edits.is_empty() {
+                        return None;
+                    }
+                    Some((
+                        buffer_handle.clone(),
+                        edits.clone(),
+                        snapshot,
+                        buffer.preview_edits(edits, cx),
+                    ))
+                })
+                .ok()??
+        };
+
+        let edit_preview = edit_preview_task.await;
+
+        Some(EditPrediction {
+            id: EditPredictionId(response.request_id),
+            path,
+            edits,
+            snapshot,
+            edit_preview,
+            _buffer: buffer,
+        })
+    }
+
+    pub fn interpolate(
+        &self,
+        new_snapshot: &TextBufferSnapshot,
+    ) -> Option<Vec<(Range<Anchor>, String)>> {
+        interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+
+    pub fn targets_buffer(&self, buffer: &Buffer, cx: &App) -> bool {
+        buffer_path_eq(buffer, &self.path, cx)
+    }
+}
+
+impl std::fmt::Debug for EditPrediction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EditPrediction")
+            .field("id", &self.id)
+            .field("path", &self.path)
+            .field("edits", &self.edits)
+            .finish()
+    }
+}
+
+pub fn buffer_path_eq(buffer: &Buffer, path: &Path, cx: &App) -> bool {
+    buffer.file().map(|p| p.full_path(cx)).as_deref() == Some(path)
+}
+
 pub fn interpolate_edits(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
     current_edits: Arc<[(Range<Anchor>, String)]>,
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
@@ -88,14 +184,13 @@ pub fn interpolate_edits(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-pub fn edits_from_response(
+fn edits_from_response(
     edits: &[predict_edits_v3::Edit],
-    snapshot: &BufferSnapshot,
+    snapshot: &TextBufferSnapshot,
 ) -> Arc<[(Range<Anchor>, String)]> {
     edits
         .iter()
         .flat_map(|edit| {
-            // TODO multi-file edits
             let old_text = snapshot.text_for_range(edit.range.clone());
 
             excerpt_edits_from_response(
@@ -113,7 +208,7 @@ fn excerpt_edits_from_response(
     old_text: Cow<str>,
     new_text: &str,
     offset: usize,
-    snapshot: &BufferSnapshot,
+    snapshot: &TextBufferSnapshot,
 ) -> impl Iterator<Item = (Range<Anchor>, String)> {
     text_diff(&old_text, new_text)
         .into_iter()
@@ -221,6 +316,8 @@ mod tests {
             id: EditPredictionId(Uuid::new_v4()),
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
+            path: Path::new("test.txt").into(),
+            _buffer: buffer.clone(),
             edit_preview,
         };
 

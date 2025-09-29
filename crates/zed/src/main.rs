@@ -270,6 +270,7 @@ pub fn main() {
         .spawn(crashes::init(InitCrashHandler {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
+            binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()

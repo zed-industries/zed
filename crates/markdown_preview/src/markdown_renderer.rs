@@ -51,6 +51,7 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
+    element_background_color: Hsla,
     text_color: Hsla,
     window_rem_size: Pixels,
     text_muted_color: Hsla,
@@ -84,6 +85,7 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
+            element_background_color: theme.colors().element_background,
             text_color: theme.colors().text,
             window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
@@ -520,6 +522,7 @@ fn render_markdown_table_row(
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = vec![];
+    let count = parsed.children.len();
 
     for (index, cell) in parsed.children.iter().enumerate() {
         let alignment = alignments
@@ -542,18 +545,29 @@ fn render_markdown_table_row(
             .children(contents)
             .px_2()
             .py_1()
-            .border_color(cx.border_color);
+            .border_color(cx.border_color)
+            .border_l_1();
+
+        if count == index + 1 {
+            cell = cell.border_r_1();
+        }
 
         if is_header {
-            cell = cell.border_2()
-        } else {
-            cell = cell.border_1()
+            cell = cell.bg(cx.element_background_color)
         }
 
         items.push(cell);
     }
 
-    h_flex().children(items).into_any_element()
+    let mut row = h_flex().border_color(cx.border_color);
+
+    if is_header {
+        row = row.border_y_1();
+    } else {
+        row = row.border_b_1();
+    }
+
+    row.children(items).into_any_element()
 }
 
 fn render_markdown_block_quote(
