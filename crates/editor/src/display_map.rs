@@ -27,8 +27,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, inlays::Inlay,
-    movement::TextLayoutDetails,
+    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -53,6 +52,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
+use project::InlayId;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 

@@ -20,8 +20,8 @@ mod inlay_hint_cache;
 use self::inlay_hint_cache::BufferInlayHints;
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
-    CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction,
-    LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
+    CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, InlayId, LocationLink,
+    LspAction, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
@@ -109,7 +109,10 @@ use std::{
     path::{self, Path, PathBuf},
     pin::pin,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{self, AtomicUsize},
+    },
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
@@ -3481,6 +3484,7 @@ pub struct BufferLspData {
     document_colors: DocumentColorData,
     code_lens: CodeLensData,
     pub inlay_hints: BufferInlayHints,
+    next_hint_id: Arc<AtomicUsize>,
     lsp_requests: HashMap<TypeId, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<TypeId, HashMap<BufferChunk, LspRequestId>>,
 }
@@ -3494,6 +3498,7 @@ impl BufferLspData {
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
+            next_hint_id: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -4802,8 +4807,67 @@ impl LspStore {
         }
     }
 
-    pub fn resolve_inlay_hint(
+    pub fn resolved_hint(
+        &mut self,
+        buffer_id: BufferId,
+        id: InlayId,
+        cx: &mut Context<Self>,
+    ) -> Option<ResolvedHint> {
+        let buffer = self.buffer_store.read(cx).get(buffer_id)?;
+
+        let lsp_data = self.lsp_data.get_mut(&buffer_id)?;
+        let buffer_lsp_hints = &mut lsp_data.inlay_hints;
+        let hint = buffer_lsp_hints.hint_for_id(id)?.clone();
+        let (server_id, resolve_data) = match &hint.resolve_state {
+            ResolveState::Resolved => return Some(ResolvedHint::Resolved(hint)),
+            ResolveState::Resolving => {
+                return Some(ResolvedHint::Resolving(
+                    buffer_lsp_hints.hint_resolves.get(&id)?.clone(),
+                ));
+            }
+            ResolveState::CanResolve(server_id, resolve_data) => (*server_id, resolve_data.clone()),
+        };
+
+        let resolve_task = self.resolve_inlay_hint(id, hint, buffer, server_id, cx);
+        let buffer_lsp_hints = &mut self.lsp_data.get_mut(&buffer_id)?.inlay_hints;
+        let previous_task = buffer_lsp_hints.hint_resolves.insert(
+            id,
+            cx.spawn(async move |lsp_store, cx| {
+                let resolved_hint = resolve_task.await;
+                lsp_store
+                    .update(cx, |lsp_store, _| {
+                        if let Some(old_inlay_hint) = lsp_store
+                            .lsp_data
+                            .get_mut(&buffer_id)
+                            .and_then(|buffer_lsp_data| buffer_lsp_data.inlay_hints.hint_for_id(id))
+                        {
+                            match resolved_hint {
+                                Ok(resolved_hint) => {
+                                    *old_inlay_hint = resolved_hint;
+                                }
+                                Err(e) => {
+                                    old_inlay_hint.resolve_state =
+                                        ResolveState::CanResolve(server_id, resolve_data);
+                                    log::error!("Inlay hint resolve failed: {e:#}");
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+            })
+            .shared(),
+        );
+        debug_assert!(
+            previous_task.is_none(),
+            "Did not change hint's resolve state after spawning its resolve"
+        );
+        buffer_lsp_hints.hint_for_id(id)?.resolve_state = ResolveState::Resolving;
+        None
+    }
+
+    fn resolve_inlay_hint(
         &self,
+        id: InlayId,
         mut hint: InlayHint,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
@@ -4819,7 +4883,7 @@ impl LspStore {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
-                hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
+                hint_id: id.id() as u64,
             };
             cx.background_spawn(async move {
                 let response = upstream_client
@@ -6424,7 +6488,6 @@ impl LspStore {
             match (
                 existing_inlay_hints
                     .cached_hints(&row_chunk)
-                    .as_mut()
                     .filter(|_| !invalidate_cache)
                     .cloned(),
                 existing_inlay_hints
@@ -6484,13 +6547,43 @@ impl LspStore {
                 })
                 .collect()))
         } else {
+            let next_hint_id = lsp_data.next_hint_id.clone();
             cx.spawn(async move |lsp_store, cx| {
                 lsp_store.update(cx, |lsp_store, cx| {
                     for (chunk, range_to_query) in ranges_to_query {
                         let new_fetch_task =
                             lsp_store.fetch_inlay_hints(&buffer, range_to_query, cx);
+                        let next_hint_id = next_hint_id.clone();
                         let new_inlay_hints = cx
-                            .background_spawn(async move { new_fetch_task.await.map_err(Arc::new) })
+                            .background_spawn(async move {
+                                new_fetch_task
+                                    .await
+                                    .map(|new_hints_by_server| {
+                                        new_hints_by_server
+                                            .into_iter()
+                                            .map(|(server_id, new_hints)| {
+                                                (
+                                                    server_id,
+                                                    new_hints
+                                                        .into_iter()
+                                                        .map(|new_hint| {
+                                                            (
+                                                                InlayId::Hint(
+                                                                    next_hint_id.fetch_add(
+                                                                        1,
+                                                                        atomic::Ordering::AcqRel,
+                                                                    ),
+                                                                ),
+                                                                new_hint,
+                                                            )
+                                                        })
+                                                        .collect(),
+                                                )
+                                            })
+                                            .collect()
+                                    })
+                                    .map_err(Arc::new)
+                            })
                             .shared();
                         if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
                             let fetch_task = lsp_data.inlay_hints.fetched_hints(&chunk);
@@ -6550,22 +6643,15 @@ impl LspStore {
                                         .entry(server_id)
                                         .or_insert_with(Vec::new)
                                         .extend(new_hints.clone());
-                                    buffer_hints
-                                        .cached_hints(&chunk)
-                                        .get_or_insert_default()
-                                        .entry(server_id)
-                                        .or_insert_with(Vec::new)
-                                        .extend(new_hints);
+                                    buffer_hints.insert_new_hints(chunk, server_id, new_hints);
                                 }
                             }
-                            Err(e) => {
-                                log::error!(
-                                    "Error when fetching hints for buffer row range {}..{}: {:#}",
-                                    chunk.start,
-                                    chunk.end,
-                                    e,
-                                );
-                            }
+                            Err(e) => log::error!(
+                                "Error when fetching hints for buffer row range {}..{}: {:#}",
+                                chunk.start,
+                                chunk.end,
+                                e,
+                            ),
                         }
 
                         *buffer_hints.fetched_hints(&chunk) = None;
@@ -9541,33 +9627,38 @@ impl LspStore {
     }
 
     async fn handle_resolve_inlay_hint(
-        this: Entity<Self>,
+        lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
         mut cx: AsyncApp,
     ) -> Result<proto::ResolveInlayHintResponse> {
-        let proto_hint = envelope
-            .payload
-            .hint
-            .expect("incorrect protobuf resolve inlay hint message: missing the inlay hint");
-        let hint = InlayHints::proto_to_project_hint(proto_hint)
-            .context("resolved proto inlay hint conversion")?;
-        let buffer = this.update(&mut cx, |this, cx| {
-            let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-            this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
-        let response_hint = this
-            .update(&mut cx, |this, cx| {
-                this.resolve_inlay_hint(
-                    hint,
-                    buffer,
-                    LanguageServerId(envelope.payload.language_server_id as usize),
-                    cx,
-                )
+        let hint_id = InlayId::Hint(envelope.payload.hint_id as usize);
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let resolved_hint = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.resolved_hint(buffer_id, hint_id, cx)
             })?
-            .await
-            .context("inlay hints fetch")?;
+            .with_context(|| format!("Missing inlay hint for id {hint_id:?}"))?;
+
+        let resolved_hint = match resolved_hint {
+            ResolvedHint::Resolved(resolved_hint) => resolved_hint,
+            ResolvedHint::Resolving(task) => {
+                task.await;
+                let now_resolved_hint = lsp_store
+                    .update(&mut cx, |lsp_store, cx| {
+                        lsp_store.resolved_hint(buffer_id, hint_id, cx)
+                    })?
+                    .with_context(|| format!("Missing resolved inlay hint for id {hint_id:?}"))?;
+                match now_resolved_hint {
+                    ResolvedHint::Resolved(resolved_hint) => resolved_hint,
+                    ResolvedHint::Resolving(_) => anyhow::bail!(
+                        "Unexpected: hint is not resolved after awaiting on its resolve task"
+                    ),
+                }
+            }
+        };
+
         Ok(proto::ResolveInlayHintResponse {
-            hint: Some(InlayHints::project_to_proto_hint(response_hint)),
+            hint: Some(InlayHints::project_to_proto_hint(resolved_hint)),
         })
     }
 
@@ -12819,6 +12910,11 @@ impl From<lsp::Documentation> for CompletionDocumentation {
             },
         }
     }
+}
+
+pub enum ResolvedHint {
+    Resolved(InlayHint),
+    Resolving(Shared<Task<()>>),
 }
 
 fn glob_literal_prefix(glob: &Path) -> PathBuf {

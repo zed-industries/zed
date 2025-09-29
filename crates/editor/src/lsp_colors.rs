@@ -6,7 +6,7 @@ use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, lsp_store::LspFetchStrategy};
+use project::{DocumentColor, InlayId, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};

@@ -445,17 +445,6 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         None
     }
 
-    fn resolve_inlay_hint(
-        &self,
-        hint: project::InlayHint,
-        buffer: Entity<Buffer>,
-        server_id: lsp::LanguageServerId,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
-        let buffer = self.to_base(&buffer, &[], cx)?;
-        self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
-    }
-
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         if let Some(buffer) = self.to_base(buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)

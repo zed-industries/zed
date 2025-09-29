@@ -3,31 +3,10 @@ pub mod inlay_hints;
 
 use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
 use multi_buffer::Anchor;
-use std::any::TypeId;
-use std::sync::OnceLock;
+use project::{InlayHint, InlayId};
 use text::Rope;
 
 use crate::{Editor, hover_links::InlayHighlight};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum InlayId {
-    EditPrediction(u32),
-    DebuggerValue(u32),
-    // LSP
-    Hint(u32),
-    Color(u32),
-}
-
-impl InlayId {
-    pub fn id(&self) -> u32 {
-        match self {
-            Self::EditPrediction(id) => *id,
-            Self::DebuggerValue(id) => *id,
-            Self::Hint(id) => *id,
-            Self::Color(id) => *id,
-        }
-    }
-}
 
 /// A splice to send into the `inlay_map` for updating the visible inlays on the screen.
 /// "Visible" inlays may not be displayed in the buffer right away, but those are ready to be displayed on further buffer scroll, pane item activations, etc. right away without additional LSP queries or settings changes.
@@ -53,7 +32,7 @@ pub enum InlayContent {
 }
 
 impl Inlay {
-    pub fn hint(id: u32, position: Anchor, hint: &project::InlayHint) -> Self {
+    pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
         let mut text = hint.text();
         if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
             text.push(" ");
@@ -62,7 +41,7 @@ impl Inlay {
             text.push_front(" ");
         }
         Self {
-            id: InlayId::Hint(id),
+            id,
             position,
             content: InlayContent::Text(text),
         }
