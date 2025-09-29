@@ -131,64 +131,32 @@ impl Render for ZedPromptRenderer {
             .p_4()
             .gap_4()
             .font_family(settings.ui_font.family.clone())
-            .child(
-                div()
-                    .w_full()
-                    .child(MarkdownElement::new(self.message.clone(), {
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(font_size),
-                            font_weight: Some(FontWeight::BOLD),
-                            color: Some(ui::Color::Default.color(cx)),
-                            ..Default::default()
-                        });
-                        MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: cx
-                                .theme()
-                                .colors()
-                                .element_selection_background,
-                            ..Default::default()
-                        }
-                    })),
-            )
+            .child(div().w_full().child(MarkdownElement::new(
+                self.message.clone(),
+                markdown_style(true, window, cx),
+            )))
             .children(self.detail.clone().map(|detail| {
-                div()
-                    .w_full()
-                    .text_xs()
-                    .child(MarkdownElement::new(detail, {
-                        let mut base_text_style = window.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(font_size),
-                            color: Some(ui::Color::Muted.color(cx)),
-                            ..Default::default()
-                        });
-                        MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: cx
-                                .theme()
-                                .colors()
-                                .element_selection_background,
-                            ..Default::default()
-                        }
-                    }))
+                div().w_full().text_xs().child(MarkdownElement::new(
+                    detail,
+                    markdown_style(false, window, cx),
+                ))
             }))
-            .child(h_flex().justify_end().gap_2().children(
-                self.actions.iter().enumerate().rev().map(|(ix, action)| {
-                    ui::Button::new(ix, action.clone())
-                        .label_size(LabelSize::Large)
-                        .style(ButtonStyle::Filled)
-                        .when(ix == self.active_action_id, |el| {
-                            el.style(ButtonStyle::Tinted(TintColor::Accent))
-                        })
-                        .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(move |_, _, _window, cx| {
-                            cx.emit(PromptResponse(ix));
-                        }))
-                }),
-            ));
+            .child(
+                v_flex()
+                    .gap_1()
+                    .children(self.actions.iter().enumerate().map(|(ix, action)| {
+                        Button::new(ix, action.clone())
+                            .full_width()
+                            .style(ButtonStyle::Outlined)
+                            .when(ix == self.active_action_id, |s| {
+                                s.style(ButtonStyle::Tinted(TintColor::Accent))
+                            })
+                            .tab_index(ix as isize)
+                            .on_click(cx.listener(move |_, _, _window, cx| {
+                                cx.emit(PromptResponse(ix));
+                            }))
+                    })),
+            );
 
         div()
             .size_full()
@@ -212,6 +180,31 @@ impl Render for ZedPromptRenderer {
                             .child(prompt),
                     ),
             )
+    }
+}
+
+fn markdown_style(main_message: bool, window: &Window, cx: &App) -> MarkdownStyle {
+    let mut base_text_style = window.text_style();
+    let settings = ThemeSettings::get_global(cx);
+    let font_size = settings.ui_font_size(cx).into();
+
+    let color = if main_message {
+        Color::Default.color(cx)
+    } else {
+        Color::Muted.color(cx)
+    };
+
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(settings.ui_font.family.clone()),
+        font_size: Some(font_size),
+        color: Some(color),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style,
+        selection_background_color: cx.theme().colors().element_selection_background,
+        ..Default::default()
     }
 }
 
