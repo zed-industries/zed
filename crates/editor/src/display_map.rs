@@ -54,7 +54,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
-use project::project_settings::DiagnosticSeverity;
+use project::{lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity};
 use serde::Deserialize;
 use theme::SyntaxTheme;
 
@@ -1534,6 +1534,79 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
+}
+
+impl SemanticTokenView {
+    pub fn new(
+        buffer_id: BufferId,
+        multibuffer: &MultiBuffer,
+        lsp: &SemanticTokens,
+        legend: &lsp::SemanticTokensLegend,
+        cx: &App,
+    ) -> Option<SemanticTokenView> {
+        let Some(buffer) = multibuffer.buffer(buffer_id) else {
+            return None;
+        };
+        let buffer = buffer.read(cx);
+
+        let stylizer = SemanticTokenStylizer::new(legend);
+
+        let mut tokens = lsp
+            .tokens()
+            .filter_map(|token| {
+                let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
+                let (start_offset, end_offset) = point_offset_to_offsets(
+                    buffer.clip_point_utf16(start, Bias::Left),
+                    text::OffsetUtf16(token.length as usize),
+                    &buffer,
+                );
+
+                Some(MultibufferSemanticToken {
+                    range: start_offset..end_offset,
+                    style: stylizer.convert(
+                        cx.theme().syntax(),
+                        token.token_type,
+                        token.token_modifiers,
+                    )?,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // These should be sorted, but we rely on it for binary searching, so let's be sure.
+        tokens.sort_by_key(|token| token.range.start);
+
+        Some(SemanticTokenView {
+            tokens,
+            version: buffer.version(),
+        })
+    }
+
+    pub fn tokens_in_range(&self, range: Range<usize>) -> &[MultibufferSemanticToken] {
+        let start = self
+            .tokens
+            .binary_search_by_key(&range.start, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        let end = self
+            .tokens
+            .binary_search_by_key(&range.end, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        &self.tokens[start..end]
+    }
+}
+
+fn point_offset_to_offsets(
+    point: text::PointUtf16,
+    length: text::OffsetUtf16,
+    buffer: &text::Buffer,
+) -> (usize, usize) {
+    let start = buffer.as_rope().point_utf16_to_offset(point);
+    let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
+    let end_offset = start_offset + length;
+    let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
+
+    (start, end)
 }
 
 struct SemanticTokenStylizer<'a> {
