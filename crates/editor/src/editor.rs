@@ -12338,7 +12338,7 @@ impl Editor {
                 }
             });
         });
-        let item = self.cut_common(true, window, cx);
+        let item = self.cut_common(false, window, cx);
         cx.set_global(KillRing(item))
     }
 
