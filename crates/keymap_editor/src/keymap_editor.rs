@@ -1569,7 +1569,7 @@ impl Render for KeymapEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
                                     .key_context({
                                         let mut context = KeyContext::new_with_defaults();
                                         context.add("BufferSearchBar");
@@ -2708,10 +2708,7 @@ impl ActionArgumentsEditor {
                     )
                 })?;
 
-                let file_name =
-                    project::lsp_store::json_language_server_ext::normalized_action_file_name(
-                        action_name,
-                    );
+                let file_name = json_schema_store::normalized_action_file_name(action_name);
 
                 let (buffer, backup_temp_dir) =
                     Self::create_temp_buffer(temp_dir, file_name.clone(), project.clone(), fs, cx)

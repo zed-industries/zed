@@ -56,6 +56,7 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
+    rel_path::rel_path,
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
@@ -5369,8 +5370,8 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «HeLlO, wOrLD!ˇ»
     "});
 
-    // Test selections with `line_mode = true`.
-    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    // Test selections with `line_mode() = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -6740,6 +6741,14 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"The quick brownˇ"});
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state(indoc! {"The quick brownˇ"});
+
+    cx.set_state(indoc! {"The emacs foxˇ"});
+    cx.update_editor(|e, window, cx| e.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state(indoc! {"The emacs foxˇ"});
 
     cx.set_state(indoc! {"
         The quick« brownˇ»
@@ -11142,19 +11151,19 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
 
     let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_2 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "other.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("other.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_3 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "lib.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -11329,19 +11338,19 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     // Open three buffers
     let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "file1.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("file1.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_2 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "file2.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("file2.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_3 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "file3.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("file3.rs")), cx)
         })
         .await
         .unwrap();
@@ -14677,7 +14686,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
         .unwrap();
     let editor = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.ts"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.ts")), None, true, window, cx)
         })
         .unwrap()
         .await
@@ -16394,7 +16403,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, Arc::from(Path::new("b.txt"))),
+                PathKey::namespaced(1, "b.txt".into()),
                 buffer_1.clone(),
                 vec![
                     Point::row_range(0..3),
@@ -16405,7 +16414,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
                 cx,
             );
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, Arc::from(Path::new("a.txt"))),
+                PathKey::namespaced(1, "a.txt".into()),
                 buffer_2.clone(),
                 vec![Point::row_range(0..6), Point::row_range(8..12)],
                 0,
@@ -16897,7 +16906,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
         .unwrap();
     let editor_handle = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .unwrap()
         .await
@@ -20878,9 +20887,9 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     fs.set_head_for_repo(
         path!("/test/.git").as_ref(),
         &[
-            ("file-1".into(), "one\n".into()),
-            ("file-2".into(), "two\n".into()),
-            ("file-3".into(), "three\n".into()),
+            ("file-1", "one\n".into()),
+            ("file-2", "two\n".into()),
+            ("file-3", "three\n".into()),
         ],
         "deadbeef",
     );
@@ -20904,7 +20913,10 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
+                PathKey::namespaced(
+                    0,
+                    buffer.read(cx).file().unwrap().path().as_unix_str().into(),
+                ),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 2,
@@ -21657,19 +21669,19 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
 
     let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "first.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("first.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_2 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "second.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_3 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "third.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("third.rs")), cx)
         })
         .await
         .unwrap();
@@ -21825,19 +21837,19 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "first.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("first.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_2 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "second.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("second.rs")), cx)
         })
         .await
         .unwrap();
     let buffer_3 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "third.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("third.rs")), cx)
         })
         .await
         .unwrap();
@@ -21960,7 +21972,7 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 
     let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -22499,7 +22511,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -22613,7 +22625,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -22783,7 +22795,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -23371,7 +23383,7 @@ println!("5");
     let editor_1 = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane_1.downgrade()),
                 true,
                 window,
@@ -23414,7 +23426,7 @@ println!("5");
     let editor_2 = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane_2.downgrade()),
                 true,
                 window,
@@ -23453,7 +23465,7 @@ println!("5");
     let _other_editor_1 = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "lib.rs"),
+                (worktree_id, rel_path("lib.rs")),
                 Some(pane_1.downgrade()),
                 true,
                 window,
@@ -23489,7 +23501,7 @@ println!("5");
     let _other_editor_2 = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "lib.rs"),
+                (worktree_id, rel_path("lib.rs")),
                 Some(pane_2.downgrade()),
                 true,
                 window,
@@ -23526,7 +23538,7 @@ println!("5");
     let _editor_1_reopened = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane_1.downgrade()),
                 true,
                 window,
@@ -23540,7 +23552,7 @@ println!("5");
     let _editor_2_reopened = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane_2.downgrade()),
                 true,
                 window,
@@ -23634,7 +23646,7 @@ println!("5");
     let editor = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane.downgrade()),
                 true,
                 window,
@@ -23693,7 +23705,7 @@ println!("5");
     let _editor_reopened = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane.downgrade()),
                 true,
                 window,
@@ -23860,7 +23872,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         .unwrap();
     let editor = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "file.html"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("file.html")), None, true, window, cx)
         })
         .unwrap()
         .await
@@ -24054,7 +24066,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     let main_editor = workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_path(
-                (worktree_id, "main.rs"),
+                (worktree_id, rel_path("main.rs")),
                 Some(pane.downgrade()),
                 true,
                 window,
@@ -25636,7 +25648,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
                     .path();
                 assert_eq!(
                     editor_file.as_ref(),
-                    Path::new("first.rs"),
+                    rel_path("first.rs"),
                     "Both editors should be opened for the same file"
                 )
             }
@@ -25701,7 +25713,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(&Default::default(), window, cx);
+                pane.navigate_backward(&workspace::GoBack, window, cx);
             })
         })
         .unwrap();
@@ -25727,6 +25739,50 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             vec![expected_color],
             extract_color_inlays(editor, cx),
             "Should have an initial inlay"
+        );
+    });
+
+    drop(color_request_handle);
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut empty_color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(Vec::new())
+            }
+        });
+    let save = editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input("dirty_again", window, cx);
+        editor.save(
+            SaveOptions {
+                format: false,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save.await.unwrap();
+
+    empty_color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save only, as formatting was not requested"
+    );
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Should clear all colors when the server returns an empty response"
         );
     });
 }
@@ -25772,7 +25828,7 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
 
     let handle = workspace
         .update_in(cx, |workspace, window, cx| {
-            let project_path = (worktree_id, "one.pdf");
+            let project_path = (worktree_id, rel_path("one.pdf"));
             workspace.open_path(project_path, None, true, window, cx)
         })
         .await
@@ -25972,6 +26028,217 @@ let result = variable * 2;",
 let another = variable + 1;
 let result = variable * 2;",
     );
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Hello, «editorˇ».\nZed is «ˇgreat» (see this link: ˇ)");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "Hello, [editor]({url})ˇ.\nZed is [great]({url})ˇ (see this link: {url}ˇ)"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_zed_copy_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state(&format!(
+        "Hello, editor.\nZed is great (see this link: )\n«{url}ˇ»"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.copy(&Copy, window, cx);
+    });
+
+    cx.set_state(&format!(
+        "Hello, «editorˇ».\nZed is «ˇgreat» (see this link: ˇ)\n{url}"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "Hello, [editor]({url})ˇ.\nZed is [great]({url})ˇ (see this link: {url}ˇ)\n{url}"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_replaces_existing_url_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Please visit zed's homepage: «https://www.apple.comˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("Please visit zed's homepage: {url}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_plain_text_from_other_app_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let text = "Awesome";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Hello, «editorˇ».\nZed is «ˇgreat»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("Hello, {text}ˇ.\nZed is {text}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("// Hello, «editorˇ».\n// Zed is «ˇgreat» (see this link: ˇ)");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "// Hello, {url}ˇ.\n// Zed is {url}ˇ (see this link: {url}ˇ)"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_multi_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("this will embed -> link", vec![Point::row_range(0..1)]),
+                ("this will replace -> link", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(vec![
+                Point::new(0, 19)..Point::new(0, 23),
+                Point::new(1, 21)..Point::new(1, 25),
+            ])
+        });
+        let first_buffer_id = multi_buffer
+            .read(cx)
+            .excerpt_buffer_ids()
+            .into_iter()
+            .next()
+            .unwrap();
+        let first_buffer = multi_buffer.read(cx).buffer(first_buffer_id).unwrap();
+        first_buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(markdown_language.clone()), cx);
+        });
+
+        editor
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "this will embed -> [link]({url})ˇ\nthis will replace -> {url}ˇ"
+    ));
 }
 
 #[track_caller]

@@ -6,12 +6,7 @@ use itertools::Itertools;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, OffsetRangeExt as _, Point, Rope, TextBuffer,
 };
-use std::{
-    cmp::Reverse,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use util::ResultExt;
 
 pub enum Diff {
@@ -21,7 +16,7 @@ pub enum Diff {
 
 impl Diff {
     pub fn finalized(
-        path: PathBuf,
+        path: String,
         old_text: Option<String>,
         new_text: String,
         language_registry: Arc<LanguageRegistry>,
@@ -36,7 +31,7 @@ impl Diff {
             let buffer = new_buffer.clone();
             async move |_, cx| {
                 let language = language_registry
-                    .language_for_file_path(&path)
+                    .language_for_file_path(Path::new(&path))
                     .await
                     .log_err();
 
@@ -152,12 +147,15 @@ impl Diff {
         let path = match self {
             Diff::Pending(PendingDiff {
                 new_buffer: buffer, ..
-            }) => buffer.read(cx).file().map(|file| file.path().as_ref()),
-            Diff::Finalized(FinalizedDiff { path, .. }) => Some(path.as_path()),
+            }) => buffer
+                .read(cx)
+                .file()
+                .map(|file| file.path().display(file.path_style(cx))),
+            Diff::Finalized(FinalizedDiff { path, .. }) => Some(path.as_str().into()),
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
-            path.unwrap_or(Path::new("untitled")).display(),
+            path.unwrap_or("untitled".into()),
             buffer_text
         )
     }
@@ -244,8 +242,8 @@ impl PendingDiff {
             .new_buffer
             .read(cx)
             .file()
-            .map(|file| file.path().as_ref())
-            .unwrap_or(Path::new("untitled"))
+            .map(|file| file.path().display(file.path_style(cx)))
+            .unwrap_or("untitled".into())
             .into();
 
         // Replace the buffer in the multibuffer with the snapshot
@@ -348,7 +346,7 @@ impl PendingDiff {
 }
 
 pub struct FinalizedDiff {
-    path: PathBuf,
+    path: String,
     base_text: Arc<String>,
     new_buffer: Entity<Buffer>,
     multibuffer: Entity<MultiBuffer>,

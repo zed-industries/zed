@@ -66,5 +66,6 @@ parking_lot.workspace = true
 project_panel.workspace = true
 release_channel.workspace = true
 settings.workspace = true
+perf.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

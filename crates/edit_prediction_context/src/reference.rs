@@ -33,8 +33,8 @@ pub fn references_in_excerpt(
         snapshot,
     );
 
-    for (range, text) in excerpt
-        .parent_signature_ranges
+    for ((_, range), text) in excerpt
+        .parent_declarations
         .iter()
         .zip(excerpt_text.parent_signatures.iter())
     {

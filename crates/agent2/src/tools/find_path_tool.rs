@@ -156,10 +156,14 @@ impl AgentTool for FindPathTool {
 }
 
 fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
-    let path_matcher = match PathMatcher::new([
-        // Sometimes models try to search for "". In this case, return all paths in the project.
-        if glob.is_empty() { "*" } else { glob },
-    ]) {
+    let path_style = project.read(cx).path_style(cx);
+    let path_matcher = match PathMatcher::new(
+        [
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { glob },
+        ],
+        path_style,
+    ) {
         Ok(matcher) => matcher,
         Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
@@ -173,9 +177,8 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         let mut results = Vec::new();
         for snapshot in snapshots {
             for entry in snapshot.entries(false, 0) {
-                let root_name = PathBuf::from(snapshot.root_name());
-                if path_matcher.is_match(root_name.join(&entry.path)) {
-                    results.push(snapshot.abs_path().join(entry.path.as_ref()));
+                if path_matcher.is_match(snapshot.root_name().join(&entry.path).as_std_path()) {
+                    results.push(snapshot.absolutize(&entry.path));
                 }
             }
         }

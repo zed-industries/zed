@@ -8,7 +8,7 @@ use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchem
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{fmt::Write, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
@@ -150,9 +150,7 @@ impl Tool for DiagnosticsTool {
                         has_diagnostics = true;
                         output.push_str(&format!(
                             "{}: {} error(s), {} warning(s)\n",
-                            Path::new(worktree.read(cx).root_name())
-                                .join(project_path.path)
-                                .display(),
+                            worktree.read(cx).absolutize(&project_path.path).display(),
                             summary.error_count,
                             summary.warning_count
                         ));

@@ -1,3 +1,7 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "We are not in an async environment, so std::process::Command is fine"
+)]
 #![cfg_attr(
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
@@ -19,6 +23,8 @@ use util::paths::PathWithPosition;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
+
+const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
 
 struct Detect;
 
@@ -137,7 +143,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         }
         .with_context(|| format!("parsing as path with position {argument_str}"))?,
     };
-    Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
+    Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -310,21 +316,16 @@ fn main() -> Result<()> {
     let wsl = None;
 
     for path in args.paths_with_position.iter() {
-        if path.starts_with("zed://")
-            || path.starts_with("http://")
-            || path.starts_with("https://")
-            || path.starts_with("file://")
-            || path.starts_with("ssh://")
-        {
+        if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
             urls.push(path.to_string());
         } else if path == "-" && args.paths_with_position.len() == 1 {
             let file = NamedTempFile::new()?;
-            paths.push(file.path().to_string_lossy().to_string());
+            paths.push(file.path().to_string_lossy().into_owned());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
         } else if let Some(file) = anonymous_fd(path) {
             let tmp_file = NamedTempFile::new()?;
-            paths.push(tmp_file.path().to_string_lossy().to_string());
+            paths.push(tmp_file.path().to_string_lossy().into_owned());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
         } else if let Some(wsl) = wsl {

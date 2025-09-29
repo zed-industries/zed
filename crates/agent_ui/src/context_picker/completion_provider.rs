@@ -13,6 +13,7 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
+use project::lsp_store::SymbolLocation;
 use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
     Symbol, WorktreeId,
@@ -22,6 +23,8 @@ use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
 use util::ResultExt as _;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use agent::{
@@ -574,11 +577,12 @@ impl ContextPickerCompletionProvider {
 
     fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
+        path_style: PathStyle,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         cx: &App,
@@ -586,6 +590,7 @@ impl ContextPickerCompletionProvider {
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &project_path.path,
             path_prefix,
+            path_style,
         );
 
         let label =
@@ -657,17 +662,22 @@ impl ContextPickerCompletionProvider {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = workspace.read(cx).path_style(cx);
+        let SymbolLocation::InProject(symbol_path) = &symbol.path else {
+            return None;
+        };
         let path_prefix = workspace
             .read(cx)
             .project()
             .read(cx)
-            .worktree_for_id(symbol.path.worktree_id, cx)?
+            .worktree_for_id(symbol_path.worktree_id, cx)?
             .read(cx)
             .root_name();
 
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
-            &symbol.path.path,
+            &symbol_path.path,
             path_prefix,
+            path_style,
         );
         let full_path = if let Some(directory) = directory {
             format!("{}{}", directory, file_name)
@@ -768,6 +778,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let text_thread_store = self.text_thread_store.clone();
         let editor = self.editor.clone();
         let http_client = workspace.read(cx).client().http_client();
+        let path_style = workspace.read(cx).path_style(cx);
 
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
@@ -834,6 +845,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 mat.is_dir,
                                 excerpt_id,
                                 source_range.clone(),
+                                path_style,
                                 editor.clone(),
                                 context_store.clone(),
                                 cx,
@@ -1064,7 +1076,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, rc::Rc};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Item};
 
     #[test]
@@ -1215,15 +1227,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -1232,7 +1246,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -1308,13 +1322,13 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "four.txt dir/a/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Fetch"
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    format!("four.txt dir{slash}a{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -1341,7 +1355,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1350,7 +1367,10 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt) ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1361,7 +1381,10 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)  ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1374,7 +1397,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1388,7 +1411,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum @file ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1406,7 +1429,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1423,7 +1446,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n@"
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n@")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1444,7 +1467,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n[@six.txt](@file:dir/b/six.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n[@six.txt](@file:dir{slash}b{slash}six.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(

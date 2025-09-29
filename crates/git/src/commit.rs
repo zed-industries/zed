@@ -39,7 +39,7 @@ pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<Hash
 }
 
 /// Parse the output of `git diff --name-status -z`
-pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&Path, StatusCode)> {
+pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, StatusCode)> {
     let mut parts = content.split('\0');
     std::iter::from_fn(move || {
         loop {
@@ -51,13 +51,14 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&Path,
                 "D" => StatusCode::Deleted,
                 _ => continue,
             };
-            return Some((Path::new(path), status));
+            return Some((path, status));
         }
     })
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -78,31 +79,19 @@ mod tests {
         assert_eq!(
             output,
             &[
-                (Path::new("Cargo.lock"), StatusCode::Modified),
-                (Path::new("crates/project/Cargo.toml"), StatusCode::Modified),
+                ("Cargo.lock", StatusCode::Modified),
+                ("crates/project/Cargo.toml", StatusCode::Modified),
+                ("crates/project/src/buffer_store.rs", StatusCode::Modified),
+                ("crates/project/src/git.rs", StatusCode::Deleted),
+                ("crates/project/src/git_store.rs", StatusCode::Added),
                 (
-                    Path::new("crates/project/src/buffer_store.rs"),
-                    StatusCode::Modified
-                ),
-                (Path::new("crates/project/src/git.rs"), StatusCode::Deleted),
-                (
-                    Path::new("crates/project/src/git_store.rs"),
-                    StatusCode::Added
-                ),
-                (
-                    Path::new("crates/project/src/git_store/git_traversal.rs"),
+                    "crates/project/src/git_store/git_traversal.rs",
                     StatusCode::Added,
                 ),
+                ("crates/project/src/project.rs", StatusCode::Modified),
+                ("crates/project/src/worktree_store.rs", StatusCode::Modified),
                 (
-                    Path::new("crates/project/src/project.rs"),
-                    StatusCode::Modified
-                ),
-                (
-                    Path::new("crates/project/src/worktree_store.rs"),
-                    StatusCode::Modified
-                ),
-                (
-                    Path::new("crates/project_panel/src/project_panel.rs"),
+                    "crates/project_panel/src/project_panel.rs",
                     StatusCode::Modified
                 ),
             ]

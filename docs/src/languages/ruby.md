@@ -9,6 +9,7 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
+  - [Herb](https://herb-tools.dev)
 - Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
@@ -27,6 +28,7 @@ In addition to these two language servers, Zed also supports:
 - [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 - [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
 - [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that leverages Ruby Signature (RBS).
+- [Herb](https://herb-tools.dev) which is a language server for ERB files.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
@@ -237,6 +239,10 @@ To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your
   }
 }
 ```
+
+## Setting up Herb
+
+`Herb` is enabled by default for the `HTML/ERB` language.
 
 ## Using the Tailwind CSS Language Server with Ruby
 

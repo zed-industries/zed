@@ -1524,7 +1524,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path1: PathKey = PathKey::namespaced(0, "/".into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1619,7 +1619,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path1: PathKey = PathKey::namespaced(0, "/".into());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1638,7 +1638,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced(1, Path::new("/").into());
+    let path2 = PathKey::namespaced(1, "/".into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1815,7 +1815,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path: PathKey = PathKey::namespaced(0, Path::new("/").into());
+    let path: PathKey = PathKey::namespaced(0, "/".into());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {

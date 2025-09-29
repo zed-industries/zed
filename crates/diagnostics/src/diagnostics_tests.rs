@@ -27,7 +27,7 @@ use std::{
     str::FromStr,
 };
 use unindent::Unindent as _;
-use util::{RandomCharIter, path, post_inc};
+use util::{RandomCharIter, path, post_inc, rel_path::rel_path};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -1609,7 +1609,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {
@@ -1763,7 +1763,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {
@@ -1892,7 +1892,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {

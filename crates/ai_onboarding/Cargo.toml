@@ -18,7 +18,6 @@ default = []
 client.workspace = true
 cloud_llm_client.workspace = true
 component.workspace = true
-feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true
 serde.workspace = true

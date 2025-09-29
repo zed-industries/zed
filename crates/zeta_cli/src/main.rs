@@ -2,6 +2,8 @@ mod headless;
 
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
+use cloud_llm_client::predict_edits_v3;
+use edit_prediction_context::EditPredictionExcerptOptions;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
@@ -13,12 +15,15 @@ use language_model::LlmApiToken;
 use project::{Project, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
+use zeta::{PerformPredictEditsParams, Zeta};
 
 use crate::headless::ZetaCliAppState;
 
@@ -32,6 +37,12 @@ struct ZetaCliArgs {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Context(ContextArgs),
+    Zeta2Context {
+        #[clap(flatten)]
+        zeta2_args: Zeta2Args,
+        #[clap(flatten)]
+        context_args: ContextArgs,
+    },
     Predict {
         #[arg(long)]
         predict_edits_body: Option<FileOrStdin>,
@@ -51,6 +62,50 @@ struct ContextArgs {
     use_language_server: bool,
     #[arg(long)]
     events: Option<FileOrStdin>,
+}
+
+#[derive(Debug, Args)]
+struct Zeta2Args {
+    #[arg(long, default_value_t = 8192)]
+    max_prompt_bytes: usize,
+    #[arg(long, default_value_t = 2048)]
+    max_excerpt_bytes: usize,
+    #[arg(long, default_value_t = 1024)]
+    min_excerpt_bytes: usize,
+    #[arg(long, default_value_t = 0.66)]
+    target_before_cursor_over_total_bytes: f32,
+    #[arg(long, default_value_t = 1024)]
+    max_diagnostic_bytes: usize,
+    #[arg(long, value_enum, default_value_t = PromptFormat::default())]
+    prompt_format: PromptFormat,
+    #[arg(long, value_enum, default_value_t = Default::default())]
+    output_format: OutputFormat,
+}
+
+#[derive(clap::ValueEnum, Default, Debug, Clone)]
+enum PromptFormat {
+    #[default]
+    MarkedExcerpt,
+    LabeledSections,
+    OnlySnippets,
+}
+
+impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
+    fn into(self) -> predict_edits_v3::PromptFormat {
+        match self {
+            Self::MarkedExcerpt => predict_edits_v3::PromptFormat::MarkedExcerpt,
+            Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
+            Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
+        }
+    }
+}
+
+#[derive(clap::ValueEnum, Default, Debug, Clone)]
+enum OutputFormat {
+    #[default]
+    Prompt,
+    Request,
+    Both,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +136,7 @@ impl FromStr for FileOrStdin {
 
 #[derive(Debug, Clone)]
 struct CursorPosition {
-    path: PathBuf,
+    path: Arc<RelPath>,
     point: Point,
 }
 
@@ -97,7 +152,7 @@ impl FromStr for CursorPosition {
             ));
         }
 
-        let path = PathBuf::from(parts[0]);
+        let path = RelPath::new(Path::new(&parts[0]), PathStyle::local())?.into_arc();
         let line: u32 = parts[1]
             .parse()
             .map_err(|_| anyhow!("Invalid line number: '{}'", parts[1]))?;
@@ -112,11 +167,17 @@ impl FromStr for CursorPosition {
     }
 }
 
+enum GetContextOutput {
+    Zeta1(zeta::GatherContextOutput),
+    Zeta2(String),
+}
+
 async fn get_context(
+    zeta2_args: Option<Zeta2Args>,
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<GatherContextOutput> {
+) -> Result<GetContextOutput> {
     let ContextArgs {
         worktree: worktree_path,
         cursor,
@@ -125,9 +186,6 @@ async fn get_context(
     } = args;
 
     let worktree_path = worktree_path.canonicalize()?;
-    if cursor.path.is_absolute() {
-        return Err(anyhow!("Absolute paths are not supported in --cursor"));
-    }
 
     let project = cx.update(|cx| {
         Project::local(
@@ -152,18 +210,13 @@ async fn get_context(
             open_buffer_with_language_server(&project, &worktree, &cursor.path, cx).await?;
         (Some(lsp_open_handle), buffer)
     } else {
-        let abs_path = worktree_path.join(&cursor.path);
-        let content = smol::fs::read_to_string(&abs_path).await?;
-        let buffer = cx.new(|cx| Buffer::local(content, cx))?;
+        let buffer = open_buffer(&project, &worktree, &cursor.path, cx).await?;
         (None, buffer)
     };
 
-    let worktree_name = worktree_path
-        .file_name()
-        .ok_or_else(|| anyhow!("--worktree path must end with a folder name"))?;
-    let full_path_str = PathBuf::from(worktree_name)
-        .join(&cursor.path)
-        .to_string_lossy()
+    let full_path_str = worktree
+        .read_with(cx, |worktree, _| worktree.root_name().join(&cursor.path))?
+        .display(PathStyle::local())
         .to_string();
 
     let snapshot = cx.update(|cx| buffer.read(cx).snapshot())?;
@@ -189,40 +242,104 @@ async fn get_context(
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };
-    let prompt_for_events = move || (events, 0);
-    cx.update(|cx| {
-        gather_context(
-            full_path_str,
-            &snapshot,
-            clipped_cursor,
-            prompt_for_events,
-            cx,
-        )
-    })?
-    .await
+
+    if let Some(zeta2_args) = zeta2_args {
+        Ok(GetContextOutput::Zeta2(
+            cx.update(|cx| {
+                let zeta = cx.new(|cx| {
+                    zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                });
+                zeta.update(cx, |zeta, cx| {
+                    zeta.register_buffer(&buffer, &project, cx);
+                    zeta.set_options(zeta2::ZetaOptions {
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: zeta2_args.max_excerpt_bytes,
+                            min_bytes: zeta2_args.min_excerpt_bytes,
+                            target_before_cursor_over_total_bytes: zeta2_args
+                                .target_before_cursor_over_total_bytes,
+                        },
+                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+                        max_prompt_bytes: zeta2_args.max_prompt_bytes,
+                        prompt_format: zeta2_args.prompt_format.into(),
+                    })
+                });
+                // TODO: Actually wait for indexing.
+                let timer = cx.background_executor().timer(Duration::from_secs(5));
+                cx.spawn(async move |cx| {
+                    timer.await;
+                    let request = zeta
+                        .update(cx, |zeta, cx| {
+                            let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
+                            zeta.cloud_request_for_zeta_cli(&project, &buffer, cursor, cx)
+                        })?
+                        .await?;
+
+                    let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
+                    let prompt_string = planned_prompt.to_prompt_string()?.0;
+                    match zeta2_args.output_format {
+                        OutputFormat::Prompt => anyhow::Ok(prompt_string),
+                        OutputFormat::Request => {
+                            anyhow::Ok(serde_json::to_string_pretty(&request)?)
+                        }
+                        OutputFormat::Both => anyhow::Ok(serde_json::to_string_pretty(&json!({
+                            "request": request,
+                            "prompt": prompt_string,
+                        }))?),
+                    }
+                })
+            })?
+            .await?,
+        ))
+    } else {
+        let prompt_for_events = move || (events, 0);
+        Ok(GetContextOutput::Zeta1(
+            cx.update(|cx| {
+                zeta::gather_context(
+                    full_path_str,
+                    &snapshot,
+                    clipped_cursor,
+                    prompt_for_events,
+                    cx,
+                )
+            })?
+            .await?,
+        ))
+    }
+}
+
+pub async fn open_buffer(
+    project: &Entity<Project>,
+    worktree: &Entity<Worktree>,
+    path: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Buffer>> {
+    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+        worktree_id: worktree.id(),
+        path: path.into(),
+    })?;
+
+    project
+        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+        .await
 }
 
 pub async fn open_buffer_with_language_server(
     project: &Entity<Project>,
     worktree: &Entity<Worktree>,
-    path: &Path,
+    path: &RelPath,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Entity<Buffer>>, Entity<Buffer>)> {
-    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-        worktree_id: worktree.id(),
-        path: path.to_path_buf().into(),
+    let buffer = open_buffer(project, worktree, path, cx).await?;
+
+    let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
+        (
+            project.register_buffer_with_language_servers(&buffer, cx),
+            project.path_style(cx),
+        )
     })?;
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-        .await?;
-
-    let lsp_open_handle = project.update(cx, |project, cx| {
-        project.register_buffer_with_language_servers(&buffer, cx)
-    })?;
-
-    let log_prefix = path.to_string_lossy().to_string();
-    wait_for_lang_server(&project, &buffer, log_prefix, cx).await?;
+    let log_prefix = path.display(path_style);
+    wait_for_lang_server(&project, &buffer, log_prefix.into_owned(), cx).await?;
 
     Ok((lsp_open_handle, buffer))
 }
@@ -319,11 +436,26 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
+        let is_zeta2_context_command = matches!(args.command, Commands::Zeta2Context { .. });
         cx.spawn(async move |cx| {
             let result = match args.command {
-                Commands::Context(context_args) => get_context(context_args, &app_state, cx)
-                    .await
-                    .map(|output| serde_json::to_string_pretty(&output.body).unwrap()),
+                Commands::Zeta2Context {
+                    zeta2_args,
+                    context_args,
+                } => match get_context(Some(zeta2_args), context_args, &app_state, cx).await {
+                    Ok(GetContextOutput::Zeta1 { .. }) => unreachable!(),
+                    Ok(GetContextOutput::Zeta2(output)) => Ok(output),
+                    Err(err) => Err(err),
+                },
+                Commands::Context(context_args) => {
+                    match get_context(None, context_args, &app_state, cx).await {
+                        Ok(GetContextOutput::Zeta1(output)) => {
+                            Ok(serde_json::to_string_pretty(&output.body).unwrap())
+                        }
+                        Ok(GetContextOutput::Zeta2 { .. }) => unreachable!(),
+                        Err(err) => Err(err),
+                    }
+                }
                 Commands::Predict {
                     predict_edits_body,
                     context_args,
@@ -338,7 +470,10 @@ fn main() {
                             if let Some(predict_edits_body) = predict_edits_body {
                                 serde_json::from_str(&predict_edits_body.read_to_string().await?)?
                             } else if let Some(context_args) = context_args {
-                                get_context(context_args, &app_state, cx).await?.body
+                                match get_context(None, context_args, &app_state, cx).await? {
+                                    GetContextOutput::Zeta1(output) => output.body,
+                                    GetContextOutput::Zeta2 { .. } => unreachable!(),
+                                }
                             } else {
                                 return Err(anyhow!(
                                     "Expected either --predict-edits-body-file \
@@ -363,6 +498,10 @@ fn main() {
             match result {
                 Ok(output) => {
                     println!("{}", output);
+                    // TODO: Remove this once the 5 second delay is properly replaced.
+                    if is_zeta2_context_command {
+                        eprintln!("Note that zeta_cli doesn't yet wait for indexing, instead waits 5 seconds.");
+                    }
                     let _ = cx.update(|cx| cx.quit());
                 }
                 Err(e) => {

@@ -110,12 +110,15 @@ impl AgentTool for GrepTool {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
 
+        let path_style = self.project.read(cx).path_style(cx);
+
         let include_matcher = match PathMatcher::new(
             input
                 .include_pattern
                 .as_ref()
                 .into_iter()
                 .collect::<Vec<_>>(),
+            path_style,
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
@@ -132,7 +135,7 @@ impl AgentTool for GrepTool {
                 .iter()
                 .chain(global_settings.private_files.sources().iter());
 
-            match PathMatcher::new(exclude_patterns) {
+            match PathMatcher::new(exclude_patterns, path_style) {
                 Ok(matcher) => matcher,
                 Err(error) => {
                     return Task::ready(Err(anyhow!("invalid exclude pattern: {error}")));

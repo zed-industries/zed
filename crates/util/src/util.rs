@@ -5,6 +5,7 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod redact;
+pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell_env;
@@ -307,7 +308,7 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
 }
 
 #[cfg(unix)]
-pub fn load_login_shell_environment() -> Result<()> {
+pub async fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -315,7 +316,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(paths::home_dir())? {
+    for (name, value) in shell_env::capture(paths::home_dir()).await? {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -598,7 +599,7 @@ pub fn get_windows_system_shell() -> String {
             .or_else(|| find_pwsh_in_msix(true))
             .or_else(|| find_pwsh_in_programfiles(true, true))
             .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or("powershell.exe".to_string())
     });
 

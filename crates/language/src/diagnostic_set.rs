@@ -269,13 +269,13 @@ impl Default for Summary {
 }
 
 impl sum_tree::Summary for Summary {
-    type Context = text::BufferSnapshot;
+    type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: &Self::Context) -> Self {
+    fn zero(_cx: Self::Context<'_>) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.min_start.cmp(&self.min_start, buffer).is_lt() {
             self.min_start = other.min_start;
         }

@@ -28,7 +28,6 @@ use std::{
 };
 use text::{Anchor, BufferSnapshot, OffsetRangeExt};
 use ui::{Button, ButtonStyle, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
-use util::paths::PathExt;
 use workspace::{
     ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, TabContentParams},
@@ -783,15 +782,16 @@ impl Item for BufferDiagnosticsEditor {
     }
 
     // Builds the content to be displayed in the tab.
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let path_style = self.project.read(cx).path_style(cx);
         let error_count = self.summary.error_count;
         let warning_count = self.summary.warning_count;
         let label = Label::new(
             self.project_path
                 .path
                 .file_name()
-                .map(|f| f.to_sanitized_string())
-                .unwrap_or_else(|| self.project_path.path.to_sanitized_string()),
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| self.project_path.path.display(path_style).to_string()),
         );
 
         h_flex()
@@ -827,11 +827,12 @@ impl Item for BufferDiagnosticsEditor {
         "Buffer Diagnostics".into()
     }
 
-    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        let path_style = self.project.read(cx).path_style(cx);
         Some(
             format!(
                 "Buffer Diagnostics - {}",
-                self.project_path.path.to_sanitized_string()
+                self.project_path.path.display(path_style)
             )
             .into(),
         )
@@ -848,7 +849,8 @@ impl Item for BufferDiagnosticsEditor {
 
 impl Render for BufferDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let filename = self.project_path.path.to_sanitized_string();
+        let path_style = self.project.read(cx).path_style(cx);
+        let filename = self.project_path.path.display(path_style).to_string();
         let error_count = self.summary.error_count;
         let warning_count = match self.include_warnings {
             true => self.summary.warning_count,

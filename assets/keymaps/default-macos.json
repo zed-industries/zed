@@ -550,6 +550,8 @@
       "cmd-ctrl-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
       "cmd-ctrl-right": "editor::SelectLargerSyntaxNode", // Expand selection
       "cmd-ctrl-up": "editor::SelectPreviousSyntaxNode", // Move selection up
+      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand selection (VSCode version)
+      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink selection (VSCode version)
       "cmd-ctrl-down": "editor::SelectNextSyntaxNode", // Move selection down
       "cmd-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch / find_under_expand
       "cmd-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection

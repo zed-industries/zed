@@ -603,13 +603,6 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
             newline: false,
         },
         BracketPair {
-            start: "{".into(),
-            end: "}".into(),
-            close: true,
-            surround: true,
-            newline: false,
-        },
-        BracketPair {
             start: "<".into(),
             end: ">".into(),
             close: true,
