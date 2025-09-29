@@ -35,7 +35,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 mod prediction;
 mod provider;
 
-use crate::prediction::{EditPrediction, EditPredictionId};
+use crate::prediction::EditPrediction;
 pub use provider::ZetaEditPredictionProvider;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
@@ -133,14 +133,8 @@ impl CurrentEditPrediction {
 /// A prediction from the perspective of a buffer.
 #[derive(Debug)]
 enum BufferEditPrediction<'a> {
-    Local {
-        prediction: &'a EditPrediction,
-    },
-    Jump {
-        id: EditPredictionId,
-        path: Arc<Path>,
-        offset: usize,
-    },
+    Local { prediction: &'a EditPrediction },
+    Jump { prediction: &'a EditPrediction },
 }
 
 impl BufferEditPrediction<'_> {
@@ -375,23 +369,10 @@ impl Zeta {
             prediction,
         } = project_state.current_prediction.as_ref()?;
 
-        if *requested_by_buffer_id == buffer.entity_id() {
-            if prediction.targets_buffer(buffer.read(cx), cx) {
-                Some(BufferEditPrediction::Local { prediction })
-            } else {
-                Some(BufferEditPrediction::Jump {
-                    id: prediction.id,
-                    path: prediction.path.clone(),
-                    offset: prediction
-                        .edits
-                        .first()?
-                        .0
-                        .start
-                        .to_offset(&prediction.snapshot),
-                })
-            }
-        } else if prediction.targets_buffer(buffer.read(cx), cx) {
+        if prediction.targets_buffer(buffer.read(cx), cx) {
             Some(BufferEditPrediction::Local { prediction })
+        } else if *requested_by_buffer_id == buffer.entity_id() {
+            Some(BufferEditPrediction::Jump { prediction })
         } else {
             None
         }
@@ -1077,7 +1058,7 @@ mod tests {
                 .unwrap();
             assert_matches!(
                 prediction,
-                BufferEditPrediction::Jump { path, .. } if path.as_ref() == Path::new(path!("root/2.txt"))
+                BufferEditPrediction::Jump { prediction } if prediction.path.as_ref() == Path::new(path!("root/2.txt"))
             );
         });
 

@@ -627,13 +627,15 @@ enum EditPrediction {
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
     },
+    /// Move to a specific location in the active editor
     Move {
         target: Anchor,
         snapshot: BufferSnapshot,
     },
-    JumpOut {
-        path: Arc<Path>,
-        offset: usize,
+    /// Jump to a specific location in another editor, not the currently active one
+    Jump {
+        target: language::Anchor,
+        snapshot: BufferSnapshot,
     },
 }
 
@@ -7490,39 +7492,11 @@ impl Editor {
 
                 cx.notify();
             }
-            EditPrediction::JumpOut { path, offset } => {
-                let Some((workspace, _)) = self.workspace.clone() else {
-                    return;
-                };
-
-                workspace
-                    .update(cx, |workspace, cx| {
-                        let Some(path) = workspace.project().read(cx).find_project_path(path, cx)
-                        else {
-                            return;
-                        };
-                        let item = workspace.open_path(path, None, true, window, cx);
-                        let offset = *offset;
-                        window
-                            .spawn(cx, async move |cx| {
-                                let Some(editor) = item.await?.downcast::<Editor>() else {
-                                    return Ok(());
-                                };
-                                editor
-                                    .update_in(cx, |editor, window, cx| {
-                                        editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::center()),
-                                            window,
-                                            cx,
-                                            |s| s.select_ranges(vec![offset..offset]),
-                                        );
-                                    })
-                                    .ok();
-                                anyhow::Ok(())
-                            })
-                            .detach_and_log_err(cx);
-                    })
-                    .ok();
+            EditPrediction::Jump { snapshot, target } => {
+                if let Some(workspace) = self.workspace() {
+                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
             }
         }
 
@@ -7596,39 +7570,11 @@ impl Editor {
                     self.accept_edit_prediction(&Default::default(), window, cx);
                 }
             }
-            EditPrediction::JumpOut { path, offset } => {
-                let Some((workspace, _)) = self.workspace.clone() else {
-                    return;
-                };
-
-                workspace
-                    .update(cx, |workspace, cx| {
-                        let Some(path) = workspace.project().read(cx).find_project_path(path, cx)
-                        else {
-                            return;
-                        };
-                        let item = workspace.open_path(path, None, true, window, cx);
-                        let offset = *offset;
-                        window
-                            .spawn(cx, async move |cx| {
-                                let Some(editor) = item.await?.downcast::<Editor>() else {
-                                    return Ok(());
-                                };
-                                editor
-                                    .update_in(cx, |editor, window, cx| {
-                                        editor.change_selections(
-                                            SelectionEffects::scroll(Autoscroll::center()),
-                                            window,
-                                            cx,
-                                            |s| s.select_ranges(vec![offset..offset]),
-                                        );
-                                    })
-                                    .ok();
-                                anyhow::Ok(())
-                            })
-                            .detach_and_log_err(cx);
-                    })
-                    .ok();
+            EditPrediction::Jump { snapshot, target } => {
+                if let Some(workspace) = self.workspace() {
+                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
             }
         }
     }
@@ -7683,6 +7629,36 @@ impl Editor {
             suggestion_accepted = accepted,
             file_extension = extension,
         );
+    }
+
+    fn open_editor_at_anchor(
+        snapshot: &language::BufferSnapshot,
+        target: language::Anchor,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        workspace.update(cx, |workspace, cx| {
+            let path = snapshot.file().map(|file| file.full_path(cx));
+            let Some(path) =
+                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
+            else {
+                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
+            };
+            let target = text::ToPoint::to_point(&target, snapshot);
+            let item = workspace.open_path(path, None, true, window, cx);
+            window.spawn(cx, async move |cx| {
+                let Some(editor) = item.await?.downcast::<Editor>() else {
+                    return Ok(());
+                };
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(target, window, cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+        })
     }
 
     pub fn has_active_edit_prediction(&self) -> bool {
@@ -7946,11 +7922,15 @@ impl Editor {
                 edits,
                 edit_preview,
             } => (id, edits, edit_preview),
-            edit_prediction::EditPrediction::JumpOut { id, path, offset } => {
+            edit_prediction::EditPrediction::JumpOut {
+                id,
+                snapshot,
+                target,
+            } => {
                 self.stale_edit_prediction_in_menu = None;
                 self.active_edit_prediction = Some(EditPredictionState {
                     inlay_ids: vec![],
-                    completion: EditPrediction::JumpOut { path, offset },
+                    completion: EditPrediction::Jump { snapshot, target },
                     completion_id: id,
                     invalidation_range: None,
                 });
@@ -8742,12 +8722,14 @@ impl Editor {
                 window,
                 cx,
             ),
-            EditPrediction::JumpOut { path, .. } => {
+            EditPrediction::Jump { snapshot, .. } => {
+                let file_name = snapshot
+                    .file()
+                    .map(|file| file.file_name(cx))
+                    .unwrap_or("untitled");
                 let mut element = self
                     .render_edit_prediction_line_popover(
-                        path.file_name()
-                            .map(|name| format!("Jump to {}", name.display()))
-                            .unwrap_or_else(|| format!("Jump to {}", path.display())),
+                        format!("Jump to {file_name}"),
                         Some(IconName::ZedPredict),
                         window,
                         cx,
@@ -9385,7 +9367,7 @@ impl Editor {
                                     }
                                 }
                                 EditPrediction::Edit { .. } => Icon::new(provider_icon),
-                                EditPrediction::JumpOut { .. } => {
+                                EditPrediction::Jump { .. } => {
                                     // TODO [zeta2] custom icon for external jump?
                                     Icon::new(provider_icon)
                                 }
@@ -9593,14 +9575,20 @@ impl Editor {
                 )
             }
 
-            EditPrediction::JumpOut { path, .. } => Some(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .flex_1()
-                    .child(Icon::new(IconName::ZedPredict))
-                    .child(Label::new(format!("Jump to {}", path.display()))),
-            ),
+            EditPrediction::Jump { snapshot, .. } => {
+                let file_name = snapshot
+                    .file()
+                    .map(|file| file.file_name(cx))
+                    .unwrap_or("untitled");
+                Some(
+                    h_flex()
+                        .px_2()
+                        .gap_2()
+                        .flex_1()
+                        .child(Icon::new(IconName::ZedPredict))
+                        .child(Label::new(format!("Jump to {file_name}"))),
+                )
+            }
 
             EditPrediction::Edit {
                 edits,

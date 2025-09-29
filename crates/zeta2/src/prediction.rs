@@ -8,7 +8,9 @@ use std::{
 use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3;
 use gpui::{App, AsyncApp, Entity};
-use language::{Anchor, Buffer, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
+};
 use project::{Project, ProjectPath};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use uuid::Uuid;
@@ -33,7 +35,7 @@ pub struct EditPrediction {
     pub id: EditPredictionId,
     pub path: Arc<Path>,
     pub edits: Arc<[(Range<Anchor>, String)]>,
-    pub snapshot: TextBufferSnapshot,
+    pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
 }
 
@@ -96,7 +98,7 @@ impl EditPrediction {
             id: EditPredictionId(response.request_id),
             path,
             edits,
-            snapshot: snapshot.text,
+            snapshot,
             edit_preview,
         })
     }
@@ -324,7 +326,7 @@ mod tests {
         let prediction = EditPrediction {
             id: EditPredictionId(Uuid::new_v4()),
             edits,
-            snapshot: cx.read(|cx| buffer.read(cx).snapshot().text),
+            snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             path: Path::new("test.txt").into(),
             edit_preview,
         };

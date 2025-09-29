@@ -1,4 +1,4 @@
-use std::{ops::Range, path::Path, sync::Arc};
+use std::ops::Range;
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
@@ -25,8 +25,8 @@ pub enum EditPrediction {
     JumpOut {
         /// The ID of the completion, if it has one.
         id: Option<SharedString>,
-        path: Arc<Path>,
-        offset: usize,
+        snapshot: language::BufferSnapshot,
+        target: language::Anchor,
     },
 }
 

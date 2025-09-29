@@ -205,11 +205,11 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 
         let prediction = match prediction {
             BufferEditPrediction::Local { prediction } => prediction,
-            BufferEditPrediction::Jump { id, path, offset } => {
+            BufferEditPrediction::Jump { prediction } => {
                 return Some(edit_prediction::EditPrediction::JumpOut {
-                    id: Some(id.to_string().into()),
-                    path,
-                    offset,
+                    id: Some(prediction.id.to_string().into()),
+                    snapshot: prediction.snapshot.clone(),
+                    target: prediction.edits.first().unwrap().0.start.clone(),
                 });
             }
         };
