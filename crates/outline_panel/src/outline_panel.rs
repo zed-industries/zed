@@ -1893,7 +1893,7 @@ impl OutlinePanel {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
         {
             cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
@@ -4077,7 +4077,7 @@ impl OutlinePanel {
             .iter()
             .map(|entry| self.entry_name(&worktree_id, entry, cx))
             .collect::<PathBuf>();
-        dir_names_segment.to_string_lossy().to_string()
+        dir_names_segment.to_string_lossy().into_owned()
     }
 
     fn query(&self, cx: &App) -> Option<String> {

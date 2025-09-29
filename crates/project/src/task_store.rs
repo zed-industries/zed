@@ -149,7 +149,7 @@ impl TaskStore {
             project_env: task_context.project_env.into_iter().collect(),
             cwd: task_context
                 .cwd
-                .map(|cwd| cwd.to_string_lossy().to_string()),
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             task_variables: task_context
                 .task_variables
                 .into_iter()

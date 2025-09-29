@@ -351,7 +351,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
         .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
             kind: None,
             title: None,
-            cwd: std::env::temp_dir().to_string_lossy().to_string(),
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
             args: vec![],
             env: None,
             args_can_be_interpreted_by_shell: None,
