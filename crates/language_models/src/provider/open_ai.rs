@@ -923,4 +923,75 @@ mod tests {
             assert!(count > 0);
         }
     }
+
+    #[test]
+    fn test_into_open_ai_with_tools_capability_disabled() {
+        use language_model::{LanguageModelRequestTool, LanguageModelToolChoice};
+
+        let request_with_tools = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Test message".into())],
+                cache: false,
+            }],
+            tools: vec![LanguageModelRequestTool {
+                name: "test_tool".to_string(),
+                description: "A test tool".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string"}
+                    }
+                }),
+            }],
+            tool_choice: Some(LanguageModelToolChoice::Auto),
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+        };
+
+        // Test when tools capability is enabled (true)
+        let openai_request_with_tools = into_open_ai(
+            request_with_tools.clone(),
+            "gpt-4",
+            false, // supports_parallel_tool_calls
+            false, // supports_prompt_cache_key
+            true,  // supports_tools = true
+            None,  // max_output_tokens
+            None,  // reasoning_effort
+        );
+
+        assert_eq!(openai_request_with_tools.tools.len(), 1);
+        let open_ai::ToolDefinition::Function { function } = &openai_request_with_tools.tools[0];
+        assert_eq!(function.name, "test_tool");
+        assert!(openai_request_with_tools.tool_choice.is_some());
+        if let Some(open_ai::ToolChoice::Auto) = openai_request_with_tools.tool_choice {
+            // Expected Auto tool choice
+        } else {
+            panic!("Expected Auto tool choice");
+        }
+
+        // Test when tools capability is disabled (false)
+        let openai_request_without_tools = into_open_ai(
+            request_with_tools.clone(),
+            "gpt-4",
+            false, // supports_parallel_tool_calls
+            false, // supports_prompt_cache_key
+            false, // supports_tools = false
+            None,  // max_output_tokens
+            None,  // reasoning_effort
+        );
+
+        // Should have empty tools array and no tool_choice when supports_tools is false
+        assert_eq!(openai_request_without_tools.tools.len(), 0);
+        assert!(openai_request_without_tools.tool_choice.is_none());
+
+        // Both requests should have the same messages
+        assert_eq!(openai_request_with_tools.messages.len(), openai_request_without_tools.messages.len());
+        assert_eq!(openai_request_with_tools.model, openai_request_without_tools.model);
+    }
 }
