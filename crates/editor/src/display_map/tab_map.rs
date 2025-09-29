@@ -10,6 +10,10 @@ use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
+// Handles a tab width <= 128
+const SPACES: &[u8; u128::BITS as usize] = &[b' '; _];
+const MAX_TABS: NonZeroU32 = NonZeroU32::new(SPACES.len() as u32).unwrap();
+
 /// Keeps track of hard tabs in a text buffer.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
@@ -19,7 +23,7 @@ impl TabMap {
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
             fold_snapshot,
-            tab_size,
+            tab_size: tab_size.min(MAX_TABS),
             max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
         };
@@ -41,7 +45,7 @@ impl TabMap {
         let old_snapshot = &mut self.0;
         let mut new_snapshot = TabSnapshot {
             fold_snapshot,
-            tab_size,
+            tab_size: tab_size.min(MAX_TABS),
             max_expansion_column: old_snapshot.max_expansion_column,
             version: old_snapshot.version,
         };
@@ -266,7 +270,7 @@ impl TabSnapshot {
             max_output_position: range.end.0,
             tab_size: self.tab_size,
             chunk: Chunk {
-                text: &SPACES[0..(to_next_stop as usize)],
+                text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
                 is_tab: true,
                 ..Default::default()
             },
@@ -317,13 +321,11 @@ impl TabSnapshot {
         let (collapsed, expanded_char_column, to_next_stop) =
             self.collapse_tabs(tab_cursor, expanded, bias);
 
-        let result = (
+        (
             FoldPoint::new(output.row(), collapsed),
             expanded_char_column,
             to_next_stop,
-        );
-
-        result
+        )
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
@@ -510,9 +512,6 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     }
 }
 
-// Handles a tab width <= 16
-const SPACES: &str = "                ";
-
 pub struct TabChunks<'a> {
     snapshot: &'a TabSnapshot,
     fold_chunks: FoldChunks<'a>,
@@ -549,7 +548,7 @@ impl TabChunks<'_> {
         self.output_position = range.start.0;
         self.max_output_position = range.end.0;
         self.chunk = Chunk {
-            text: &SPACES[0..(to_next_stop as usize)],
+            text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
             is_tab: true,
             chars: 1u128.unbounded_shl(to_next_stop) - 1,
             ..Default::default()
@@ -621,7 +620,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         self.input_column += 1;
                         self.output_position = next_output_position;
                         return Some(Chunk {
-                            text: &SPACES[..len as usize],
+                            text: unsafe { std::str::from_utf8_unchecked(&SPACES[..len as usize]) },
                             is_tab: true,
                             chars: 1u128.unbounded_shl(len) - 1,
                             tabs: 0,

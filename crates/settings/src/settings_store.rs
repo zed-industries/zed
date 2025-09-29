@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -34,7 +34,7 @@ use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
-    parse_json_with_comments, replace_value_in_json_text,
+    parse_json_with_comments,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
@@ -439,34 +439,6 @@ impl SettingsStore {
         return rx;
     }
 
-    pub fn update_settings_file_at_path(
-        &self,
-        fs: Arc<dyn Fs>,
-        path: &[impl AsRef<str>],
-        new_value: serde_json::Value,
-    ) -> oneshot::Receiver<Result<()>> {
-        let key_path = path
-            .into_iter()
-            .map(AsRef::as_ref)
-            .map(SharedString::new)
-            .collect::<Vec<_>>();
-        let update = move |mut old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
-                // todo(settings_ui) use `update_value_in_json_text` for merging new and old objects with comment preservation, needs old value though...
-                let (range, replacement) = replace_value_in_json_text(
-                    &old_text,
-                    key_path.as_slice(),
-                    store.json_tab_size(),
-                    Some(&new_value),
-                    None,
-                );
-                old_text.replace_range(range, &replacement);
-                old_text
-            })
-        };
-        self.update_settings_file_inner(fs, update)
-    }
-
     pub fn update_settings_file(
         &self,
         fs: Arc<dyn Fs>,
@@ -661,7 +633,7 @@ impl SettingsStore {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
-                        .join(RelPath::new(task_file_name()).unwrap())
+                        .join(RelPath::unix(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -671,7 +643,7 @@ impl SettingsStore {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
                     path: directory_path
-                        .join(RelPath::new(task_file_name()).unwrap())
+                        .join(RelPath::unix(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -726,7 +698,8 @@ impl SettingsStore {
                             v.insert((editorconfig_contents.to_owned(), None));
                             return Err(InvalidSettingsError::Editorconfig {
                                 message: e.to_string(),
-                                path: directory_path.join(RelPath::new(EDITORCONFIG_NAME).unwrap()),
+                                path: directory_path
+                                    .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                             });
                         }
                     },
@@ -744,7 +717,7 @@ impl SettingsStore {
                                     return Err(InvalidSettingsError::Editorconfig {
                                         message: e.to_string(),
                                         path: directory_path
-                                            .join(RelPath::new(EDITORCONFIG_NAME).unwrap()),
+                                            .join(RelPath::unix(EDITORCONFIG_NAME).unwrap()),
                                     });
                                 }
                             }
@@ -826,6 +799,7 @@ impl SettingsStore {
         let language_settings_content_ref = generator
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
+
         replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
             json_schema!({
                 "type": "object",
@@ -838,7 +812,8 @@ impl SettingsStore {
                             language_settings_content_ref.clone(),
                         )
                     })
-                    .collect::<serde_json::Map<_, _>>()
+                    .collect::<serde_json::Map<_, _>>(),
+                "errorMessage": "No language with this name is installed."
             })
         });
 

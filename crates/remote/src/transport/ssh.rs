@@ -419,7 +419,7 @@ impl SshRemoteConnection {
             version_str
         );
         let dst_path =
-            paths::remote_server_dir_relative().join(RelPath::new(&binary_name).unwrap());
+            paths::remote_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         #[cfg(debug_assertions)]
         if let Some(remote_server_path) =
@@ -427,7 +427,7 @@ impl SshRemoteConnection {
                 .await?
         {
             let tmp_path = paths::remote_server_dir_relative().join(
-                RelPath::new(&format!(
+                RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -462,7 +462,7 @@ impl SshRemoteConnection {
         })??;
 
         let tmp_path_gz = remote_server_dir_relative().join(
-            RelPath::new(&format!(
+            RelPath::unix(&format!(
                 "{}-download-{}.gz",
                 binary_name,
                 std::process::id()
@@ -558,7 +558,6 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",
                             body,

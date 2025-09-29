@@ -3,7 +3,8 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, SemanticVersion,
+    Task, Window, actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
+use std::mem;
 use std::{
     env::{
         self,
@@ -84,31 +86,37 @@ pub struct JsonRelease {
     pub url: String,
 }
 
-struct MacOsUnmounter {
+struct MacOsUnmounter<'a> {
     mount_path: PathBuf,
+    background_executor: &'a BackgroundExecutor,
 }
 
-impl Drop for MacOsUnmounter {
+impl Drop for MacOsUnmounter<'_> {
     fn drop(&mut self) {
-        let unmount_output = std::process::Command::new("hdiutil")
-            .args(["detach", "-force"])
-            .arg(&self.mount_path)
-            .output();
-
-        match unmount_output {
-            Ok(output) if output.status.success() => {
-                log::info!("Successfully unmounted the disk image");
-            }
-            Ok(output) => {
-                log::error!(
-                    "Failed to unmount disk image: {:?}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
-            Err(error) => {
-                log::error!("Error while trying to unmount disk image: {:?}", error);
-            }
-        }
+        let mount_path = mem::take(&mut self.mount_path);
+        self.background_executor
+            .spawn(async move {
+                let unmount_output = Command::new("hdiutil")
+                    .args(["detach", "-force"])
+                    .arg(&mount_path)
+                    .output()
+                    .await;
+                match unmount_output {
+                    Ok(output) if output.status.success() => {
+                        log::info!("Successfully unmounted the disk image");
+                    }
+                    Ok(output) => {
+                        log::error!(
+                            "Failed to unmount disk image: {:?}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                    Err(error) => {
+                        log::error!("Error while trying to unmount disk image: {:?}", error);
+                    }
+                }
+            })
+            .detach();
     }
 }
 
@@ -302,10 +310,10 @@ impl AutoUpdater {
         // the app after an update, we use `set_restart_path` to run the auto
         // update helper instead of the app, so that it can overwrite the app
         // and then spawn the new binary.
-        let quit_subscription = Some(cx.on_app_quit(|_, _| async move {
-            #[cfg(target_os = "windows")]
-            finalize_auto_update_on_quit();
-        }));
+        #[cfg(target_os = "windows")]
+        let quit_subscription = Some(cx.on_app_quit(|_, _| finalize_auto_update_on_quit()));
+        #[cfg(not(target_os = "windows"))]
+        let quit_subscription = None;
 
         cx.on_app_restart(|this, _| {
             this.quit_subscription.take();
@@ -896,6 +904,7 @@ async fn install_release_macos(
     // Create an MacOsUnmounter that will be dropped (and thus unmount the disk) when this function exits
     let _unmounter = MacOsUnmounter {
         mount_path: mount_path.clone(),
+        background_executor: cx.background_executor(),
     };
 
     let output = Command::new("rsync")
@@ -933,11 +942,12 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option
     let helper_path = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
-        .join("tools\\auto_update_helper.exe");
+        .join("tools")
+        .join("auto_update_helper.exe");
     Ok(Some(helper_path))
 }
 
-pub fn finalize_auto_update_on_quit() {
+pub async fn finalize_auto_update_on_quit() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
@@ -950,12 +960,14 @@ pub fn finalize_auto_update_on_quit() {
     if flag_file.exists()
         && let Some(helper) = installer_path
             .parent()
-            .map(|p| p.join("tools\\auto_update_helper.exe"))
+            .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = std::process::Command::new(helper);
+        let mut command = smol::process::Command::new(helper);
         command.arg("--launch");
         command.arg("false");
-        let _ = command.spawn();
+        if let Ok(mut cmd) = command.spawn() {
+            _ = cmd.status().await;
+        }
     }
 }
 

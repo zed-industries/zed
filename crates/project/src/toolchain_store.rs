@@ -257,7 +257,7 @@ impl ToolchainStore {
         envelope: TypedEnvelope<proto::ActiveToolchain>,
         mut cx: AsyncApp,
     ) -> Result<proto::ActiveToolchainResponse> {
-        let path = RelPath::new(envelope.payload.path.as_deref().unwrap_or(""))?;
+        let path = RelPath::unix(envelope.payload.path.as_deref().unwrap_or(""))?;
         let toolchain = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
@@ -278,7 +278,7 @@ impl ToolchainStore {
                 let path = PathBuf::from(toolchain.path.to_string());
                 proto::Toolchain {
                     name: toolchain.name.into(),
-                    path: path.to_string_lossy().to_string(),
+                    path: path.to_string_lossy().into_owned(),
                     raw_json: toolchain.as_json.to_string(),
                 }
             }),
@@ -330,7 +330,7 @@ impl ToolchainStore {
                     let path = PathBuf::from(toolchain.path.to_string());
                     proto::Toolchain {
                         name: toolchain.name.to_string(),
-                        path: path.to_string_lossy().to_string(),
+                        path: path.to_string_lossy().into_owned(),
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
@@ -609,7 +609,7 @@ impl RemoteToolchainStore {
                             language_name: toolchain.language_name.into(),
                             toolchain: Some(proto::Toolchain {
                                 name: toolchain.name.into(),
-                                path: path.to_string_lossy().to_string(),
+                                path: path.to_string_lossy().into_owned(),
                                 raw_json: toolchain.as_json.to_string(),
                             }),
                             path: Some(project_path.path.to_proto()),

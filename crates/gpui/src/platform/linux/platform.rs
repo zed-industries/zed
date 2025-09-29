@@ -204,6 +204,10 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/usr/bin/env")
             .arg("bash")
             .arg("-c")
@@ -403,11 +407,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = std::process::Command::new("xdg-open")
+                let _ = smol::process::Command::new("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
-                    .log_err();
+                    .log_err()?
+                    .status()
+                    .await
+                    .log_err()?;
+                Some(())
             })
             .detach();
     }
@@ -441,8 +449,6 @@ impl<P: LinuxClient + 'static> Platform for P {
             common.callbacks.validate_app_menu_command = Some(callback);
         });
     }
-
-    fn on_action_triggered(&self, _action: &dyn Action) {}
 
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
@@ -593,10 +599,14 @@ pub(super) fn open_uri_internal(
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
-                    match command.spawn() {
-                        Ok(_) => return,
+                    let program = format!("{:?}", command.get_program());
+                    match smol::process::Command::from(command).spawn() {
+                        Ok(mut cmd) => {
+                            cmd.status().await.log_err();
+                            return;
+                        }
                         Err(e) => {
-                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                            log::error!("Failed to open with {}: {}", program, e)
                         }
                     }
                 }

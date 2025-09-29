@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use strum::EnumIter;
 use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
@@ -42,14 +43,33 @@ pub struct PredictEditsRequest {
     pub prompt_format: PromptFormat,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    /// Prompt format intended for use via zeta_cli
+    OnlySnippets,
+}
+
+impl PromptFormat {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+}
+
+impl std::fmt::Display for PromptFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
+            PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
+            PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -83,13 +103,13 @@ pub struct ReferencedDeclaration {
     /// Index within `signatures`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parent_index: Option<usize>,
-    pub score_components: ScoreComponents,
+    pub score_components: DeclarationScoreComponents,
     pub signature_score: f32,
     pub declaration_score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoreComponents {
+pub struct DeclarationScoreComponents {
     pub is_same_file: bool,
     pub is_referenced_nearby: bool,
     pub is_referenced_in_breadcrumb: bool,
@@ -99,12 +119,12 @@ pub struct ScoreComponents {
     pub reference_line_distance: u32,
     pub declaration_line_distance: u32,
     pub declaration_line_distance_rank: usize,
-    pub containing_range_vs_item_jaccard: f32,
-    pub containing_range_vs_signature_jaccard: f32,
+    pub excerpt_vs_item_jaccard: f32,
+    pub excerpt_vs_signature_jaccard: f32,
     pub adjacent_vs_item_jaccard: f32,
     pub adjacent_vs_signature_jaccard: f32,
-    pub containing_range_vs_item_weighted_overlap: f32,
-    pub containing_range_vs_signature_weighted_overlap: f32,
+    pub excerpt_vs_item_weighted_overlap: f32,
+    pub excerpt_vs_signature_weighted_overlap: f32,
     pub adjacent_vs_item_weighted_overlap: f32,
     pub adjacent_vs_signature_weighted_overlap: f32,
 }

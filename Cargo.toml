@@ -91,6 +91,7 @@ members = [
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/journal",
+    "crates/json_schema_store",
     "crates/keymap_editor",
     "crates/language",
     "crates/language_extension",
@@ -322,6 +323,7 @@ zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
+json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
@@ -376,7 +378,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
+rodio = { git = "https://github.com/RustAudio/rodio" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -384,6 +386,7 @@ search = { path = "crates/search" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
+settings_macros = { path = "crates/settings_macros" }
 settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
@@ -440,7 +443,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.4.2", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
@@ -511,6 +514,7 @@ futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
+hashbrown = "0.15.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
@@ -809,6 +813,7 @@ image_viewer = { codegen-units = 1 }
 edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
+json_schema_store = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }
@@ -860,6 +865,7 @@ todo = "deny"
 declare_interior_mutable_const = "deny"
 
 redundant_clone = "deny"
+disallowed_methods = "deny"
 
 # We currently do not restrict any style rules
 # as it slows down shipping code to Zed.

@@ -618,10 +618,29 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Set index of the tab stop order.
+    /// Designate this element as a tab stop, equivalent to `tab_index(0)`.
+    /// This should be the primary mechanism for tab navigation within the application.
+    fn tab_stop(mut self) -> Self {
+        self.tab_index(0)
+    }
+
+    /// Set index of the tab stop order. This should only be used in conjunction with `tab_group`
+    /// in order to not interfere with the tab index of other elements.
     fn tab_index(mut self, index: isize) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tab_index = Some(index);
+        self
+    }
+
+    /// Designate this div as a "tab group". Tab groups have their own location in the tab-index order,
+    /// but for children of the tab group, the tab index is reset to 0. This can be useful for swapping
+    /// the order of tab stops within the group, without having to renumber all the tab stops in the whole
+    /// application.
+    fn tab_group(mut self) -> Self {
+        self.interactivity().tab_group = true;
+        if self.interactivity().tab_index.is_none() {
+            self.interactivity().tab_index = Some(0);
+        }
         self
     }
 
@@ -1481,6 +1500,7 @@ pub struct Interactivity {
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
+    pub(crate) tab_group: bool,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1766,8 +1786,12 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
+                let mut tab_group = None;
+                if self.tab_group {
+                    tab_group = self.tab_index;
+                }
                 if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_handles.insert(focus_handle);
+                    window.next_frame.tab_stops.insert(focus_handle);
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
@@ -1776,55 +1800,59 @@ impl Interactivity {
                             window.with_content_mask(
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
-                                    if let Some(hitbox) = hitbox {
-                                        #[cfg(debug_assertions)]
-                                        self.paint_debug_info(
-                                            global_id, hitbox, &style, window, cx,
-                                        );
+                                    window.with_tab_group(tab_group, |window| {
+                                        if let Some(hitbox) = hitbox {
+                                            #[cfg(debug_assertions)]
+                                            self.paint_debug_info(
+                                                global_id, hitbox, &style, window, cx,
+                                            );
 
-                                        if let Some(drag) = cx.active_drag.as_ref() {
-                                            if let Some(mouse_cursor) = drag.cursor_style {
-                                                window.set_window_cursor_style(mouse_cursor);
+                                            if let Some(drag) = cx.active_drag.as_ref() {
+                                                if let Some(mouse_cursor) = drag.cursor_style {
+                                                    window.set_window_cursor_style(mouse_cursor);
+                                                }
+                                            } else {
+                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                    window.set_cursor_style(mouse_cursor, hitbox);
+                                                }
                                             }
-                                        } else {
-                                            if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+
+                                            if let Some(group) = self.group.clone() {
+                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            }
+
+                                            if let Some(area) = self.window_control {
+                                                window.insert_window_control_hitbox(
+                                                    area,
+                                                    hitbox.clone(),
+                                                );
+                                            }
+
+                                            self.paint_mouse_listeners(
+                                                hitbox,
+                                                element_state.as_mut(),
+                                                window,
+                                                cx,
+                                            );
+                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                        }
+
+                                        self.paint_keyboard_listeners(window, cx);
+                                        f(&style, window, cx);
+
+                                        if let Some(_hitbox) = hitbox {
+                                            #[cfg(any(feature = "inspector", debug_assertions))]
+                                            window.insert_inspector_hitbox(
+                                                _hitbox.id,
+                                                _inspector_id,
+                                                cx,
+                                            );
+
+                                            if let Some(group) = self.group.as_ref() {
+                                                GroupHitboxes::pop(group, cx);
                                             }
                                         }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupHitboxes::push(group, hitbox.id, cx);
-                                        }
-
-                                        if let Some(area) = self.window_control {
-                                            window
-                                                .insert_window_control_hitbox(area, hitbox.clone());
-                                        }
-
-                                        self.paint_mouse_listeners(
-                                            hitbox,
-                                            element_state.as_mut(),
-                                            window,
-                                            cx,
-                                        );
-                                        self.paint_scroll_listener(hitbox, &style, window, cx);
-                                    }
-
-                                    self.paint_keyboard_listeners(window, cx);
-                                    f(&style, window, cx);
-
-                                    if let Some(_hitbox) = hitbox {
-                                        #[cfg(any(feature = "inspector", debug_assertions))]
-                                        window.insert_inspector_hitbox(
-                                            _hitbox.id,
-                                            _inspector_id,
-                                            cx,
-                                        );
-
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-                                    }
+                                    })
                                 },
                             );
                         });

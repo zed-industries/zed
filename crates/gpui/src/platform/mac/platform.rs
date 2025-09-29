@@ -177,8 +177,6 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
-    action_menus: Vec<(Box<dyn Action>, id)>,
-    handling_menu_item: bool,
 }
 
 impl Default for MacPlatform {
@@ -221,8 +219,6 @@ impl MacPlatform {
             on_keyboard_layout_change: None,
             menus: None,
             keyboard_mapper,
-            handling_menu_item: false,
-            action_menus: Vec::new(),
         }))
     }
 
@@ -245,7 +241,6 @@ impl MacPlatform {
         menus: &Vec<Menu>,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        action_menus: &mut Vec<(Box<dyn Action>, id)>,
         keymap: &Keymap,
     ) -> id {
         unsafe {
@@ -263,7 +258,6 @@ impl MacPlatform {
                         item_config,
                         delegate,
                         actions,
-                        action_menus,
                         keymap,
                     ));
                 }
@@ -298,7 +292,6 @@ impl MacPlatform {
                     &item_config,
                     delegate,
                     actions,
-                    &mut Vec::new(),
                     keymap,
                 ));
             }
@@ -311,7 +304,6 @@ impl MacPlatform {
         item: &MenuItem,
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
-        action_menus: &mut Vec<(Box<dyn Action>, id)>,
         keymap: &Keymap,
     ) -> id {
         static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
@@ -420,7 +412,6 @@ impl MacPlatform {
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
-                    action_menus.push((action.boxed_clone(), item));
                     item
                 }
                 MenuItem::Submenu(Menu { name, items }) => {
@@ -428,13 +419,7 @@ impl MacPlatform {
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
                     for item in items {
-                        submenu.addItem_(Self::create_menu_item(
-                            item,
-                            delegate,
-                            actions,
-                            action_menus,
-                            keymap,
-                        ));
+                        submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
                     item.setTitle_(ns_string(name));
@@ -558,6 +543,10 @@ impl Platform for MacPlatform {
             open "$1"
         "#;
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/bin/bash")
             .arg("-c")
             .arg(script)
@@ -870,11 +859,14 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                let _ = std::process::Command::new("open")
+                if let Some(mut child) = smol::process::Command::new("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
-                    .log_err();
+                    .log_err()
+                {
+                    child.status().await.log_err();
+                }
             })
             .detach();
     }
@@ -903,30 +895,6 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn on_action_triggered(&self, action: &dyn Action) {
-        let menu_item = {
-            let mut state = self.0.lock();
-            let Some(menu_item) = state
-                .action_menus
-                .iter()
-                .find(|(menu_action, _)| menu_action.partial_eq(action))
-                .map(|(_, menu)| *menu)
-            else {
-                return;
-            };
-
-            state.handling_menu_item = true;
-            menu_item
-        };
-
-        unsafe {
-            let parent: id = msg_send![menu_item, menu];
-            let index: NSInteger = msg_send![parent, indexOfItem: menu_item];
-            let _: () = msg_send![parent, performActionForItemAtIndex: index];
-        }
-        self.0.lock().handling_menu_item = false;
-    }
-
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(MacKeyboardLayout::new())
     }
@@ -944,24 +912,15 @@ impl Platform for MacPlatform {
     }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap) {
-        let mut action_menus = Vec::new();
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
             let actions = &mut state.menu_actions;
-            let menu = self.create_menu_bar(
-                &menus,
-                NSWindow::delegate(app),
-                actions,
-                &mut action_menus,
-                keymap,
-            );
+            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
             drop(state);
             app.setMainMenu_(menu);
         }
-        let mut state = self.0.lock();
-        state.menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
-        state.action_menus = action_menus;
+        self.0.lock().menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -1513,12 +1472,6 @@ extern "C" fn handle_menu_item(this: &mut Object, _: Sel, item: id) {
     unsafe {
         let platform = get_mac_platform(this);
         let mut lock = platform.0.lock();
-
-        // If the menu item is currently being handled, i.e., this action is being triggered as a
-        // result of a keyboard shortcut causing the menu to flash, don't do anything.
-        if lock.handling_menu_item {
-            return;
-        }
         if let Some(mut callback) = lock.menu_command.take() {
             let tag: NSInteger = msg_send![item, tag];
             let index = tag as usize;

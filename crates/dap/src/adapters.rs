@@ -238,7 +238,7 @@ impl DebugAdapterBinary {
             cwd: self
                 .cwd
                 .as_ref()
-                .map(|cwd| cwd.to_string_lossy().to_string()),
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             connection: self.connection.as_ref().map(|c| c.to_proto()),
             launch_type: match self.request_args.request {
                 StartDebuggingRequestArgumentsRequest::Launch => {

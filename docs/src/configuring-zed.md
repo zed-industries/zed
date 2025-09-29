@@ -1571,22 +1571,6 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
 
-## Global LSP Settings
-
-- Description: Common language server settings.
-- Setting: `global_lsp_settings`
-- Default:
-
-```json
-"global_lsp_settings": {
-  "button": true
-}
-```
-
-**Options**
-
-`integer` values representing milliseconds
-
 ## Features
 
 - Description: Features that can be globally enabled or disabled
@@ -3536,7 +3520,7 @@ List of `integer` column numbers
     "button": true,
     "shell": "system",
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     "working_directory": "current_project_directory",
     "scrollbar": {
@@ -3957,7 +3941,7 @@ Disable with:
 {
   "terminal": {
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     }
   }
 }

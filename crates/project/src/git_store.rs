@@ -989,7 +989,7 @@ impl GitStore {
                             parse_git_remote_url(provider_registry, &origin_url)
                                 .context("parsing Git remote URL")?;
 
-                        let path = repo_path.as_str();
+                        let path = repo_path.as_unix_str();
 
                         Ok(provider.build_permalink(
                             remote,
@@ -1315,7 +1315,7 @@ impl GitStore {
                 });
                 if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                     let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.as_str());
+                        log::debug!("hunks changed for {}", path.as_unix_str());
                         repo.spawn_set_index_text_job(
                             path,
                             new_index_text.as_ref().map(|rope| rope.to_string()),
@@ -1407,7 +1407,7 @@ impl GitStore {
             GitStoreState::Local { fs, .. } => {
                 let fs = fs.clone();
                 cx.background_executor()
-                    .spawn(async move { fs.git_init(&path, fallback_branch_name) })
+                    .spawn(async move { fs.git_init(&path, fallback_branch_name).await })
             }
             GitStoreState::Remote {
                 upstream_client,
@@ -1420,7 +1420,7 @@ impl GitStore {
                     client
                         .request(proto::GitInit {
                             project_id: project_id,
-                            abs_path: path.to_string_lossy().to_string(),
+                            abs_path: path.to_string_lossy().into_owned(),
                             fallback_branch_name,
                         })
                         .await?;
@@ -1455,7 +1455,7 @@ impl GitStore {
                 }
                 let request = upstream_client.request(proto::GitClone {
                     project_id: *upstream_project_id,
-                    abs_path: path.to_string_lossy().to_string(),
+                    abs_path: path.to_string_lossy().into_owned(),
                     remote_repo: repo,
                 });
 
@@ -2802,7 +2802,7 @@ impl RepositorySnapshot {
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
             entry_ids: vec![self.id.to_proto()],
             scan_id: self.scan_id,
             is_last_update: true,
@@ -2871,7 +2871,7 @@ impl RepositorySnapshot {
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().into_owned(),
             entry_ids: vec![],
             scan_id: self.scan_id,
             is_last_update: true,
@@ -3118,7 +3118,7 @@ impl Repository {
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
                                 log::debug!(
                                     "start reload diff bases for repo path {}",
-                                    repo_path.as_str()
+                                    repo_path.as_unix_str()
                                 );
                                 diff_state.update(cx, |diff_state, _| {
                                     let has_unstaged_diff = diff_state
@@ -4162,7 +4162,10 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
             move |git_repo, mut cx| async move {
-                log::debug!("start updating index text for buffer {}", path.as_str());
+                log::debug!(
+                    "start updating index text for buffer {}",
+                    path.as_unix_str()
+                );
                 match git_repo {
                     RepositoryState::Local {
                         backend,
@@ -4184,7 +4187,10 @@ impl Repository {
                             .await?;
                     }
                 }
-                log::debug!("finish updating index text for buffer {}", path.as_str());
+                log::debug!(
+                    "finish updating index text for buffer {}",
+                    path.as_unix_str()
+                );
 
                 if let Some(hunk_staging_operation_count) = hunk_staging_operation_count {
                     let project_path = this

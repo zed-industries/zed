@@ -81,6 +81,7 @@ image_viewer.workspace = true
 inspector_ui.workspace = true
 install_cli.workspace = true
 journal.workspace = true
+json_schema_store.workspace = true
 keymap_editor.workspace = true
 language.workspace = true
 language_extension.workspace = true
@@ -189,6 +190,7 @@ project = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
+util_macros.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]

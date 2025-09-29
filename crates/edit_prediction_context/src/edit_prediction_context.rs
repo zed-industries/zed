@@ -21,7 +21,7 @@ pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
     pub cursor_offset_in_excerpt: usize,
-    pub snippets: Vec<ScoredSnippet>,
+    pub declarations: Vec<ScoredDeclaration>,
 }
 
 impl EditPredictionContext {
@@ -58,17 +58,28 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
+        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
+
+        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+        let adjacent_end = Point::new(cursor_point.row + 1, 0);
+        let adjacent_occurrences = text_similarity::Occurrences::within_string(
+            &buffer
+                .text_for_range(adjacent_start..adjacent_end)
+                .collect::<String>(),
+        );
+
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub
         let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
-        let snippets = if let Some(index_state) = index_state {
+        let declarations = if let Some(index_state) = index_state {
             let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
 
-            scored_snippets(
+            scored_declarations(
                 &index_state,
                 &excerpt,
-                &excerpt_text,
+                &excerpt_occurrences,
+                &adjacent_occurrences,
                 references,
                 cursor_offset_in_file,
                 buffer,
@@ -81,7 +92,7 @@ impl EditPredictionContext {
             excerpt,
             excerpt_text,
             cursor_offset_in_excerpt,
-            snippets,
+            declarations,
         })
     }
 }
@@ -137,7 +148,7 @@ mod tests {
             .unwrap();
 
         let mut snippet_identifiers = context
-            .snippets
+            .declarations
             .iter()
             .map(|snippet| snippet.identifier.name.as_ref())
             .collect::<Vec<_>>();

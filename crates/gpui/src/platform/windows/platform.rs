@@ -349,6 +349,11 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
+
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
@@ -535,8 +540,6 @@ impl Platform for WindowsPlatform {
             .callbacks
             .validate_app_menu_command = Some(callback);
     }
-
-    fn on_action_triggered(&self, _action: &dyn Action) {}
 
     fn app_path(&self) -> Result<PathBuf> {
         Ok(std::env::current_exe()?)

@@ -2,6 +2,7 @@ use std::{collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc, 
 
 use chrono::TimeDelta;
 use client::{Client, UserStore};
+use cloud_llm_client::predict_edits_v3::PromptFormat;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
 use futures::StreamExt as _;
@@ -11,13 +12,13 @@ use gpui::{
 };
 use language::{Buffer, DiskState};
 use project::{Project, WorktreeId};
-use ui::prelude::*;
+use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{Zeta, ZetaOptions};
 
-use edit_prediction_context::{EditPredictionExcerptOptions, SnippetStyle};
+use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
 actions!(
     dev,
@@ -284,7 +285,7 @@ impl Zeta2Inspector {
                 let mut languages = HashMap::default();
                 for lang_id in prediction
                     .context
-                    .snippets
+                    .declarations
                     .iter()
                     .map(|snippet| snippet.declaration.identifier().language_id)
                     .chain(prediction.context.excerpt_text.language_id)
@@ -306,7 +307,7 @@ impl Zeta2Inspector {
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
-                                title: RelPath::new("Cursor Excerpt").unwrap().into(),
+                                title: RelPath::unix("Cursor Excerpt").unwrap().into(),
                                 path_style,
                                 worktree_id,
                             });
@@ -333,18 +334,18 @@ impl Zeta2Inspector {
                                 cx,
                             );
 
-                            for snippet in &prediction.context.snippets {
+                            for snippet in &prediction.context.declarations {
                                 let path = this
                                     .project
                                     .read(cx)
                                     .path_for_entry(snippet.declaration.project_entry_id(), cx);
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
-                                    title: RelPath::new(&format!(
+                                    title: RelPath::unix(&format!(
                                         "{} (Score density: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
-                                        snippet.score_density(SnippetStyle::Declaration)
+                                        snippet.score_density(DeclarationStyle::Declaration)
                                     ))
                                     .unwrap()
                                     .into(),
@@ -425,18 +426,191 @@ impl Zeta2Inspector {
         });
     }
 
+    fn render_options(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .gap_2()
+            .child(
+                h_flex()
+                    .child(Headline::new("Options").size(HeadlineSize::Small))
+                    .justify_between()
+                    .child(
+                        ui::Button::new("reset-options", "Reset")
+                            .disabled(self.zeta.read(cx).options() == &zeta2::DEFAULT_OPTIONS)
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Large)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_input_options(&zeta2::DEFAULT_OPTIONS, window, cx);
+                            })),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_end()
+                            .child(self.max_excerpt_bytes_input.clone())
+                            .child(self.min_excerpt_bytes_input.clone())
+                            .child(self.cursor_context_ratio_input.clone()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_end()
+                            .child(self.max_prompt_bytes_input.clone())
+                            .child(self.render_prompt_format_dropdown(window, cx)),
+                    ),
+            )
+    }
+
+    fn render_prompt_format_dropdown(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let active_format = self.zeta.read(cx).options().prompt_format;
+        let this = cx.weak_entity();
+
+        v_flex()
+            .gap_1p5()
+            .child(
+                Label::new("Prompt Format")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                DropdownMenu::new(
+                    "ep-prompt-format",
+                    active_format.to_string(),
+                    ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+                        for prompt_format in PromptFormat::iter() {
+                            menu = menu.item(
+                                ContextMenuEntry::new(prompt_format.to_string())
+                                    .toggleable(IconPosition::End, active_format == prompt_format)
+                                    .handler({
+                                        let this = this.clone();
+                                        move |_window, cx| {
+                                            this.update(cx, |this, cx| {
+                                                let current_options =
+                                                    this.zeta.read(cx).options().clone();
+                                                let options = ZetaOptions {
+                                                    prompt_format,
+                                                    ..current_options
+                                                };
+                                                this.set_options(options, cx);
+                                            })
+                                            .ok();
+                                        }
+                                    }),
+                            )
+                        }
+                        menu
+                    }),
+                )
+                .style(ui::DropdownStyle::Outlined),
+            )
+    }
+
+    fn render_tabs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Some(LastPredictionState::Success { .. } | LastPredictionState::Replaying { .. }) =
+            self.last_prediction.as_ref()
+        else {
+            return None;
+        };
+
+        Some(
+            ui::ToggleButtonGroup::single_row(
+                "prediction",
+                [
+                    ui::ToggleButtonSimple::new(
+                        "Context",
+                        cx.listener(|this, _, _, cx| {
+                            this.active_view = ActiveView::Context;
+                            cx.notify();
+                        }),
+                    ),
+                    ui::ToggleButtonSimple::new(
+                        "Inference",
+                        cx.listener(|this, _, _, cx| {
+                            this.active_view = ActiveView::Inference;
+                            cx.notify();
+                        }),
+                    ),
+                ],
+            )
+            .style(ui::ToggleButtonGroupStyle::Outlined)
+            .selected_index(if self.active_view == ActiveView::Context {
+                0
+            } else {
+                1
+            })
+            .into_any_element(),
+        )
+    }
+
+    fn render_stats(&self) -> Option<Div> {
+        let Some(
+            LastPredictionState::Success(prediction)
+            | LastPredictionState::Replaying { prediction, .. },
+        ) = self.last_prediction.as_ref()
+        else {
+            return None;
+        };
+
+        Some(
+            v_flex()
+                .p_4()
+                .gap_2()
+                .min_w(px(160.))
+                .child(Headline::new("Stats").size(HeadlineSize::Small))
+                .child(Self::render_duration(
+                    "Context retrieval",
+                    prediction.retrieval_time,
+                ))
+                .child(Self::render_duration(
+                    "Prompt planning",
+                    prediction.prompt_planning_time,
+                ))
+                .child(Self::render_duration(
+                    "Inference",
+                    prediction.inference_time,
+                ))
+                .child(Self::render_duration("Parsing", prediction.parsing_time)),
+        )
+    }
+
     fn render_duration(name: &'static str, time: chrono::TimeDelta) -> Div {
         h_flex()
             .gap_1()
             .child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
             .child(
-                Label::new(if time.num_microseconds().unwrap_or(0) > 1000 {
+                Label::new(if time.num_microseconds().unwrap_or(0) >= 1000 {
                     format!("{} ms", time.num_milliseconds())
                 } else {
                     format!("{} µs", time.num_microseconds().unwrap_or(0))
                 })
                 .size(LabelSize::Small),
             )
+    }
+
+    fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.last_prediction.as_ref() {
+            None => v_flex()
+                .size_full()
+                .justify_center()
+                .items_center()
+                .child(Label::new("No prediction").size(LabelSize::Large))
+                .into_any(),
+            Some(LastPredictionState::Success(prediction)) => {
+                self.render_last_prediction(prediction, cx).into_any()
+            }
+            Some(LastPredictionState::Replaying { prediction, _task }) => self
+                .render_last_prediction(prediction, cx)
+                .opacity(0.6)
+                .into_any(),
+            Some(LastPredictionState::Failed(err)) => v_flex()
+                .p_4()
+                .gap_2()
+                .child(Label::new(err.clone()).buffer_font(cx))
+                .into_any(),
+        }
     }
 
     fn render_last_prediction(&self, prediction: &LastPrediction, cx: &mut Context<Self>) -> Div {
@@ -489,28 +663,7 @@ impl Item for Zeta2Inspector {
 impl EventEmitter<()> for Zeta2Inspector {}
 
 impl Render for Zeta2Inspector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match self.last_prediction.as_ref() {
-            None => v_flex()
-                .size_full()
-                .justify_center()
-                .items_center()
-                .child(Label::new("No prediction").size(LabelSize::Large))
-                .into_any(),
-            Some(LastPredictionState::Success(prediction)) => {
-                self.render_last_prediction(prediction, cx).into_any()
-            }
-            Some(LastPredictionState::Replaying { prediction, _task }) => self
-                .render_last_prediction(prediction, cx)
-                .opacity(0.6)
-                .into_any(),
-            Some(LastPredictionState::Failed(err)) => v_flex()
-                .p_4()
-                .gap_2()
-                .child(Label::new(err.clone()).buffer_font(cx))
-                .into_any(),
-        };
-
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -523,114 +676,14 @@ impl Render for Zeta2Inspector {
                             .p_4()
                             .h_full()
                             .justify_between()
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(Headline::new("Options").size(HeadlineSize::Small))
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_end()
-                                            .child(self.max_excerpt_bytes_input.clone())
-                                            .child(self.min_excerpt_bytes_input.clone())
-                                            .child(self.cursor_context_ratio_input.clone())
-                                            .child(self.max_prompt_bytes_input.clone())
-                                            .child(
-                                                ui::Button::new("reset-options", "Reset")
-                                                    .disabled(
-                                                        self.zeta.read(cx).options()
-                                                            == &zeta2::DEFAULT_OPTIONS,
-                                                    )
-                                                    .style(ButtonStyle::Outlined)
-                                                    .size(ButtonSize::Large)
-                                                    .on_click(cx.listener(
-                                                        |this, _, window, cx| {
-                                                            this.set_input_options(
-                                                                &zeta2::DEFAULT_OPTIONS,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        },
-                                                    )),
-                                            ),
-                                    ),
-                            )
-                            .map(|this| {
-                                if let Some(
-                                    LastPredictionState::Success { .. }
-                                    | LastPredictionState::Replaying { .. },
-                                ) = self.last_prediction.as_ref()
-                                {
-                                    this.child(
-                                        ui::ToggleButtonGroup::single_row(
-                                            "prediction",
-                                            [
-                                                ui::ToggleButtonSimple::new(
-                                                    "Context",
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.active_view = ActiveView::Context;
-                                                        cx.notify();
-                                                    }),
-                                                ),
-                                                ui::ToggleButtonSimple::new(
-                                                    "Inference",
-                                                    cx.listener(|this, _, _, cx| {
-                                                        this.active_view = ActiveView::Inference;
-                                                        cx.notify();
-                                                    }),
-                                                ),
-                                            ],
-                                        )
-                                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                                        .selected_index(
-                                            if self.active_view == ActiveView::Context {
-                                                0
-                                            } else {
-                                                1
-                                            },
-                                        ),
-                                    )
-                                } else {
-                                    this
-                                }
-                            }),
+                            .child(self.render_options(window, cx))
+                            .gap_4()
+                            .children(self.render_tabs(cx)),
                     )
                     .child(ui::vertical_divider())
-                    .map(|this| {
-                        if let Some(
-                            LastPredictionState::Success(prediction)
-                            | LastPredictionState::Replaying { prediction, .. },
-                        ) = self.last_prediction.as_ref()
-                        {
-                            this.child(
-                                v_flex()
-                                    .p_4()
-                                    .gap_2()
-                                    .min_w(px(160.))
-                                    .child(Headline::new("Stats").size(HeadlineSize::Small))
-                                    .child(Self::render_duration(
-                                        "Context retrieval",
-                                        prediction.retrieval_time,
-                                    ))
-                                    .child(Self::render_duration(
-                                        "Prompt planning",
-                                        prediction.prompt_planning_time,
-                                    ))
-                                    .child(Self::render_duration(
-                                        "Inference",
-                                        prediction.inference_time,
-                                    ))
-                                    .child(Self::render_duration(
-                                        "Parsing",
-                                        prediction.parsing_time,
-                                    )),
-                            )
-                        } else {
-                            this
-                        }
-                    }),
+                    .children(self.render_stats()),
             )
-            .child(content)
+            .child(self.render_content(cx))
     }
 }
 

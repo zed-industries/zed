@@ -415,7 +415,7 @@ impl AgentServerStore {
             })??
             .await?;
         Ok(proto::AgentServerCommand {
-            path: command.path.to_string_lossy().to_string(),
+            path: command.path.to_string_lossy().into_owned(),
             args: command.args,
             env: command
                 .env
@@ -650,7 +650,7 @@ fn get_or_npm_install_builtin_agent(
 
         anyhow::Ok(AgentServerCommand {
             path: node_path,
-            args: vec![agent_server_path.to_string_lossy().to_string()],
+            args: vec![agent_server_path.to_string_lossy().into_owned()],
             env: None,
         })
     })
@@ -842,7 +842,7 @@ impl ExternalAgentServer for LocalGemini {
 
             // Gemini CLI doesn't seem to have a dedicated invocation for logging in--we just run it normally without any arguments.
             let login = task::SpawnInTerminal {
-                command: Some(command.path.to_string_lossy().to_string()),
+                command: Some(command.path.to_string_lossy().into_owned()),
                 args: command.args.clone(),
                 env: command.env.clone().unwrap_or_default(),
                 label: "gemini /auth".into(),
@@ -851,7 +851,11 @@ impl ExternalAgentServer for LocalGemini {
 
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
-            Ok((command, root_dir.to_string_lossy().to_string(), Some(login)))
+            Ok((
+                command,
+                root_dir.to_string_lossy().into_owned(),
+                Some(login),
+            ))
         })
     }
 
@@ -919,7 +923,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                         path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
                     })
                     .map(|path_prefix| task::SpawnInTerminal {
-                        command: Some(command.path.to_string_lossy().to_string()),
+                        command: Some(command.path.to_string_lossy().into_owned()),
                         args: vec![
                             Path::new(path_prefix)
                                 .join("@anthropic-ai/claude-code/cli.js")
@@ -935,7 +939,7 @@ impl ExternalAgentServer for LocalClaudeCode {
             };
 
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().to_string(), login))
+            Ok((command, root_dir.to_string_lossy().into_owned(), login))
         })
     }
 
@@ -974,7 +978,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
-            Ok((command, root_dir.to_string_lossy().to_string(), None))
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
         })
     }
 

@@ -369,7 +369,7 @@ impl RenderOnce for SshConnectionHeader {
                     )
                     .child(div().overflow_x_hidden().text_ellipsis().children(
                         self.paths.into_iter().map(|path| {
-                            Label::new(path.to_string_lossy().to_string())
+                            Label::new(path.to_string_lossy().into_owned())
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                         }),

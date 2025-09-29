@@ -93,7 +93,10 @@ impl OutputKind<'_> {
         match self {
             OutputKind::Markdown => print!("{output}"),
             OutputKind::Json(ident) => {
-                let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+                // We're going to be in tooling/perf/$whatever.
+                let wspace_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                    .join("..")
+                    .join("..");
                 let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
                 std::fs::create_dir_all(&runs_dir).unwrap();
                 assert!(
@@ -215,7 +218,10 @@ fn compare_profiles(args: &[String]) {
     let ident_new = args.first().expect("FATAL: missing identifier for new run");
     let ident_old = args.get(1).expect("FATAL: missing identifier for old run");
     let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
+    let runs_dir = PathBuf::from(&wspace_dir)
+        .join("..")
+        .join("..")
+        .join(consts::RUNS_DIR);
 
     // Use the blank outputs initially, so we can merge into these with prefixes.
     let mut outputs_new = Output::blank();

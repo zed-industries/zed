@@ -5370,8 +5370,8 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «HeLlO, wOrLD!ˇ»
     "});
 
-    // Test selections with `line_mode = true`.
-    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    // Test selections with `line_mode() = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -20905,7 +20905,10 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().as_str().into()),
+                PathKey::namespaced(
+                    0,
+                    buffer.read(cx).file().unwrap().path().as_unix_str().into(),
+                ),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 2,

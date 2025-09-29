@@ -2192,7 +2192,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
             collect_search_matches(picker).history,
             vec![
                 rel_path("test/first.rs").into(),
-                rel_path("test/third.rs").into(),
+                rel_path("test/third.rs").into()
             ],
             "Should have all opened files in the history, except the ones that do not exist on disk"
         );

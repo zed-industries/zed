@@ -37,4 +37,12 @@ workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
+cloud_llm_client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+lsp.workspace = true
+indoc.workspace = true
+language_model = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }

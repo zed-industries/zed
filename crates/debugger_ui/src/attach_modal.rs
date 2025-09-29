@@ -373,7 +373,7 @@ fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Ar
                     command: process
                         .cmd()
                         .iter()
-                        .map(|s| s.to_string_lossy().to_string())
+                        .map(|s| s.to_string_lossy().into_owned())
                         .collect::<Vec<_>>(),
                 }
             })

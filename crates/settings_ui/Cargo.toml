@@ -26,6 +26,7 @@ gpui.workspace = true
 menu.workspace = true
 serde.workspace = true
 settings.workspace = true
+strum.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

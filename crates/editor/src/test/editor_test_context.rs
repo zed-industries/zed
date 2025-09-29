@@ -296,7 +296,7 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_head_for_repo(
             &Self::root_path().join(".git"),
-            &[(path.as_str(), diff_base.to_string())],
+            &[(path.as_unix_str(), diff_base.to_string())],
             "deadbeef",
         );
         self.cx.run_until_parked();
@@ -317,7 +317,7 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),
-            &[(path.as_str(), diff_base.to_string())],
+            &[(path.as_unix_str(), diff_base.to_string())],
         );
         self.cx.run_until_parked();
     }

@@ -290,7 +290,7 @@ impl LicenseDetectionWatcher {
             include_ignored: true,
         };
         for top_file in local_worktree.child_entries_with_options(RelPath::empty(), options) {
-            let path_bytes = top_file.path.as_os_str().as_encoded_bytes();
+            let path_bytes = top_file.path.as_unix_str().as_bytes();
             if top_file.is_created() && LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
                 let rel_path = top_file.path.clone();
                 files_to_check_tx.unbounded_send(rel_path).ok();
@@ -302,7 +302,7 @@ impl LicenseDetectionWatcher {
                 worktree::Event::UpdatedEntries(updated_entries) => {
                     for updated_entry in updated_entries.iter() {
                         let rel_path = &updated_entry.0;
-                        let path_bytes = rel_path.as_os_str().as_encoded_bytes();
+                        let path_bytes = rel_path.as_unix_str().as_bytes();
                         if LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
                             files_to_check_tx.unbounded_send(rel_path.clone()).ok();
                         }
@@ -435,7 +435,7 @@ mod tests {
             let Ok(contents) = std::fs::read_to_string(entry.path()) else {
                 continue;
             };
-            let path_string = entry.path().to_string_lossy().to_string();
+            let path_string = entry.path().to_string_lossy().into_owned();
             let license = detect_license(&contents);
             match license {
                 Some(license) => detected.push((license, path_string)),
