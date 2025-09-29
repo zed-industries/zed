@@ -1,15 +1,16 @@
 use std::time::Duration;
 
-use rodio::{SampleRate, Source};
+use rodio::{Sample, SampleRate, Source};
 use rubato::{FftFixedInOut, Resampler};
 
 pub struct FixedResampler<S> {
     input: S,
     next_channel: usize,
     next_frame: usize,
-    output_buffer: Vec<Vec<rodio::Sample>>,
-    input_buffer: Vec<Vec<rodio::Sample>>,
-    resampler: FftFixedInOut<rodio::Sample>,
+    output_buffer: Vec<Vec<Sample>>,
+    input_buffer: Vec<Vec<Sample>>,
+    target_sample_rate: SampleRate,
+    resampler: FftFixedInOut<Sample>,
 }
 
 impl<S: Source> FixedResampler<S> {
@@ -31,8 +32,9 @@ impl<S: Source> FixedResampler<S> {
         Self {
             next_channel: 0,
             next_frame: 0,
-            output_buffer: resampler.output_buffer_allocate(false),
+            output_buffer: resampler.output_buffer_allocate(true),
             input_buffer: resampler.input_buffer_allocate(false),
+            target_sample_rate,
             resampler,
             input,
         }
@@ -49,7 +51,7 @@ impl<S: Source> Source for FixedResampler<S> {
     }
 
     fn sample_rate(&self) -> rodio::SampleRate {
-        self.input.sample_rate()
+        self.target_sample_rate
     }
 
     fn total_duration(&self) -> Option<std::time::Duration> {
@@ -57,18 +59,24 @@ impl<S: Source> Source for FixedResampler<S> {
     }
 }
 
-impl<S: Source> Iterator for FixedResampler<S> {
-    type Item = rodio::Sample;
-
-    fn next(&mut self) -> Option<Self::Item> {
+impl<S: Source> FixedResampler<S> {
+    fn next_sample(&mut self) -> Option<Sample> {
         let sample = self.output_buffer[self.next_channel]
             .get(self.next_frame)
             .copied();
         self.next_channel = (self.next_channel + 1) % self.input.channels().get() as usize;
         self.next_frame += 1;
 
-        if sample.is_some() {
-            return sample;
+        sample
+    }
+}
+
+impl<S: Source> Iterator for FixedResampler<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(sample) = self.next_sample() {
+            return Some(sample);
         }
 
         for input_channel in &mut self.input_buffer {
@@ -82,13 +90,9 @@ impl<S: Source> Iterator for FixedResampler<S> {
         }
 
         self.resampler
-            .process_into_buffer(&mut self.input_buffer, &mut self.output_buffer, None).expect("input and output buffer channels cant be wrong as they have been set by the resampler. The buffer for each channel is the same length. The buffer length is what is requested the resampler");
+            .process_into_buffer(&mut self.input_buffer, &mut self.output_buffer, None).expect("Input and output buffer channels are correct as they have been set by the resampler. The buffer for each channel is the same length. The buffer length is what is requested the resampler.");
 
-        let sample = self.output_buffer[self.next_channel]
-            .get(self.next_frame)
-            .copied();
-        self.next_channel = (self.next_channel + 1) % self.input.channels().get() as usize;
-        self.next_frame += 1;
-        sample
+        self.next_frame = 0;
+        self.next_sample()
     }
 }
