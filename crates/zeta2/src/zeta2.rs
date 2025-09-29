@@ -339,7 +339,7 @@ impl Zeta {
                 state
                     .events
                     .iter()
-                    .map(|event| match event {
+                    .filter_map(|event| match event {
                         Event::BufferChange {
                             old_snapshot,
                             new_snapshot,
@@ -356,15 +356,20 @@ impl Zeta {
                                 }
                             });
 
-                            predict_edits_v3::Event::BufferChange {
-                                old_path,
-                                path,
-                                diff: language::unified_diff(
-                                    &old_snapshot.text(),
-                                    &new_snapshot.text(),
-                                ),
-                                //todo: Actually detect if this edit was predicted or not
-                                predicted: false,
+                            // TODO [zeta2] move to bg?
+                            let diff =
+                                language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
+
+                            if path == old_path && diff.is_empty() {
+                                None
+                            } else {
+                                Some(predict_edits_v3::Event::BufferChange {
+                                    old_path,
+                                    path,
+                                    diff,
+                                    //todo: Actually detect if this edit was predicted or not
+                                    predicted: false,
+                                })
                             }
                         }
                     })
