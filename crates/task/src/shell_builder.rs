@@ -210,6 +210,7 @@ pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
     interactive: bool,
+    /// Whether to redirect stdin to /dev/null for the spawned command as a subshell.
     redirect_stdin: bool,
     kind: ShellKind,
 }
@@ -279,10 +280,12 @@ impl ShellBuilder {
             if self.redirect_stdin {
                 match self.kind {
                     ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
-                        combined_command.push_str(" </dev/null");
+                        combined_command.insert(0, '(');
+                        combined_command.push_str(") </dev/null");
                     }
                     ShellKind::PowerShell => {
-                        combined_command.insert_str(0, "$null | ");
+                        combined_command.insert_str(0, "$null | {");
+                        combined_command.push_str("}");
                     }
                     ShellKind::Cmd => {
                         combined_command.push_str("< NUL");
@@ -328,5 +331,18 @@ mod test {
                 "echo $env.hello $env.world nothing --($env.something) $ ${test"
             ]
         );
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_precedence() {
+        let shell = Shell::Program("nu".to_owned());
+        let shell_builder = ShellBuilder::new(None, &shell);
+
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo".into()), &["nothing".to_string()]);
+
+        assert_eq!(program, "nu");
+        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
     }
 }
