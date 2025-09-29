@@ -79,7 +79,6 @@ edit_prediction_button.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inspector_ui.workspace = true
-ollama.workspace = true
 ollama_edit_predictions.workspace = true
 install_cli.workspace = true
 journal.workspace = true

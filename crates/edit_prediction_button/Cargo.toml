@@ -21,13 +21,10 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 indoc.workspace = true
 edit_prediction.workspace = true
 language.workspace = true
 language_models.workspace = true
-ollama.workspace = true
-ollama_edit_predictions.workspace = true
 
 paths.workspace = true
 project.workspace = true
