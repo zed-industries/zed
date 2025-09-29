@@ -119,7 +119,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
-    Vim::action(editor, cx, Vim::yank_end_of_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
@@ -846,7 +846,7 @@ impl Vim {
         )
     }
 
-    fn yank_end_of_line(
+    fn yank_to_end_of_line(
         &mut self,
         _: &YankToEndOfLine,
         window: &mut Window,
@@ -1998,6 +1998,14 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\n").await;
+        cx.simulate_shared_keystrokes("Y p").await;
+        cx.shared_state().await.assert_eq("helllˇolo\n");
     }
 
     #[gpui::test]
