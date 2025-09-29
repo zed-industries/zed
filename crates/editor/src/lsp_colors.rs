@@ -6,14 +6,14 @@ use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, lsp_store::LspFetchStrategy};
+use project::{DocumentColor, InlayId, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlaySplice, RangeToAnchorExt,
     editor_settings::DocumentColorsRenderMode, inlays::Inlay,
 };
 

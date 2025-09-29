@@ -13,7 +13,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
     EditorEvent, EditorMode, EditorSnapshot, EditorStyle, ExcerptId, FoldPlaceholder, Inlay,
-    InlayId, MultiBuffer, ToOffset,
+    MultiBuffer, ToOffset,
     actions::Paste,
     display_map::{Crease, CreaseId, FoldId},
 };
@@ -30,7 +30,8 @@ use language::{Buffer, Language, language_settings::InlayHintKind};
 use language_model::LanguageModelImage;
 use postage::stream::Stream as _;
 use project::{
-    CompletionIntent, InlayHint, InlayHintLabel, Project, ProjectItem, ProjectPath, Worktree,
+    CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectItem, ProjectPath,
+    Worktree,
 };
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
@@ -76,7 +77,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: u32 = 0;
+const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
 impl MessageEditor {
     pub fn new(
@@ -150,7 +151,7 @@ impl MessageEditor {
                         let has_new_hint = !new_hints.is_empty();
                         editor.splice_inlays(
                             if has_hint {
-                                &[InlayId::Hint(COMMAND_HINT_INLAY_ID)]
+                                &[COMMAND_HINT_INLAY_ID]
                             } else {
                                 &[]
                             },

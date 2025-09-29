@@ -60,7 +60,7 @@ pub use element::{
 };
 pub use git::blame::BlameRenderer;
 pub use hover_popover::hover_markdown_style;
-pub use inlays::{Inlay, InlayId};
+pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
 pub use lsp::CompletionContext;
 pub use lsp_ext::lsp_tasks;
@@ -146,7 +146,7 @@ use parking_lot::Mutex;
 use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
-    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint,
+    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
     Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectPath,
     ProjectTransaction, TaskSourceKind,
     debugger::{
@@ -22466,14 +22466,6 @@ pub trait SemanticsProvider {
         None
     }
 
-    fn resolve_inlay_hint(
-        &self,
-        hint: InlayHint,
-        buffer_handle: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<InlayHint>>>;
-
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
@@ -22978,18 +22970,6 @@ impl SemanticsProvider for Entity<Project> {
     ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate_cache, buffer, range, cx)
-        }))
-    }
-
-    fn resolve_inlay_hint(
-        &self,
-        hint: InlayHint,
-        buffer_handle: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: &mut App,
-    ) -> Option<Task<anyhow::Result<InlayHint>>> {
-        Some(self.update(cx, |project, cx| {
-            project.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
         }))
     }
 

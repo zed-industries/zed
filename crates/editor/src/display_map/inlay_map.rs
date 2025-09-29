@@ -1,7 +1,8 @@
-use crate::{ChunkRenderer, HighlightStyles, InlayId, inlays::Inlay};
+use crate::{ChunkRenderer, HighlightStyles, inlays::Inlay};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset};
+use project::InlayId;
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -1174,7 +1175,7 @@ const fn is_utf8_char_boundary(byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        InlayId, MultiBuffer,
+        MultiBuffer,
         display_map::{HighlightKey, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
     };
@@ -1193,7 +1194,7 @@ mod tests {
     fn test_inlay_properties_label_padding() {
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
@@ -1213,7 +1214,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
@@ -1233,7 +1234,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
@@ -1253,7 +1254,7 @@ mod tests {
 
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
@@ -1276,7 +1277,7 @@ mod tests {
     fn test_inlay_hint_padding_with_multibyte_chars() {
         assert_eq!(
             Inlay::hint(
-                0,
+                InlayId::Hint(0),
                 Anchor::min(),
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),

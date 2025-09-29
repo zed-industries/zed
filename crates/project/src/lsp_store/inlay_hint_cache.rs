@@ -6,10 +6,11 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, BufferRow, BufferSnapshot};
 use lsp::LanguageServerId;
 use text::OffsetRangeExt;
+use util::debug_panic;
 
-use crate::InlayHint;
+use crate::{InlayHint, InlayId};
 
-pub type CacheInlayHints = HashMap<LanguageServerId, Vec<InlayHint>>;
+pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
 
 pub struct RowChunkCachedHints {
@@ -22,6 +23,15 @@ pub struct BufferInlayHints {
     buffer_chunks: Vec<BufferChunk>,
     hints_by_chunks: Vec<Option<CacheInlayHints>>,
     fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
+    hints_by_id: HashMap<InlayId, HintForId>,
+    pub(super) hint_resolves: HashMap<InlayId, Shared<Task<()>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HintForId {
+    chunk_id: usize,
+    server_id: LanguageServerId,
+    position: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,6 +47,7 @@ impl std::fmt::Debug for BufferInlayHints {
             .field("buffer_chunks", &self.buffer_chunks)
             .field("hints_by_chunks", &self.hints_by_chunks)
             .field("fetches_by_chunks", &self.fetches_by_chunks)
+            .field("hints_by_id", &self.hints_by_id)
             .finish_non_exhaustive()
     }
 }
@@ -67,6 +78,8 @@ impl BufferInlayHints {
         Self {
             hints_by_chunks: vec![None; buffer_chunks.len()],
             fetches_by_chunks: vec![None; buffer_chunks.len()],
+            hints_by_id: HashMap::default(),
+            hint_resolves: HashMap::default(),
             snapshot,
             buffer_chunks,
         }
@@ -86,8 +99,8 @@ impl BufferInlayHints {
             .copied()
     }
 
-    pub fn cached_hints(&mut self, chunk: &BufferChunk) -> &mut Option<CacheInlayHints> {
-        &mut self.hints_by_chunks[chunk.id]
+    pub fn cached_hints(&mut self, chunk: &BufferChunk) -> Option<&CacheInlayHints> {
+        self.hints_by_chunks[chunk.id].as_ref()
     }
 
     pub fn fetched_hints(&mut self, chunk: &BufferChunk) -> &mut Option<CacheInlayHintsTask> {
@@ -101,6 +114,7 @@ impl BufferInlayHints {
             .filter_map(|hints| hints.as_ref())
             .flat_map(|hints| hints.values().cloned())
             .flatten()
+            .map(|(_, hint)| hint)
             .collect()
     }
 
@@ -125,5 +139,48 @@ impl BufferInlayHints {
     pub fn clear(&mut self) {
         self.hints_by_chunks = vec![None; self.buffer_chunks.len()];
         self.fetches_by_chunks = vec![None; self.buffer_chunks.len()];
+        self.hints_by_id.clear();
+        self.hint_resolves.clear();
+    }
+
+    pub fn insert_new_hints(
+        &mut self,
+        chunk: BufferChunk,
+        server_id: LanguageServerId,
+        new_hints: Vec<(InlayId, InlayHint)>,
+    ) {
+        let existing_hints = self.hints_by_chunks[chunk.id]
+            .get_or_insert_default()
+            .entry(server_id)
+            .or_insert_with(Vec::new);
+        let existing_count = existing_hints.len();
+        existing_hints.extend(
+            new_hints
+                .into_iter()
+                .enumerate()
+                .map(|(i, (id, new_hint))| {
+                    let new_hint_for_id = HintForId {
+                        chunk_id: chunk.id,
+                        server_id,
+                        position: existing_count + i,
+                    };
+                    if let Some(old_hint_for_id) = self.hints_by_id.insert(id, new_hint_for_id) {
+                        debug_panic!("Unexpected: hint {new_hint:?}, id {id:?} has 2 pointers: old: {old_hint_for_id:?}, new: {new_hint_for_id:?}");
+                    }
+                    (id, new_hint)
+                })
+        );
+    }
+
+    pub fn hint_for_id(&mut self, id: InlayId) -> Option<&mut InlayHint> {
+        let hint_for_id = self.hints_by_id.get(&id)?;
+        let (hint_id, hint) = self
+            .hints_by_chunks
+            .get_mut(hint_for_id.chunk_id)?
+            .as_mut()?
+            .get_mut(&hint_for_id.server_id)?
+            .get_mut(hint_for_id.position)?;
+        debug_assert_eq!(*hint_id, id, "Invalid pointer {hint_for_id:?}");
+        Some(hint)
     }
 }
