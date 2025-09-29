@@ -731,10 +731,7 @@ impl LanguageRegistry {
         )
     }
 
-    pub fn language_for_file_path<'a>(
-        self: &Arc<Self>,
-        path: &'a Path,
-    ) -> Option<AvailableLanguage> {
+    pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<AvailableLanguage> {
         self.language_for_file_internal(path, None, None)
     }
 
