@@ -209,7 +209,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
                 return Some(edit_prediction::EditPrediction::Jump {
                     id: Some(prediction.id.to_string().into()),
                     snapshot: prediction.snapshot.clone(),
-                    target: prediction.edits.first().unwrap().0.start.clone(),
+                    target: prediction.edits.first().unwrap().0.start,
                 });
             }
         };
