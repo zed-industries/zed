@@ -2,7 +2,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, WeakEntity};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
 use language::LanguageRegistry;
 use project::LspStore;
 
