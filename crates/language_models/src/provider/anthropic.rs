@@ -151,8 +151,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4,
-            anthropic::Model::ClaudeSonnet4Thinking,
+            anthropic::Model::ClaudeSonnet4_5,
+            anthropic::Model::ClaudeSonnet4_5Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
