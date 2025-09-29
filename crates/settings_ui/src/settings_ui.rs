@@ -399,7 +399,6 @@ impl PartialEq for SettingItem {
     fn eq(&self, other: &Self) -> bool {
         self.title == other.title
             && self.description == other.description
-            && self.field.type_id() == other.field.type_id()
             && (match (&self.metadata, &other.metadata) {
                 (None, None) => true,
                 (Some(m1), Some(m2)) => m1.placeholder == m2.placeholder,
