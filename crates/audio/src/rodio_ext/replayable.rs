@@ -232,6 +232,8 @@ impl Source for Replay {
 
 #[cfg(test)]
 mod tests {
+    use rodio::{nz, static_buffer::StaticSamplesBuffer};
+
     use super::*;
     use crate::{
         RodioExt,
