@@ -7412,8 +7412,6 @@ impl Editor {
             return;
         };
 
-        self.report_edit_prediction_event(active_edit_prediction.completion_id.clone(), true, cx);
-
         match &active_edit_prediction.completion {
             EditPrediction::Move { target, .. } => {
                 let target = *target;
@@ -7458,6 +7456,12 @@ impl Editor {
                 }
             }
             EditPrediction::Edit { edits, .. } => {
+                self.report_edit_prediction_event(
+                    active_edit_prediction.completion_id.clone(),
+                    true,
+                    cx,
+                );
+
                 if let Some(provider) = self.edit_prediction_provider() {
                     provider.accept(cx);
                 }
@@ -7516,8 +7520,6 @@ impl Editor {
             return;
         }
 
-        self.report_edit_prediction_event(active_edit_prediction.completion_id.clone(), true, cx);
-
         match &active_edit_prediction.completion {
             EditPrediction::Move { target, .. } => {
                 let target = *target;
@@ -7531,6 +7533,12 @@ impl Editor {
                 );
             }
             EditPrediction::Edit { edits, .. } => {
+                self.report_edit_prediction_event(
+                    active_edit_prediction.completion_id.clone(),
+                    true,
+                    cx,
+                );
+
                 // Find an insertion that starts at the cursor position.
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
