@@ -891,8 +891,8 @@ impl DirectoryLister {
         project
             .visible_worktrees(cx)
             .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
-            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
                 s.push_str(path_style.separator());
                 s
@@ -4207,7 +4207,7 @@ impl Project {
                 let metadata = fs.metadata(&expanded).await.ok().flatten();
 
                 metadata.map(|metadata| ResolvedPath::AbsPath {
-                    path: expanded.to_string_lossy().to_string(),
+                    path: expanded.to_string_lossy().into_owned(),
                     is_dir: metadata.is_dir,
                 })
             })

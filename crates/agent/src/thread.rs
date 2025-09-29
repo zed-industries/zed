@@ -2875,7 +2875,7 @@ impl Thread {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().to_string();
+                let path = worktree.abs_path().to_string_lossy().into_owned();
                 let snapshot = worktree.snapshot();
                 (path, snapshot)
             });

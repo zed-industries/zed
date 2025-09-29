@@ -4081,7 +4081,7 @@ impl ProjectPanel {
         let canonical_path = details
             .canonical_path
             .as_ref()
-            .map(|f| f.to_string_lossy().to_string());
+            .map(|f| f.to_string_lossy().into_owned());
         let path_style = self.project.read(cx).path_style(cx);
         let path = details.path.clone();
         let path_for_external_paths = path.clone();

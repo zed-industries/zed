@@ -573,7 +573,7 @@ impl ToolCallContent {
             ))),
             acp::ToolCallContent::Diff { diff } => Ok(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
-                    diff.path.to_string_lossy().to_string(),
+                    diff.path.to_string_lossy().into_owned(),
                     diff.old_text,
                     diff.new_text,
                     language_registry,
@@ -1985,7 +1985,7 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let (command, args) = ShellBuilder::new(
+                let (task_command, task_args) = ShellBuilder::new(
                     project
                         .update(cx, |project, cx| {
                             project
@@ -1996,13 +1996,13 @@ impl AcpThread {
                     &Shell::Program(get_default_system_shell()),
                 )
                 .redirect_stdin_to_dev_null()
-                .build(Some(command), &args);
+                .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
-                                command: Some(command.clone()),
-                                args: args.clone(),
+                                command: Some(task_command),
+                                args: task_args,
                                 cwd: cwd.clone(),
                                 env,
                                 ..Default::default()

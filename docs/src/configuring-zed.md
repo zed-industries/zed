@@ -66,13 +66,13 @@ Non-negative `float` values
 
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Description: Control the layout of the bottom dock, relative to the left and right docks.
 - Setting: `bottom_dock_layout`
 - Default: `"contained"`
 
 **Options**
 
-1. Contain the bottom dock, giving the full height of the window to the left and right docks
+1. Contain the bottom dock, giving the full height of the window to the left and right docks.
 
 ```json
 {
@@ -80,7 +80,7 @@ Non-negative `float` values
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks
+2. Give the bottom dock the full width of the window, truncating the left and right docks.
 
 ```json
 {
@@ -88,7 +88,7 @@ Non-negative `float` values
 }
 ```
 
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
 
 ```json
 {
@@ -96,7 +96,7 @@ Non-negative `float` values
 }
 ```
 
-3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
 ```json
 {

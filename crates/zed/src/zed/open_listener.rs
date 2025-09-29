@@ -434,7 +434,7 @@ async fn open_workspaces(
                     let workspace_paths = workspace_paths
                         .paths()
                         .iter()
-                        .map(|path| path.to_string_lossy().to_string())
+                        .map(|path| path.to_string_lossy().into_owned())
                         .collect();
 
                     let workspace_failed_to_open = open_local_workspace(

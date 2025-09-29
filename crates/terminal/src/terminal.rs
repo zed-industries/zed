@@ -1862,7 +1862,7 @@ impl Terminal {
                             let process_file = fpi
                                 .cwd
                                 .file_name()
-                                .map(|name| name.to_string_lossy().to_string())
+                                .map(|name| name.to_string_lossy().into_owned())
                                 .unwrap_or_default();
 
                             let argv = fpi.argv.as_slice();

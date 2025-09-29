@@ -1233,7 +1233,7 @@ mod tests {
     #[perf]
     fn test_path_compact() {
         let path: PathBuf = [
-            home_dir().to_string_lossy().to_string(),
+            home_dir().to_string_lossy().into_owned(),
             "some_file.txt".to_string(),
         ]
         .iter()

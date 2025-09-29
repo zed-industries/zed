@@ -143,7 +143,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         }
         .with_context(|| format!("parsing as path with position {argument_str}"))?,
     };
-    Ok(canonicalized.to_string(|path| path.to_string_lossy().to_string()))
+    Ok(canonicalized.to_string(|path| path.to_string_lossy().into_owned()))
 }
 
 fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
@@ -320,12 +320,12 @@ fn main() -> Result<()> {
             urls.push(path.to_string());
         } else if path == "-" && args.paths_with_position.len() == 1 {
             let file = NamedTempFile::new()?;
-            paths.push(file.path().to_string_lossy().to_string());
+            paths.push(file.path().to_string_lossy().into_owned());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
         } else if let Some(file) = anonymous_fd(path) {
             let tmp_file = NamedTempFile::new()?;
-            paths.push(tmp_file.path().to_string_lossy().to_string());
+            paths.push(tmp_file.path().to_string_lossy().into_owned());
             let (tmp_file, _) = tmp_file.keep()?;
             anonymous_fd_tmp_files.push((file, tmp_file));
         } else if let Some(wsl) = wsl {
