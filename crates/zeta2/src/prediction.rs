@@ -1,8 +1,16 @@
-use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use anyhow::{Context as _, Result};
 use cloud_llm_client::predict_edits_v3;
 use gpui::{App, AsyncApp, Entity};
 use language::{Anchor, Buffer, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff};
+use project::{Project, ProjectPath};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use uuid::Uuid;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -20,60 +28,8 @@ impl std::fmt::Display for EditPredictionId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingEditPrediction {
-    pub id: EditPredictionId,
-    pub path: Arc<Path>,
-    pub edits: Vec<predict_edits_v3::Edit>,
-}
-
-impl PendingEditPrediction {
-    pub fn from_response(response: predict_edits_v3::PredictEditsResponse) -> Option<Self> {
-        // TODO only allow cloud to return one path
-        let Some(path) = response.edits.first().map(|e| e.path.clone()) else {
-            return None;
-        };
-
-        Some(Self {
-            id: EditPredictionId(response.request_id),
-            path,
-            edits: response.edits,
-        })
-    }
-
-    pub async fn resolve(
-        self,
-        old_snapshot: Option<&TextBufferSnapshot>,
-        buffer: &Entity<Buffer>,
-        cx: &mut AsyncApp,
-    ) -> Option<ResolvedEditPrediction> {
-        let Ok(Some((edits, snapshot, edit_preview_task))) = buffer.read_with(cx, |buffer, cx| {
-            let new_snapshot = buffer.snapshot();
-            let edits: Arc<[_]> = if let Some(old_snapshot) = old_snapshot {
-                let edits = edits_from_response(&self.edits, &old_snapshot);
-                interpolate_edits(old_snapshot, &new_snapshot, edits)?.into()
-            } else {
-                // TODO try to get snapshot if we can?
-                edits_from_response(&self.edits, &new_snapshot)
-            };
-
-            Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
-        }) else {
-            return None;
-        };
-
-        Some(ResolvedEditPrediction {
-            id: self.id,
-            path: self.path,
-            edits,
-            snapshot: snapshot.text,
-            edit_preview: edit_preview_task.await,
-        })
-    }
-}
-
 #[derive(Clone)]
-pub struct ResolvedEditPrediction {
+pub struct EditPrediction {
     pub id: EditPredictionId,
     pub path: Arc<Path>,
     pub edits: Arc<[(Range<Anchor>, String)]>,
@@ -81,18 +37,85 @@ pub struct ResolvedEditPrediction {
     pub edit_preview: EditPreview,
 }
 
-impl ResolvedEditPrediction {
+impl EditPrediction {
+    pub async fn from_response(
+        response: predict_edits_v3::PredictEditsResponse,
+        active_buffer_old_snapshot: &TextBufferSnapshot,
+        active_buffer: &Entity<Buffer>,
+        project: &Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Option<Self> {
+        // TODO only allow cloud to return one path
+        let Some(path) = response.edits.first().map(|e| e.path.clone()) else {
+            return None;
+        };
+
+        let is_same_path = active_buffer
+            .read_with(cx, |buffer, cx| buffer_path_eq(buffer, &path, cx))
+            .ok()?;
+
+        let (edits, snapshot, edit_preview_task) = if is_same_path {
+            active_buffer
+                .read_with(cx, |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+                    let edits = edits_from_response(&response.edits, &active_buffer_old_snapshot);
+                    let edits: Arc<[_]> =
+                        interpolate_edits(active_buffer_old_snapshot, &new_snapshot, edits)?.into();
+
+                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                })
+                .ok()??
+        } else {
+            let buffer = project
+                .update(cx, |project, cx| {
+                    let project_path = path_to_project_path(&path, project, cx)
+                        .context("Failed to find project path for zeta edit")?;
+                    anyhow::Ok(project.open_buffer(project_path, cx))
+                })
+                .ok()?
+                .log_err()?
+                .await
+                .context("Failed to open buffer for zeta edit")
+                .log_err()?;
+
+            buffer
+                .read_with(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let edits = edits_from_response(&response.edits, &snapshot);
+                    if edits.is_empty() {
+                        return None;
+                    }
+                    Some((edits.clone(), snapshot, buffer.preview_edits(edits, cx)))
+                })
+                .ok()??
+        };
+
+        let edit_preview = edit_preview_task.await;
+
+        Some(EditPrediction {
+            id: EditPredictionId(response.request_id),
+            path,
+            edits,
+            snapshot: snapshot.text,
+            edit_preview,
+        })
+    }
+
     pub fn interpolate(
         &self,
         new_snapshot: &TextBufferSnapshot,
     ) -> Option<Vec<(Range<Anchor>, String)>> {
         interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
     }
+
+    pub fn targets_buffer(&self, buffer: &Buffer, cx: &App) -> bool {
+        buffer_path_eq(buffer, &self.path, cx)
+    }
 }
 
-impl std::fmt::Debug for ResolvedEditPrediction {
+impl std::fmt::Debug for EditPrediction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResolvedEditPrediction")
+        f.debug_struct("EditPrediction")
             .field("id", &self.id)
             .field("path", &self.path)
             .field("edits", &self.edits)
@@ -100,32 +123,24 @@ impl std::fmt::Debug for ResolvedEditPrediction {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum EditPrediction {
-    /// The target file hasn't been loaded yet, so we only have offsets
-    Pending(PendingEditPrediction),
-    /// The target file has been loaded, so we have anchors
-    Resolved(ResolvedEditPrediction),
-}
+fn path_to_project_path(path: &Path, project: &Project, cx: &App) -> Result<ProjectPath> {
+    let components: Vec<_> = path.components().collect();
+    let worktree_name = components
+        .first()
+        .context("Path has no components")?
+        .as_os_str()
+        .to_string_lossy();
+    let sub_path: PathBuf = components.iter().skip(1).collect();
+    let sub_path = RelPath::from_std_path(&sub_path, PathStyle::local())?;
 
-impl EditPrediction {
-    pub fn path(&self) -> &Arc<Path> {
-        match self {
-            Self::Pending(prediction) => &prediction.path,
-            Self::Resolved(prediction) => &prediction.path,
-        }
-    }
+    let worktree = project
+        .worktree_for_root_name(&worktree_name, cx)
+        .context("Failed to find worktree")?;
 
-    pub fn as_resolved(&self) -> Option<&ResolvedEditPrediction> {
-        match self {
-            Self::Pending(_) => None,
-            Self::Resolved(prediction) => Some(prediction),
-        }
-    }
-
-    pub fn targets_buffer(&self, buffer: &Buffer, cx: &App) -> bool {
-        buffer_path_eq(buffer, self.path(), cx)
-    }
+    Ok(ProjectPath {
+        worktree_id: worktree.read(cx).id(),
+        path: sub_path,
+    })
 }
 
 pub fn buffer_path_eq(buffer: &Buffer, path: &Path, cx: &App) -> bool {
@@ -306,7 +321,7 @@ mod tests {
             .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
             .await;
 
-        let prediction = ResolvedEditPrediction {
+        let prediction = EditPrediction {
             id: EditPredictionId(Uuid::new_v4()),
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot().text),

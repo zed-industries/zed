@@ -35,9 +35,7 @@ use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_noti
 mod prediction;
 mod provider;
 
-use crate::prediction::{
-    EditPrediction, EditPredictionId, PendingEditPrediction, ResolvedEditPrediction, buffer_path_eq,
-};
+use crate::prediction::{EditPrediction, EditPredictionId};
 pub use provider::ZetaEditPredictionProvider;
 
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
@@ -115,28 +113,19 @@ impl CurrentEditPrediction {
             return true;
         }
 
-        let Some(old_edits) = old_prediction
-            .prediction
-            .as_resolved()
-            .and_then(|old| old.interpolate(snapshot))
-        else {
+        let Some(old_edits) = old_prediction.prediction.interpolate(snapshot) else {
             return true;
         };
 
-        match &self.prediction {
-            EditPrediction::Pending(_) => true,
-            EditPrediction::Resolved(prediction) => {
-                let Some(new_edits) = prediction.interpolate(snapshot) else {
-                    return false;
-                };
-                if old_edits.len() == 1 && new_edits.len() == 1 {
-                    let (old_range, old_text) = &old_edits[0];
-                    let (new_range, new_text) = &new_edits[0];
-                    new_range == old_range && new_text.starts_with(old_text)
-                } else {
-                    true
-                }
-            }
+        let Some(new_edits) = self.prediction.interpolate(snapshot) else {
+            return false;
+        };
+        if old_edits.len() == 1 && new_edits.len() == 1 {
+            let (old_range, old_text) = &old_edits[0];
+            let (new_range, new_text) = &new_edits[0];
+            new_range == old_range && new_text.starts_with(old_text)
+        } else {
+            true
         }
     }
 }
@@ -145,7 +134,7 @@ impl CurrentEditPrediction {
 #[derive(Debug)]
 enum BufferEditPrediction<'a> {
     Local {
-        prediction: &'a ResolvedEditPrediction,
+        prediction: &'a EditPrediction,
     },
     Jump {
         id: EditPredictionId,
@@ -155,7 +144,7 @@ enum BufferEditPrediction<'a> {
 }
 
 impl BufferEditPrediction<'_> {
-    pub fn as_local(&self) -> Option<&ResolvedEditPrediction> {
+    pub fn as_local(&self) -> Option<&EditPrediction> {
         match self {
             BufferEditPrediction::Local { prediction } => Some(prediction),
             BufferEditPrediction::Jump { .. } => None,
@@ -388,32 +377,21 @@ impl Zeta {
 
         if *requested_by_buffer_id == buffer.entity_id() {
             if prediction.targets_buffer(buffer.read(cx), cx) {
-                prediction
-                    .as_resolved()
-                    .map(|prediction| BufferEditPrediction::Local { prediction })
+                Some(BufferEditPrediction::Local { prediction })
             } else {
-                match prediction {
-                    EditPrediction::Pending(prediction) => Some(BufferEditPrediction::Jump {
-                        id: prediction.id,
-                        path: prediction.path.clone(),
-                        offset: prediction.edits.first()?.range.start,
-                    }),
-                    EditPrediction::Resolved(prediction) => Some(BufferEditPrediction::Jump {
-                        id: prediction.id,
-                        path: prediction.path.clone(),
-                        offset: prediction
-                            .edits
-                            .first()?
-                            .0
-                            .start
-                            .to_offset(&buffer.read(cx)),
-                    }),
-                }
+                Some(BufferEditPrediction::Jump {
+                    id: prediction.id,
+                    path: prediction.path.clone(),
+                    offset: prediction
+                        .edits
+                        .first()?
+                        .0
+                        .start
+                        .to_offset(&prediction.snapshot),
+                })
             }
         } else if prediction.targets_buffer(buffer.read(cx), cx) {
-            prediction
-                .as_resolved()
-                .map(|prediction| BufferEditPrediction::Local { prediction })
+            Some(BufferEditPrediction::Local { prediction })
         } else {
             None
         }
@@ -439,47 +417,6 @@ impl Zeta {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        // TODO consider actually refreshing if not interpolatable after resfreshing
-        let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
-            return Task::ready(Err(anyhow!("Project not found")));
-        };
-
-        if let Some(CurrentEditPrediction {
-            requested_by_buffer_id,
-            prediction,
-        }) = project_state.current_prediction.take()
-            && prediction.targets_buffer(buffer.read(cx), cx)
-        {
-            match prediction {
-                EditPrediction::Pending(prediction) => {
-                    let buffer = buffer.clone();
-                    let project = project.clone();
-
-                    return cx.spawn(async move |this, cx| {
-                        let Some(resolved) = prediction.resolve(None, &buffer, cx).await else {
-                            return Ok(());
-                        };
-                        this.update(cx, |this, _cx| {
-                            let project_state = this
-                                .projects
-                                .get_mut(&project.entity_id())
-                                .context("Project not found")?;
-
-                            if project_state.current_prediction.is_none() {
-                                project_state.current_prediction = Some(CurrentEditPrediction {
-                                    requested_by_buffer_id,
-                                    prediction: EditPrediction::Resolved(resolved),
-                                });
-                            }
-                            anyhow::Ok(())
-                        })??;
-                        Ok(())
-                    });
-                }
-                EditPrediction::Resolved(_) => {}
-            }
-        }
-
         let request_task = self.request_prediction(project, buffer, position, cx);
         let buffer = buffer.clone();
         let project = project.clone();
@@ -667,65 +604,57 @@ impl Zeta {
 
         let buffer = buffer.clone();
 
-        cx.spawn(async move |this, cx| {
-            match request_task.await {
-                Ok(Some((response, usage))) => {
-                    if let Some(usage) = usage {
-                        this.update(cx, |this, cx| {
-                            this.user_store.update(cx, |user_store, cx| {
-                                user_store.update_edit_prediction_usage(usage, cx);
-                            });
-                        })
-                        .ok();
-                    }
-
-                    let prediction =
-                        if let Some(prediction) = PendingEditPrediction::from_response(response) {
-                            if buffer.read_with(cx, |buffer, cx| {
-                                buffer_path_eq(buffer, &prediction.path, cx)
-                            })? {
-                                prediction
-                                    .resolve(Some(&snapshot), &buffer, cx)
-                                    .await
-                                    .map(EditPrediction::Resolved)
-                            } else {
-                                Some(EditPrediction::Pending(prediction))
-                            }
-                        } else {
-                            None
-                        };
-
-                    // TODO telemetry: duration, etc
-                    Ok(prediction)
-                }
-                Ok(None) => Ok(None),
-                Err(err) => {
-                    if err.is::<ZedUpdateRequiredError>() {
-                        cx.update(|cx| {
-                            this.update(cx, |this, _cx| {
-                                this.update_required = true;
+        cx.spawn({
+            let project = project.clone();
+            async move |this, cx| {
+                match request_task.await {
+                    Ok(Some((response, usage))) => {
+                        if let Some(usage) = usage {
+                            this.update(cx, |this, cx| {
+                                this.user_store.update(cx, |user_store, cx| {
+                                    user_store.update_edit_prediction_usage(usage, cx);
+                                });
                             })
                             .ok();
+                        }
 
-                            let error_message: SharedString = err.to_string().into();
-                            show_app_notification(
-                                NotificationId::unique::<ZedUpdateRequiredError>(),
-                                cx,
-                                move |cx| {
-                                    cx.new(|cx| {
-                                        ErrorMessagePrompt::new(error_message.clone(), cx)
-                                            .with_link_button(
-                                                "Update Zed",
-                                                "https://zed.dev/releases",
-                                            )
-                                    })
-                                },
-                            );
-                        })
-                        .ok();
+                        let prediction = EditPrediction::from_response(
+                            response, &snapshot, &buffer, &project, cx,
+                        )
+                        .await;
+
+                        // TODO telemetry: duration, etc
+                        Ok(prediction)
                     }
+                    Ok(None) => Ok(None),
+                    Err(err) => {
+                        if err.is::<ZedUpdateRequiredError>() {
+                            cx.update(|cx| {
+                                this.update(cx, |this, _cx| {
+                                    this.update_required = true;
+                                })
+                                .ok();
 
-                    Err(err)
+                                let error_message: SharedString = err.to_string().into();
+                                show_app_notification(
+                                    NotificationId::unique::<ZedUpdateRequiredError>(),
+                                    cx,
+                                    move |cx| {
+                                        cx.new(|cx| {
+                                            ErrorMessagePrompt::new(error_message.clone(), cx)
+                                                .with_link_button(
+                                                    "Update Zed",
+                                                    "https://zed.dev/releases",
+                                                )
+                                        })
+                                    },
+                                );
+                            })
+                            .ok();
+                        }
+
+                        Err(err)
+                    }
                 }
             }
         })
@@ -1160,20 +1089,6 @@ mod tests {
             .await
             .unwrap();
 
-        // The prediction should be pending until we refresh
-        zeta.read_with(cx, |zeta, cx| {
-            assert!(
-                zeta.current_prediction_for_buffer(&buffer2, &project, cx)
-                    .is_none(),
-            );
-        });
-
-        zeta.update(cx, |zeta, cx| {
-            zeta.refresh_prediction(&project, &buffer2, position, cx)
-        })
-        .await
-        .unwrap();
-
         zeta.read_with(cx, |zeta, cx| {
             let prediction = zeta
                 .current_prediction_for_buffer(&buffer2, &project, cx)
@@ -1229,7 +1144,6 @@ mod tests {
             .unwrap();
 
         let prediction = prediction_task.await.unwrap().unwrap();
-        let prediction = prediction.as_resolved().unwrap();
 
         assert_eq!(prediction.edits.len(), 1);
         assert_eq!(
@@ -1308,7 +1222,6 @@ mod tests {
             .unwrap();
 
         let prediction = prediction_task.await.unwrap().unwrap();
-        let prediction = prediction.as_resolved().unwrap();
 
         assert_eq!(prediction.edits.len(), 1);
         assert_eq!(
