@@ -6,6 +6,8 @@ mod reference;
 mod syntax_index;
 mod text_similarity;
 
+use std::sync::Arc;
+
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 use text::{Point, ToOffset as _};
@@ -33,8 +35,10 @@ impl EditPredictionContext {
         cx: &mut App,
     ) -> Task<Option<Self>> {
         if let Some(syntax_index) = syntax_index {
-            let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+            let index_state =
+                syntax_index.read_with(cx, |index, _cx| Arc::downgrade(index.state()));
             cx.background_spawn(async move {
+                let index_state = index_state.upgrade()?;
                 let index_state = index_state.lock().await;
                 Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
             })
@@ -237,7 +241,8 @@ mod tests {
         let lang_id = lang.id();
         language_registry.add(Arc::new(lang));
 
-        let index = cx.new(|cx| SyntaxIndex::new(&project, cx));
+        let file_indexing_parallelism = 2;
+        let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx));
         cx.run_until_parked();
 
         (project, index, lang_id)

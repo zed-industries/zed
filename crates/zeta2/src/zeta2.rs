@@ -54,6 +54,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
+    file_indexing_parallelism: 1,
 };
 
 #[derive(Clone)]
@@ -78,6 +79,7 @@ pub struct ZetaOptions {
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
+    pub file_indexing_parallelism: usize,
 }
 
 pub struct PredictionDebugInfo {
@@ -242,7 +244,9 @@ impl Zeta {
         self.projects
             .entry(project.entity_id())
             .or_insert_with(|| ZetaProject {
-                syntax_index: cx.new(|cx| SyntaxIndex::new(project, cx)),
+                syntax_index: cx.new(|cx| {
+                    SyntaxIndex::new(project, self.options.file_indexing_parallelism, cx)
+                }),
                 events: VecDeque::new(),
                 registered_buffers: HashMap::new(),
                 current_prediction: None,
@@ -816,6 +820,18 @@ impl Zeta {
                 )
             })
         })
+    }
+
+    pub fn wait_for_initial_indexing(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let zeta_project = self.get_or_init_zeta_project(project, cx);
+        zeta_project
+            .syntax_index
+            .read(cx)
+            .wait_for_initial_file_indexing(cx)
     }
 }
 
