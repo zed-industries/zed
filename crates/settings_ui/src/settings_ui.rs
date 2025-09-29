@@ -765,6 +765,10 @@ impl SettingsWindow {
     }
 
     fn page_index_from_navbar_index(&self, index: usize) -> usize {
+        if self.navbar_entries.is_empty() {
+            return 0;
+        }
+
         self.navbar_entries
             .iter()
             .take(index + 1)
