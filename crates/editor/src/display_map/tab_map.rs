@@ -54,9 +54,7 @@ impl TabMap {
             new_snapshot.version += 1;
         }
 
-        let mut tab_edits = Vec::with_capacity(fold_edits.len());
-
-        if old_snapshot.tab_size == new_snapshot.tab_size {
+        let tab_edits = if old_snapshot.tab_size == new_snapshot.tab_size {
             // Expand each edit to include the next tab on the same line as the edit,
             // and any subsequent tabs on that line that moved across the tab expansion
             // boundary.
@@ -112,7 +110,7 @@ impl TabMap {
             let _old_alloc_ptr = fold_edits.as_ptr();
             // Combine any edits that overlap due to the expansion.
             let mut fold_edits = fold_edits.into_iter();
-            let fold_edits = if let Some(mut first_edit) = fold_edits.next() {
+            if let Some(mut first_edit) = fold_edits.next() {
                 // This code relies on reusing allocations from the Vec<_> - at the time of writing .flatten() prevents them.
                 #[allow(clippy::filter_map_identity)]
                 let mut v: Vec<_> = fold_edits
@@ -132,29 +130,30 @@ impl TabMap {
                     .collect();
                 v.push(first_edit);
                 debug_assert_eq!(v.as_ptr(), _old_alloc_ptr, "Fold edits were reallocated");
-                v
+                v.into_iter()
+                    .map(|fold_edit| {
+                        let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+                        let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+                        let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+                        let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+                        TabEdit {
+                            old: old_snapshot.to_tab_point(old_start)
+                                ..old_snapshot.to_tab_point(old_end),
+                            new: new_snapshot.to_tab_point(new_start)
+                                ..new_snapshot.to_tab_point(new_end),
+                        }
+                    })
+                    .collect()
             } else {
                 vec![]
-            };
-
-            for fold_edit in fold_edits {
-                let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
-                let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
-                let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
-                let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
-                tab_edits.push(TabEdit {
-                    old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                    new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
-                });
             }
         } else {
             new_snapshot.version += 1;
-            tab_edits.push(TabEdit {
+            vec![TabEdit {
                 old: TabPoint::zero()..old_snapshot.max_point(),
                 new: TabPoint::zero()..new_snapshot.max_point(),
-            });
-        }
-
+            }]
+        };
         *old_snapshot = new_snapshot;
         (old_snapshot.clone(), tab_edits)
     }
@@ -195,37 +194,28 @@ impl TabSnapshot {
             .fold_snapshot
             .text_summary_for_range(input_start..input_end);
 
-        let mut first_line_chars = 0;
         let line_end = if range.start.row() == range.end.row() {
             range.end
         } else {
             self.max_point()
         };
-        for c in self
+        let first_line_chars = self
             .chunks(range.start..line_end, false, Highlights::default())
             .flat_map(|chunk| chunk.text.chars())
-        {
-            if c == '\n' {
-                break;
-            }
-            first_line_chars += 1;
-        }
+            .take_while(|&c| c != '\n')
+            .count() as u32;
 
-        let mut last_line_chars = 0;
-        if range.start.row() == range.end.row() {
-            last_line_chars = first_line_chars;
+        let last_line_chars = if range.start.row() == range.end.row() {
+            first_line_chars
         } else {
-            for _ in self
-                .chunks(
-                    TabPoint::new(range.end.row(), 0)..range.end,
-                    false,
-                    Highlights::default(),
-                )
-                .flat_map(|chunk| chunk.text.chars())
-            {
-                last_line_chars += 1;
-            }
-        }
+            self.chunks(
+                TabPoint::new(range.end.row(), 0)..range.end,
+                false,
+                Highlights::default(),
+            )
+            .flat_map(|chunk| chunk.text.chars())
+            .count() as u32
+        };
 
         TextSummary {
             lines: range.end.0 - range.start.0,
@@ -514,15 +504,17 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 
 pub struct TabChunks<'a> {
     snapshot: &'a TabSnapshot,
+    max_expansion_column: u32,
+    max_output_position: Point,
+    tab_size: NonZeroU32,
+    // region: iteration state
     fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
     column: u32,
-    max_expansion_column: u32,
     output_position: Point,
     input_column: u32,
-    max_output_position: Point,
-    tab_size: NonZeroU32,
     inside_leading_tab: bool,
+    // endregion: iteration state
 }
 
 impl TabChunks<'_> {
