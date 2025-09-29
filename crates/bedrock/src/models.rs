@@ -22,7 +22,6 @@ pub struct BedrockModelCacheConfiguration {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // Anthropic models (already included)
-    #[default]
     #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
     ClaudeSonnet4,
     #[serde(
@@ -30,6 +29,7 @@ pub enum Model {
         alias = "claude-sonnet-4-thinking-latest"
     )]
     ClaudeSonnet4Thinking,
+    #[default]
     #[serde(rename = "claude-sonnet-4-5", alias = "claude-sonnet-4-5-latest")]
     ClaudeSonnet4_5,
     #[serde(
