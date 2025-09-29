@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -117,6 +119,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
@@ -836,6 +839,25 @@ impl Vim {
         let forced_motion = Vim::take_forced_motion(cx);
         self.yank_motion(
             motion::Motion::CurrentLine,
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
+    fn yank_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
             count,
             forced_motion,
             window,
