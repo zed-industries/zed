@@ -22,7 +22,7 @@ pub enum EditPrediction {
         edits: Vec<(Range<language::Anchor>, String)>,
         edit_preview: Option<language::EditPreview>,
     },
-    JumpOut {
+    Jump {
         /// The ID of the completion, if it has one.
         id: Option<SharedString>,
         snapshot: language::BufferSnapshot,

@@ -7922,7 +7922,7 @@ impl Editor {
                 edits,
                 edit_preview,
             } => (id, edits, edit_preview),
-            edit_prediction::EditPrediction::JumpOut {
+            edit_prediction::EditPrediction::Jump {
                 id,
                 snapshot,
                 target,
