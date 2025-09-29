@@ -160,8 +160,6 @@ pub struct SettingsStore {
 #[derive(Clone, PartialEq)]
 pub enum SettingsFile {
     User,
-    Global,
-    Extension,
     Server,
     Default,
     Local((WorktreeId, Arc<RelPath>)),
@@ -483,14 +481,82 @@ impl SettingsStore {
         if self.user_settings.is_some() {
             files.push(SettingsFile::User);
         }
-        if self.extension_settings.is_some() {
-            files.push(SettingsFile::Extension);
-        }
-        if self.global_settings.is_some() {
-            files.push(SettingsFile::Global);
-        }
         files.push(SettingsFile::Default);
         files
+    }
+
+
+    fn get_content_for_file_mut<'a>(
+        &'a mut self,
+        file: SettingsFile,
+    ) -> Option<&'a mut SettingsContent> {
+        match file {
+            SettingsFile::User => self
+                .user_settings
+                .as_mut()
+                .map(|settings| settings.content.as_mut()),
+            SettingsFile::Default => Some(self.default_settings.as_mut()),
+            SettingsFile::Server => self.server_settings.as_deref_mut(),
+            SettingsFile::Local(key) => self.local_settings.get_mut(&key),
+        }
+    }
+
+    pub fn get_value_from_file_mut<T>(
+        &mut self,
+        file: SettingsFile,
+        get: fn(&mut SettingsContent) -> &mut Option<T>,
+    ) -> &mut Option<T> {
+
+        // get_overrides_for_field(SettingsFile, pick()) -> Vec<SettingsFiles>
+        // get_value_for_field(SettingsFile, pick()) -> (SettingsFile, T) -> Current Value OR default (at this point)
+        // update_file(SettingsFile, fn(&mut SettingsContent))
+        // Add a metadata field for overriding the "overrides" tag, for contextually different settings
+        //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
+
+        let settings_store = todo!();
+        settings_store.get_overrides_for_field(/* ???? */) -> Vec<SettingsFile>
+
+
+        let all_files = self.get_all_files();
+        let pos = all_files
+            .iter()
+            .position(|other_file| *other_file == file)
+            .unwrap_or({
+                debug_assert!(
+                    all_files[all_files.len() - 1] == SettingsFile::Default,
+                    "Default settings file is always lowest precedence"
+                );
+                // default settings file only
+                all_files.len() - 1
+            });
+
+        let mut valid_position = all_files.len() - 1;
+        // We find the valid position using this loop to avoid borrow errors
+        // the borrow checker will complain if we return `value` in this loop
+        // because content is a mutable reference of self and so is value
+        // TODO: figure out a cleaner way to do this
+        for (ix, other_file) in all_files.iter().skip(pos).enumerate() {
+            if let SettingsFile::Local((other_wt_id, _)) = other_file
+                && let SettingsFile::Local((wt_id, _)) = file
+                && *other_wt_id != wt_id
+            {
+                // if requesting value from a local file, don't return values from local files in different worktrees
+                continue;
+            }
+
+            let Some(content) = self.get_content_for_file_mut(other_file.clone()) else {
+                continue;
+            };
+            let value = get(content);
+            if value.is_some() {
+                valid_position = ix;
+                break;
+            }
+        }
+
+        return get(self
+            .get_content_for_file_mut(all_files[valid_position].clone())
+            .unwrap());
     }
 }
 

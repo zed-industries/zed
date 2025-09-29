@@ -498,8 +498,6 @@ impl SettingsWindow {
         for file in all_files {
             let settings_ui_file = match file {
                 settings::SettingsFile::User => SettingsFile::User,
-                settings::SettingsFile::Global => continue,
-                settings::SettingsFile::Extension => continue,
                 settings::SettingsFile::Server => SettingsFile::Server("todo: server name"),
                 settings::SettingsFile::Default => continue,
                 settings::SettingsFile::Local(location) => SettingsFile::Local(location),
@@ -507,10 +505,10 @@ impl SettingsWindow {
             ui_files.push(settings_ui_file);
         }
         ui_files.reverse();
-        if !ui_files.contains(&self.current_file) {
+        self.files = ui_files;
+        if !self.files.contains(&self.current_file) {
             self.change_file(0, cx);
         }
-        self.files = ui_files;
     }
 
     fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
