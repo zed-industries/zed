@@ -14,7 +14,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
@@ -2749,11 +2749,16 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         let task = cx.spawn(async move |_, cx| {
-            let (port, _child) =
+            let (port_for_dap, _child) =
                 if remote_client.read_with(cx, |client, _| client.shares_network_interface())? {
                     (request.server_port, None)
                 } else {
-                    let port = TcpListener::bind("127.0.0.1").await?.local_addr()?.port();
+                    let port = {
+                        let listener = TcpListener::bind("127.0.0.1:0")
+                            .await
+                            .context("getting port for DAP")?;
+                        listener.local_addr()?.port()
+                    };
                     let child = remote_client.update(cx, |client, _| {
                         let command = client.build_forward_port_command(
                             port,
@@ -2763,7 +2768,6 @@ impl Session {
                         let child = new_smol_command(command.program)
                             .args(command.args)
                             .envs(command.env)
-                            .kill_on_drop(true)
                             .spawn()
                             .context("spawning port forwarding process")?;
                         anyhow::Ok(child)
@@ -2771,32 +2775,51 @@ impl Session {
                     (port, Some(child))
                 };
 
-            let (_child, browser_stream) = spawn_browser(&request)?;
+            let port_for_browser = {
+                let listener = TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .context("getting port for browser")?;
+                listener.local_addr()?.port()
+            };
+
+            let path = request.path.clone();
+            let _child = spawn_browser(request, port_for_browser)?;
 
             Tokio::spawn(cx, async move {
-                let path = request.path;
-                let url = format!("ws://localhost:{port}{path}");
+                let url = format!("ws://localhost:{port_for_dap}{path}");
                 log::info!("will connect to DAP running on remote at {url}");
-                let (dap_stream, _response) = tokio_tungstenite::connect_async(&url).await?;
+                let (dap_stream, _response) = tokio_tungstenite::connect_async(&url)
+                    .await
+                    .context("connecting to DAP")?;
                 let (mut dap_in, mut dap_out) = dap_stream.split();
                 log::info!("established websocket connection to DAP running on remote");
 
-                // FIXME what url to use here?
-                let (browser_stream, _response) =
-                    tokio_tungstenite::client_async("ws://localhost", browser_stream).await?;
+                let url = format!("ws://localhost:{port_for_browser}");
+                log::info!("will connect to browser running running locally at {url}");
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                let (browser_stream, _response) = tokio_tungstenite::connect_async(&url)
+                    .await
+                    .context("connecting to browser")?;
                 let (mut browser_in, mut browser_out) = browser_stream.split();
+                log::info!("established websocket connection to browser running locally");
 
                 let down_task = tokio::spawn(async move {
                     while let Some(message) = dap_out.next().await {
-                        let message = message?;
-                        browser_in.send(message).await?;
+                        let message = message.context("reading message from DAP")?;
+                        browser_in
+                            .send(message)
+                            .await
+                            .context("sending message to browser")?;
                     }
                     anyhow::Ok(())
                 });
                 let up_task = tokio::spawn(async move {
                     while let Some(message) = browser_out.next().await {
-                        let message = message?;
-                        dap_in.send(message).await?;
+                        let message = message.context("reading message from browser")?;
+                        dap_in
+                            .send(message)
+                            .await
+                            .context("sending message to DAP")?;
                     }
                     anyhow::Ok(())
                 });
@@ -2808,69 +2831,46 @@ impl Session {
             anyhow::Ok(())
         });
         self.background_tasks.push(cx.spawn(async move |_, _| {
-            task.await.ok();
+            task.await.log_err();
         }));
     }
 }
 
-struct BrowserStream {
-    browser_in: async_compat::Compat<smol::Unblock<std::io::PipeWriter>>,
-    browser_out: async_compat::Compat<smol::Unblock<std::io::PipeReader>>,
-}
-
-impl BrowserStream {
-    fn new() -> Result<(Self, std::io::PipeWriter, std::io::PipeReader)> {
-        todo!()
-    }
-}
-
-impl tokio::io::AsyncRead for BrowserStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let browser_out = unsafe { Pin::new_unchecked(&mut self.browser_out) };
-        browser_out.poll_read(cx, buf)
-    }
-}
-
-impl tokio::io::AsyncWrite for BrowserStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::result::Result<usize, std::io::Error>> {
-        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
-        browser_in.poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::result::Result<(), std::io::Error>> {
-        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
-        browser_in.poll_flush(cx)
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::result::Result<(), std::io::Error>> {
-        let browser_in = unsafe { Pin::new_unchecked(&mut self.browser_in) };
-        browser_in.poll_shutdown(cx)
-    }
-}
-
-#[cfg(windows)]
 fn spawn_browser(
-    request: &LaunchBrowserInCompanionParams,
-) -> Result<(smol::process::Child, Pin<Box<BrowserStream>>)> {
-    let (stream, child_in, child_out) = BrowserStream::new()?;
+    mut request: LaunchBrowserInCompanionParams,
+    port_for_browser: u16,
+) -> Result<smol::process::Child> {
+    if let Some(ix) = request
+        .browser_args
+        .iter()
+        .position(|arg| arg == "--remote-debugging-pipe")
+    {
+        request.browser_args[ix] = format!("--remote-debugging-port={port_for_browser}");
+        request
+            .browser_args
+            .retain(|arg| !arg.starts_with("--remote-debugging-io-pipes"));
+    } else {
+        // FIXME
+        bail!("expected --remote-debugging-pipe")
+    }
 
-    // create process
-    // DuplicateHandle or w/e
-    Box::pin(stream)
+    dbg!(&request.browser_args);
+
+    // FIXME
+    let path = match request.r#type.as_str() {
+        "edge" => "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "chrome" => "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        other => bail!("unrecognized browser debugging type: {other:?}"),
+    };
+
+    let child = new_smol_command(path)
+        .args(request.browser_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("spawning browser")?;
+    Ok(child)
 }
 
 #[derive(Deserialize)]
