@@ -341,7 +341,7 @@ mod tests {
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             path: Path::new("test.txt").into(),
-            buffer: buffer.clone(),
+            _buffer: buffer.clone(),
             edit_preview,
         };
 
