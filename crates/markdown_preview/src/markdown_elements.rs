@@ -178,7 +178,7 @@ impl MarkdownHighlight {
     pub fn to_highlight_style(
         &self,
         theme: &theme::SyntaxTheme,
-        link_color: &Hsla,
+        link_color: Hsla,
     ) -> Option<HighlightStyle> {
         match self {
             MarkdownHighlight::Style(style) => {
@@ -209,10 +209,10 @@ impl MarkdownHighlight {
                 if style.link {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
-                        color: Some(link_color.clone()),
+                        color: Some(link_color),
                         ..Default::default()
                     });
-                    highlight.color = Some(link_color.clone());
+                    highlight.color = Some(link_color);
                 }
 
                 Some(highlight)

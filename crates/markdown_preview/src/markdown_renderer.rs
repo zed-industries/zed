@@ -658,7 +658,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
     let workspace_clone = cx.workspace.clone();
     let code_span_bg_color = cx.code_span_background_color;
     let text_style = cx.text_style.clone();
-    let link_color = cx.link_color.clone();
+    let link_color = cx.link_color;
 
     for parsed_region in parsed_new {
         match parsed_region {
@@ -668,7 +668,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
-                            .to_highlight_style(&syntax_theme, &link_color)
+                            .to_highlight_style(&syntax_theme, link_color)
                             .map(|style| (range.clone(), style))
                     }),
                     parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
