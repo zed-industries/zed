@@ -262,7 +262,7 @@ impl ToolCard for FindPathToolCard {
                     .children(self.paths.iter().enumerate().map(|(index, path)| {
                         let path_clone = path.clone();
                         let workspace_clone = workspace.clone();
-                        let button_label = path.to_string_lossy().to_string();
+                        let button_label = path.to_string_lossy().into_owned();
 
                         Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)

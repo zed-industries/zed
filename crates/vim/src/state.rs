@@ -59,8 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-            Mode::HelixSelect => write!(f, "HELIX SELECT"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
@@ -344,11 +344,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
-                    let path = RelPath::from_std_path(relative, worktree.read(cx).path_style())
-                        .log_err()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path,
+                        path: path.into_arc(),
                     })
                 })
                 .next();
@@ -1611,7 +1610,7 @@ impl PickerDelegate for MarksViewDelegate {
 
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
-                let s = path.to_string_lossy().to_string();
+                let s = path.to_string_lossy().into_owned();
                 (
                     s.clone(),
                     vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],

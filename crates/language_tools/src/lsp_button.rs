@@ -162,7 +162,7 @@ impl LanguageServerState {
                                             let relative_path =
                                                 abs_path.strip_prefix(&worktree.abs_path()).ok()?;
                                             let relative_path =
-                                                RelPath::from_std_path(relative_path, path_style)
+                                                RelPath::new(relative_path, path_style)
                                                     .log_err()?;
                                             let entry = worktree.entry_for_path(&relative_path)?;
                                             let project_path =

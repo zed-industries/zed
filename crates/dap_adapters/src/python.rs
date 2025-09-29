@@ -46,7 +46,7 @@ impl PythonDebugAdapter {
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
-            vec![user_installed_path.to_string_lossy().to_string()]
+            vec![user_installed_path.to_string_lossy().into_owned()]
         } else {
             let adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
             let path = adapter_path
@@ -264,7 +264,7 @@ impl PythonDebugAdapter {
             name = delegate
                 .which(OsStr::new(cmd))
                 .await
-                .map(|path| path.to_string_lossy().to_string());
+                .map(|path| path.to_string_lossy().into_owned());
             if name.is_some() {
                 break;
             }
@@ -726,7 +726,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .config
             .get("cwd")
             .and_then(|cwd| {
-                RelPath::from_std_path(
+                RelPath::new(
                     cwd.as_str()
                         .map(Path::new)?
                         .strip_prefix(delegate.worktree_root_path())
@@ -740,7 +740,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
-                base_path,
+                base_path.into_arc(),
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )

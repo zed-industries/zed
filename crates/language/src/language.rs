@@ -463,17 +463,6 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         false
     }
 
-    /// Method only implemented by the default JSON language server adapter.
-    /// Used to clear the cache of JSON schemas that are used to provide
-    /// autocompletion and diagnostics in Zed settings and keybinds files.
-    /// Should not be called unless the callee is sure that
-    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
-    async fn clear_zed_json_schema_cache(&self) {
-        unreachable!(
-            "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
-        );
-    }
-
     /// True for the extension adapter and false otherwise.
     fn is_extension(&self) -> bool {
         false
@@ -760,6 +749,7 @@ pub struct LanguageConfig {
     pub hard_tabs: Option<bool>,
     /// How many columns a tab should occupy.
     #[serde(default)]
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// How to soft-wrap long lines of text.
     #[serde(default)]
@@ -856,6 +846,7 @@ pub struct BlockCommentConfig {
     /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: u32,
 }
 

@@ -164,7 +164,7 @@ impl ExampleInstance {
         } else {
             println!("{}Creating worktree", self.log_prefix);
 
-            let worktree_path_string = worktree_path.to_string_lossy().to_string();
+            let worktree_path_string = worktree_path.to_string_lossy().into_owned();
 
             run_git(
                 &self.repo_path,

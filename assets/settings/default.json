@@ -115,6 +115,7 @@
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
   // Whether to enable helix mode and key bindings.
+  // Enabling this mode will automatically enable vim mode.
   "helix_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.

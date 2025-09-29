@@ -3,23 +3,20 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    ContextProvider, LanguageName, LocalFile as _, LspAdapter, LspAdapterDelegate, LspInstaller,
+    Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
-use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
     io::BufReader,
-    lock::RwLock,
 };
 use std::{
     env::consts,
@@ -28,8 +25,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
-use theme::ThemeRegistry;
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
     rel_path::RelPath,
@@ -39,10 +35,6 @@ use crate::PackageJsonData;
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
-
-// Origin: https://github.com/SchemaStore/schemastore
-const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
-const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 
 pub(crate) struct JsonTaskProvider;
 
@@ -55,8 +47,8 @@ impl ContextProvider for JsonTaskProvider {
         let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
             return Task::ready(None);
         };
-        let is_package_json = file.path.ends_with(RelPath::new("package.json").unwrap());
-        let is_composer_json = file.path.ends_with(RelPath::new("composer.json").unwrap());
+        let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
+        let is_composer_json = file.path.ends_with(RelPath::unix("composer.json").unwrap());
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }
@@ -138,173 +130,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct JsonLspAdapter {
     node: NodeRuntime,
-    languages: Arc<LanguageRegistry>,
-    workspace_config: RwLock<Option<Value>>,
 }
 
 impl JsonLspAdapter {
     const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
-    pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
-        Self {
-            node,
-            languages,
-            workspace_config: Default::default(),
-        }
+    pub fn new(node: NodeRuntime) -> Self {
+        Self { node }
     }
-
-    fn get_workspace_config(
-        language_names: Vec<String>,
-        adapter_schemas: AdapterSchemas,
-        cx: &mut App,
-    ) -> Value {
-        let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
-        let font_names = &cx.text_system().all_font_names();
-        let themes = ThemeRegistry::try_global(cx);
-        let theme_names = &themes.clone().map(|t| t.list_names()).unwrap_or_default();
-        let icon_theme_names = &themes
-            .map(|t| {
-                t.list_icon_themes()
-                    .into_iter()
-                    .map(|icon_theme| icon_theme.name)
-                    .collect::<Vec<SharedString>>()
-            })
-            .unwrap_or_default();
-        let settings_schema = cx
-            .global::<SettingsStore>()
-            .json_schema(&SettingsJsonSchemaParams {
-                language_names: &language_names,
-                font_names,
-                theme_names,
-                icon_theme_names,
-            });
-
-        let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
-        let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
-        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
-        let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
-
-        #[allow(unused_mut)]
-        let mut schemas = serde_json::json!([
-            {
-                "fileMatch": ["tsconfig*.json"],
-                "schema":tsconfig_schema
-            },
-            {
-                "fileMatch": ["package.json"],
-                "schema":package_json_schema
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(paths::settings_file()),
-                    paths::local_settings_file_relative_path()
-                ],
-                "schema": settings_schema,
-            },
-            {
-                "fileMatch": [schema_file_match(paths::keymap_file())],
-                "schema": keymap_schema,
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(paths::tasks_file()),
-                    paths::local_tasks_file_relative_path()
-                ],
-                "schema": tasks_schema,
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(
-                        paths::snippets_dir()
-                            .join("*.json")
-                            .as_path()
-                    )
-                ],
-                "schema": snippets_schema,
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(paths::debug_scenarios_file()),
-                    paths::local_debug_file_relative_path()
-                ],
-                "schema": debug_schema,
-            },
-        ]);
-
-        #[cfg(debug_assertions)]
-        {
-            schemas.as_array_mut().unwrap().push(serde_json::json!(
-                {
-                    "fileMatch": [
-                        "zed-inspector-style.json"
-                    ],
-                    "schema": generate_inspector_style_schema(),
-                }
-            ))
-        }
-
-        schemas
-            .as_array_mut()
-            .unwrap()
-            .extend(cx.all_action_names().iter().map(|&name| {
-                project::lsp_store::json_language_server_ext::url_schema_for_action(name)
-            }));
-
-        // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
-        // `Server Info`
-        serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "validate":
-                {
-                    "enable": true,
-                },
-                "schemas": schemas
-            }
-        })
-    }
-
-    async fn get_or_init_workspace_config(&self, cx: &mut AsyncApp) -> Result<Value> {
-        {
-            let reader = self.workspace_config.read().await;
-            if let Some(config) = reader.as_ref() {
-                return Ok(config.clone());
-            }
-        }
-        let mut writer = self.workspace_config.write().await;
-
-        let adapter_schemas = cx
-            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
-            .adapters_schema()
-            .await;
-
-        let config = cx.update(|cx| {
-            Self::get_workspace_config(
-                self.languages
-                    .language_names()
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect(),
-                adapter_schemas,
-                cx,
-            )
-        })?;
-        writer.replace(config.clone());
-        Ok(config)
-    }
-}
-
-#[cfg(debug_assertions)]
-fn generate_inspector_style_schema() -> serde_json_lenient::Value {
-    let schema = schemars::generate::SchemaSettings::draft2019_09()
-        .with_transform(util::schemars::DefaultDenyUnknownFields)
-        .into_generator()
-        .root_schema_for::<gpui::StyleRefinement>();
-
-    serde_json_lenient::to_value(schema).unwrap()
 }
 
 impl LspInstaller for JsonLspAdapter {
@@ -420,8 +253,23 @@ impl LspAdapter for JsonLspAdapter {
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut config = self.get_or_init_workspace_config(cx).await?;
+        let mut config = cx.update(|cx| {
+            let schemas = json_schema_store::all_schema_file_associations(cx);
 
+            // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
+            // `Server Info`
+            serde_json::json!({
+                "json": {
+                    "format": {
+                        "enable": true,
+                    },
+                    "validate": {
+                        "enable": true,
+                    },
+                    "schemas": schemas
+                }
+            })
+        })?;
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| s.settings.clone())
@@ -445,10 +293,6 @@ impl LspAdapter for JsonLspAdapter {
 
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
-    }
-
-    async fn clear_zed_json_schema_cache(&self) {
-        self.workspace_config.write().await.take();
     }
 }
 
@@ -480,15 +324,6 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
-}
-
-#[inline]
-fn schema_file_match(path: &Path) -> String {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
-        .display()
-        .to_string()
-        .replace('\\', "/")
 }
 
 pub struct NodeVersionAdapter;

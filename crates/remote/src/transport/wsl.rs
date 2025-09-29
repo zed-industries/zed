@@ -142,7 +142,7 @@ impl WslRemoteConnection {
         );
 
         let dst_path =
-            paths::remote_wsl_server_dir_relative().join(RelPath::new(&binary_name).unwrap());
+            paths::remote_wsl_server_dir_relative().join(RelPath::unix(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
             self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
@@ -155,7 +155,7 @@ impl WslRemoteConnection {
             super::build_remote_server_from_source(&self.platform, delegate.as_ref(), cx).await?
         {
             let tmp_path = paths::remote_wsl_server_dir_relative().join(
-                &RelPath::new(&format!(
+                &RelPath::unix(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
@@ -193,7 +193,7 @@ impl WslRemoteConnection {
             dst_path.display(PathStyle::Posix),
             std::process::id()
         );
-        let tmp_path = RelPath::new(&tmp_path).unwrap();
+        let tmp_path = RelPath::unix(&tmp_path).unwrap();
 
         self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
         self.extract_and_install(&tmp_path, &dst_path, delegate, cx)

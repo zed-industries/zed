@@ -1850,7 +1850,7 @@ impl LocalLspStore {
                                                 if !extra_buffers.is_empty() {
                                                     extra_buffers.push_str(", ");
                                                 }
-                                                extra_buffers.push_str(path.path.as_str());
+                                                extra_buffers.push_str(path.path.as_unix_str());
                                             }
                                         })
                                         .ok();
@@ -2485,7 +2485,7 @@ impl LocalLspStore {
                     name: None,
                     message: proto::update_language_server::Variant::RegisteredForBuffer(
                         proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                             buffer_id: buffer_id.to_proto(),
                         },
                     ),
@@ -3188,7 +3188,7 @@ impl LocalLspStore {
                         let pattern = watcher_path
                             .as_path()
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
@@ -3196,7 +3196,7 @@ impl LocalLspStore {
                                     path.display(),
                                     e
                                 );
-                                watcher_path.as_path().to_string_lossy().to_string()
+                                watcher_path.as_path().to_string_lossy().into_owned()
                             });
                         (path, pattern)
                     }
@@ -3212,7 +3212,7 @@ impl LocalLspStore {
                         let path = glob_literal_prefix(Path::new(&rp.pattern));
                         let pattern = Path::new(&rp.pattern)
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
@@ -3284,8 +3284,8 @@ impl LocalLspStore {
                     let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
-                        relative.to_string_lossy().to_string(),
+                        RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
+                        relative.to_string_lossy().into_owned(),
                     ))
                 }
                 lsp::GlobPattern::Relative(rp) => {
@@ -3300,7 +3300,7 @@ impl LocalLspStore {
                     literal_prefix.push(glob_literal_prefix(Path::new(&rp.pattern)));
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
+                        RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
                         rp.pattern.clone(),
                     ))
                 }
@@ -3707,15 +3707,6 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
-            cx.subscribe(
-                extension_events,
-                Self::reload_zed_json_schemas_on_extensions_changed,
-            )
-            .detach();
-        } else {
-            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
-        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
         subscribe_to_binary_statuses(&languages, cx).detach();
@@ -3989,100 +3980,6 @@ impl LspStore {
         }
 
         Ok(())
-    }
-
-    pub fn reload_zed_json_schemas_on_extensions_changed(
-        &mut self,
-        _: Entity<extension::ExtensionEvents>,
-        evt: &extension::Event,
-        cx: &mut Context<Self>,
-    ) {
-        match evt {
-            extension::Event::ExtensionInstalled(_)
-            | extension::Event::ExtensionUninstalled(_)
-            | extension::Event::ConfigureExtensionRequested(_) => return,
-            extension::Event::ExtensionsInstalledChanged => {}
-        }
-        if self.as_local().is_none() {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let weak_ref = this.clone();
-
-            let servers = this
-                .update(cx, |this, cx| {
-                    let local = this.as_local()?;
-
-                    let mut servers = Vec::new();
-                    for (seed, state) in &local.language_server_ids {
-
-                            let Some(states) = local.language_servers.get(&state.id) else {
-                                continue;
-                            };
-                            let (json_adapter, json_server) = match states {
-                                LanguageServerState::Running {
-                                    adapter, server, ..
-                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
-                                    (adapter.adapter.clone(), server.clone())
-                                }
-                                _ => continue,
-                            };
-
-                            let Some(worktree) = this
-                                .worktree_store
-                                .read(cx)
-                                .worktree_for_id(seed.worktree_id, cx)
-                            else {
-                                continue;
-                            };
-                            let json_delegate: Arc<dyn LspAdapterDelegate> =
-                                LocalLspAdapterDelegate::new(
-                                    local.languages.clone(),
-                                    &local.environment,
-                                    weak_ref.clone(),
-                                    &worktree,
-                                    local.http_client.clone(),
-                                    local.fs.clone(),
-                                    cx,
-                                );
-
-                            servers.push((json_adapter, json_server, json_delegate));
-
-                    }
-                    Some(servers)
-                })
-                .ok()
-                .flatten();
-
-            let Some(servers) = servers else {
-                return;
-            };
-
-            for (adapter, server, delegate) in servers {
-                adapter.clear_zed_json_schema_cache().await;
-
-                let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
-                        adapter,
-                        &delegate,
-                        None,
-                        cx,
-                    )
-                    .await
-                    .context("generate new workspace configuration for JSON language server while trying to refresh JSON Schemas")
-                    .ok()
-                else {
-                    continue;
-                };
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        &lsp::DidChangeConfigurationParams {
-                            settings: json_workspace_config,
-                        },
-                    )
-                    .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4725,7 +4622,9 @@ impl LspStore {
                                 message:
                                     proto::update_language_server::Variant::RegisteredForBuffer(
                                         proto::RegisteredForBuffer {
-                                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                                            buffer_abs_path: abs_path
+                                                .to_string_lossy()
+                                                .into_owned(),
                                             buffer_id: buffer_id.to_proto(),
                                         },
                                     ),
@@ -7936,11 +7835,8 @@ impl LspStore {
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
-                    RelPath::from_std_path(
-                        abs_path.strip_prefix(worktree_root)?,
-                        PathStyle::local(),
-                    )
-                    .context("failed to create relative path")?
+                    RelPath::new(abs_path.strip_prefix(worktree_root)?, PathStyle::local())?
+                        .into_arc()
                 };
                 (worktree, relative_path)
             };
@@ -10688,7 +10584,7 @@ impl LspStore {
                 name: Some(adapter.name()),
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                         buffer_id: buffer_id.to_proto(),
                     },
                 ),
@@ -10949,7 +10845,7 @@ impl LspStore {
                 abs_path,
                 signature,
             } => {
-                result.path = abs_path.to_string_lossy().to_string();
+                result.path = abs_path.to_string_lossy().into_owned();
                 result.signature = signature.to_vec();
             }
         }

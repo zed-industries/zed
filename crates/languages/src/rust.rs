@@ -92,7 +92,7 @@ impl ManifestProvider for CargoManifestProvider {
     ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::new("Cargo.toml").unwrap());
+            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -1029,7 +1029,7 @@ fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
         // filter out just that module.
         Some("--lib".to_owned())
     } else if stem == "mod" {
-        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().to_string()) })
+        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().into_owned()) })
     } else if stem == "main" {
         if let (Some(bin_name), Some(bin_kind)) = (
             variables.get(&RUST_BIN_NAME_TASK_VARIABLE),

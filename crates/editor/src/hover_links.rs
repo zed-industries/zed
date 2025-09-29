@@ -370,7 +370,7 @@ pub fn update_inlay_link_and_hover_points(
                                                 inlay: hovered_hint.id,
                                                 inlay_position: hovered_hint.position,
                                                 range: extra_shift_left
-                                                    ..hovered_hint.text.len() + extra_shift_right,
+                                                    ..hovered_hint.text().len() + extra_shift_right,
                                             },
                                         },
                                         window,

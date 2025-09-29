@@ -443,7 +443,7 @@ impl Zeta {
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
-        let full_path_str = full_path.to_string_lossy().to_string();
+        let full_path_str = full_path.to_string_lossy().into_owned();
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let prompt_for_events = {
@@ -1181,11 +1181,11 @@ impl Event {
                 let old_path = old_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(RelPath::new("untitled").unwrap());
+                    .unwrap_or(RelPath::unix("untitled").unwrap());
                 let new_path = new_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(RelPath::new("untitled").unwrap());
+                    .unwrap_or(RelPath::unix("untitled").unwrap());
                 if old_path != new_path {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }

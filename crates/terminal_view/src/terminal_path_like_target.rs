@@ -109,7 +109,7 @@ fn possible_hover_target(
             .update(cx, |terminal_view, _| match file_to_open {
                 Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, ..)) => {
                     terminal_view.hover = Some(HoverTarget {
-                        tooltip: path.to_string(|path| path.to_string_lossy().to_string()),
+                        tooltip: path.to_string(|path| path.to_string_lossy().into_owned()),
                         hovered_word,
                     });
                 }
@@ -183,7 +183,7 @@ fn possible_open_target(
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
         let relative_cwd = cwd
             .and_then(|cwd| cwd.strip_prefix(&worktree_root).ok())
-            .and_then(|cwd| RelPath::from_std_path(cwd, PathStyle::local()).ok())
+            .and_then(|cwd| RelPath::new(cwd, PathStyle::local()).ok())
             .and_then(|cwd_stripped| {
                 (cwd_stripped.as_ref() != RelPath::empty()).then(|| {
                     is_cwd_in_worktree = true;
@@ -223,7 +223,7 @@ fn possible_open_target(
             };
 
             if let Ok(relative_path_to_check) =
-                RelPath::from_std_path(&path_to_check.path, PathStyle::local())
+                RelPath::new(&path_to_check.path, PathStyle::local())
                 && !worktree.read(cx).is_single_file()
                 && let Some(entry) = relative_cwd
                     .clone()
@@ -369,7 +369,7 @@ fn possible_open_target(
                         for entry in traversal {
                             if let Some(path_in_worktree) =
                                 worktree_paths_to_check.iter().find(|path_to_check| {
-                                    RelPath::from_std_path(&path_to_check.path, PathStyle::local())
+                                    RelPath::new(&path_to_check.path, PathStyle::local())
                                         .is_ok_and(|path| entry.path.ends_with(&path))
                                 })
                             {

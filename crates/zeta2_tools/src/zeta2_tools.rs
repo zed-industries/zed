@@ -18,7 +18,7 @@ use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{Zeta, ZetaOptions};
 
-use edit_prediction_context::{EditPredictionExcerptOptions, SnippetStyle};
+use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
 actions!(
     dev,
@@ -285,7 +285,7 @@ impl Zeta2Inspector {
                 let mut languages = HashMap::default();
                 for lang_id in prediction
                     .context
-                    .snippets
+                    .declarations
                     .iter()
                     .map(|snippet| snippet.declaration.identifier().language_id)
                     .chain(prediction.context.excerpt_text.language_id)
@@ -307,7 +307,7 @@ impl Zeta2Inspector {
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
-                                title: RelPath::new("Cursor Excerpt").unwrap().into(),
+                                title: RelPath::unix("Cursor Excerpt").unwrap().into(),
                                 path_style,
                                 worktree_id,
                             });
@@ -334,18 +334,18 @@ impl Zeta2Inspector {
                                 cx,
                             );
 
-                            for snippet in &prediction.context.snippets {
+                            for snippet in &prediction.context.declarations {
                                 let path = this
                                     .project
                                     .read(cx)
                                     .path_for_entry(snippet.declaration.project_entry_id(), cx);
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
-                                    title: RelPath::new(&format!(
+                                    title: RelPath::unix(&format!(
                                         "{} (Score density: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
-                                        snippet.score_density(SnippetStyle::Declaration)
+                                        snippet.score_density(DeclarationStyle::Declaration)
                                     ))
                                     .unwrap()
                                     .into(),

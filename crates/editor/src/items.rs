@@ -640,7 +640,7 @@ impl Item for Editor {
             .and_then(|f| f.as_local())?
             .abs_path(cx);
 
-        let file_path = file_path.compact().to_string_lossy().to_string();
+        let file_path = file_path.compact().to_string_lossy().into_owned();
 
         Some(file_path.into())
     }
@@ -963,13 +963,12 @@ impl Item for Editor {
             buffer
                 .snapshot()
                 .resolve_file_path(
-                    cx,
                     self.project
                         .as_ref()
                         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
                         .unwrap_or_default(),
+                    cx,
                 )
-                .map(|path| path.to_string_lossy().to_string())
                 .unwrap_or_else(|| {
                     if multibuffer.is_singleton() {
                         multibuffer.title(cx).to_string()
@@ -1910,7 +1909,7 @@ fn path_for_file<'a>(
                 return None;
             }
         }
-        Some(full_path.to_string_lossy().to_string().into())
+        Some(full_path.to_string_lossy().into_owned().into())
     } else {
         let mut path = file.path().strip_prefix(prefix).ok()?;
         if !include_filename {

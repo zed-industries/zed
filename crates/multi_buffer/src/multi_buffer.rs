@@ -54,7 +54,7 @@ use util::post_inc;
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExcerptId(usize);
+pub struct ExcerptId(u32);
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
@@ -178,7 +178,7 @@ impl PathKey {
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().to_string().into())
+            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
         } else {
             Self::namespaced(0, buffer.entity_id().to_string().into())
         }
@@ -7202,7 +7202,7 @@ impl ExcerptId {
     }
 
     pub fn max() -> Self {
-        Self(usize::MAX)
+        Self(u32::MAX)
     }
 
     pub fn to_proto(self) -> u64 {
@@ -7222,7 +7222,7 @@ impl ExcerptId {
 
 impl From<ExcerptId> for usize {
     fn from(val: ExcerptId) -> Self {
-        val.0
+        val.0 as usize
     }
 }
 

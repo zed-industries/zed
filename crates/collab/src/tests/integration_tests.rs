@@ -1699,13 +1699,8 @@ async fn test_project_reconnect(
         );
         assert!(worktree_a3.read(cx).has_update_observer());
         assert_eq!(
-            worktree_a3
-                .read(cx)
-                .snapshot()
-                .paths()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>(),
-            vec!["w.txt", "x.txt", "y.txt"]
+            worktree_a3.read(cx).snapshot().paths().collect::<Vec<_>>(),
+            vec![rel_path("w.txt"), rel_path("x.txt"), rel_path("y.txt")]
         );
     });
 
@@ -1737,9 +1732,8 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
-            vec!["w.txt", "x.txt", "y.txt"]
+            vec![rel_path("w.txt"), rel_path("x.txt"), rel_path("y.txt")]
         );
     });
 
@@ -1833,7 +1827,7 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.as_str())
+                .map(|p| p.as_unix_str())
                 .collect::<Vec<_>>(),
             vec!["z.txt"]
         );
@@ -2471,39 +2465,39 @@ async fn test_propagate_saves_and_fs_changes(
 
     worktree_a.read_with(cx_a, |tree, _| {
         assert_eq!(
-            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["file1.js", "file3", "file4"]
+            tree.paths().collect::<Vec<_>>(),
+            [rel_path("file1.js"), rel_path("file3"), rel_path("file4")]
         )
     });
 
     worktree_b.read_with(cx_b, |tree, _| {
         assert_eq!(
-            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["file1.js", "file3", "file4"]
+            tree.paths().collect::<Vec<_>>(),
+            [rel_path("file1.js"), rel_path("file3"), rel_path("file4")]
         )
     });
 
     worktree_c.read_with(cx_c, |tree, _| {
         assert_eq!(
-            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["file1.js", "file3", "file4"]
+            tree.paths().collect::<Vec<_>>(),
+            [rel_path("file1.js"), rel_path("file3"), rel_path("file4")]
         )
     });
 
     // Ensure buffer files are updated as well.
 
     buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
+        assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
+        assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
+        assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
@@ -3217,15 +3211,15 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["a.txt", "b.txt", "c.txt"]
+            worktree.paths().collect::<Vec<_>>(),
+            [rel_path("a.txt"), rel_path("b.txt"), rel_path("c.txt")]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["a.txt", "b.txt", "c.txt"]
+            worktree.paths().collect::<Vec<_>>(),
+            [rel_path("a.txt"), rel_path("b.txt"), rel_path("c.txt")]
         );
     });
 
@@ -3240,14 +3234,17 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
-            ["a.txt", "b.txt", "d.txt"]
+            worktree.paths().collect::<Vec<_>>(),
+            [rel_path("a.txt"), rel_path("b.txt"), rel_path("d.txt")]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt"]
         );
     });
@@ -3263,14 +3260,20 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["DIR", "a.txt", "b.txt", "d.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["DIR", "a.txt", "b.txt", "d.txt"]
         );
     });
@@ -3386,14 +3389,20 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
@@ -3407,14 +3416,20 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "f.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree
+                .paths()
+                .map(|p| p.as_unix_str())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "f.txt"]
         );
     });
