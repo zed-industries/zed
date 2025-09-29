@@ -120,13 +120,6 @@
             name: (identifier) @name
             !value) @item))
 
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (_) @name
-            value: (arrow_function)) @item))
-
 (class_declaration
     "class" @context
     name: (_) @name) @item
