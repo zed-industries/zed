@@ -16,7 +16,7 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset, ToPoint};
+use multi_buffer::{ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{borrow::Cow, cell::RefCell};
@@ -477,13 +477,8 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        match snapshot.syntax_ancestor(anchor..anchor)?.1 {
-                            MultiOrSingleBufferOffsetRange::Multi(range) => Some(
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_after(range.end),
-                            ),
-                            MultiOrSingleBufferOffsetRange::Single(_) => None,
-                        }
+                        let range = snapshot.syntax_ancestor(anchor..anchor)?.1;
+                        Some(snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
