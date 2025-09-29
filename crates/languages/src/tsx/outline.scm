@@ -35,13 +35,23 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (object_pattern) @name) @item))
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
 
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (array_pattern) @name) @item))
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
 
 (export_statement
     (lexical_declaration
@@ -70,13 +80,23 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (object_pattern) @name) @item))
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (array_pattern) @name) @item))
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
 
 (program
     (lexical_declaration
@@ -112,13 +132,23 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (object_pattern) @name) @item))
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
 
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (array_pattern) @name) @item))
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
 
 (statement_block
     (lexical_declaration
