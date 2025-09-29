@@ -377,6 +377,8 @@ pub struct EditPredictionSettings {
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
+    /// Settings specific to Codestral.
+    pub codestral: CodestralSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -410,6 +412,16 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CodestralSettings {
+    /// API key for Codestral.
+    pub api_key: Option<String>,
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
 }
 
 impl AllLanguageSettings {
@@ -622,6 +634,13 @@ impl settings::Settings for AllLanguageSettings {
             enterprise_uri: copilot.enterprise_uri,
         };
 
+        let codestral = edit_predictions.codestral.unwrap();
+        let codestral_settings = CodestralSettings {
+            api_key: codestral.api_key,
+            model: codestral.model,
+            max_tokens: codestral.max_tokens,
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
@@ -655,6 +674,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
+                codestral: codestral_settings,
                 enabled_in_text_threads,
             },
             defaults: default_language_settings,
