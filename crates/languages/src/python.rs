@@ -1008,9 +1008,10 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
 }
 
 fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
-    if let Some(venv) = venv {
-        venv.strip_prefix(wr)
-            .map_or(usize::MAX, |p| p.components().count())
+    if let Some(venv) = venv
+        && let Ok(p) = venv.strip_prefix(wr)
+    {
+        p.components().count()
     } else {
         usize::MAX
     }
