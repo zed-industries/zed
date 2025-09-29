@@ -715,13 +715,13 @@ mod tests {
             let decls = index_state.declarations_for_identifier::<8>(&main);
             assert_eq!(decls.len(), 2);
 
-            let decl = expect_file_decl("c.rs", &decls[0].1, &project, cx);
-            assert_eq!(decl.identifier, main.clone());
-            assert_eq!(decl.item_range, 32..280);
-
-            let decl = expect_file_decl("a.rs", &decls[1].1, &project, cx);
+            let decl = expect_file_decl("a.rs", &decls[0].1, &project, cx);
             assert_eq!(decl.identifier, main);
             assert_eq!(decl.item_range, 0..98);
+
+            let decl = expect_file_decl("c.rs", &decls[1].1, &project, cx);
+            assert_eq!(decl.identifier, main.clone());
+            assert_eq!(decl.item_range, 32..280);
         });
     }
 
@@ -857,8 +857,8 @@ mod tests {
         cx.update(|cx| {
             let decls = index_state.declarations_for_identifier::<8>(&main);
             assert_eq!(decls.len(), 2);
-            expect_file_decl("c.rs", &decls[0].1, &project, cx);
-            expect_file_decl("a.rs", &decls[1].1, &project, cx);
+            expect_file_decl("a.rs", &decls[0].1, &project, cx);
+            expect_file_decl("c.rs", &decls[1].1, &project, cx);
         });
     }
 
