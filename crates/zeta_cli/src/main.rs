@@ -80,6 +80,8 @@ struct Zeta2Args {
     prompt_format: PromptFormat,
     #[arg(long, value_enum, default_value_t = Default::default())]
     output_format: OutputFormat,
+    #[arg(long, default_value_t = 42)]
+    file_indexing_parallelism: usize,
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
@@ -257,7 +259,6 @@ async fn get_context(
                     zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
                 });
                 let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                    zeta.register_buffer(&buffer, &project, cx);
                     zeta.set_options(zeta2::ZetaOptions {
                         excerpt: EditPredictionExcerptOptions {
                             max_bytes: zeta2_args.max_excerpt_bytes,
@@ -268,7 +269,9 @@ async fn get_context(
                         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
                         max_prompt_bytes: zeta2_args.max_prompt_bytes,
                         prompt_format: zeta2_args.prompt_format.into(),
+                        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
                     });
+                    zeta.register_buffer(&buffer, &project, cx);
                     zeta.wait_for_initial_indexing(&project, cx)
                 });
                 cx.spawn(async move |cx| {

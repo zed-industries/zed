@@ -241,7 +241,8 @@ mod tests {
         let lang_id = lang.id();
         language_registry.add(Arc::new(lang));
 
-        let index = cx.new(|cx| SyntaxIndex::new(&project, cx));
+        let file_indexing_parallelism = 2;
+        let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx));
         cx.run_until_parked();
 
         (project, index, lang_id)

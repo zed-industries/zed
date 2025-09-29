@@ -3,7 +3,8 @@ use collections::{HashMap, HashSet};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use futures::lock::Mutex;
-use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
+use itertools::Itertools;
 use language::{Buffer, BufferEvent};
 use postage::stream::Stream as _;
 use project::buffer_store::{BufferStore, BufferStoreEvent};
@@ -80,7 +81,12 @@ struct BufferState {
 }
 
 impl SyntaxIndex {
-    pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        project: &Entity<Project>,
+        file_indexing_parallelism: usize,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        assert!(file_indexing_parallelism > 0);
         let (dirty_files_tx, mut dirty_files_rx) = mpsc::channel::<()>(1);
         let (mut initial_file_indexing_done_tx, initial_file_indexing_done_rx) =
             postage::watch::channel();
@@ -108,20 +114,38 @@ impl SyntaxIndex {
             .collect::<Vec<_>>();
         this.state.try_lock().unwrap()._file_indexing_task =
             Some(cx.spawn(async move |this, cx| {
-                for worktree in initial_worktree_snapshots {
-                    for entry in worktree.files(false, 0) {
-                        let project_path = ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: entry.path.clone(),
-                        };
-                        let Ok(task) = this
-                            .update(cx, |this, cx| this.update_file(entry.id, project_path, cx))
-                        else {
-                            return;
-                        };
-                        task.await;
-                    }
+                let snapshots_file_count = initial_worktree_snapshots
+                    .iter()
+                    .map(|worktree| worktree.file_count())
+                    .sum::<usize>();
+                let chunk_size = snapshots_file_count.div_ceil(file_indexing_parallelism);
+                let chunk_count = snapshots_file_count.div_ceil(chunk_size);
+                let file_chunks = initial_worktree_snapshots
+                    .iter()
+                    .flat_map(|worktree| {
+                        let worktree_id = worktree.id();
+                        worktree.files(false, 0).map(move |entry| {
+                            (
+                                entry.id,
+                                ProjectPath {
+                                    worktree_id,
+                                    path: entry.path.clone(),
+                                },
+                            )
+                        })
+                    })
+                    .chunks(chunk_size);
+
+                let mut tasks = Vec::with_capacity(chunk_count);
+                for chunk in file_chunks.into_iter() {
+                    tasks.push(Self::update_dirty_files(
+                        &this,
+                        chunk.into_iter().collect(),
+                        cx.clone(),
+                    ));
                 }
+                futures::future::join_all(tasks).await;
+
                 log::info!("Finished initial file indexing");
                 *initial_file_indexing_done_tx.borrow_mut() = true;
 
@@ -137,15 +161,22 @@ impl SyntaxIndex {
                         state.dirty_files.shrink_to_fit();
                     }
                     drop(state);
-
-                    for (entry_id, project_path) in dirty_files {
-                        let Ok(task) = this
-                            .update(cx, |this, cx| this.update_file(entry_id, project_path, cx))
-                        else {
-                            return;
-                        };
-                        task.await;
+                    if dirty_files.is_empty() {
+                        continue;
                     }
+
+                    let chunk_size = dirty_files.len().div_ceil(file_indexing_parallelism);
+                    let chunk_count = dirty_files.len().div_ceil(chunk_size);
+                    let mut tasks = Vec::with_capacity(chunk_count);
+                    let chunks = dirty_files.into_iter().chunks(chunk_size);
+                    for chunk in chunks.into_iter() {
+                        tasks.push(Self::update_dirty_files(
+                            &this,
+                            chunk.into_iter().collect(),
+                            cx.clone(),
+                        ));
+                    }
+                    futures::future::join_all(tasks).await;
                 }
             }));
 
@@ -160,6 +191,21 @@ impl SyntaxIndex {
             .detach();
 
         this
+    }
+
+    async fn update_dirty_files(
+        this: &WeakEntity<Self>,
+        dirty_files: Vec<(ProjectEntryId, ProjectPath)>,
+        mut cx: AsyncApp,
+    ) {
+        for (entry_id, project_path) in dirty_files {
+            let Ok(task) = this.update(&mut cx, |this, cx| {
+                this.update_file(entry_id, project_path, cx)
+            }) else {
+                return;
+            };
+            task.await;
+        }
     }
 
     pub fn wait_for_initial_file_indexing(&self, cx: &App) -> Task<Result<()>> {
@@ -925,7 +971,8 @@ mod tests {
         let lang_id = lang.id();
         language_registry.add(Arc::new(lang));
 
-        let index = cx.new(|cx| SyntaxIndex::new(&project, cx));
+        let file_indexing_parallelism = 2;
+        let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx));
         cx.run_until_parked();
 
         (project, index, lang_id)
