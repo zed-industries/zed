@@ -37,6 +37,8 @@ pub struct EditPrediction {
     pub edits: Arc<[(Range<Anchor>, String)]>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
+    // We keep a reference to the buffer so that we do not need to reload it from disk when applying the prediction.
+    _buffer: Entity<Buffer>,
 }
 
 impl EditPrediction {
@@ -56,7 +58,7 @@ impl EditPrediction {
             .read_with(cx, |buffer, cx| buffer_path_eq(buffer, &path, cx))
             .ok()?;
 
-        let (edits, snapshot, edit_preview_task) = if is_same_path {
+        let (buffer, edits, snapshot, edit_preview_task) = if is_same_path {
             active_buffer
                 .read_with(cx, |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
@@ -64,11 +66,16 @@ impl EditPrediction {
                     let edits: Arc<[_]> =
                         interpolate_edits(active_buffer_old_snapshot, &new_snapshot, edits)?.into();
 
-                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                    Some((
+                        active_buffer.clone(),
+                        edits.clone(),
+                        new_snapshot,
+                        buffer.preview_edits(edits, cx),
+                    ))
                 })
                 .ok()??
         } else {
-            let buffer = project
+            let buffer_handle = project
                 .update(cx, |project, cx| {
                     let project_path = path_to_project_path(&path, project, cx)
                         .context("Failed to find project path for zeta edit")?;
@@ -80,14 +87,19 @@ impl EditPrediction {
                 .context("Failed to open buffer for zeta edit")
                 .log_err()?;
 
-            buffer
+            buffer_handle
                 .read_with(cx, |buffer, cx| {
                     let snapshot = buffer.snapshot();
                     let edits = edits_from_response(&response.edits, &snapshot);
                     if edits.is_empty() {
                         return None;
                     }
-                    Some((edits.clone(), snapshot, buffer.preview_edits(edits, cx)))
+                    Some((
+                        buffer_handle.clone(),
+                        edits.clone(),
+                        snapshot,
+                        buffer.preview_edits(edits, cx),
+                    ))
                 })
                 .ok()??
         };
@@ -100,6 +112,7 @@ impl EditPrediction {
             edits,
             snapshot,
             edit_preview,
+            _buffer: buffer,
         })
     }
 
@@ -328,6 +341,7 @@ mod tests {
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             path: Path::new("test.txt").into(),
+            buffer: buffer.clone(),
             edit_preview,
         };
 

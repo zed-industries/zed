@@ -206,7 +206,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let prediction = match prediction {
             BufferEditPrediction::Local { prediction } => prediction,
             BufferEditPrediction::Jump { prediction } => {
-                return Some(edit_prediction::EditPrediction::JumpOut {
+                return Some(edit_prediction::EditPrediction::Jump {
                     id: Some(prediction.id.to_string().into()),
                     snapshot: prediction.snapshot.clone(),
                     target: prediction.edits.first().unwrap().0.start.clone(),
@@ -215,25 +215,27 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         };
 
         let buffer = buffer.read(cx);
-        let Some(edits) = prediction.interpolate(&buffer.snapshot()) else {
+        let snapshot = buffer.snapshot();
+
+        let Some(edits) = prediction.interpolate(&snapshot) else {
             self.zeta.update(cx, |zeta, _cx| {
                 zeta.discard_current_prediction(&self.project);
             });
             return None;
         };
 
-        let cursor_row = cursor_position.to_point(buffer).row;
+        let cursor_row = cursor_position.to_point(&snapshot).row;
         let (closest_edit_ix, (closest_edit_range, _)) =
             edits.iter().enumerate().min_by_key(|(_, (range, _))| {
-                let distance_from_start = cursor_row.abs_diff(range.start.to_point(buffer).row);
-                let distance_from_end = cursor_row.abs_diff(range.end.to_point(buffer).row);
+                let distance_from_start = cursor_row.abs_diff(range.start.to_point(&snapshot).row);
+                let distance_from_end = cursor_row.abs_diff(range.end.to_point(&snapshot).row);
                 cmp::min(distance_from_start, distance_from_end)
             })?;
 
         let mut edit_start_ix = closest_edit_ix;
         for (range, _) in edits[..edit_start_ix].iter().rev() {
-            let distance_from_closest_edit =
-                closest_edit_range.start.to_point(buffer).row - range.end.to_point(buffer).row;
+            let distance_from_closest_edit = closest_edit_range.start.to_point(&snapshot).row
+                - range.end.to_point(&snapshot).row;
             if distance_from_closest_edit <= 1 {
                 edit_start_ix -= 1;
             } else {
@@ -244,7 +246,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let mut edit_end_ix = closest_edit_ix + 1;
         for (range, _) in &edits[edit_end_ix..] {
             let distance_from_closest_edit =
-                range.start.to_point(buffer).row - closest_edit_range.end.to_point(buffer).row;
+                range.start.to_point(buffer).row - closest_edit_range.end.to_point(&snapshot).row;
             if distance_from_closest_edit <= 1 {
                 edit_end_ix += 1;
             } else {
