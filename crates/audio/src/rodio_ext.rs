@@ -11,9 +11,15 @@ use crossbeam::queue::ArrayQueue;
 use denoise::{Denoiser, DenoiserError};
 use log::warn;
 use rodio::{
-    ChannelCount, Sample, SampleRate, Source, conversions::SampleRateConverter, nz,
+    ChannelCount, Sample, SampleRate, Source,
+    conversions::{ChannelCountConverter, SampleRateConverter},
+    nz,
     source::UniformSourceIterator,
 };
+
+use crate::rodio_ext::resample::FixedResampler;
+
+mod resample;
 
 const MAX_CHANNELS: usize = 8;
 
@@ -41,8 +47,8 @@ pub trait RodioExt: Source + Sized {
         self,
         channel_count: ChannelCount,
         sample_rate: SampleRate,
-    ) -> UniformSourceIterator<Self>;
-    fn constant_samplerate(self, sample_rate: SampleRate) -> ConstantSampleRate<Self>;
+    ) -> ConstantChannelCount<FixedResampler<Self>>;
+    fn constant_samplerate(self, sample_rate: SampleRate) -> FixedResampler<Self>;
     fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self>;
 }
 
@@ -128,37 +134,37 @@ impl<S: Source> RodioExt for S {
         self,
         channel_count: ChannelCount,
         sample_rate: SampleRate,
-    ) -> UniformSourceIterator<Self> {
-        UniformSourceIterator::new(self, channel_count, sample_rate)
+    ) -> ConstantChannelCount<FixedResampler<Self>> {
+        ConstantChannelCount::new(self.constant_samplerate(sample_rate), channel_count)
     }
-    fn constant_samplerate(self, sample_rate: SampleRate) -> ConstantSampleRate<Self> {
-        ConstantSampleRate::new(self, sample_rate)
+    fn constant_samplerate(self, sample_rate: SampleRate) -> FixedResampler<Self> {
+        FixedResampler::new(self, sample_rate)
     }
     fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self> {
         ToMono::new(self)
     }
 }
 
-pub struct ConstantSampleRate<S: Source> {
-    inner: SampleRateConverter<S>,
+pub struct ConstantChannelCount<S: Source> {
+    inner: ChannelCountConverter<S>,
     channels: ChannelCount,
     sample_rate: SampleRate,
 }
 
-impl<S: Source> ConstantSampleRate<S> {
-    fn new(source: S, target_rate: SampleRate) -> Self {
-        let input_sample_rate = source.sample_rate();
-        let channels = source.channels();
-        let inner = SampleRateConverter::new(source, input_sample_rate, target_rate, channels);
+impl<S: Source> ConstantChannelCount<S> {
+    fn new(source: S, target_channels: ChannelCount) -> Self {
+        let input_channels = source.channels();
+        let sample_rate = source.sample_rate();
+        let inner = ChannelCountConverter::new(source, input_channels, target_channels);
         Self {
+            sample_rate,
             inner,
-            channels,
-            sample_rate: target_rate,
+            channels: target_channels,
         }
     }
 }
 
-impl<S: Source> Iterator for ConstantSampleRate<S> {
+impl<S: Source> Iterator for ConstantChannelCount<S> {
     type Item = rodio::Sample;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -170,7 +176,7 @@ impl<S: Source> Iterator for ConstantSampleRate<S> {
     }
 }
 
-impl<S: Source> Source for ConstantSampleRate<S> {
+impl<S: Source> Source for ConstantChannelCount<S> {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
