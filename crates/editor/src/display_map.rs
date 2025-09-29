@@ -53,11 +53,12 @@ use multi_buffer::{
     RowInfo, ToOffset, ToPoint,
 };
 use project::InlayId;
+use project::lsp_store::semantic_tokens::BufferSemanticTokens;
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 use sum_tree::{Bias, TreeMap};
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ActiveTheme, SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 
 use std::{
@@ -72,6 +73,7 @@ use std::{
 
 use crate::{
     EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+    SemanticTokenStylizer,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use fold_map::FoldSnapshot;
@@ -1579,6 +1581,76 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(map.buffer_snapshot()).to_display_point(map)
     }
+}
+
+impl PositionedSemanticTokens {
+    pub fn new<'a>(
+        buffer: &language::Buffer,
+        lsp: &BufferSemanticTokens,
+        legends: impl Iterator<Item = (lsp::LanguageServerId, &'a lsp::SemanticTokensLegend)>,
+        cx: &App,
+    ) -> Self {
+        let stylizers = legends
+            .map(|(id, legend)| (id, SemanticTokenStylizer::new(legend)))
+            .collect::<HashMap<_, _>>();
+
+        let mut tokens = lsp
+            .all_tokens()
+            .filter_map(|(server, token)| {
+                let stylizer = stylizers.get(&server)?;
+                let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
+                let (start_offset, end_offset) = point_offset_to_offsets(
+                    buffer.clip_point_utf16(start, Bias::Left),
+                    text::OffsetUtf16(token.length as usize),
+                    &buffer,
+                );
+
+                Some(PositionedSemanticToken {
+                    range: start_offset..end_offset,
+                    style: stylizer.convert(
+                        cx.theme().syntax(),
+                        token.token_type,
+                        token.token_modifiers,
+                    )?,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // These should be sorted, but we rely on it for binary searching, so let's be sure.
+        tokens.sort_by_key(|token| token.range.start);
+
+        PositionedSemanticTokens {
+            tokens,
+            version: buffer.version(),
+        }
+    }
+
+    pub fn tokens_in_range(&self, range: Range<usize>) -> &[PositionedSemanticToken] {
+        let start = self
+            .tokens
+            .binary_search_by_key(&range.start, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        let end = self
+            .tokens
+            .binary_search_by_key(&range.end, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        &self.tokens[start..end]
+    }
+}
+
+fn point_offset_to_offsets(
+    point: text::PointUtf16,
+    length: text::OffsetUtf16,
+    buffer: &text::Buffer,
+) -> (usize, usize) {
+    let start = buffer.as_rope().point_utf16_to_offset(point);
+    let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
+    let end_offset = start_offset + length;
+    let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
+
+    (start, end)
 }
 
 #[cfg(test)]
