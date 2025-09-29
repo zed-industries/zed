@@ -329,6 +329,7 @@ impl LanguageModel for OpenAiLanguageModel {
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
+            self.supports_tools(),
             self.max_output_tokens(),
             self.model.reasoning_effort(),
         );
@@ -346,6 +347,7 @@ pub fn into_open_ai(
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
+    supports_tools: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
@@ -442,22 +444,30 @@ pub fn into_open_ai(
         } else {
             None
         },
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| open_ai::ToolDefinition::Function {
-                function: open_ai::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+        tools: if supports_tools {
+            request
+                .tools
+                .into_iter()
+                .map(|tool| open_ai::ToolDefinition::Function {
+                    function: open_ai::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect()
+        } else {
+            vec![]
+        },
+        tool_choice: if supports_tools {
+            request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
+                LanguageModelToolChoice::None => open_ai::ToolChoice::None,
             })
-            .collect(),
-        tool_choice: request.tool_choice.map(|choice| match choice {
-            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
-            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
-            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
-        }),
+        } else {
+            None
+        },
         reasoning_effort,
     }
 }
