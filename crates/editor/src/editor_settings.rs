@@ -1,7 +1,6 @@
 use core::num;
 use std::num::NonZeroU32;
 
-use anyhow::Result;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
