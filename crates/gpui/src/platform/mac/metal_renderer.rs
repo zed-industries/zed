@@ -144,7 +144,9 @@ impl MetalRenderer {
                 if let Some(default_device) = metal::Device::system_default() {
                     default_device
                 } else {
-                    log::error!("unable to access a compatible graphics device (no Metal devices found)");
+                    log::error!(
+                        "unable to access a compatible graphics device (no Metal devices found)"
+                    );
                     std::process::exit(1);
                 }
             } else if devices.len() == 1 {
