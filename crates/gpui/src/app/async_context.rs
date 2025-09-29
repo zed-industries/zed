@@ -48,6 +48,7 @@ impl AppContext for AsyncApp {
         Ok(app.insert_entity(reservation, build_entity))
     }
 
+    #[track_caller]
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,

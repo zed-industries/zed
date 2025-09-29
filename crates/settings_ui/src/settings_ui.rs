@@ -4,9 +4,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, px, size, uniform_list,
+    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
+    point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
@@ -328,18 +328,21 @@ struct SettingsPage {
     items: Vec<SettingsPageItem>,
 }
 
-impl SettingsPage {
-    fn section_headers(&self) -> impl Iterator<Item = &'static str> {
-        self.items.iter().filter_map(|item| match item {
-            SettingsPageItem::SectionHeader(header) => Some(*header),
-            _ => None,
-        })
-    }
-}
-
+#[derive(PartialEq)]
 enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
+}
+
+impl std::fmt::Debug for SettingsPageItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SettingsPageItem::SectionHeader(header) => write!(f, "SectionHeader({})", header),
+            SettingsPageItem::SettingItem(setting_item) => {
+                write!(f, "SettingItem({})", setting_item.title)
+            }
+        }
+    }
 }
 
 impl SettingsPageItem {
@@ -390,6 +393,19 @@ struct SettingItem {
     description: &'static str,
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
+}
+
+impl PartialEq for SettingItem {
+    fn eq(&self, other: &Self) -> bool {
+        self.title == other.title
+            && self.description == other.description
+            && self.field.type_id() == other.field.type_id()
+            && (match (&self.metadata, &other.metadata) {
+                (None, None) => true,
+                (Some(m1), Some(m2)) => m1.placeholder == m2.placeholder,
+                _ => false,
+            })
+    }
 }
 
 #[allow(unused)]
@@ -738,20 +754,21 @@ impl SettingsWindow {
             )
     }
 
-    fn render_page(
-        &self,
-        page: &SettingsPage,
-        page_idx: usize,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) -> Div {
+    fn page_items(&self) -> impl Iterator<Item = &SettingsPageItem> {
+        let page_idx = self.current_page_index();
+
+        self.current_page()
+            .items
+            .iter()
+            .enumerate()
+            .filter_map(move |(item_index, item)| {
+                self.search_matches[page_idx][item_index].then_some(item)
+            })
+    }
+
+    fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
         v_flex().gap_4().children(
-            page.items
-                .iter()
-                .enumerate()
-                .filter_map(|(item_index, item)| {
-                    self.search_matches[page_idx][item_index].then_some(item)
-                })
+            self.page_items()
                 .map(|item| item.render(self.current_file.clone(), window, cx)),
         )
     }
@@ -804,12 +821,7 @@ impl Render for SettingsWindow {
                     .gap_4()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.render_files(window, cx))
-                    .child(self.render_page(
-                        self.current_page(),
-                        self.current_page_index(),
-                        window,
-                        cx,
-                    )),
+                    .child(self.render_page(window, cx)),
             )
     }
 }
@@ -950,8 +962,8 @@ where
 
 #[cfg(test)]
 mod test {
+
     use super::*;
-    use gpui::TestAppContext;
 
     impl SettingsWindow {
         fn navbar(&self) -> &[NavBarEntry] {
@@ -960,6 +972,57 @@ mod test {
 
         fn navbar_entry(&self) -> usize {
             self.navbar_entry
+        }
+
+        fn new_builder(window: &mut Window, cx: &mut Context<Self>) -> Self {
+            let mut this = Self::new(window, cx);
+            this.navbar_entries.clear();
+            this.pages.clear();
+            this
+        }
+
+        fn build(mut self) -> Self {
+            self.build_navbar();
+            self
+        }
+
+        fn add_page(
+            mut self,
+            title: &'static str,
+            build_page: impl Fn(SettingsPage) -> SettingsPage,
+        ) -> Self {
+            let page = SettingsPage {
+                title,
+                expanded: false,
+                items: Vec::default(),
+            };
+
+            self.pages.push(build_page(page));
+            self
+        }
+
+        fn search(&mut self, search_query: &str, window: &mut Window, cx: &mut Context<Self>) {
+            self.search_task.take();
+            self.search_bar.update(cx, |editor, cx| {
+                editor.set_text(search_query, window, cx);
+            });
+            self.update_matches(cx);
+        }
+
+        fn assert_search_results(&self, other: &Self) {
+            // todo! assert that rendered paged as well and it's items.
+            assert_eq!(self.navbar_entries, other.navbar_entries);
+            assert_eq!(
+                self.current_page().items.iter().collect::<Vec<_>>(),
+                other.page_items().collect::<Vec<_>>()
+            );
+        }
+    }
+
+    impl SettingsPage {
+        fn item(mut self, item: SettingsPageItem) -> Self {
+            self.items.push(item);
+            self
         }
     }
 
@@ -1125,4 +1188,69 @@ mod test {
         > Project*
         "
     );
+
+    #[gpui::test]
+    fn test_basic_search(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (actual, expected) = cx.update(|window, cx| {
+            register_settings(cx);
+
+            let expected = cx.new(|cx| {
+                SettingsWindow::new_builder(window, cx)
+                    .add_page("General", |page| {
+                        page.item(SettingsPageItem::SectionHeader("General settings"))
+                            .item(SettingsPageItem::SettingItem(SettingItem {
+                                title: "test title",
+                                description: "General test",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        &settings_content.workspace.confirm_quit
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.workspace.confirm_quit
+                                    },
+                                }),
+                                metadata: None,
+                            }))
+                    })
+                    .build()
+            });
+
+            let actual = cx.new(|cx| {
+                SettingsWindow::new_builder(window, cx)
+                    .add_page("General", |page| {
+                        page.item(SettingsPageItem::SectionHeader("General settings"))
+                            .item(SettingsPageItem::SettingItem(SettingItem {
+                                title: "test title",
+                                description: "General test",
+                                field: Box::new(SettingField {
+                                    pick: |settings_content| {
+                                        &settings_content.workspace.confirm_quit
+                                    },
+                                    pick_mut: |settings_content| {
+                                        &mut settings_content.workspace.confirm_quit
+                                    },
+                                }),
+                                metadata: None,
+                            }))
+                    })
+                    .add_page("Theme", |page| {
+                        page.item(SettingsPageItem::SectionHeader("Theme settings"))
+                    })
+                    .build()
+            });
+
+            actual.update(cx, |settings, cx| settings.search("gen", window, cx));
+
+            (actual, expected)
+        });
+
+        cx.cx.run_until_parked();
+
+        cx.update(|_window, cx| {
+            let expected = expected.read(cx);
+            let actual = actual.read(cx);
+            expected.assert_search_results(&actual);
+        })
+    }
 }
