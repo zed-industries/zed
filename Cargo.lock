@@ -5126,7 +5126,6 @@ dependencies = [
  "client",
  "gpui",
  "language",
- "project",
  "workspace-hack",
 ]
 
