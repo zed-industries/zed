@@ -454,8 +454,8 @@ impl Default for NavigationMode {
 
 #[derive(Clone)]
 pub struct NavigationEntry {
-    pub item: Arc<dyn WeakItemHandle>,
-    pub data: Option<Arc<dyn Any + Send>>,
+    pub item: Arc<dyn WeakItemHandle + Send + Sync>,
+    pub data: Option<Arc<dyn Any + Send + Sync>>,
     pub timestamp: usize,
     pub is_preview: bool,
     pub is_deleted: bool,
@@ -3952,7 +3952,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any + Send>(&mut self, data: Option<D>, cx: &mut App) {
+    pub fn push<D: 'static + Any + Send + Sync>(&mut self, data: Option<D>, cx: &mut App) {
         if self
             .item
             .upgrade()
@@ -3963,7 +3963,11 @@ impl ItemNavHistory {
         }
     }
 
-    pub fn push_tag<D: 'static + Any + Send>(&mut self, tag: Option<String>, data: Option<D>) {
+    pub fn push_tag<D: 'static + Any + Send + Sync>(
+        &mut self,
+        tag: Option<String>,
+        data: Option<D>,
+    ) {
         if self
             .item
             .upgrade()
@@ -4055,10 +4059,10 @@ impl NavHistory {
         }
     }
 
-    pub fn push<D: 'static + Any + Send>(
+    pub fn push<D: 'static + Any + Send + Sync>(
         &mut self,
         data: Option<D>,
-        item: Arc<dyn WeakItemHandle>,
+        item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
         cx: &mut App,
     ) {
@@ -4071,18 +4075,18 @@ impl NavHistory {
             | NavigationMode::GoingBack(_)
             | NavigationMode::GoingForward(_)
             | NavigationMode::ClosingItem => {
-                let data = data.map(|item| Arc::new(item) as Arc<dyn Any + Send>);
+                let data = data.map(|item| Arc::new(item) as Arc<dyn Any + Send + Sync>);
                 state.push(mode, data, item, is_preview);
             }
         }
         state.did_update(cx);
     }
 
-    pub fn push_tag<D: 'static + Any + Send>(
+    pub fn push_tag<D: 'static + Any + Send + Sync>(
         &mut self,
         tag: Option<String>,
         data: Option<D>,
-        item: Arc<dyn WeakItemHandle>,
+        item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
     ) {
         let mut state = self.0.lock();
@@ -4091,7 +4095,7 @@ impl NavHistory {
         };
         let dst = NavigationEntry {
             item,
-            data: data.map(|item| Arc::new(item) as Arc<dyn Any + Send>),
+            data: data.map(|item| Arc::new(item) as Arc<dyn Any + Send + Sync>),
             timestamp: src.timestamp,
             is_preview,
             is_deleted: false,
@@ -4145,8 +4149,8 @@ impl NavHistoryState {
     fn push(
         &mut self,
         mode: NavigationMode,
-        data: Option<Arc<dyn Any + Send>>,
-        item: Arc<dyn WeakItemHandle>,
+        data: Option<Arc<dyn Any + Send + Sync>>,
+        item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
     ) {
         match mode {
