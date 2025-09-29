@@ -1,18 +1,13 @@
-use std::{
-    borrow::Cow,
-    ops::Range,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::Context as _;
 use cloud_llm_client::predict_edits_v3;
 use gpui::{App, AsyncApp, Entity};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
 };
-use project::{Project, ProjectPath};
-use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
+use project::Project;
+use util::ResultExt;
 use uuid::Uuid;
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -77,7 +72,8 @@ impl EditPrediction {
         } else {
             let buffer_handle = project
                 .update(cx, |project, cx| {
-                    let project_path = path_to_project_path(&path, project, cx)
+                    let project_path = project
+                        .find_project_path(&path, cx)
                         .context("Failed to find project path for zeta edit")?;
                     anyhow::Ok(project.open_buffer(project_path, cx))
                 })
@@ -136,26 +132,6 @@ impl std::fmt::Debug for EditPrediction {
             .field("edits", &self.edits)
             .finish()
     }
-}
-
-fn path_to_project_path(path: &Path, project: &Project, cx: &App) -> Result<ProjectPath> {
-    let components: Vec<_> = path.components().collect();
-    let worktree_name = components
-        .first()
-        .context("Path has no components")?
-        .as_os_str()
-        .to_string_lossy();
-    let sub_path: PathBuf = components.iter().skip(1).collect();
-    let sub_path = RelPath::from_std_path(&sub_path, PathStyle::local())?;
-
-    let worktree = project
-        .worktree_for_root_name(&worktree_name, cx)
-        .context("Failed to find worktree")?;
-
-    Ok(ProjectPath {
-        worktree_id: worktree.read(cx).id(),
-        path: sub_path,
-    })
 }
 
 pub fn buffer_path_eq(buffer: &Buffer, path: &Path, cx: &App) -> bool {
