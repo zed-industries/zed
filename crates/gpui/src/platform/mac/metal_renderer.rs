@@ -132,30 +132,27 @@ impl MetalRenderer {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
-        // Prefer the system default device when enumeration is unavailable or there is only one device.
-        // On Apple Silicon there is only one GPU, so enumeration will typically return a single device.
-        // On Intel, when multiple GPUs exist, prefer the low-power, non-removable device (iGPU).
-        let device = if let Some(default_device) = metal::Device::system_default() {
+        // Enumerate devices first and prefer low-power, non-removable GPUs when multiple exist.
+        // If enumeration yields no devices (seen on some environments), log and fall back to system_default().
+        // Exit only if both enumeration and system_default() fail.
+        let device = {
             let mut devices = metal::Device::all();
             if devices.is_empty() {
-                // Enumeration failed or is unavailable; fall back to system default.
-                default_device
+                log::error!(
+                    "unable to enumerate Metal devices; attempting to use system default device"
+                );
+                if let Some(default_device) = metal::Device::system_default() {
+                    default_device
+                } else {
+                    log::error!("unable to access a compatible graphics device (no Metal devices found)");
+                    std::process::exit(1);
+                }
             } else if devices.len() == 1 {
-                // Single device present; use it (covers ASi common case).
                 devices.remove(0)
             } else {
-                // Multiple devices present (common on Intel). Prefer low-power, non-removable.
                 devices.sort_by_key(|d| (d.is_removable(), !d.is_low_power()));
                 devices.remove(0)
             }
-        } else {
-            let mut devices = metal::Device::all();
-            if devices.is_empty() {
-                log::error!("unable to access a compatible graphics device (no Metal devices found)");
-                std::process::exit(1);
-            }
-            devices.sort_by_key(|d| (d.is_removable(), !d.is_low_power()));
-            devices.remove(0)
         };
 
         let layer = metal::MetalLayer::new();
