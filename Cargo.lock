@@ -20339,7 +20339,6 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
- "util_macros",
  "uuid",
  "vim",
  "vim_mode_setting",
