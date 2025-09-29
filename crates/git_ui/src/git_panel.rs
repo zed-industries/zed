@@ -3458,7 +3458,7 @@ impl GitPanel {
                         if can_commit {
                             Tooltip::with_meta_in(
                                 tooltip,
-                                Some(&git::Commit),
+                                Some(if amend { &git::Amend } else { &git::Commit }),
                                 format!(
                                     "git commit{}{}",
                                     if amend { " --amend" } else { "" },
