@@ -1,4 +1,7 @@
-use crate::{ChunkRenderer, HighlightStyles, inlays::Inlay};
+use crate::{
+    ChunkRenderer, HighlightStyles,
+    inlays::{Inlay, InlayContent},
+};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset};
@@ -6,7 +9,7 @@ use project::InlayId;
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::{ChunkBitmaps, Patch};
