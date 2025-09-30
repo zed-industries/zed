@@ -1,3 +1,4 @@
+use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Anchor, Editor, ExcerptId, SelectionEffects, scroll::Autoscroll};
 use gpui::{
@@ -6,7 +7,8 @@ use gpui::{
     MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
-use language::{Buffer, OwnedSyntaxLayer};
+use language::{Buffer, BufferSnapshot, OwnedSyntaxLayer, Point};
+use project::lsp_store::semantic_tokens::BufferSemanticTokens;
 use std::{any::TypeId, mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
@@ -114,6 +116,13 @@ struct EditorState {
     active_buffer: Option<BufferState>,
     _subscription: gpui::Subscription,
 }
+
+type SemanticTokenState = Option<(
+    HashMap<lsp::LanguageServerId, lsp::SemanticTokensLegend>,
+    std::sync::Arc<BufferSemanticTokens>,
+    BufferSnapshot,
+    clock::Global,
+)>;
 
 impl EditorState {
     fn has_language(&self) -> bool {
@@ -373,7 +382,13 @@ impl SyntaxTreeView {
         Some(())
     }
 
-    fn render_node(cursor: &TreeCursor, depth: u32, selected: bool, cx: &App) -> Div {
+    fn render_node(
+        cursor: &TreeCursor,
+        depth: u32,
+        selected: bool,
+        semantic_tokens: &SemanticTokenState,
+        cx: &App,
+    ) -> Div {
         let colors = cx.theme().colors();
         let mut row = h_flex();
         if let Some(field_name) = cursor.field_name() {
@@ -381,17 +396,77 @@ impl SyntaxTreeView {
         }
 
         let node = cursor.node();
-        row.child(if node.is_named() {
-            Label::new(node.kind()).color(Color::Default)
-        } else {
-            Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
-        })
-        .child(
-            div()
-                .child(Label::new(format_node_range(node)).color(Color::Muted))
-                .pl_1(),
-        )
-        .text_bg(if selected {
+        row = row
+            .child(if node.is_named() {
+                Label::new(node.kind()).color(Color::Default)
+            } else {
+                Label::new(format!("\"{}\"", node.kind())).color(Color::Created)
+            })
+            .child(
+                div()
+                    .child(Label::new(format_node_range(node)).color(Color::Muted))
+                    .pl_1(),
+            );
+
+        if node.child_count() == 0 {
+            if let Some((legends, sema, buffer, version)) = semantic_tokens {
+                let token_range =
+                    editor::display_map::range_from_version(buffer, node.byte_range(), version);
+                for (server, tok) in sema.all_tokens().filter(|(_, t)| {
+                    let lsp_start = buffer.point_to_offset(Point::new(t.line, t.start));
+                    let lsp_end = lsp_start + t.length as usize;
+
+                    // If the lsp token range is within the tree-sitter token, show it.
+                    lsp_start >= token_range.start && lsp_end <= token_range.end
+                }) {
+                    let Some(legend) = legends.get(&server) else {
+                        continue;
+                    };
+
+                    row = row
+                        .child(div().pl_4())
+                        .child(Label::new("LSP: "))
+                        .child(
+                            Label::new(format!(
+                                "({}:{} - {}:{}) ",
+                                tok.line + 1,
+                                tok.start + 1,
+                                tok.line + 1,
+                                tok.start + tok.length + 1,
+                            ))
+                            .color(Color::Muted),
+                        )
+                        .child(Label::new(
+                            legend.token_types[tok.token_type as usize]
+                                .as_str()
+                                .to_string(),
+                        ))
+                        .when(tok.token_modifiers != 0, |row| {
+                            row.child(
+                                Label::new(format!(
+                                    " ({})",
+                                    legend
+                                        .token_modifiers
+                                        .iter()
+                                        .enumerate()
+                                        .filter_map(|(i, modifier)| {
+                                            if (tok.token_modifiers & (1 << i)) != 0 {
+                                                Some(modifier.as_str())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ))
+                                .color(Color::Muted),
+                            )
+                        });
+                }
+            }
+        }
+
+        row.text_bg(if selected {
             colors.element_selected
         } else {
             Hsla::default()
@@ -406,6 +481,8 @@ impl SyntaxTreeView {
         range: Range<usize>,
         cx: &Context<Self>,
     ) -> Vec<Div> {
+        let semantic_tokens = self.lookup_semantic_tokens(cx);
+
         let mut items = Vec::new();
         let mut cursor = layer.node().walk();
         let mut descendant_ix = range.start;
@@ -427,6 +504,7 @@ impl SyntaxTreeView {
                         &cursor,
                         depth,
                         Some(descendant_ix) == self.selected_descendant_ix,
+                        &semantic_tokens,
                         cx,
                     )
                     .on_mouse_down(
@@ -487,6 +565,44 @@ impl SyntaxTreeView {
             }
         }
         items
+    }
+
+    fn lookup_semantic_tokens(&self, cx: &Context<Self>) -> SemanticTokenState {
+        if !self.semantic_tokens {
+            return None;
+        }
+
+        let editor_state = self.editor.as_ref()?;
+        let buffer = editor_state.active_buffer.as_ref()?.buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        let lsp_store = editor_state
+            .editor
+            .read(cx)
+            .project()?
+            .read(cx)
+            .lsp_store()
+            .read(cx);
+        let (semantic_tokens, version) = lsp_store.current_semantic_tokens(buffer_id)?;
+
+        let legends = semantic_tokens
+            .servers
+            .keys()
+            .filter_map(|server_id| {
+                let caps = lsp_store.lsp_server_capabilities.get(server_id)?;
+                let legend = match caps.semantic_tokens_provider.as_ref()? {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => {
+                        &opts.legend
+                    }
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                        opts,
+                    ) => &opts.semantic_tokens_options.legend,
+                };
+                Some((*server_id, legend.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+
+        Some((legends, semantic_tokens, buffer.snapshot(), version))
     }
 }
 

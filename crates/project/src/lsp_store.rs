@@ -7043,6 +7043,18 @@ impl LspStore {
         }
     }
 
+    pub fn current_semantic_tokens(
+        &self,
+        buffer: BufferId,
+    ) -> Option<(Arc<BufferSemanticTokens>, Global)> {
+        let lsp_data = self.lsp_data.get(&buffer)?;
+
+        Some((
+            lsp_data.semantic_tokens.as_ref()?.buffer_tokens.clone(),
+            lsp_data.buffer_version.clone(),
+        ))
+    }
+
     pub fn semantic_tokens(
         &mut self,
         buffer: Entity<Buffer>,
