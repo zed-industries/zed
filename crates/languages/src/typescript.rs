@@ -1052,6 +1052,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             &[
                 ("function a()", 0),
+                ("let a1", 1),
                 ("async function a2()", 1),
                 ("let b", 0),
                 ("function getB()", 0),
