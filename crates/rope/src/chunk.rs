@@ -154,6 +154,12 @@ impl<'a> ChunkSlice<'a> {
         let mask = if range.end == MAX_BASE {
             u128::MAX
         } else {
+            debug_assert!(
+                self.is_char_boundary(range.end),
+                "Invalid range end {} in {:?}",
+                range.end,
+                self
+            );
             (1u128 << range.end) - 1
         };
         if range.start == MAX_BASE {
@@ -165,6 +171,12 @@ impl<'a> ChunkSlice<'a> {
                 text: "",
             }
         } else {
+            debug_assert!(
+                self.is_char_boundary(range.start),
+                "Invalid range start {} in {:?}",
+                range.start,
+                self
+            );
             Self {
                 chars: (self.chars & mask) >> range.start,
                 chars_utf16: (self.chars_utf16 & mask) >> range.start,
@@ -703,7 +715,6 @@ mod tests {
         let mut chunk1 = Chunk::new(&str1);
         let chunk2 = Chunk::new(&str2);
         chunk1.append(chunk2.as_slice());
-
         verify_chunk(chunk1.as_slice(), &(str1 + &str2));
     }
 
