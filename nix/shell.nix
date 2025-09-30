@@ -1,6 +1,7 @@
 {
   mkShell,
   makeFontsConf,
+  lib,
 
   zed-editor,
 
@@ -11,6 +12,7 @@
   nixfmt-rfc-style,
   protobuf,
   nodejs_22,
+  cowsay,
 }:
 (mkShell.override { inherit (zed-editor) stdenv; }) {
   inputsFrom = [ zed-editor ];
@@ -52,4 +54,19 @@
       };
       PROTOC = "${protobuf}/bin/protoc";
     };
+
+    shellHook = lib.optionalString zed-editor.stdenv.hostPlatform.isDarwin ''
+      set -x
+      metal_compiler="$(env -u SDKROOT /usr/bin/xcrun -f metal)"
+      if ! $("$metal_compiler" --help &> /dev/null); then
+        {
+          echo 'Leave the devshell and run `xcodebuild -downloadComponent MetalToolchain`'
+          echo "to download the (proprietary 😤) metal compiler, or you'll need to pass"
+          echo '`--features gpui/runtime_shaders` to cargo.'
+        } |
+        ${lib.getExe cowsay} -W 80
+      else
+        XCRUN_PATH=/usr/bin/xcrun
+      fi;
+    '';
 }
