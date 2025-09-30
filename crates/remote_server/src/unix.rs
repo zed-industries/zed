@@ -254,10 +254,6 @@ fn start_server(
                 }
             }).detach();
 
-            use proto::EnvelopedMessage;
-            let message = proto::RemoteStarted{}.into_envelope(0, None, None);
-            write_message(&mut stdout_stream, &mut output_buffer, message).await.log_err();
-
             loop {
 
                 select_biased! {

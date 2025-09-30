@@ -1175,6 +1175,11 @@ impl ChannelClient {
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
+            if let Some(this) = this.upgrade() {
+                let envelope = proto::RemoteStarted {}.into_envelope(0, None, None);
+                this.outgoing_tx.lock().unbounded_send(envelope).ok();
+            };
+
             let peer_id = PeerId { owner_id: 0, id: 0 };
             while let Some(incoming) = incoming_rx.next().await {
                 let Some(this) = this.upgrade() else {
