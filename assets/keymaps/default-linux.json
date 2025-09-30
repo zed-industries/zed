@@ -250,7 +250,7 @@
       "alt-enter": "agent::ContinueWithBurnMode",
       "ctrl-y": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
-      "ctrl-d": "agent::RejectOnce"
+      "ctrl-alt-z": "agent::RejectOnce"
     }
   },
   {
