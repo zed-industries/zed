@@ -121,7 +121,7 @@ const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
 ///Upward flowing events, for changing the title and such
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
@@ -134,7 +134,7 @@ pub enum Event {
     Open(MaybeNavigationTarget),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathLikeTarget {
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
@@ -144,7 +144,7 @@ pub struct PathLikeTarget {
 }
 
 /// A string inside terminal, potentially useful as a URI that can be opened.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaybeNavigationTarget {
     /// HTTP, git, etc. string determined by the `URL_REGEX` regex.
     Url(String),
@@ -775,7 +775,7 @@ impl TaskStatus {
 
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
-        match dbg!(event) {
+        match event {
             AlacTermEvent::Title(title) => {
                 // ignore default shell program title change as windows always sends those events
                 // and it would end up showing the shell executable path in breadcrumbs
@@ -1249,7 +1249,6 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
-        dbg!("IIIInput");
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
@@ -1350,7 +1349,6 @@ impl Terminal {
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
-        dbg!("TTTTTTTTTTTT");
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
@@ -1937,8 +1935,10 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
+                // if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                //     cx.emit(Event::CloseTerminal);
+                // }
                 if error_code.is_none() {
-                    // if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2268,12 +2268,15 @@ mod tests {
 
     #[cfg(unix)]
     #[gpui::test]
-    async fn test_basic_terminal_11(cx: &mut TestAppContext) {
+    async fn test_terminal_eof(cx: &mut TestAppContext) {
         use std::time::Duration;
+
+        use gpui::FutureExt;
 
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
+        // Build an empty command, which will result in a tty shell spawned.
         let (program, args) = ShellBuilder::new(None, &Shell::System).build(None, &[]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
@@ -2292,50 +2295,61 @@ mod tests {
                 0,
                 Some(completion_tx),
                 cx,
-                vec![],
+                Vec::new(),
             )
             .unwrap()
             .subscribe(cx)
         });
 
-        let (shell_started_tx, shell_started_rx) = futures::channel::oneshot::channel::<()>();
-
+        let (mut event_tx, mut event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
-            let mut tx = Some(shell_started_tx);
             cx.subscribe(&terminal, move |_, e, cx| {
-                dbg!(e);
-                if matches!(e, Event::Wakeup) {
-                    if let Some(tx) = tx.take() {
-                        tx.send(()).unwrap();
-                    }
-                }
+                event_tx.send_blocking(e.clone()).unwrap();
             })
         })
         .detach();
-
         cx.background_spawn(async move {
-            dbg!("?");
-            let a = completion_rx.recv().await.unwrap();
-            dbg!(a);
+            assert_eq!(
+                completion_rx.recv().await.unwrap(),
+                Some(ExitStatus::default()),
+                "EOF should result in the tty shell exiting successfully",
+            );
         })
         .detach();
 
-        shell_started_rx.await.unwrap();
+        let wakeup = event_rx.recv().await.expect("No wakeup event received");
+        assert_eq!(wakeup, Event::Wakeup, "Expected wakeup, got {wakeup:?}");
+
         terminal.update(cx, |terminal, cx| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
-            dbg!(success);
+            assert!(success, "Should have registered EOF sequence");
         });
 
-        cx.executor().timer(Duration::from_secs(1)).await;
+        let mut all_events = vec![Event::Wakeup];
+        while let Ok(new_event) = event_rx
+            .recv()
+            .with_timeout(Duration::from_secs(1), &cx.executor())
+            .await
+            .expect("timed out while waiting for the terminal events")
+        {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
 
-        // assert_eq!(
-        //     completion_rx.recv().await.unwrap(),
-        //     Some(ExitStatus::default())
-        // );
-        // assert_eq!(
-        //     terminal.update(cx, |term, _| term.get_content()).trim(),
-        //     "hello"
-        // );
+        assert_eq!(
+            all_events,
+            vec![
+                Event::Wakeup,
+                Event::Wakeup,
+                Event::Wakeup,
+                Event::Wakeup,
+                Event::TitleChanged,
+                Event::CloseTerminal
+            ],
+            "EOF command sequence should have triggered a TTY terminal exit"
+        );
     }
 
     #[cfg(unix)]
@@ -2369,7 +2383,7 @@ mod tests {
             .subscribe(cx)
         });
         cx.update(|cx| {
-            cx.subscribe(&terminal, |_, e, cx| {
+            cx.subscribe(&terminal, |_, e, _| {
                 dbg!(e);
             })
         })
