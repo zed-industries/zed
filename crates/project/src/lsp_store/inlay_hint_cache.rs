@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::{collections::hash_map, ops::Range, sync::Arc};
 
 use collections::HashMap;
 use futures::future::Shared;
@@ -6,7 +6,6 @@ use gpui::{App, Entity, Task};
 use language::{Buffer, BufferRow, BufferSnapshot};
 use lsp::LanguageServerId;
 use text::OffsetRangeExt;
-use util::debug_panic;
 
 use crate::{InlayHint, InlayId};
 
@@ -154,22 +153,21 @@ impl BufferInlayHints {
             .entry(server_id)
             .or_insert_with(Vec::new);
         let existing_count = existing_hints.len();
-        existing_hints.extend(
-            new_hints
-                .into_iter()
-                .enumerate()
-                .map(|(i, (id, new_hint))| {
-                    let new_hint_for_id = HintForId {
-                        chunk_id: chunk.id,
-                        server_id,
-                        position: existing_count + i,
-                    };
-                    if let Some(old_hint_for_id) = self.hints_by_id.insert(id, new_hint_for_id) {
-                        debug_panic!("Unexpected: hint {new_hint:?}, id {id:?} has 2 pointers: old: {old_hint_for_id:?}, new: {new_hint_for_id:?}");
-                    }
-                    (id, new_hint)
-                })
-        );
+        existing_hints.extend(new_hints.into_iter().enumerate().filter_map(
+            |(i, (id, new_hint))| {
+                let new_hint_for_id = HintForId {
+                    chunk_id: chunk.id,
+                    server_id,
+                    position: existing_count + i,
+                };
+                if let hash_map::Entry::Vacant(vacant_entry) = self.hints_by_id.entry(id) {
+                    vacant_entry.insert(new_hint_for_id);
+                    Some((id, new_hint))
+                } else {
+                    None
+                }
+            },
+        ));
     }
 
     pub fn hint_for_id(&mut self, id: InlayId) -> Option<&mut InlayHint> {
