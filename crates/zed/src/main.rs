@@ -1520,9 +1520,10 @@ fn dump_all_gpui_actions() {
 
 #[cfg(windows)]
 fn check_for_conpty_dll() {
-    use windows_sys::{Win32::System::LibraryLoader::LoadLibraryW, w};
     let hmodule = unsafe { LoadLibraryW(w!("conpty.dll")) };
     if hmodule.is_null() {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    } else {
+        unsafe { FreeLibrary(hmodule) };
     }
 }

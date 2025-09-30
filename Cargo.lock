@@ -20348,7 +20348,6 @@ dependencies = [
  "web_search",
  "web_search_providers",
  "windows 0.61.1",
- "windows-sys 0.61.0",
  "winresource",
  "workspace",
  "workspace-hack",
