@@ -22,7 +22,8 @@ use gpui::{
     Subscription, Task, WeakEntity, Window, actions, div,
 };
 use language::{
-    Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
+    Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, DiagnosticEntryRef, Point,
+    ToTreeSitterPoint,
 };
 use project::{
     DiagnosticSummary, Project, ProjectPath,
@@ -412,8 +413,8 @@ impl ProjectDiagnosticsEditor {
 
     fn diagnostics_are_unchanged(
         &self,
-        existing: &Vec<DiagnosticEntry<text::Anchor>>,
-        new: &Vec<DiagnosticEntry<text::Anchor>>,
+        existing: &[DiagnosticEntry<text::Anchor>],
+        new: &[DiagnosticEntryRef<'_, text::Anchor>],
         snapshot: &BufferSnapshot,
     ) -> bool {
         if existing.len() != new.len() {
@@ -457,7 +458,13 @@ impl ProjectDiagnosticsEditor {
                 }) {
                     return true;
                 }
-                this.diagnostics.insert(buffer_id, diagnostics.clone());
+                this.diagnostics.insert(
+                    buffer_id,
+                    diagnostics
+                        .iter()
+                        .map(DiagnosticEntryRef::to_owned)
+                        .collect(),
+                );
                 false
             })?;
             if unchanged {
@@ -469,7 +476,7 @@ impl ProjectDiagnosticsEditor {
                 grouped
                     .entry(entry.diagnostic.group_id)
                     .or_default()
-                    .push(DiagnosticEntry {
+                    .push(DiagnosticEntryRef {
                         range: entry.range.to_point(&buffer_snapshot),
                         diagnostic: entry.diagnostic,
                     })

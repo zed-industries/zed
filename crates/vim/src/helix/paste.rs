@@ -84,13 +84,15 @@ impl Vim {
                     let display_point = if line_mode {
                         if action.before {
                             movement::line_beginning(&display_map, sel.start, false)
-                        } else if sel.end.column() == 0 {
-                            sel.end
                         } else {
-                            movement::right(
-                                &display_map,
-                                movement::line_end(&display_map, sel.end, false),
-                            )
+                            if sel.start == sel.end {
+                                movement::right(
+                                    &display_map,
+                                    movement::line_end(&display_map, sel.end, false),
+                                )
+                            } else {
+                                sel.end
+                            }
                         }
                     } else if action.before {
                         sel.start
@@ -396,8 +398,8 @@ mod test {
         cx.set_state(
             indoc! {"
             The quick brown
-            fox jumps over
-            ˇthe lazy dog."},
+            fox jumps overˇ
+            the lazy dog."},
             Mode::HelixNormal,
         );
         cx.simulate_keystrokes("p");
@@ -406,6 +408,45 @@ mod test {
             The quick brown
             fox jumps over
             «n
+            ˇ»the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(
+            indoc! {"
+
+            The quick brown
+            fox jumps overˇ
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x y up up p");
+        cx.assert_state(
+            indoc! {"
+
+            «fox jumps over
+            ˇ»The quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            «The quick brown
+            fox jumps over
+            ˇ»the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("y p p");
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            fox jumps over
+            The quick brown
+            fox jumps over
+            «The quick brown
+            fox jumps over
             ˇ»the lazy dog."},
             Mode::HelixNormal,
         );

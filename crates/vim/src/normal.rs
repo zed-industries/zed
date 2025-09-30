@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
+use gpui::{Action, Context, Window, actions};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -94,6 +96,10 @@ actions!(
         Redo,
         /// Undoes all changes to the most recently changed line.
         UndoLastLine,
+        /// Go to tab page (with count support).
+        GoToTab,
+        /// Go to previous tab page (with count support).
+        GoToPreviousTab,
     ]
 );
 
@@ -113,9 +119,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
+    Vim::action(editor, cx, Vim::go_to_tab);
+    Vim::action(editor, cx, Vim::go_to_previous_tab);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
@@ -837,6 +846,25 @@ impl Vim {
         )
     }
 
+    fn yank_to_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
     fn show_location(&mut self, _: &ShowLocation, _: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -852,12 +880,12 @@ impl Vim {
             let filename = if let Some(file) = buffer.read(cx).file() {
                 if count.is_some() {
                     if let Some(local) = file.as_local() {
-                        local.abs_path(cx).to_string_lossy().to_string()
+                        local.abs_path(cx).to_string_lossy().into_owned()
                     } else {
-                        file.full_path(cx).to_string_lossy().to_string()
+                        file.full_path(cx).to_string_lossy().into_owned()
                     }
                 } else {
-                    file.path().to_string_lossy().to_string()
+                    file.path().display(file.path_style(cx)).into_owned()
                 }
             } else {
                 "[No Name]".into()
@@ -982,6 +1010,54 @@ impl Vim {
     fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
+        }
+    }
+
+    fn go_to_tab(&mut self, _: &GoToTab, window: &mut Window, cx: &mut Context<Self>) {
+        let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+
+        if let Some(tab_index) = count {
+            // <count>gt goes to tab <count> (1-based).
+            let zero_based_index = tab_index.saturating_sub(1);
+            window.dispatch_action(
+                workspace::pane::ActivateItem(zero_based_index).boxed_clone(),
+                cx,
+            );
+        } else {
+            // If no count is provided, go to the next tab.
+            window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+        }
+    }
+
+    fn go_to_previous_tab(
+        &mut self,
+        _: &GoToPreviousTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+
+        if let Some(count) = count {
+            // gT with count goes back that many tabs with wraparound (not the same as gt!).
+            if let Some(workspace) = self.workspace(window) {
+                let pane = workspace.read(cx).active_pane().read(cx);
+                let item_count = pane.items().count();
+                if item_count > 0 {
+                    let current_index = pane.active_item_index();
+                    let target_index = (current_index as isize - count as isize)
+                        .rem_euclid(item_count as isize)
+                        as usize;
+                    window.dispatch_action(
+                        workspace::pane::ActivateItem(target_index).boxed_clone(),
+                        cx,
+                    );
+                }
+            }
+        } else {
+            // No count provided, go to the previous tab.
+            window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
         }
     }
 }
@@ -1925,6 +2001,14 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\n").await;
+        cx.simulate_shared_keystrokes("Y p").await;
+        cx.shared_state().await.assert_eq("helllˇolo\n");
+    }
+
+    #[gpui::test]
     async fn test_yank_line_with_trailing_newline(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("heˇllo\n").await;
@@ -2118,5 +2202,81 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        cx.simulate_keystrokes("3 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 2);
+        });
+
+        cx.simulate_keystrokes("4 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.simulate_keystrokes("g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_previous_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("2 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        // Wraparound: gT from first tab should go to last.
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("6 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
     }
 }

@@ -98,7 +98,7 @@ impl SearchOption {
     pub fn label(&self) -> &'static str {
         match self {
             SearchOption::WholeWord => "Match Whole Words",
-            SearchOption::CaseSensitive => "Match Case Sensitively",
+            SearchOption::CaseSensitive => "Match Case Sensitivity",
             SearchOption::IncludeIgnored => "Also search files ignored by configuration",
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",

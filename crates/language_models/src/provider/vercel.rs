@@ -36,7 +36,7 @@ pub struct VercelSettings {
 
 pub struct VercelLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -114,7 +114,7 @@ impl VercelLanguageModelProvider {
 impl LanguageModelProviderState for VercelLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -195,7 +195,7 @@ impl LanguageModelProvider for VercelLanguageModelProvider {
 pub struct VercelLanguageModel {
     id: LanguageModelId,
     model: vercel::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -363,12 +363,12 @@ pub fn count_vercel_tokens(
 
 struct ConfigurationView {
     api_key_editor: Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             SingleLineInput::new(
                 window,

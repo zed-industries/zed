@@ -140,3 +140,35 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_with_timeout(cx: &mut TestAppContext) {
+        Task::ready(())
+            .with_timeout(Duration::from_secs(1), &cx.executor())
+            .await
+            .expect("Timeout should be noop");
+
+        let long_duration = Duration::from_secs(6000);
+        let short_duration = Duration::from_secs(1);
+        cx.executor()
+            .timer(long_duration)
+            .with_timeout(short_duration, &cx.executor())
+            .await
+            .expect_err("timeout should have triggered");
+
+        let fut = cx
+            .executor()
+            .timer(long_duration)
+            .with_timeout(short_duration, &cx.executor());
+        cx.executor().advance_clock(short_duration * 2);
+        futures::FutureExt::now_or_never(fut)
+            .unwrap_or_else(|| panic!("timeout should have triggered"))
+            .expect_err("timeout");
+    }
+}

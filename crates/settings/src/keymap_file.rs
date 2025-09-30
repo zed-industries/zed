@@ -177,7 +177,6 @@ impl KeymapFile {
         }
     }
 
-    #[cfg(feature = "test-support")]
     pub fn load_asset_allow_partial_failure(
         asset_path: &str,
         cx: &App,

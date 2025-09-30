@@ -401,7 +401,7 @@ impl StackFrameList {
                             this.open_buffer(
                                 ProjectPath {
                                     worktree_id,
-                                    path: relative_path.into(),
+                                    path: relative_path,
                                 },
                                 cx,
                             )
