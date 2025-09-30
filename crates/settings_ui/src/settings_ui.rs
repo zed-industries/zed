@@ -490,7 +490,7 @@ impl SettingsUiFile {
 impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let current_file = SettingsUiFile::User;
-        let search = cx.new(|cx| {
+        let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Search settings…", window, cx);
             editor
@@ -530,17 +530,35 @@ impl SettingsWindow {
     }
 
     fn toggle_navbar_entry(&mut self, ix: usize) {
-        if self.navbar_entries[ix].is_root {
-            let expanded = &mut self.page_for_navbar_index(ix).expanded;
-            *expanded = !*expanded;
-            let current_page_index = self.page_index_from_navbar_index(self.navbar_entry);
-            // if currently selected page is a child of the parent page we are folding,
-            // set the current page to the parent page
-            if current_page_index == ix {
-                self.navbar_entry = ix;
-            }
-            self.build_navbar();
+        // We can only toggle root entries
+        if !self.navbar_entries[ix].is_root {
+            return;
         }
+
+        let toggle_page_index = self.page_index_from_navbar_index(ix);
+        let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
+
+        let expanded = &mut self.page_for_navbar_index(ix).expanded;
+        *expanded = !*expanded;
+        let expanded = *expanded;
+        // if currently selected page is a child of the parent page we are folding,
+        // set the current page to the parent page
+        if selected_page_index == toggle_page_index {
+            self.navbar_entry = ix;
+        } else if selected_page_index > toggle_page_index {
+            let sub_items_count = self.pages[toggle_page_index]
+                .items
+                .iter()
+                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
+                .count();
+            if expanded {
+                self.navbar_entry += sub_items_count;
+            } else {
+                self.navbar_entry -= sub_items_count;
+            }
+        }
+
+        self.build_navbar();
     }
 
     fn build_navbar(&mut self) {
@@ -549,6 +567,7 @@ impl SettingsWindow {
             if !self.search_matches[page_index]
                 .iter()
                 .any(|is_match| *is_match)
+                && !self.search_matches[page_index].is_empty()
             {
                 continue;
             }
@@ -1062,13 +1081,15 @@ mod test {
         let mut pages: Vec<SettingsPage> = Vec::new();
         let mut current_page = None;
         let mut selected_idx = None;
+        let mut ix = 0;
+        let mut in_closed_subentry = false;
 
-        for (ix, mut line) in input
+        for mut line in input
             .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
-            .enumerate()
         {
+            let mut is_selected = false;
             if line.ends_with("*") {
                 assert!(
                     selected_idx.is_none(),
@@ -1076,6 +1097,7 @@ mod test {
                 );
                 selected_idx = Some(ix);
                 line = &line[..line.len() - 1];
+                is_selected = true;
             }
 
             if line.starts_with("v") || line.starts_with(">") {
@@ -1084,6 +1106,8 @@ mod test {
                 }
 
                 let expanded = line.starts_with("v");
+                in_closed_subentry = !expanded;
+                ix += 1;
 
                 current_page = Some(SettingsPage {
                     title: line.split_once(" ").unwrap().1,
@@ -1091,6 +1115,12 @@ mod test {
                     items: Vec::default(),
                 });
             } else if line.starts_with("-") {
+                if !in_closed_subentry {
+                    ix += 1;
+                } else if is_selected && in_closed_subentry {
+                    panic!("Can't select sub entry if it's parent is closed");
+                }
+
                 let Some(current_page) = current_page.as_mut() else {
                     panic!("Sub entries must be within a page");
                 };
@@ -1110,15 +1140,20 @@ mod test {
             pages.push(current_page);
         }
 
+        let search_matches = pages
+            .iter()
+            .map(|page| vec![true; page.items.len()])
+            .collect::<Vec<_>>();
+
         let mut settings_window = SettingsWindow {
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
             pages,
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
-            navbar_entry: selected_idx.unwrap(),
+            navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
             list_handle: UniformListScrollHandle::default(),
-            search_matches: Vec::default(),
+            search_matches,
             search_task: None,
         };
 
@@ -1160,7 +1195,7 @@ mod test {
     }
 
     check_navbar_toggle!(
-        basic_open,
+        navbar_basic_open,
         before: r"
         v General
         - General
@@ -1177,7 +1212,7 @@ mod test {
     );
 
     check_navbar_toggle!(
-        basic_close,
+        navbar_basic_close,
         before: r"
         > General*
         - General
@@ -1196,7 +1231,7 @@ mod test {
     );
 
     check_navbar_toggle!(
-        basic_second_root_entry_close,
+        navbar_basic_second_root_entry_close,
         before: r"
         > General
         - General
@@ -1208,6 +1243,103 @@ mod test {
         after: r"
         > General
         > Project*
+        "
+    );
+
+    check_navbar_toggle!(
+        navbar_toggle_subroot,
+        before: r"
+        v General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content*
+        v AI
+        - General
+        > Appearance & Behavior
+        ",
+        toggle_idx: 3,
+        after: r"
+        v General Page
+        - General
+        - Privacy
+        > Project*
+        v AI
+        - General
+        > Appearance & Behavior
+        "
+    );
+
+    check_navbar_toggle!(
+        navbar_toggle_close_propagates_selected_index,
+        before: r"
+        v General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
+        ",
+        toggle_idx: 0,
+        after: r"
+        > General Page
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
+        "
+    );
+
+    check_navbar_toggle!(
+        navbar_toggle_expand_propagates_selected_index,
+        before: r"
+        > General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
+        ",
+        toggle_idx: 0,
+        after: r"
+        v General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
+        "
+    );
+
+    check_navbar_toggle!(
+        navbar_toggle_sub_entry_does_nothing,
+        before: r"
+        > General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
+        ",
+        toggle_idx: 4,
+        after: r"
+        > General Page
+        - General
+        - Privacy
+        v Project
+        - Worktree Settings Content
+        v AI
+        - General*
+        > Appearance & Behavior
         "
     );
 
