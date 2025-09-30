@@ -3,7 +3,6 @@
   stdenv,
 
   apple-sdk_15,
-  darwin,
   darwinMinVersionHook,
 
   cargo-about,
@@ -144,7 +143,6 @@ let
           xorg.libxcb
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-          apple-sdk_15
           (darwinMinVersionHook "10.15")
         ];
 
