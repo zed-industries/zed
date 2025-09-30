@@ -39,6 +39,5 @@ workspace-members = [
     "zed_proto",
     "zed_ruff",
     "slash_commands_example",
-    "zed_snippets",
     "zed_test_extension",
 ]
