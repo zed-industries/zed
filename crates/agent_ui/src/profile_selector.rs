@@ -98,7 +98,7 @@ impl ProfileSelector {
                 let profiles = AgentProfile::available_profiles(cx);
                 self.profiles = profiles.clone();
                 picker.update(cx, |picker, cx| {
-                    let query = picker.query(cx).to_string();
+                    let query = picker.query(cx);
                     picker
                         .delegate
                         .refresh_profiles(profiles.clone(), query, cx);
@@ -431,7 +431,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         let provider = self.provider.clone();
         self.query = query.clone();
 
-        let cancel_for_future = cancel.clone();
+        let cancel_for_future = cancel;
 
         cx.spawn_in(window, async move |this, cx| {
             let matches = match_strings(
@@ -666,7 +666,7 @@ mod tests {
             fs: FakeFs::new(cx.executor()),
             provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
             background: cx.executor(),
-            candidates: candidates.clone(),
+            candidates,
             string_candidates: Arc::new(Vec::new()),
             filtered_entries: vec![
                 ProfilePickerEntry::Profile(ProfileMatchEntry {
