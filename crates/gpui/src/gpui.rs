@@ -8,7 +8,8 @@
 //! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
 //! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
 //!
-//! ```
+//! ```toml
+//! [dependencies]
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
 //!
@@ -64,6 +65,8 @@
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
+extern crate self as gpui;
+
 #[macro_use]
 mod action;
 mod app;
@@ -111,7 +114,6 @@ pub mod private {
     pub use inventory;
     pub use schemars;
     pub use serde;
-    pub use serde_derive;
     pub use serde_json;
 }
 

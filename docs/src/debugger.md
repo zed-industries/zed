@@ -351,9 +351,7 @@ The Debugger supports the following theme options:
 
 ## Troubleshooting
 
-If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml) or [schedule an onboarding call](https://cal.com/team/zed-research/debugger) with us so we can help understand and fix your issue.
-
-There are also some features you can use to gather more information about the problem:
+If you're running into problems with the debugger, please [open a GitHub issue](https://github.com/zed-industries/zed/issues/new?template=04_bug_debugger.yml), providing as much context as possible. There are also some features you can use to gather more information about the problem:
 
 - When you have a session running in the debug panel, you can run the {#action dev::CopyDebugAdapterArguments} action to copy a JSON blob to the clipboard that describes how Zed initialized the session. This is especially useful when the session failed to start, and is great context to add if you open a GitHub issue.
 - You can also use the {#action dev::OpenDebugAdapterLogs} action to see a trace of all of Zed's communications with debug adapters during the most recent debug sessions.

@@ -83,6 +83,8 @@ struct ShaderUnderlinesData {
 #[derive(blade_macros::ShaderData)]
 struct ShaderMonoSpritesData {
     globals: GlobalParams,
+    gamma_ratios: [f32; 4],
+    grayscale_enhanced_contrast: f32,
     t_sprite: gpu::TextureView,
     s_sprite: gpu::Sampler,
     b_mono_sprites: gpu::BufferPiece,
@@ -334,11 +336,11 @@ pub struct BladeRenderer {
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
-    path_sample_count: u32,
     path_intermediate_texture: gpu::Texture,
     path_intermediate_texture_view: gpu::TextureView,
     path_intermediate_msaa_texture: Option<gpu::Texture>,
     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
+    rendering_parameters: RenderingParameters,
 }
 
 impl BladeRenderer {
@@ -351,7 +353,7 @@ impl BladeRenderer {
             size: config.size,
             usage: gpu::TextureUsage::TARGET,
             display_sync: gpu::DisplaySync::Recent,
-            color_space: gpu::ColorSpace::Linear,
+            color_space: gpu::ColorSpace::Srgb,
             allow_exclusive_full_screen: false,
             transparent: config.transparent,
         };
@@ -364,17 +366,12 @@ impl BladeRenderer {
             name: "main",
             buffer_count: 2,
         });
-        // workaround for https://github.com/zed-industries/zed/issues/26143
-        let path_sample_count = std::env::var("ZED_PATH_SAMPLE_COUNT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .or_else(|| {
-                [4, 2, 1]
-                    .into_iter()
-                    .find(|&n| (context.gpu.capabilities().sample_count_mask & n) != 0)
-            })
-            .unwrap_or(1);
-        let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
+        let rendering_parameters = RenderingParameters::from_env(context);
+        let pipelines = BladePipelines::new(
+            &context.gpu,
+            surface.info(),
+            rendering_parameters.path_sample_count,
+        );
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
@@ -401,7 +398,7 @@ impl BladeRenderer {
                 surface.info().format,
                 config.size.width,
                 config.size.height,
-                path_sample_count,
+                rendering_parameters.path_sample_count,
             )
             .unzip();
 
@@ -425,11 +422,11 @@ impl BladeRenderer {
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            path_sample_count,
             path_intermediate_texture,
             path_intermediate_texture_view,
             path_intermediate_msaa_texture,
             path_intermediate_msaa_texture_view,
+            rendering_parameters,
         })
     }
 
@@ -506,7 +503,7 @@ impl BladeRenderer {
                     self.surface.info().format,
                     gpu_size.width,
                     gpu_size.height,
-                    self.path_sample_count,
+                    self.rendering_parameters.path_sample_count,
                 )
                 .unzip();
             self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
@@ -521,8 +518,11 @@ impl BladeRenderer {
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
             self.pipelines.destroy(&self.gpu);
-            self.pipelines =
-                BladePipelines::new(&self.gpu, self.surface.info(), self.path_sample_count);
+            self.pipelines = BladePipelines::new(
+                &self.gpu,
+                self.surface.info(),
+                self.rendering_parameters.path_sample_count,
+            );
         }
     }
 
@@ -783,6 +783,10 @@ impl BladeRenderer {
                         0,
                         &ShaderMonoSpritesData {
                             globals,
+                            gamma_ratios: self.rendering_parameters.gamma_ratios,
+                            grayscale_enhanced_contrast: self
+                                .rendering_parameters
+                                .grayscale_enhanced_contrast,
                             t_sprite: tex_info.raw_view,
                             s_sprite: self.atlas_sampler,
                             b_mono_sprites: instance_buf,
@@ -983,4 +987,86 @@ fn create_msaa_texture_if_needed(
     );
 
     Some((texture_msaa, texture_view_msaa))
+}
+
+/// A set of parameters that can be set using a corresponding environment variable.
+struct RenderingParameters {
+    // Env var: ZED_PATH_SAMPLE_COUNT
+    // workaround for https://github.com/zed-industries/zed/issues/26143
+    path_sample_count: u32,
+
+    // Env var: ZED_FONTS_GAMMA
+    // Allowed range [1.0, 2.2], other values are clipped
+    // Default: 1.8
+    gamma_ratios: [f32; 4],
+    // Env var: ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST
+    // Allowed range: [0.0, ..), other values are clipped
+    // Default: 1.0
+    grayscale_enhanced_contrast: f32,
+}
+
+impl RenderingParameters {
+    fn from_env(context: &BladeContext) -> Self {
+        use std::env;
+
+        let path_sample_count = env::var("ZED_PATH_SAMPLE_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .or_else(|| {
+                [4, 2, 1]
+                    .into_iter()
+                    .find(|&n| (context.gpu.capabilities().sample_count_mask & n) != 0)
+            })
+            .unwrap_or(1);
+        let gamma = env::var("ZED_FONTS_GAMMA")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.8_f32)
+            .clamp(1.0, 2.2);
+        let gamma_ratios = Self::get_gamma_ratios(gamma);
+        let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0_f32)
+            .max(0.0);
+
+        Self {
+            path_sample_count,
+            gamma_ratios,
+            grayscale_enhanced_contrast,
+        }
+    }
+
+    // Gamma ratios for brightening/darkening edges for better contrast
+    // https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp#L50
+    fn get_gamma_ratios(gamma: f32) -> [f32; 4] {
+        const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
+            [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
+            [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
+            [0.0350 / 4.0, -0.1760 / 4.0, 0.4325 / 4.0, -0.1370 / 4.0], // gamma = 1.2
+            [0.0543 / 4.0, -0.2821 / 4.0, 0.6302 / 4.0, -0.1876 / 4.0], // gamma = 1.3
+            [0.0739 / 4.0, -0.3963 / 4.0, 0.8167 / 4.0, -0.2287 / 4.0], // gamma = 1.4
+            [0.0933 / 4.0, -0.5161 / 4.0, 0.9926 / 4.0, -0.2616 / 4.0], // gamma = 1.5
+            [0.1121 / 4.0, -0.6395 / 4.0, 1.1588 / 4.0, -0.2877 / 4.0], // gamma = 1.6
+            [0.1300 / 4.0, -0.7649 / 4.0, 1.3159 / 4.0, -0.3080 / 4.0], // gamma = 1.7
+            [0.1469 / 4.0, -0.8911 / 4.0, 1.4644 / 4.0, -0.3234 / 4.0], // gamma = 1.8
+            [0.1627 / 4.0, -1.0170 / 4.0, 1.6051 / 4.0, -0.3347 / 4.0], // gamma = 1.9
+            [0.1773 / 4.0, -1.1420 / 4.0, 1.7385 / 4.0, -0.3426 / 4.0], // gamma = 2.0
+            [0.1908 / 4.0, -1.2652 / 4.0, 1.8650 / 4.0, -0.3476 / 4.0], // gamma = 2.1
+            [0.2031 / 4.0, -1.3864 / 4.0, 1.9851 / 4.0, -0.3501 / 4.0], // gamma = 2.2
+        ];
+
+        const NORM13: f32 = ((0x10000 as f64) / (255.0 * 255.0) * 4.0) as f32;
+        const NORM24: f32 = ((0x100 as f64) / (255.0) * 4.0) as f32;
+
+        let index = ((gamma * 10.0).round() as usize).clamp(10, 22) - 10;
+        let ratios = GAMMA_INCORRECT_TARGET_RATIOS[index];
+
+        [
+            ratios[0] * NORM13,
+            ratios[1] * NORM24,
+            ratios[2] * NORM13,
+            ratios[3] * NORM24,
+        ]
+    }
 }

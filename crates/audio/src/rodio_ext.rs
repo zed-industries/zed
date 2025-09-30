@@ -1,4 +1,5 @@
 use std::{
+    num::NonZero,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -7,11 +8,22 @@ use std::{
 };
 
 use crossbeam::queue::ArrayQueue;
-use rodio::{ChannelCount, Sample, SampleRate, Source};
+use denoise::{Denoiser, DenoiserError};
+use log::warn;
+use rodio::{
+    ChannelCount, Sample, SampleRate, Source, conversions::SampleRateConverter, nz,
+    source::UniformSourceIterator,
+};
 
-#[derive(Debug)]
+const MAX_CHANNELS: usize = 8;
+
+#[derive(Debug, thiserror::Error)]
+#[error("Replay duration is too short must be >= 100ms")]
 pub struct ReplayDurationTooShort;
 
+// These all require constant sources (so the span is infinitely long)
+// this is not guaranteed by rodio however we know it to be true in all our
+// applications. Rodio desperately needs a constant source concept.
 pub trait RodioExt: Source + Sized {
     fn process_buffer<const N: usize, F>(self, callback: F) -> ProcessBuffer<N, Self, F>
     where
@@ -24,6 +36,14 @@ pub trait RodioExt: Source + Sized {
         duration: Duration,
     ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort>;
     fn take_samples(self, n: usize) -> TakeSamples<Self>;
+    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError>;
+    fn constant_params(
+        self,
+        channel_count: ChannelCount,
+        sample_rate: SampleRate,
+    ) -> UniformSourceIterator<Self>;
+    fn constant_samplerate(self, sample_rate: SampleRate) -> ConstantSampleRate<Self>;
+    fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self>;
 }
 
 impl<S: Source> RodioExt for S {
@@ -56,7 +76,7 @@ impl<S: Source> RodioExt for S {
     /// replay is being read
     ///
     /// # Errors
-    /// If duration is smaller then 100ms
+    /// If duration is smaller than 100ms
     fn replayable(
         self,
         duration: Duration,
@@ -100,8 +120,149 @@ impl<S: Source> RodioExt for S {
             left_to_take: n,
         }
     }
+    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError> {
+        let res = Denoiser::try_new(self);
+        res
+    }
+    fn constant_params(
+        self,
+        channel_count: ChannelCount,
+        sample_rate: SampleRate,
+    ) -> UniformSourceIterator<Self> {
+        UniformSourceIterator::new(self, channel_count, sample_rate)
+    }
+    fn constant_samplerate(self, sample_rate: SampleRate) -> ConstantSampleRate<Self> {
+        ConstantSampleRate::new(self, sample_rate)
+    }
+    fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self> {
+        ToMono::new(self)
+    }
 }
 
+pub struct ConstantSampleRate<S: Source> {
+    inner: SampleRateConverter<S>,
+    channels: ChannelCount,
+    sample_rate: SampleRate,
+}
+
+impl<S: Source> ConstantSampleRate<S> {
+    fn new(source: S, target_rate: SampleRate) -> Self {
+        let input_sample_rate = source.sample_rate();
+        let channels = source.channels();
+        let inner = SampleRateConverter::new(source, input_sample_rate, target_rate, channels);
+        Self {
+            inner,
+            channels,
+            sample_rate: target_rate,
+        }
+    }
+}
+
+impl<S: Source> Iterator for ConstantSampleRate<S> {
+    type Item = rodio::Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<S: Source> Source for ConstantSampleRate<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        self.channels
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        self.sample_rate
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None // not supported (not used by us)
+    }
+}
+
+const TYPICAL_NOISE_FLOOR: Sample = 1e-3;
+
+/// constant source, only works on a single span
+pub struct ToMono<S> {
+    inner: S,
+    input_channel_count: ChannelCount,
+    connected_channels: ChannelCount,
+    /// running mean of second channel 'volume'
+    means: [f32; MAX_CHANNELS],
+}
+impl<S: Source> ToMono<S> {
+    fn new(input: S) -> Self {
+        let channels = input
+            .channels()
+            .min(const { NonZero::<u16>::new(MAX_CHANNELS as u16).unwrap() });
+        if channels < input.channels() {
+            warn!("Ignoring input channels {}..", channels.get());
+        }
+
+        Self {
+            connected_channels: channels,
+            input_channel_count: channels,
+            inner: input,
+            means: [TYPICAL_NOISE_FLOOR; MAX_CHANNELS],
+        }
+    }
+}
+
+impl<S: Source> Source for ToMono<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        rodio::nz!(1)
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+}
+
+fn update_mean(mean: &mut f32, sample: Sample) {
+    const HISTORY: f32 = 500.0;
+    *mean *= (HISTORY - 1.0) / HISTORY;
+    *mean += sample.abs() / HISTORY;
+}
+
+impl<S: Source> Iterator for ToMono<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut mono_sample = 0f32;
+        let mut active_channels = 0;
+        for channel in 0..self.input_channel_count.get() as usize {
+            let sample = self.inner.next()?;
+            mono_sample += sample;
+
+            update_mean(&mut self.means[channel], sample);
+            if self.means[channel] > TYPICAL_NOISE_FLOOR / 10.0 {
+                active_channels += 1;
+            }
+        }
+        mono_sample /= self.connected_channels.get() as f32;
+        self.connected_channels = NonZero::new(active_channels).unwrap_or(nz!(1));
+
+        Some(mono_sample)
+    }
+}
+
+/// constant source, only works on a single span
 pub struct TakeSamples<S> {
     inner: S,
     left_to_take: usize,
@@ -146,11 +307,12 @@ impl<S: Source> Source for TakeSamples<S> {
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 struct ReplayQueue {
     inner: ArrayQueue<Vec<Sample>>,
     normal_chunk_len: usize,
-    /// The last chunk in the queue may be smaller then
+    /// The last chunk in the queue may be smaller than
     /// the normal chunk size. This is always equal to the
     /// size of the last element in the queue.
     /// (so normally chunk_size)
@@ -192,6 +354,7 @@ impl ReplayQueue {
     }
 }
 
+/// constant source, only works on a single span
 pub struct ProcessBuffer<const N: usize, S, F>
 where
     S: Source + Sized,
@@ -259,6 +422,7 @@ where
     }
 }
 
+/// constant source, only works on a single span
 pub struct InspectBuffer<const N: usize, S, F>
 where
     S: Source + Sized,
@@ -323,6 +487,7 @@ where
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 pub struct Replayable<S: Source> {
     inner: S,
@@ -338,6 +503,7 @@ impl<S: Source> Iterator for Replayable<S> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sample) = self.inner.next() {
             self.buffer.push(sample);
+            // If the buffer is full send it
             if self.buffer.len() == self.chunk_size {
                 self.tx.push_normal(std::mem::take(&mut self.buffer));
             }
@@ -373,6 +539,7 @@ impl<S: Source> Source for Replayable<S> {
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 pub struct Replay {
     rx: Arc<ReplayQueue>,
@@ -422,6 +589,9 @@ impl Iterator for Replay {
                 return None;
             }
 
+            // The queue does not support blocking on a next item. We want this queue as it
+            // is quite fast and provides a fixed size. We know how many samples are in a
+            // buffer so if we do not get one now we must be getting one after `sleep_duration`.
             std::thread::sleep(self.sleep_duration);
         }
     }
@@ -530,7 +700,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(3))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(3).count();
             let yielded: Vec<Sample> = replay.by_ref().take(3).collect();
@@ -547,7 +717,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(5).count(); // get all items but do not end the source
             let yielded: Vec<Sample> = replay.by_ref().take(2).collect();
@@ -562,7 +732,7 @@ mod tests {
 
             let (replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             // exhaust but do not yet end source
             source.by_ref().take(40_000).count();
@@ -581,7 +751,7 @@ mod tests {
             let input = StaticSamplesBuffer::new(nz!(1), nz!(16_000), &[0.0; 40_000]);
             let (mut replay, source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
             assert_eq!(replay.by_ref().samples_ready(), 0);
 
             source.take(8000).count(); // half a second

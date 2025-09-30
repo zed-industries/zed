@@ -1,8 +1,9 @@
-use crash_handler::CrashHandler;
+use crash_handler::{CrashEventResult, CrashHandler};
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+use smol::process::Command;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU32;
@@ -10,9 +11,9 @@ use std::{
     env,
     fs::{self, File},
     io,
-    panic::Location,
+    panic::{self, PanicHookInfo},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -33,7 +34,16 @@ static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 pub async fn init(crash_init: InitCrashHandler) {
     if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
+        let old_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            unsafe { env::set_var("RUST_BACKTRACE", "1") };
+            old_hook(info);
+            // prevent the macOS crash dialog from popping up
+            std::process::exit(1);
+        }));
         return;
+    } else {
+        panic::set_hook(Box::new(panic_hook));
     }
 
     let exe = env::current_exe().expect("unable to find ourselves");
@@ -44,13 +54,13 @@ pub async fn init(crash_init: InitCrashHandler) {
     // used by the crash handler isn't destroyed correctly which causes it to stay on the file
     // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
-    #[allow(unused)]
-    let server_pid = Command::new(exe)
+    let _crash_handler = Command::new(exe)
         .arg("--crash-handler")
         .arg(&socket_name)
         .spawn()
-        .expect("unable to spawn server process")
-        .id();
+        .expect("unable to spawn server process");
+    #[cfg(target_os = "linux")]
+    let server_pid = _crash_handler.id();
     info!("spawning crash handler process");
 
     let mut elapsed = Duration::ZERO;
@@ -71,7 +81,7 @@ pub async fn init(crash_init: InitCrashHandler) {
         .unwrap();
 
     let client = Arc::new(client);
-    let handler = crash_handler::CrashHandler::attach(unsafe {
+    let handler = CrashHandler::attach(unsafe {
         let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
@@ -87,7 +97,7 @@ pub async fn init(crash_init: InitCrashHandler) {
             } else {
                 true
             };
-            crash_handler::CrashEventResult::Handled(res)
+            CrashEventResult::Handled(res)
         })
     })
     .expect("failed to attach signal handler");
@@ -144,6 +154,7 @@ pub struct CrashInfo {
 pub struct InitCrashHandler {
     pub session_id: String,
     pub zed_version: String,
+    pub binary: String,
     pub release_channel: String,
     pub commit_sha: String,
 }
@@ -257,8 +268,16 @@ impl minidumper::ServerHandler for CrashServer {
     }
 }
 
-pub fn handle_panic(message: String, span: Option<&Location>) {
-    let span = span
+pub fn panic_hook(info: &PanicHookInfo) {
+    let message = info
+        .payload()
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Box<Any>".to_string());
+
+    let span = info
+        .location()
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
@@ -281,11 +300,15 @@ pub fn handle_panic(message: String, span: Option<&Location>) {
                 Ordering::SeqCst,
             );
 
-            #[cfg(target_os = "linux")]
-            CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
-            #[cfg(not(target_os = "linux"))]
-            CrashHandler.simulate_exception(None);
-            break;
+            cfg_if::cfg_if! {
+                if #[cfg(target_os = "windows")] {
+                    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+                    CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
+                    break;
+                } else {
+                    std::process::abort();
+                }
+            }
         }
         thread::sleep(retry_frequency);
     }
@@ -300,16 +323,19 @@ pub fn crash_server(socket: &Path) {
     let shutdown = Arc::new(AtomicBool::new(false));
     let has_connection = Arc::new(AtomicBool::new(false));
 
-    std::thread::spawn({
-        let shutdown = shutdown.clone();
-        let has_connection = has_connection.clone();
-        move || {
-            std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
-            if !has_connection.load(Ordering::SeqCst) {
-                shutdown.store(true, Ordering::SeqCst);
+    thread::Builder::new()
+        .name("CrashServerTimeout".to_owned())
+        .spawn({
+            let shutdown = shutdown.clone();
+            let has_connection = has_connection.clone();
+            move || {
+                std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
+                if !has_connection.load(Ordering::SeqCst) {
+                    shutdown.store(true, Ordering::SeqCst);
+                }
             }
-        }
-    });
+        })
+        .unwrap();
 
     server
         .run(

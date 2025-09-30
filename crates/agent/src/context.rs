@@ -6,7 +6,7 @@ use futures::future;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext as _, ElementId, Entity, SharedString, Task};
 use icons::IconName;
-use language::{Buffer, ParseStatus};
+use language::Buffer;
 use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::{ops::Range, path::Path, sync::Arc};
 use text::{Anchor, OffsetRangeExt as _};
 use util::markdown::MarkdownCodeBlock;
+use util::rel_path::RelPath;
 use util::{ResultExt as _, post_inc};
 
 pub const RULES_ICON: IconName = IconName::Reader;
@@ -158,7 +159,7 @@ pub struct FileContextHandle {
 #[derive(Debug, Clone)]
 pub struct FileContext {
     pub handle: FileContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub text: SharedString,
     pub is_outline: bool,
 }
@@ -186,50 +187,24 @@ impl FileContextHandle {
             log::error!("file context missing path");
             return Task::ready(None);
         };
-        let full_path: Arc<Path> = file.full_path(cx).into();
+        let full_path = file.full_path(cx).to_string_lossy().into_owned();
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
 
         cx.spawn(async move |cx| {
-            // For large files, use outline instead of full content
-            if rope.len() > outline::AUTO_OUTLINE_SIZE {
-                // Wait until the buffer has been fully parsed, so we can read its outline
-                if let Ok(mut parse_status) =
-                    buffer.read_with(cx, |buffer, _| buffer.parse_status())
-                {
-                    while *parse_status.borrow() != ParseStatus::Idle {
-                        parse_status.changed().await.log_err();
-                    }
+            let buffer_content =
+                outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+                    .await
+                    .unwrap_or_else(|_| outline::BufferContent {
+                        text: rope.to_string(),
+                        is_outline: false,
+                    });
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
-                        let items = snapshot
-                            .outline(None)
-                            .items
-                            .into_iter()
-                            .map(|item| item.to_point(&snapshot));
-
-                        if let Ok(outline_text) =
-                            outline::render_outline(items, None, 0, usize::MAX).await
-                        {
-                            let context = AgentContext::File(FileContext {
-                                handle: self,
-                                full_path,
-                                text: outline_text.into(),
-                                is_outline: true,
-                            });
-                            return Some((context, vec![buffer]));
-                        }
-                    }
-                }
-            }
-
-            // Fallback to full content if we couldn't build an outline
-            // (or didn't need to because the file was small enough)
             let context = AgentContext::File(FileContext {
                 handle: self,
                 full_path,
-                text: rope.to_string().into(),
-                is_outline: false,
+                text: buffer_content.text.into(),
+                is_outline: buffer_content.is_outline,
             });
             Some((context, vec![buffer]))
         })
@@ -261,14 +236,14 @@ pub struct DirectoryContextHandle {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub handle: DirectoryContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub descendants: Vec<DirectoryContextDescendant>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DirectoryContextDescendant {
     /// Path within the directory.
-    pub rel_path: Arc<Path>,
+    pub rel_path: Arc<RelPath>,
     pub fenced_codeblock: SharedString,
 }
 
@@ -299,13 +274,16 @@ impl DirectoryContextHandle {
         }
 
         let directory_path = entry.path.clone();
-        let directory_full_path = worktree_ref.full_path(&directory_path).into();
+        let directory_full_path = worktree_ref
+            .full_path(&directory_path)
+            .to_string_lossy()
+            .to_string();
 
         let file_paths = collect_files_in_path(worktree_ref, &directory_path);
         let descendants_future = future::join_all(file_paths.into_iter().map(|path| {
             let worktree_ref = worktree.read(cx);
             let worktree_id = worktree_ref.id();
-            let full_path = worktree_ref.full_path(&path);
+            let full_path = worktree_ref.full_path(&path).to_string_lossy().into_owned();
 
             let rel_path = path
                 .strip_prefix(&directory_path)
@@ -386,7 +364,7 @@ pub struct SymbolContextHandle {
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
     pub handle: SymbolContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub line_range: Range<Point>,
     pub text: SharedString,
 }
@@ -425,7 +403,7 @@ impl SymbolContextHandle {
             log::error!("symbol context's file has no path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx).into();
+        let full_path = file.full_path(cx).to_string_lossy().into_owned();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
         let text = self.text(cx);
         let buffer = self.buffer.clone();
@@ -459,7 +437,7 @@ pub struct SelectionContextHandle {
 #[derive(Debug, Clone)]
 pub struct SelectionContext {
     pub handle: SelectionContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub line_range: Range<Point>,
     pub text: SharedString,
 }
@@ -498,7 +476,7 @@ impl SelectionContextHandle {
         let text = self.text(cx);
         let buffer = self.buffer.clone();
         let context = AgentContext::Selection(SelectionContext {
-            full_path: full_path.into(),
+            full_path: full_path.to_string_lossy().into_owned(),
             line_range: self.line_range(cx),
             text,
             handle: self,
@@ -728,7 +706,7 @@ impl Display for RulesContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub project_path: Option<ProjectPath>,
-    pub full_path: Option<Arc<Path>>,
+    pub full_path: Option<String>,
     pub original_image: Arc<gpui::Image>,
     // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
     // needed due to a false positive of `clippy::mutable_key_type`.
@@ -994,7 +972,7 @@ pub fn load_context(
     })
 }
 
-fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<Arc<RelPath>> {
     let mut files = Vec::new();
 
     for entry in worktree.child_entries(path) {
@@ -1008,14 +986,17 @@ fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
     files
 }
 
-fn codeblock_tag(full_path: &Path, line_range: Option<Range<Point>>) -> String {
+fn codeblock_tag(full_path: &str, line_range: Option<Range<Point>>) -> String {
     let mut result = String::new();
 
-    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+    if let Some(extension) = Path::new(full_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
         let _ = write!(result, "{} ", extension);
     }
 
-    let _ = write!(result, "{}", full_path.display());
+    let _ = write!(result, "{}", full_path);
 
     if let Some(range) = line_range {
         if range.start.row == range.end.row {

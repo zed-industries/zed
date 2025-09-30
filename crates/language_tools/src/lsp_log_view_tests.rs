@@ -91,7 +91,7 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
                     .next()
                     .unwrap()
                     .read(cx)
-                    .root_name()
+                    .root_name_str()
                     .to_string(),
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,

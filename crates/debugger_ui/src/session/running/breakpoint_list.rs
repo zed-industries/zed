@@ -10,7 +10,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
+    Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
 use language::Point;
 use project::{
@@ -23,9 +23,10 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render, Scrollbar,
-    ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
+    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
+    StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
+use util::rel_path::RelPath;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -49,7 +50,6 @@ pub(crate) struct BreakpointList {
     breakpoint_store: Entity<BreakpointStore>,
     dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
-    scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
     focus_handle: FocusHandle,
@@ -87,7 +87,6 @@ impl BreakpointList {
         let dap_store = project.dap_store();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let adapter_name = session.as_ref().map(|session| session.read(cx).adapter());
         cx.new(|cx| {
@@ -95,7 +94,6 @@ impl BreakpointList {
                 breakpoint_store,
                 dap_store,
                 worktree_store,
-                scrollbar_state,
                 breakpoints: Default::default(),
                 workspace,
                 session,
@@ -576,39 +574,6 @@ impl BreakpointList {
         .flex_1()
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("breakpoint-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let selection_kind = self.selection_kind();
         let focus_handle = self.focus_handle.clone();
@@ -699,6 +664,7 @@ impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
+        let path_style = self.worktree_store.read(cx).path_style();
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
             let relative_worktree_path = self
@@ -709,24 +675,20 @@ impl Render for BreakpointList {
                     worktree
                         .read(cx)
                         .is_visible()
-                        .then(|| Path::new(worktree.read(cx).root_name()).join(relative_path))
+                        .then(|| worktree.read(cx).root_name().join(&relative_path))
                 });
             breakpoints.sort_by_key(|breakpoint| breakpoint.row);
             let weak = weak.clone();
             breakpoints.into_iter().filter_map(move |breakpoint| {
                 debug_assert_eq!(&path, &breakpoint.path);
                 let file_name = breakpoint.path.file_name()?;
+                let breakpoint_path = RelPath::new(&breakpoint.path, path_style).ok();
 
                 let dir = relative_worktree_path
-                    .clone()
-                    .unwrap_or_else(|| PathBuf::from(&*breakpoint.path))
+                    .as_deref()
+                    .or(breakpoint_path.as_deref())?
                     .parent()
-                    .and_then(|parent| {
-                        parent
-                            .to_str()
-                            .map(ToOwned::to_owned)
-                            .map(SharedString::from)
-                    });
+                    .map(|parent| SharedString::from(parent.display(path_style).to_string()));
                 let name = file_name
                     .to_str()
                     .map(ToOwned::to_owned)
@@ -789,7 +751,7 @@ impl Render for BreakpointList {
             .size_full()
             .pt_1()
             .child(self.render_list(cx))
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(

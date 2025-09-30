@@ -1,7 +1,7 @@
 pub mod extension;
 pub mod registry;
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -10,7 +10,7 @@ use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
     Project,
@@ -282,8 +282,18 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
-    pub fn all_server_ids(&self) -> Vec<ContextServerId> {
-        self.servers.keys().cloned().collect()
+    pub fn server_ids(&self, cx: &App) -> HashSet<ContextServerId> {
+        self.servers
+            .keys()
+            .cloned()
+            .chain(
+                self.registry
+                    .read(cx)
+                    .context_server_descriptors()
+                    .into_iter()
+                    .map(|(id, _)| ContextServerId(id)),
+            )
+            .collect()
     }
 
     pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
@@ -500,7 +510,7 @@ impl ContextServerStore {
             .next()
             .map(|worktree| settings::SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path: Path::new(""),
+                path: RelPath::empty(),
             });
         &ProjectSettings::get(location, cx).context_servers
     }
@@ -915,7 +925,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -934,7 +944,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -961,7 +971,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        ContextServerSettings::Extension {
+                        settings::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -970,7 +980,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        ContextServerSettings::Custom {
+                        settings::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1002,7 +1012,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        ContextServerSettings::Extension {
+                        settings::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -1011,7 +1021,7 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        ContextServerSettings::Custom {
+                        settings::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
@@ -1038,7 +1048,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1061,7 +1071,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1147,7 +1157,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Custom {
+                    settings::ContextServerSettingsContent::Custom {
                         enabled: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1176,7 +1186,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Custom {
+                    settings::ContextServerSettingsContent::Custom {
                         enabled: true,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
@@ -1194,18 +1204,17 @@ mod tests {
     }
 
     fn set_context_server_configuration(
-        context_servers: Vec<(Arc<str>, ContextServerSettings)>,
+        context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                let mut settings = ProjectSettings::default();
-                for (id, config) in context_servers {
-                    settings.context_servers.insert(id, config);
-                }
-                store
-                    .set_user_settings(&serde_json::to_string(&settings).unwrap(), cx)
-                    .unwrap();
+                store.update_user_settings(cx, |content| {
+                    content.project.context_servers.clear();
+                    for (id, config) in context_servers {
+                        content.project.context_servers.insert(id, config);
+                    }
+                });
             })
         });
     }

@@ -1,13 +1,14 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
-use agent::agent_profile::{AgentProfile, AvailableProfiles};
-use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{
+    AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
+};
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, prelude::*};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use ui::{
-    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, TintColor,
-    Tooltip, prelude::*,
+    ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, PopoverMenu,
+    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -127,9 +128,11 @@ impl ProfileSelector {
             .toggleable(IconPosition::End, profile_id == thread_profile_id);
 
         let entry = if let Some(doc_text) = documentation {
-            entry.documentation_aside(documentation_side(settings.dock), move |_| {
-                Label::new(doc_text).into_any_element()
-            })
+            entry.documentation_aside(
+                documentation_side(settings.dock),
+                DocumentationEdge::Top,
+                move |_| Label::new(doc_text).into_any_element(),
+            )
         } else {
             entry
         };
@@ -138,10 +141,13 @@ impl ProfileSelector {
             let fs = self.fs.clone();
             let provider = self.provider.clone();
             move |_window, cx| {
-                update_settings_file::<AgentSettings>(fs.clone(), cx, {
+                update_settings_file(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
-                        settings.set_profile(profile_id);
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_profile(profile_id.0);
                     }
                 });
 
@@ -212,10 +218,10 @@ impl Render for ProfileSelector {
     }
 }
 
-fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
+fn documentation_side(position: DockPosition) -> DocumentationSide {
     match position {
-        AgentDockPosition::Left => DocumentationSide::Right,
-        AgentDockPosition::Bottom => DocumentationSide::Left,
-        AgentDockPosition::Right => DocumentationSide::Left,
+        DockPosition::Left => DocumentationSide::Right,
+        DockPosition::Bottom => DocumentationSide::Left,
+        DockPosition::Right => DocumentationSide::Left,
     }
 }

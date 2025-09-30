@@ -277,7 +277,7 @@ impl ToTaffy<taffy::style::Style> for Style {
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
-            scrollbar_width: self.scrollbar_width,
+            scrollbar_width: self.scrollbar_width.to_taffy(rem_size),
             position: self.position.into(),
             inset: self.inset.to_taffy(rem_size),
             size: self.size.to_taffy(rem_size),
@@ -310,6 +310,15 @@ impl ToTaffy<taffy::style::Style> for Style {
                 .map(|location| to_grid_line(&location.column))
                 .unwrap_or_default(),
             ..Default::default()
+        }
+    }
+}
+
+impl ToTaffy<f32> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels) -> f32 {
+        match self {
+            AbsoluteLength::Pixels(pixels) => pixels.into(),
+            AbsoluteLength::Rems(rems) => (*rems * rem_size).into(),
         }
     }
 }
@@ -490,6 +499,7 @@ impl AvailableSpace {
     /// # Examples
     ///
     /// ```
+    /// use gpui::AvailableSpace;
     /// let min_content_size = AvailableSpace::min_size();
     /// assert_eq!(min_content_size.width, AvailableSpace::MinContent);
     /// assert_eq!(min_content_size.height, AvailableSpace::MinContent);

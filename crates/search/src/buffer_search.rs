@@ -28,17 +28,19 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use zed_actions::outline::ToggleOutline;
+use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
     utils::SearchInputWidth,
 };
-use util::ResultExt;
+use util::{ResultExt, paths::PathMatcher};
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
-    searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
+    searchable::{
+        Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle,
+    },
 };
 
 pub use registrar::DivRegistrar;
@@ -117,7 +119,7 @@ pub struct BufferSearchBar {
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
-    selection_search_enabled: bool,
+    selection_search_enabled: Option<FilteredSearchRange>,
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
@@ -255,13 +257,13 @@ impl Render for BufferSearchBar {
                     )
                     .style(ButtonStyle::Subtle)
                     .shape(IconButtonShape::Square)
-                    .when(self.selection_search_enabled, |button| {
+                    .when(self.selection_search_enabled.is_some(), |button| {
                         button.style(ButtonStyle::Filled)
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.toggle_selection(&ToggleSelection, window, cx);
                     }))
-                    .toggle_state(self.selection_search_enabled)
+                    .toggle_state(self.selection_search_enabled.is_some())
                     .tooltip({
                         let focus_handle = focus_handle.clone();
                         move |window, cx| {
@@ -425,6 +427,16 @@ impl Render for BufferSearchBar {
                     active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, _: &CopyPath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyPath), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyRelativePath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyRelativePath), window, cx);
+                }
+            }))
             .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
                     .when(in_replace, |this| {
@@ -489,7 +501,7 @@ impl ToolbarItemView for BufferSearchBar {
 
             let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
-            drop(self.update_matches(true, window, cx));
+            drop(self.update_matches(true, false, window, cx));
             if !self.dismissed {
                 if is_project_search {
                     self.dismiss(&Default::default(), window, cx);
@@ -663,7 +675,7 @@ impl BufferSearchBar {
             search_history_cursor: Default::default(),
             active_search: None,
             replace_enabled: false,
-            selection_search_enabled: false,
+            selection_search_enabled: None,
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
@@ -686,10 +698,10 @@ impl BufferSearchBar {
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_mut() {
-            self.selection_search_enabled = false;
+            self.selection_search_enabled = None;
             self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, window, cx);
-            active_editor.toggle_filtered_search_ranges(false, window, cx);
+            active_editor.toggle_filtered_search_ranges(None, window, cx);
             let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, window);
         }
@@ -701,18 +713,23 @@ impl BufferSearchBar {
     }
 
     pub fn deploy(&mut self, deploy: &Deploy, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let filtered_search_range = if deploy.selection_search_enabled {
+            Some(FilteredSearchRange::Default)
+        } else {
+            None
+        };
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
-                active_item.toggle_filtered_search_ranges(
-                    deploy.selection_search_enabled,
-                    window,
-                    cx,
-                );
+                active_item.toggle_filtered_search_ranges(filtered_search_range, window, cx);
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
             self.replace_enabled = deploy.replace_enabled;
-            self.selection_search_enabled = deploy.selection_search_enabled;
+            self.selection_search_enabled = if deploy.selection_search_enabled {
+                Some(FilteredSearchRange::Default)
+            } else {
+                None
+            };
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
@@ -778,16 +795,19 @@ impl BufferSearchBar {
     }
 
     pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let search = self
-            .query_suggestion(window, cx)
-            .map(|suggestion| self.search(&suggestion, Some(self.default_options), window, cx));
+        let search = self.query_suggestion(window, cx).map(|suggestion| {
+            self.search(&suggestion, Some(self.default_options), true, window, cx)
+        });
 
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
-                search.await?;
-                this.update_in(cx, |this, window, cx| {
-                    this.activate_current_match(window, cx)
-                })
+                if search.await.is_ok() {
+                    this.update_in(cx, |this, window, cx| {
+                        this.activate_current_match(window, cx)
+                    })
+                } else {
+                    Ok(())
+                }
             })
             .detach_and_log_err(cx);
         }
@@ -855,6 +875,7 @@ impl BufferSearchBar {
         &mut self,
         query: &str,
         options: Option<SearchOptions>,
+        add_to_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -871,7 +892,7 @@ impl BufferSearchBar {
             self.clear_matches(window, cx);
             cx.notify();
         }
-        self.update_matches(!updated, window, cx)
+        self.update_matches(!updated, add_to_history, window, cx)
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
@@ -889,7 +910,7 @@ impl BufferSearchBar {
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        drop(self.update_matches(false, window, cx));
+        drop(self.update_matches(false, false, window, cx));
         self.adjust_query_regex_language(cx);
         cx.notify();
     }
@@ -907,6 +928,19 @@ impl BufferSearchBar {
         if !self.search_options.contains(search_option) {
             self.toggle_search_option(search_option, window, cx)
         }
+    }
+
+    pub fn set_search_within_selection(
+        &mut self,
+        search_within_selection: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<oneshot::Receiver<()>> {
+        let active_item = self.active_searchable_item.as_mut()?;
+        self.selection_search_enabled = search_within_selection;
+        active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
+        cx.notify();
+        Some(self.update_matches(false, false, window, cx))
     }
 
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
@@ -943,7 +977,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, 1, window, cx);
     }
 
-    fn select_all_matches(
+    pub fn select_all_matches(
         &mut self,
         _: &SelectAllMatches,
         window: &mut Window,
@@ -1033,7 +1067,7 @@ impl BufferSearchBar {
             editor::EditorEvent::Edited { .. } => {
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
-                let search = self.update_matches(false, window, cx);
+                let search = self.update_matches(false, true, window, cx);
 
                 let width = editor.update(cx, |editor, cx| {
                     let text_layout_details = editor.text_layout_details(window);
@@ -1046,10 +1080,13 @@ impl BufferSearchBar {
                 cx.notify();
 
                 cx.spawn_in(window, async move |this, cx| {
-                    search.await?;
-                    this.update_in(cx, |this, window, cx| {
-                        this.activate_current_match(window, cx)
-                    })
+                    if search.await.is_ok() {
+                        this.update_in(cx, |this, window, cx| {
+                            this.activate_current_match(window, cx)
+                        })
+                    } else {
+                        Ok(())
+                    }
                 })
                 .detach_and_log_err(cx);
             }
@@ -1078,7 +1115,7 @@ impl BufferSearchBar {
     ) {
         match event {
             SearchEvent::MatchesInvalidated => {
-                drop(self.update_matches(false, window, cx));
+                drop(self.update_matches(false, false, window, cx));
             }
             SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
         }
@@ -1108,12 +1145,15 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active_item) = self.active_searchable_item.as_mut() {
-            self.selection_search_enabled = !self.selection_search_enabled;
-            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
-            drop(self.update_matches(false, window, cx));
-            cx.notify();
-        }
+        self.set_search_within_selection(
+            if let Some(_) = self.selection_search_enabled {
+                None
+            } else {
+                Some(FilteredSearchRange::Default)
+            },
+            window,
+            cx,
+        );
     }
 
     fn toggle_regex(&mut self, _: &ToggleRegex, window: &mut Window, cx: &mut Context<Self>) {
@@ -1154,6 +1194,7 @@ impl BufferSearchBar {
     fn update_matches(
         &mut self,
         reuse_existing_query: bool,
+        add_to_history: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -1173,6 +1214,8 @@ impl BufferSearchBar {
                 {
                     search
                 } else {
+                    // Value doesn't matter, we only construct empty matchers with it
+
                     if self.search_options.contains(SearchOptions::REGEX) {
                         match SearchQuery::regex(
                             query,
@@ -1181,8 +1224,8 @@ impl BufferSearchBar {
                             false,
                             self.search_options
                                 .contains(SearchOptions::ONE_MATCH_PER_LINE),
-                            Default::default(),
-                            Default::default(),
+                            PathMatcher::default(),
+                            PathMatcher::default(),
                             false,
                             None,
                         ) {
@@ -1200,8 +1243,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
-                            Default::default(),
-                            Default::default(),
+                            PathMatcher::default(),
+                            PathMatcher::default(),
                             false,
                             None,
                         ) {
@@ -1234,8 +1277,10 @@ impl BufferSearchBar {
                                 .insert(active_searchable_item.downgrade(), matches);
 
                             this.update_match_index(window, cx);
-                            this.search_history
-                                .add(&mut this.search_history_cursor, query_text);
+                            if add_to_history {
+                                this.search_history
+                                    .add(&mut this.search_history_cursor, query_text);
+                            }
                             if !this.dismissed {
                                 let matches = this
                                     .searchable_items_with_matches
@@ -1324,10 +1369,10 @@ impl BufferSearchBar {
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
         } else {
             self.search_history_cursor.reset();
-            drop(self.search("", Some(self.search_options), window, cx));
+            drop(self.search("", Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1343,7 +1388,7 @@ impl BufferSearchBar {
                 .current(&self.search_history_cursor)
                 .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
             return;
         }
 
@@ -1352,7 +1397,7 @@ impl BufferSearchBar {
             .previous(&mut self.search_history_cursor)
             .map(str::to_string)
         {
-            drop(self.search(&new_query, Some(self.search_options), window, cx));
+            drop(self.search(&new_query, Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1476,7 +1521,7 @@ mod tests {
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
-    use settings::SettingsStore;
+    use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -1548,7 +1593,7 @@ mod tests {
         // By default, search is case-insensitive.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("us", None, window, cx)
+                search_bar.search("us", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -1579,7 +1624,7 @@ mod tests {
         // within other words. By default, all results are found.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("or", None, window, cx)
+                search_bar.search("or", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -1823,7 +1868,7 @@ mod tests {
         search_bar
             .update_in(cx, |search_bar, window, cx| {
                 search_bar.show(window, cx);
-                search_bar.search("us", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search("us", Some(SearchOptions::CASE_SENSITIVE), true, window, cx)
             })
             .await
             .unwrap();
@@ -1843,7 +1888,13 @@ mod tests {
         // toggling a search option should update the defaults
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("regex", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search(
+                    "regex",
+                    Some(SearchOptions::CASE_SENSITIVE),
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1904,7 +1955,7 @@ mod tests {
         window
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
-                    search_bar.search("a", None, window, cx)
+                    search_bar.search("a", None, true, window, cx)
                 })
             })
             .unwrap()
@@ -2046,7 +2097,7 @@ mod tests {
                 search_bar.update(cx, |search_bar, cx| {
                     let handle = search_bar.query_editor.focus_handle(cx);
                     window.focus(&handle);
-                    search_bar.search("abas_nonexistent_match", None, window, cx)
+                    search_bar.search("abas_nonexistent_match", None, true, window, cx)
                 })
             })
             .unwrap()
@@ -2114,6 +2165,7 @@ mod tests {
                 search_bar.search(
                     "edit\\(",
                     Some(SearchOptions::WHOLE_WORD | SearchOptions::REGEX),
+                    true,
                     window,
                     cx,
                 )
@@ -2139,6 +2191,7 @@ mod tests {
                 search_bar.search(
                     "edit(",
                     Some(SearchOptions::WHOLE_WORD | SearchOptions::CASE_SENSITIVE),
+                    true,
                     window,
                     cx,
                 )
@@ -2162,43 +2215,24 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_query_history(cx: &mut TestAppContext) {
-        init_globals(cx);
-        let buffer_text = r#"
-        A regular expression (shortened as regex or regexp;[1] also referred to as
-        rational expression[2][3]) is a sequence of characters that specifies a search
-        pattern in text. Usually such patterns are used by string-searching algorithms
-        for "find" or "find and replace" operations on strings, or for input validation.
-        "#
-        .unindent();
-        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-        let cx = cx.add_empty_window();
-
-        let editor =
-            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
-
-        let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(None, window, cx);
-            search_bar.set_active_pane_item(Some(&editor), window, cx);
-            search_bar.show(window, cx);
-            search_bar
-        });
+        let (_editor, search_bar, cx) = init_test(cx);
 
         // Add 3 search items into the history.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("a", None, window, cx)
+                search_bar.search("a", None, true, window, cx)
             })
             .await
             .unwrap();
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("b", None, window, cx)
+                search_bar.search("b", None, true, window, cx)
             })
             .await
             .unwrap();
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("c", Some(SearchOptions::CASE_SENSITIVE), window, cx)
+                search_bar.search("c", Some(SearchOptions::CASE_SENSITIVE), true, window, cx)
             })
             .await
             .unwrap();
@@ -2212,6 +2246,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2219,6 +2254,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2228,6 +2264,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2237,6 +2274,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2246,6 +2284,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2253,6 +2292,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2262,6 +2302,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
@@ -2269,7 +2310,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("ba", None, window, cx)
+                search_bar.search("ba", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2282,6 +2323,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
@@ -2289,6 +2331,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
@@ -2296,6 +2339,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
@@ -2303,6 +2347,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
@@ -2310,6 +2355,7 @@ mod tests {
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
+        cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
             assert_eq!(search_bar.query(cx), "");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
@@ -2322,7 +2368,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression", None, window, cx)
+                search_bar.search("expression", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2348,7 +2394,7 @@ mod tests {
         // Search for word boundaries and replace just a single one.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), window, cx)
+                search_bar.search("or", Some(SearchOptions::WHOLE_WORD), true, window, cx)
             })
             .await
             .unwrap();
@@ -2373,7 +2419,13 @@ mod tests {
         // Let's turn on regex mode.
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("\\[([^\\]]+)\\]", Some(SearchOptions::REGEX), window, cx)
+                search_bar.search(
+                    "\\[([^\\]]+)\\]",
+                    Some(SearchOptions::REGEX),
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2399,6 +2451,7 @@ mod tests {
                 search_bar.search(
                     "a\\w+s",
                     Some(SearchOptions::REGEX | SearchOptions::WHOLE_WORD),
+                    true,
                     window,
                     cx,
                 )
@@ -2443,7 +2496,13 @@ mod tests {
                 if let Some(options) = options.search_options {
                     search_bar.set_search_options(options, cx);
                 }
-                search_bar.search(options.search_text, options.search_options, window, cx)
+                search_bar.search(
+                    options.search_text,
+                    options.search_options,
+                    true,
+                    window,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -2582,7 +2641,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("aaa", None, window, cx)
+                search_bar.search("aaa", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2668,7 +2727,7 @@ mod tests {
 
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("aaa", None, window, cx)
+                search_bar.search("aaa", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2692,7 +2751,7 @@ mod tests {
         search_bar
             .update_in(cx, |search_bar, window, cx| {
                 search_bar.enable_search_option(SearchOptions::REGEX, window, cx);
-                search_bar.search("expression", None, window, cx)
+                search_bar.search("expression", None, true, window, cx)
             })
             .await
             .unwrap();
@@ -2709,7 +2768,7 @@ mod tests {
         // Now, the expression is invalid
         search_bar
             .update_in(cx, |search_bar, window, cx| {
-                search_bar.search("expression (", None, window, cx)
+                search_bar.search("expression (", None, true, window, cx)
             })
             .await
             .unwrap_err();
@@ -2848,8 +2907,14 @@ mod tests {
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorSettings>(cx, |settings| {
-                    settings.search = Some(search_settings);
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.search = Some(SearchSettingsContent {
+                        button: Some(search_settings.button),
+                        whole_word: Some(search_settings.whole_word),
+                        case_sensitive: Some(search_settings.case_sensitive),
+                        include_ignored: Some(search_settings.include_ignored),
+                        regex: Some(search_settings.regex),
+                    });
                 });
             });
         });

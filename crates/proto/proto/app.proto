@@ -28,7 +28,7 @@ message GetCrashFiles {
 
 message GetCrashFilesResponse {
     repeated CrashReport crashes = 1;
-    repeated string legacy_panics = 2;
+    reserved 2; // old panics
 }
 
 message CrashReport {

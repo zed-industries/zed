@@ -14,9 +14,41 @@ impl TestExtension {
         language_server_id: &LanguageServerId,
         _worktree: &zed::Worktree,
     ) -> Result<String> {
-        let echo_output = Command::new("echo").arg("hello!").output()?;
+        let (platform, arch) = zed::current_platform();
 
-        println!("{}", String::from_utf8_lossy(&echo_output.stdout));
+        let current_dir = std::env::current_dir().unwrap();
+        println!("current_dir: {}", current_dir.display());
+        assert_eq!(
+            current_dir.file_name().unwrap().to_str().unwrap(),
+            "test-extension"
+        );
+
+        fs::create_dir_all(current_dir.join("dir-created-with-abs-path")).unwrap();
+        fs::create_dir_all("./dir-created-with-rel-path").unwrap();
+        fs::write("file-created-with-rel-path", b"contents 1").unwrap();
+        fs::write(
+            current_dir.join("file-created-with-abs-path"),
+            b"contents 2",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read("file-created-with-rel-path").unwrap(),
+            b"contents 1"
+        );
+        assert_eq!(
+            fs::read("file-created-with-abs-path").unwrap(),
+            b"contents 2"
+        );
+
+        let command = match platform {
+            zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
+            zed::Os::Windows => Command::new("cmd").args(["/C", "echo"]),
+        };
+        let output = command.arg("hello from a child process!").output()?;
+        println!(
+            "command output: {}",
+            String::from_utf8_lossy(&output.stdout).trim()
+        );
 
         if let Some(path) = &self.cached_binary_path
             && fs::metadata(path).is_ok_and(|stat| stat.is_file())
@@ -36,9 +68,18 @@ impl TestExtension {
             },
         )?;
 
-        let (platform, arch) = zed::current_platform();
+        let ext = "tar.gz";
+        let download_type = zed::DownloadedFileType::GzipTar;
+
+        // Do this if you want to actually run this extension -
+        // the actual asset is a .zip. But the integration test is simpler
+        // if every platform uses .tar.gz.
+        //
+        // ext = "zip";
+        // download_type = zed::DownloadedFileType::Zip;
+
         let asset_name = format!(
-            "gleam-{version}-{arch}-{os}.tar.gz",
+            "gleam-{version}-{arch}-{os}.{ext}",
             version = release.version,
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
@@ -67,18 +108,21 @@ impl TestExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(
-                &asset.download_url,
-                &version_dir,
-                zed::DownloadedFileType::GzipTar,
-            )
-            .map_err(|e| format!("failed to download file: {e}"))?;
+            zed::download_file(&asset.download_url, &version_dir, download_type)
+                .map_err(|e| format!("failed to download file: {e}"))?;
+
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::None,
+            );
 
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
-                if entry.file_name().to_str() != Some(&version_dir) {
+                let filename = entry.file_name();
+                let filename = filename.to_str().unwrap();
+                if filename.starts_with("gleam-") && filename != version_dir {
                     fs::remove_dir_all(entry.path()).ok();
                 }
             }

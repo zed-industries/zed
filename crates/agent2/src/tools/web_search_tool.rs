@@ -122,6 +122,7 @@ fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream)
                         mime_type: None,
                         annotations: None,
                         size: None,
+                        meta: None,
                     }),
                 })
                 .collect(),

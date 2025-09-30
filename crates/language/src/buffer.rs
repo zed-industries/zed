@@ -1,7 +1,7 @@
 use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
     TextObject, TreeSitterOptions,
-    diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
@@ -30,10 +30,9 @@ use gpui::{
 
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{SettingsUi, WorktreeId};
+use settings::WorktreeId;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -42,13 +41,12 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
     ops::{Deref, Range},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
@@ -66,7 +64,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe};
+use util::{RangeExt, debug_panic, maybe, paths::PathStyle, rel_path::RelPath};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
@@ -145,7 +143,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub(crate) syntax: SyntaxSnapshot,
+    pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -174,10 +172,7 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
     /// A vertical bar
     #[default]
@@ -188,6 +183,17 @@ pub enum CursorShape {
     Underline,
     /// A box drawn around the following character
     Hollow,
+}
+
+impl From<settings::CursorShape> for CursorShape {
+    fn from(shape: settings::CursorShape) -> Self {
+        match shape {
+            settings::CursorShape::Bar => CursorShape::Bar,
+            settings::CursorShape::Block => CursorShape::Block,
+            settings::CursorShape::Underline => CursorShape::Underline,
+            settings::CursorShape::Hollow => CursorShape::Hollow,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -342,15 +348,18 @@ pub trait File: Send + Sync + Any {
     fn disk_state(&self) -> DiskState;
 
     /// Returns the path of this file relative to the worktree's root directory.
-    fn path(&self) -> &Arc<Path>;
+    fn path(&self) -> &Arc<RelPath>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &App) -> PathBuf;
 
+    /// Returns the path style of this file.
+    fn path_style(&self, cx: &App) -> PathStyle;
+
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a App) -> &'a OsStr;
+    fn file_name<'a>(&'a self, cx: &'a App) -> &'a str;
 
     /// Returns the id of the worktree to which this file belongs.
     ///
@@ -539,6 +548,23 @@ pub enum CharKind {
     Word,
 }
 
+/// Context for character classification within a specific scope.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CharScopeContext {
+    /// Character classification for completion queries.
+    ///
+    /// This context treats certain characters as word constituents that would
+    /// normally be considered punctuation, such as '-' in Tailwind classes
+    /// ("bg-yellow-100") or '.' in import paths ("foo.ts").
+    Completion,
+    /// Character classification for linked edits.
+    ///
+    /// This context handles characters that should be treated as part of
+    /// identifiers during linked editing operations, such as '.' in JSX
+    /// component names like `<Animated.View>`.
+    LinkedEdit,
+}
+
 /// A runnable is a set of data about a region that could be resolved into a task
 pub struct Runnable {
     pub tags: SmallVec<[RunnableTag; 1]>,
@@ -660,7 +686,10 @@ impl HighlightedTextBuilder {
         syntax_snapshot: &'a SyntaxSnapshot,
     ) -> BufferChunks<'a> {
         let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
 
         let highlight_maps = captures
@@ -3246,7 +3275,10 @@ impl BufferSnapshot {
 
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
         let highlight_maps = captures
             .grammars()
@@ -3310,16 +3342,23 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
-        self.syntax
-            .layers_for_range(0..self.len(), &self.text, true)
+        self.syntax_layers_for_range(0..self.len(), true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
-        self.syntax
-            .layers_for_range(offset..offset, &self.text, false)
+        self.syntax_layers_for_range(offset..offset, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
+    }
+
+    pub fn syntax_layers_for_range<D: ToOffset>(
+        &self,
+        range: Range<D>,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
+        self.syntax
+            .layers_for_range(range, &self.text, include_hidden)
     }
 
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
@@ -3429,16 +3468,14 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        for_completion: bool,
+        scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).take(128).peekable();
         let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
-        let classifier = self
-            .char_classifier_at(start)
-            .for_completion(for_completion);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),
             next_chars.peek().copied().map(|c| classifier.kind(c)),
@@ -3463,46 +3500,53 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the closest syntax node enclosing the given range.
-    /// Positions a tree cursor at the leaf node that contains or touches the given range.
-    /// This is shared logic used by syntax navigation methods.
-    fn position_cursor_at_range(cursor: &mut tree_sitter::TreeCursor, range: &Range<usize>) {
-        // Descend to the first leaf that touches the start of the range.
-        //
-        // If the range is non-empty and the current node ends exactly at the start,
-        // move to the next sibling to find a node that extends beyond the start.
-        //
-        // If the range is empty and the current node starts after the range position,
-        // move to the previous sibling to find the node that contains the position.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {
-            if !range.is_empty() && cursor.node().end_byte() == range.start {
-                cursor.goto_next_sibling();
-            }
-            if range.is_empty() && cursor.node().start_byte() > range.start {
-                cursor.goto_previous_sibling();
-            }
-        }
-    }
-
-    /// Moves the cursor to find a node that contains the given range.
-    /// Returns true if such a node is found, false otherwise.
-    /// This is shared logic used by syntax navigation methods.
-    fn find_containing_node(
+    /// Moves the TreeCursor to the smallest descendant or ancestor syntax node enclosing the given
+    /// range. When `require_larger` is true, the node found must be larger than the query range.
+    ///
+    /// Returns true if a node was found, and false otherwise. In the `false` case the cursor will
+    /// be moved to the root of the tree.
+    fn goto_node_enclosing_range(
         cursor: &mut tree_sitter::TreeCursor,
-        range: &Range<usize>,
-        strict: bool,
+        query_range: &Range<usize>,
+        require_larger: bool,
     ) -> bool {
+        let mut ascending = false;
         loop {
-            let node_range = cursor.node().byte_range();
+            let mut range = cursor.node().byte_range();
+            if query_range.is_empty() {
+                // When the query range is empty and the current node starts after it, move to the
+                // previous sibling to find the node the containing node.
+                if range.start > query_range.start {
+                    cursor.goto_previous_sibling();
+                    range = cursor.node().byte_range();
+                }
+            } else {
+                // When the query range is non-empty and the current node ends exactly at the start,
+                // move to the next sibling to find a node that extends beyond the start.
+                if range.end == query_range.start {
+                    cursor.goto_next_sibling();
+                    range = cursor.node().byte_range();
+                }
+            }
 
-            if node_range.start <= range.start
-                && node_range.end >= range.end
-                && (!strict || node_range.len() > range.len())
-            {
+            let encloses = range.contains_inclusive(query_range)
+                && (!require_larger || range.len() > query_range.len());
+            if !encloses {
+                ascending = true;
+                if !cursor.goto_parent() {
+                    return false;
+                }
+                continue;
+            } else if ascending {
                 return true;
             }
-            if !cursor.goto_parent() {
-                return false;
+
+            // Descend into the current node.
+            if cursor
+                .goto_first_child_for_byte(query_range.start)
+                .is_none()
+            {
+                return true;
             }
         }
     }
@@ -3519,10 +3563,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
-            // Ascend to the smallest ancestor that strictly contains the range.
-            if !Self::find_containing_node(&mut cursor, &range, true) {
+            // Find the node that both contains the range and is larger than it.
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, true) {
                 continue;
             }
 
@@ -3588,10 +3630,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
@@ -3641,10 +3681,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
@@ -3720,11 +3758,9 @@ impl BufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
-        let mut items = self.outline_items_containing(
-            position.saturating_sub(1)..self.len().min(position + 1),
-            false,
-            theme,
-        );
+        let start = self.clip_offset(position.saturating_sub(1), Bias::Left);
+        let end = self.clip_offset(position + 1, Bias::Right);
+        let mut items = self.outline_items_containing(start..end, false, theme);
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
@@ -3858,9 +3894,9 @@ impl BufferSnapshot {
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item.body_range.map(|body_range| {
-                    self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
-                }),
+                body_range: item
+                    .body_range
+                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
                     self.anchor_after(Point::new(annotation_range.start, 0))
                         ..self.anchor_before(Point::new(
@@ -3900,38 +3936,40 @@ impl BufferSnapshot {
 
         let mut open_point = None;
         let mut close_point = None;
+
         let mut buffer_ranges = Vec::new();
-        for capture in mat.captures {
-            let node_is_name;
-            if capture.index == config.name_capture_ix {
-                node_is_name = true;
-            } else if Some(capture.index) == config.context_capture_ix
-                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
-            {
-                node_is_name = false;
-            } else {
-                if Some(capture.index) == config.open_capture_ix {
-                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
-                } else if Some(capture.index) == config.close_capture_ix {
-                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
-                }
-
-                continue;
-            }
-
-            let mut range = capture.node.start_byte()..capture.node.end_byte();
-            let start = capture.node.start_position();
-            if capture.node.end_position().row > start.row {
+        let mut add_to_buffer_ranges = |node: tree_sitter::Node, node_is_name| {
+            let mut range = node.start_byte()..node.end_byte();
+            let start = node.start_position();
+            if node.end_position().row > start.row {
                 range.end = range.start + self.line_len(start.row as u32) as usize - start.column;
             }
 
             if !range.is_empty() {
                 buffer_ranges.push((range, node_is_name));
             }
+        };
+
+        for capture in mat.captures {
+            if capture.index == config.name_capture_ix {
+                add_to_buffer_ranges(capture.node, true);
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                add_to_buffer_ranges(capture.node, false);
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
+                }
+            }
         }
+
         if buffer_ranges.is_empty() {
             return None;
         }
+
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
@@ -3940,7 +3978,6 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
-
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
             if space_added {
@@ -4065,8 +4102,7 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
             .filter(|pair| !pair.newline_only)
     }
@@ -4075,8 +4111,7 @@ impl BufferSnapshot {
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = (Range<usize>, DebuggerTextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
 
         let mut matches = self.syntax.matches_with_options(
             range.clone(),
@@ -4144,8 +4179,8 @@ impl BufferSnapshot {
         range: Range<T>,
         options: TreeSitterOptions,
     ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range =
+            range.start.to_previous_offset(self)..self.len().min(range.end.to_next_offset(self));
 
         let mut matches =
             self.syntax
@@ -4484,7 +4519,7 @@ impl BufferSnapshot {
         &'a self,
         search_range: Range<T>,
         reversed: bool,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
@@ -4517,12 +4552,20 @@ impl BufferSnapshot {
                 })?;
             iterators[next_ix]
                 .next()
-                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
-                    diagnostic,
-                    range: FromAnchor::from_anchor(&range.start, self)
-                        ..FromAnchor::from_anchor(&range.end, self),
-                })
+                .map(
+                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
+                        diagnostic,
+                        range: FromAnchor::from_anchor(&range.start, self)
+                            ..FromAnchor::from_anchor(&range.end, self),
+                    },
+                )
         })
+    }
+
+    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
+    /// should be used instead.
+    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
+        &self.diagnostics
     }
 
     /// Returns all the diagnostic groups associated with the given
@@ -4531,7 +4574,7 @@ impl BufferSnapshot {
     pub fn diagnostic_groups(
         &self,
         language_server_id: Option<LanguageServerId>,
-    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<'_, Anchor>)> {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
@@ -4562,7 +4605,7 @@ impl BufferSnapshot {
     pub fn diagnostic_group<O>(
         &self,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, O>> + use<'_, O>
     where
         O: FromAnchor + 'static,
     {
@@ -4587,13 +4630,12 @@ impl BufferSnapshot {
         self.file.as_ref()
     }
 
-    /// Resolves the file path (relative to the worktree root) associated with the underlying file.
-    pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
+    pub fn resolve_file_path(&self, include_root: bool, cx: &App) -> Option<String> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {
-                Some(file.full_path(cx))
+                Some(file.full_path(cx).to_string_lossy().into_owned())
             } else {
-                Some(file.path().to_path_buf())
+                Some(file.path().display(file.path_style(cx)).to_string())
             }
         } else {
             None
@@ -5078,19 +5120,19 @@ impl IndentSize {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct TestFile {
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
     pub root_name: String,
     pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl File for TestFile {
-    fn path(&self) -> &Arc<Path> {
+    fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 
     fn full_path(&self, _: &gpui::App) -> PathBuf {
-        PathBuf::from(&self.root_name).join(self.path.as_ref())
+        PathBuf::from(self.root_name.clone()).join(self.path.as_std_path())
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
@@ -5105,7 +5147,7 @@ impl File for TestFile {
         unimplemented!()
     }
 
-    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a std::ffi::OsStr {
+    fn file_name<'a>(&'a self, _: &'a gpui::App) -> &'a str {
         self.path().file_name().unwrap_or(self.root_name.as_ref())
     }
 
@@ -5120,6 +5162,10 @@ impl File for TestFile {
     fn is_private(&self) -> bool {
         false
     }
+
+    fn path_style(&self, _cx: &App) -> PathStyle {
+        PathStyle::local()
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -5127,7 +5173,7 @@ impl LocalFile for TestFile {
     fn abs_path(&self, _cx: &App) -> PathBuf {
         PathBuf::from(self.local_root.as_ref().unwrap())
             .join(&self.root_name)
-            .join(self.path.as_ref())
+            .join(self.path.as_std_path())
     }
 
     fn load(&self, _cx: &App) -> Task<Result<String>> {
@@ -5171,7 +5217,7 @@ pub(crate) fn contiguous_ranges(
 #[derive(Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
-    for_completion: bool,
+    scope_context: Option<CharScopeContext>,
     ignore_punctuation: bool,
 }
 
@@ -5179,14 +5225,14 @@ impl CharClassifier {
     pub fn new(scope: Option<LanguageScope>) -> Self {
         Self {
             scope,
-            for_completion: false,
+            scope_context: None,
             ignore_punctuation: false,
         }
     }
 
-    pub fn for_completion(self, for_completion: bool) -> Self {
+    pub fn scope_context(self, scope_context: Option<CharScopeContext>) -> Self {
         Self {
-            for_completion,
+            scope_context,
             ..self
         }
     }
@@ -5216,10 +5262,10 @@ impl CharClassifier {
         }
 
         if let Some(scope) = &self.scope {
-            let characters = if self.for_completion {
-                scope.completion_query_characters()
-            } else {
-                scope.word_characters()
+            let characters = match self.scope_context {
+                Some(CharScopeContext::Completion) => scope.completion_query_characters(),
+                Some(CharScopeContext::LinkedEdit) => scope.linked_edit_characters(),
+                None => scope.word_characters(),
             };
             if let Some(characters) = characters
                 && characters.contains(&c)

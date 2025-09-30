@@ -19,7 +19,6 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
@@ -177,12 +176,6 @@ pub fn main() {
         return;
     }
 
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    if let Some(socket) = &args.askpass {
-        askpass::main(socket);
-        return;
-    }
-
     // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
     if let Some(socket) = &args.nc {
         match nc::main(socket) {
@@ -260,6 +253,9 @@ pub fn main() {
             .unwrap_or("unknown"),
     );
 
+    #[cfg(windows)]
+    check_for_conpty_dll();
+
     let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
@@ -271,6 +267,7 @@ pub fn main() {
         .spawn(crashes::init(InitCrashHandler {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
+            binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
@@ -278,13 +275,6 @@ pub fn main() {
                 .unwrap_or_else(|| "no sha".to_owned()),
         }))
         .detach();
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -347,7 +337,7 @@ pub fn main() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
-                util::load_login_shell_environment().log_err();
+                util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
@@ -405,16 +395,7 @@ pub fn main() {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-        let proxy_url = proxy_str
-            .as_ref()
-            .and_then(|input| {
-                input
-                    .parse::<Url>()
-                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                    .ok()
-            })
-            .or_else(read_proxy_from_env);
+        let proxy_url = ProxySettings::get_global(cx).proxy_url();
         let http = {
             let _guard = Tokio::handle(cx).enter();
 
@@ -467,7 +448,7 @@ pub fn main() {
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -542,8 +523,6 @@ pub fn main() {
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),
-            installation_id.clone().map(|id| id.to_string()),
-            session_id.clone(),
             cx,
         );
 
@@ -568,6 +547,7 @@ pub fn main() {
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
         acp_tools::init(cx);
+        zeta2_tools::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -628,7 +608,6 @@ pub fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
-        jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         svg_preview::init(cx);
@@ -638,6 +617,7 @@ pub fn main() {
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
+        json_schema_store::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();
@@ -797,6 +777,59 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::DockMenuAction { index } => {
                 cx.perform_dock_menu_action(index);
+            }
+            OpenRequestKind::BuiltinJsonSchema { schema_path } => {
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let res = async move {
+                            let json = app_state.languages.language_for_name("JSONC").await.ok();
+                            let json_schema_content =
+                                json_schema_store::resolve_schema_request_inner(
+                                    &app_state.languages,
+                                    &schema_path,
+                                    cx,
+                                )?;
+                            let json_schema_content =
+                                serde_json::to_string_pretty(&json_schema_content)
+                                    .context("Failed to serialize JSON Schema as JSON")?;
+                            let buffer_task = workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                            })?;
+
+                            let buffer = buffer_task.await?;
+
+                            workspace.update_in(cx, |workspace, window, cx| {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_language(json, cx);
+                                    buffer.edit([(0..0, json_schema_content)], None, cx);
+                                    buffer.edit(
+                                        [(0..0, format!("// {} JSON Schema\n", schema_path))],
+                                        None,
+                                        cx,
+                                    );
+                                });
+
+                                workspace.add_item_to_active_pane(
+                                    Box::new(cx.new(|cx| {
+                                        let mut editor =
+                                            editor::Editor::for_buffer(buffer, None, window, cx);
+                                        editor.set_read_only(true);
+                                        editor
+                                    })),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                        }
+                        .await;
+                        res.context("Failed to open builtin JSON Schema").log_err();
+                    })
+                    .detach();
+                });
             }
         }
 
@@ -1210,11 +1243,6 @@ struct Args {
     #[arg(long)]
     system_specs: bool,
 
-    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long, hide = true)]
-    askpass: Option<String>,
-
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
@@ -1477,4 +1505,22 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(target_os = "windows")]
+fn check_for_conpty_dll() {
+    use windows::{
+        Win32::{Foundation::FreeLibrary, System::LibraryLoader::LoadLibraryW},
+        core::w,
+    };
+
+    if let Ok(hmodule) = unsafe { LoadLibraryW(w!("conpty.dll")) } {
+        unsafe {
+            FreeLibrary(hmodule)
+                .context("Failed to free conpty.dll")
+                .log_err();
+        }
+    } else {
+        log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
 }

@@ -35,3 +35,13 @@ curl -fsSL --output - "$MOLD_URL" \
 
 # Note this binary depends on the system libatomic.so.1 which is usually
 # provided as a dependency of gcc so it should be available on most systems.
+
+cat <<EOF
+Mold is installed to /usr/local/bin/mold
+
+To make it your default, add or merge these lines into your ~/.cargo/config.toml:
+
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+EOF

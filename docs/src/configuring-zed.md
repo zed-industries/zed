@@ -66,13 +66,13 @@ Non-negative `float` values
 
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Description: Control the layout of the bottom dock, relative to the left and right docks.
 - Setting: `bottom_dock_layout`
 - Default: `"contained"`
 
 **Options**
 
-1. Contain the bottom dock, giving the full height of the window to the left and right docks
+1. Contain the bottom dock, giving the full height of the window to the left and right docks.
 
 ```json
 {
@@ -80,7 +80,7 @@ Non-negative `float` values
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks
+2. Give the bottom dock the full width of the window, truncating the left and right docks.
 
 ```json
 {
@@ -88,7 +88,7 @@ Non-negative `float` values
 }
 ```
 
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
 
 ```json
 {
@@ -96,7 +96,7 @@ Non-negative `float` values
 }
 ```
 
-3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
 ```json
 {
@@ -245,6 +245,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
   }
 }
 ```
+
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
 
 ## Autoscroll on Clicks
 
@@ -1569,22 +1571,6 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
 
-## Global LSP Settings
-
-- Description: Common language server settings.
-- Setting: `global_lsp_settings`
-- Default:
-
-```json
-"global_lsp_settings": {
-  "button": true
-}
-```
-
-**Options**
-
-`integer` values representing milliseconds
-
 ## Features
 
 - Description: Features that can be globally enabled or disabled
@@ -2624,6 +2610,7 @@ The following settings can be overridden for each specific language:
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
+- [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
@@ -3346,6 +3333,20 @@ Positive integer values
 3. `none`
 4. `boundary`
 
+## Whitespace Map
+
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
+- Setting: `whitespace_map`
+- Default:
+
+```json
+{
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
+```
+
 ## Soft Wrap
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
@@ -3519,7 +3520,7 @@ List of `integer` column numbers
     "button": true,
     "shell": "system",
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     "working_directory": "current_project_directory",
     "scrollbar": {
@@ -3774,11 +3775,11 @@ See Buffer Font Features
 
 - Description: Set the terminal's line height.
 - Setting: `line_height`
-- Default: `comfortable`
+- Default: `standard`
 
 **Options**
 
-1. Use a line height that's `comfortable` for reading, 1.618. (default)
+1. Use a line height that's `comfortable` for reading, 1.618.
 
 ```json
 {
@@ -3788,7 +3789,7 @@ See Buffer Font Features
 }
 ```
 
-2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters. (default)
 
 ```json
 {
@@ -3940,7 +3941,7 @@ Disable with:
 {
   "terminal": {
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     }
   }
 }
@@ -4024,6 +4025,23 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
     }
   }
 }
+```
+
+## REPL
+
+- Description: Repl settings.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
+},
 ```
 
 ## Theme

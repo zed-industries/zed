@@ -127,6 +127,10 @@ struct Notification<'a, T> {
 
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
+    #[expect(
+        unused,
+        reason = "Part of the JSON-RPC protocol - we expect the field to be present in a valid JSON-RPC notification"
+    )]
     jsonrpc: &'a str,
     method: String,
     #[serde(default)]
@@ -168,7 +172,7 @@ impl Client {
         let server_name = binary
             .executable
             .file_name()
-            .map(|name| name.to_string_lossy().to_string())
+            .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(String::new);
 
         let timeout = binary.timeout.map(Duration::from_millis);

@@ -18,12 +18,9 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
-use settings::Settings;
+use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{
-    Terminal,
-    terminal_settings::{TerminalDockPosition, TerminalSettings},
-};
+use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
     prelude::*,
@@ -385,19 +382,44 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            &pane::Event::Split(direction) => {
-                let fut = self.new_pane_with_cloned_active_terminal(window, cx);
-                let pane = pane.clone();
-                cx.spawn_in(window, async move |panel, cx| {
-                    let Some(new_pane) = fut.await else {
+            &pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if clone_active_item {
+                    let fut = self.new_pane_with_cloned_active_terminal(window, cx);
+                    let pane = pane.clone();
+                    cx.spawn_in(window, async move |panel, cx| {
+                        let Some(new_pane) = fut.await else {
+                            return;
+                        };
+                        panel
+                            .update_in(cx, |panel, window, cx| {
+                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                window.focus(&new_pane.focus_handle(cx));
+                            })
+                            .ok();
+                    })
+                    .detach();
+                } else {
+                    let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
+                    else {
                         return;
                     };
-                    _ = panel.update_in(cx, |panel, window, cx| {
-                        panel.center.split(&pane, &new_pane, direction).log_err();
-                        window.focus(&new_pane.focus_handle(cx));
+                    let Ok(project) = self
+                        .workspace
+                        .update(cx, |workspace, _| workspace.project().clone())
+                    else {
+                        return;
+                    };
+                    let new_pane =
+                        new_terminal_pane(self.workspace.clone(), project, false, window, cx);
+                    new_pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx);
                     });
-                })
-                .detach();
+                    self.center.split(&pane, &new_pane, direction).log_err();
+                    window.focus(&new_pane.focus_handle(cx));
+                }
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
@@ -446,7 +468,7 @@ impl TerminalPanel {
                 })
                 .ok()?
                 .await
-                .ok()?;
+                .log_err()?;
 
             panel
                 .update_in(cx, move |terminal_panel, window, cx| {
@@ -522,7 +544,7 @@ impl TerminalPanel {
             .and_then(|remote_client| remote_client.read(cx).shell());
 
         let builder = ShellBuilder::new(remote_shell.as_deref(), &task.shell);
-        let command_label = builder.command_label(&task.command_label);
+        let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 
         let task = SpawnInTerminal {
@@ -642,7 +664,7 @@ impl TerminalPanel {
                 .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
                 .filter_map(|(index, terminal_view)| {
                     let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
-                    if &task_state.full_label == label {
+                    if &task_state.spawned_task.full_label == label {
                         Some((index, terminal_view))
                     } else {
                         None
@@ -776,7 +798,7 @@ impl TerminalPanel {
         })
     }
 
-    pub fn add_terminal_shell(
+    fn add_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
@@ -786,7 +808,7 @@ impl TerminalPanel {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for remote projects");
+                anyhow::bail!("terminal not yet supported for collaborative projects");
             }
             let pane = terminal_panel.update(cx, |terminal_panel, _| {
                 terminal_panel.pending_terminals_to_add += 1;
@@ -1440,18 +1462,14 @@ impl Panel for TerminalPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        settings::update_settings_file::<TerminalSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => TerminalDockPosition::Left,
-                    DockPosition::Bottom => TerminalDockPosition::Bottom,
-                    DockPosition::Right => TerminalDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => TerminalDockPosition::Left,
+                DockPosition::Bottom => TerminalDockPosition::Bottom,
+                DockPosition::Right => TerminalDockPosition::Right,
+            };
+            settings.terminal.get_or_insert_default().dock = Some(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
@@ -1604,5 +1622,141 @@ impl Render for InlineAssistTabBarButton {
                     cx,
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
+    use project::FakeFs;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_spawn_an_empty_task(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        let task = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.spawn_task(&SpawnInTerminal::default(), window, cx)
+                })
+            })
+            .unwrap();
+
+        let terminal = task.await.unwrap();
+        let expected_shell = util::get_system_shell();
+        terminal
+            .update(cx, |terminal, _| {
+                let task_metadata = terminal
+                    .task()
+                    .expect("When spawning a task, should have the task metadata")
+                    .spawned_task
+                    .clone();
+                assert_eq!(task_metadata.env, HashMap::default());
+                assert_eq!(task_metadata.cwd, None);
+                assert_eq!(task_metadata.shell, task::Shell::System);
+                assert_eq!(
+                    task_metadata.command,
+                    Some(expected_shell.clone()),
+                    "Empty tasks should spawn a -i shell"
+                );
+                assert_eq!(task_metadata.args, Vec::<String>::new());
+                assert_eq!(
+                    task_metadata.command_label, expected_shell,
+                    "We show the shell launch for empty commands"
+                );
+            })
+            .unwrap();
+    }
+
+    // A complex Unix command won't be properly parsed by the Windows terminal hence omit the test there.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_spawn_script_like_task(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        let user_command = r#"REPO_URL=$(git remote get-url origin | sed -e \"s/^git@\\(.*\\):\\(.*\\)\\.git$/https:\\/\\/\\1\\/\\2/\"); COMMIT_SHA=$(git log -1 --format=\"%H\" -- \"${ZED_RELATIVE_FILE}\"); echo \"${REPO_URL}/blob/${COMMIT_SHA}/${ZED_RELATIVE_FILE}#L${ZED_ROW}-$(echo $(($(wc -l <<< \"$ZED_SELECTED_TEXT\") + $ZED_ROW - 1)))\" | xclip -selection clipboard"#.to_string();
+
+        let expected_cwd = PathBuf::from("/some/work");
+        let task = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.spawn_task(
+                        &SpawnInTerminal {
+                            command: Some(user_command.clone()),
+                            cwd: Some(expected_cwd.clone()),
+                            ..SpawnInTerminal::default()
+                        },
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        let terminal = task.await.unwrap();
+        let shell = util::get_system_shell();
+        terminal
+            .update(cx, |terminal, _| {
+                let task_metadata = terminal
+                    .task()
+                    .expect("When spawning a task, should have the task metadata")
+                    .spawned_task
+                    .clone();
+                assert_eq!(task_metadata.env, HashMap::default());
+                assert_eq!(task_metadata.cwd, Some(expected_cwd));
+                assert_eq!(task_metadata.shell, task::Shell::System);
+                assert_eq!(task_metadata.command, Some(shell.clone()));
+                assert_eq!(
+                    task_metadata.args,
+                    vec!["-i".to_string(), "-c".to_string(), user_command.clone(),],
+                    "Use command should have been moved into the arguments, as we're spawning a new -i shell",
+                );
+                assert_eq!(
+                    task_metadata.command_label,
+                    format!("{shell} {interactive}-c '{user_command}'", interactive = if cfg!(windows) {""} else {"-i "}),
+                    "We want to show to the user the entire command spawned");
+            })
+            .unwrap();
+    }
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
     }
 }

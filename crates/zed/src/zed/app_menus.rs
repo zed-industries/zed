@@ -10,7 +10,7 @@ pub fn app_menus() -> Vec<Menu> {
         Menu {
             name: "Zed".into(),
             items: vec![
-                MenuItem::action("About Zed…", zed_actions::About),
+                MenuItem::action("About Zed", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
@@ -252,7 +252,7 @@ pub fn app_menus() -> Vec<Menu> {
             name: "Help".into(),
             items: vec![
                 MenuItem::action(
-                    "View Release Notes",
+                    "View Release Notes Locally",
                     auto_update_ui::ViewReleaseNotesLocally,
                 ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),

@@ -33,6 +33,7 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
+        windows_paths: bool,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -69,6 +70,7 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
+                windows_paths: ActiveValue::set(windows_paths),
             }
             .insert(&*tx)
             .await?;
@@ -995,6 +997,7 @@ impl Database {
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
+                        stash_entries: Vec::new(),
                     });
                 }
             }
@@ -1045,6 +1048,12 @@ impl Database {
             .all(tx)
             .await?;
 
+        let path_style = if project.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let project = Project {
             id: project.id,
             role,
@@ -1072,6 +1081,7 @@ impl Database {
                     capabilities: language_server.capabilities,
                 })
                 .collect(),
+            path_style,
         };
         Ok((project, replica_id as ReplicaId))
     }

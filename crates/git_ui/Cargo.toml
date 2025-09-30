@@ -48,7 +48,6 @@ postage.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 strum.workspace = true
@@ -62,6 +61,7 @@ watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
