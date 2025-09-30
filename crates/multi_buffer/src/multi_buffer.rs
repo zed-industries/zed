@@ -17,7 +17,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntry, DiskState, File,
+    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState, File,
     IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
     OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
     ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
@@ -6007,7 +6007,7 @@ impl MultiBufferSnapshot {
         &self,
         buffer_id: BufferId,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<Point>> + '_ {
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, Point>> + '_ {
         self.lift_buffer_metadata(Point::zero()..self.max_point(), move |buffer, range| {
             if buffer.remote_id() != buffer_id {
                 return None;
@@ -6016,16 +6016,16 @@ impl MultiBufferSnapshot {
                 buffer
                     .diagnostics_in_range(range, false)
                     .filter(move |diagnostic| diagnostic.diagnostic.group_id == group_id)
-                    .map(move |DiagnosticEntry { diagnostic, range }| (range, diagnostic)),
+                    .map(move |DiagnosticEntryRef { diagnostic, range }| (range, diagnostic)),
             )
         })
-        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
+        .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
     pub fn diagnostics_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = DiagnosticEntry<T>> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'a, T>> + 'a
     where
         T: 'a
             + text::ToOffset
@@ -6042,13 +6042,13 @@ impl MultiBufferSnapshot {
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
-        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
+        .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
     pub fn diagnostics_with_buffer_ids_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (BufferId, DiagnosticEntry<T>)> + 'a
+    ) -> impl Iterator<Item = (BufferId, DiagnosticEntryRef<'a, T>)> + 'a
     where
         T: 'a
             + text::ToOffset
@@ -6065,7 +6065,7 @@ impl MultiBufferSnapshot {
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
-        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntry { diagnostic, range }))
+        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntryRef { diagnostic, range }))
     }
 
     pub fn syntax_ancestor<T: ToOffset>(

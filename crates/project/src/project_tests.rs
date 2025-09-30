@@ -20,9 +20,10 @@ use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use itertools::Itertools;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
-    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
-    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList, ToolchainLister,
+    Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
+    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
+    ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
+    ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -1847,9 +1848,9 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
             .collect::<Vec<_>>();
         assert_eq!(
             diagnostics,
-            &[DiagnosticEntry {
+            &[DiagnosticEntryRef {
                 range: Point::new(0, 9)..Point::new(0, 10),
-                diagnostic: Diagnostic {
+                diagnostic: &Diagnostic {
                     severity: lsp::DiagnosticSeverity::ERROR,
                     message: "undefined variable 'A'".to_string(),
                     group_id: 0,
@@ -2024,7 +2025,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message)
+                .map(|entry| entry.diagnostic.message.clone())
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -2050,7 +2051,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message)
+                .map(|entry| entry.diagnostic.message.clone())
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );

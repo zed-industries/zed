@@ -371,7 +371,7 @@ fn show_hover(
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
                 let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic,
+                    diagnostic: local_diagnostic.diagnostic.to_owned(),
                     range: snapshot
                         .buffer_snapshot
                         .anchor_before(local_diagnostic.range.start)
