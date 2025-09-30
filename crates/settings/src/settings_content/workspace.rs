@@ -106,6 +106,9 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+    /// What draws window decorations/titlebar, the client application (Zed) or display server
+    /// Default: client
+    pub window_decorations: Option<WindowDecorations>,
 }
 
 #[skip_serializing_none]
@@ -283,6 +286,16 @@ pub enum BottomDockLayout {
     LeftAligned,
     /// Extends under the right dock while snapping to the left dock
     RightAligned,
+}
+
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowDecorations {
+    /// Zed draws its own window decorations/titlebar (client-side decoration)
+    #[default]
+    Client,
+    /// Show system's window titlebar (server-side decoration; not supported by GNOME Wayland)
+    Server,
 }
 
 #[derive(
