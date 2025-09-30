@@ -3217,6 +3217,7 @@ dependencies = [
  "indoc",
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
+ "serde",
  "strum 0.27.1",
  "workspace-hack",
 ]
