@@ -7,9 +7,9 @@ use crate::markdown_elements::{
 use fs::normalize_path;
 use gpui::{
     AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    Element, ElementId, Entity, FontWeight, HighlightStyle, Hsla, ImageSource, InteractiveText,
+    IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString,
+    Styled, StyledText, TextAlign, TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -51,7 +51,8 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
-    element_background_color: Hsla,
+    title_bar_background_color: Hsla,
+    panel_background_color: Hsla,
     text_color: Hsla,
     window_rem_size: Pixels,
     text_muted_color: Hsla,
@@ -85,7 +86,8 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
-            element_background_color: theme.colors().element_background,
+            title_bar_background_color: theme.colors().title_bar_background,
+            panel_background_color: theme.colors().panel_background,
             text_color: theme.colors().text,
             window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
@@ -204,7 +206,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(padding_top)
         .pb(padding_bottom)
-        .children(render_markdown_text(&parsed.contents, cx))
+        .children(render_markdown_text(&parsed.contents, false, cx))
         .whitespace_normal()
         .into_any()
 }
@@ -490,28 +492,27 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         &parsed.column_alignments,
         &max_column_widths,
         true,
+        0,
         cx,
     );
 
     let body: Vec<AnyElement> = parsed
         .body
         .iter()
-        .map(|row| {
+        .enumerate()
+        .map(|(index, row)| {
             render_markdown_table_row(
                 row,
                 &parsed.column_alignments,
                 &max_column_widths,
                 false,
+                index,
                 cx,
             )
         })
         .collect();
 
-    cx.with_common_p(v_flex())
-        .w_full()
-        .child(header)
-        .children(body)
-        .into_any()
+    div().child(header).children(body).into_any()
 }
 
 fn render_markdown_table_row(
@@ -519,6 +520,7 @@ fn render_markdown_table_row(
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
     is_header: bool,
+    row_index: usize,
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = vec![];
@@ -530,7 +532,7 @@ fn render_markdown_table_row(
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
-        let contents = render_markdown_text(cell, cx);
+        let contents = render_markdown_text(cell, is_header, cx);
 
         let container = match alignment {
             ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),
@@ -553,7 +555,9 @@ fn render_markdown_table_row(
         }
 
         if is_header {
-            cell = cell.bg(cx.element_background_color)
+            cell = cell
+                .bg(cx.title_bar_background_color)
+                .text_align(TextAlign::Center)
         }
 
         items.push(cell);
@@ -565,6 +569,10 @@ fn render_markdown_table_row(
         row = row.border_y_1();
     } else {
         row = row.border_b_1();
+    }
+
+    if row_index % 2 == 1 {
+        row = row.bg(cx.panel_background_color)
     }
 
     row.children(items).into_any_element()
@@ -643,19 +651,27 @@ fn render_markdown_code_block(
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
     cx.with_common_p(div())
-        .children(render_markdown_text(parsed, cx))
+        .children(render_markdown_text(parsed, false, cx))
         .flex()
         .flex_col()
         .into_any_element()
 }
 
-fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
+fn render_markdown_text(
+    parsed_new: &MarkdownParagraph,
+    is_table_header: bool,
+    cx: &mut RenderContext,
+) -> Vec<AnyElement> {
     let mut any_element = vec![];
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
     let code_span_bg_color = cx.code_span_background_color;
-    let text_style = cx.text_style.clone();
+    let mut text_style = cx.text_style.clone();
+
+    if is_table_header {
+        text_style.font_weight = FontWeight::SEMIBOLD;
+    }
 
     for parsed_region in parsed_new {
         match parsed_region {
