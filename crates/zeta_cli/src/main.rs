@@ -706,6 +706,7 @@ pub fn wait_for_lang_server(
             .unwrap()
             .detach();
     }
+    let (mut added_tx, mut added_rx) = mpsc::channel(1);
 
     let subscriptions = [
         cx.subscribe(&lsp_store, {
@@ -734,6 +735,7 @@ pub fn wait_for_lang_server(
                     project
                         .update(cx, |project, cx| project.save_buffer(buffer, cx))
                         .detach();
+                    added_tx.try_send(()).ok();
                 }
                 project::Event::DiskBasedDiagnosticsFinished { .. } => {
                     tx.try_send(()).ok();
@@ -744,6 +746,16 @@ pub fn wait_for_lang_server(
     ];
 
     cx.spawn(async move |cx| {
+        if !has_lang_server {
+            // some buffers never have a language server, so this aborts quickly in that case.
+            let timeout = cx.background_executor().timer(Duration::from_secs(1));
+            futures::select! {
+                _ = added_rx.next() => {},
+                _ = timeout.fuse() => {
+                    anyhow::bail!("Waiting for language server add timed out after 1 second");
+                }
+            };
+        }
         let timeout = cx.background_executor().timer(Duration::from_secs(60 * 5));
         let result = futures::select! {
             _ = rx.next() => {
