@@ -573,7 +573,7 @@ pub async fn retrieval_stats(
                 ..
             } => {
                 definitions_count += 1;
-                let top_matches = matches.iter().any(|index| *index == Some(0));
+                let top_matches = matches.contains(&Some(0));
                 if top_matches {
                     top_match_count += 1;
                 }
