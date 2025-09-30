@@ -29,6 +29,8 @@ pub(crate) mod invisibles;
 mod tab_map;
 mod wrap_map;
 
+pub use custom_highlights::range_from_version;
+
 use crate::{
     EditorStyle, RowExt, SemanticTokenStylizer, hover_links::InlayHighlight, inlays::Inlay,
     movement::TextLayoutDetails,
