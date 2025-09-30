@@ -32,6 +32,44 @@ const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(target_os = "macos")]
 static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
+pub async fn spawn_sidecar(crash_init: InitCrashHandler) -> Client {
+    let exe = env::current_exe().expect("unable to find ourselves");
+    let zed_pid = process::id();
+    // TODO: we should be able to get away with using 1 crash-handler process per machine,
+    // but for now we append the PID of the current process which makes it unique per remote
+    // server or interactive zed instance. This solves an issue where occasionally the socket
+    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
+    // system and block further attempts to initialize crash handlers with that socket path.
+    let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
+    let crash_handler = Command::new(exe)
+        .arg("--crash-handler")
+        .arg(&socket_name)
+        .spawn()
+        .expect("unable to spawn server process");
+
+    let server_pid = crash_handler.id();
+    info!("spawned crash handler process with pid: {server_pid}");
+    server_pid
+
+    let mut elapsed = Duration::ZERO;
+    let retry_frequency = Duration::from_millis(100);
+    let mut maybe_client = None;
+    while maybe_client.is_none() {
+        if let Ok(client) = Client::with_name(socket_name.as_path()) {
+            maybe_client = Some(client);
+            info!("connected to crash handler process after {elapsed:?}");
+            break;
+        }
+        elapsed += retry_frequency;
+        smol::Timer::after(retry_frequency).await;
+    }
+    let client = maybe_client.unwrap();
+    client
+        .send_message(1, serde_json::to_vec(&crash_init).unwrap())
+        .unwrap();
+    client
+}
+
 pub async fn init(crash_init: InitCrashHandler) {
     let gen_var = match env::var("ZED_GENERATE_MINIDUMPS") {
         Ok(v) => {
@@ -60,41 +98,7 @@ pub async fn init(crash_init: InitCrashHandler) {
         }
     }
 
-    let exe = env::current_exe().expect("unable to find ourselves");
-    let zed_pid = process::id();
-    // TODO: we should be able to get away with using 1 crash-handler process per machine,
-    // but for now we append the PID of the current process which makes it unique per remote
-    // server or interactive zed instance. This solves an issue where occasionally the socket
-    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
-    // system and block further attempts to initialize crash handlers with that socket path.
-    let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
-    let _crash_handler = Command::new(exe)
-        .arg("--crash-handler")
-        .arg(&socket_name)
-        .spawn()
-        .expect("unable to spawn server process");
-    #[cfg(target_os = "linux")]
-    let server_pid = _crash_handler.id();
-    info!("spawning crash handler process");
-
-    let mut elapsed = Duration::ZERO;
-    let retry_frequency = Duration::from_millis(100);
-    let mut maybe_client = None;
-    while maybe_client.is_none() {
-        if let Ok(client) = Client::with_name(socket_name.as_path()) {
-            maybe_client = Some(client);
-            info!("connected to crash handler process after {elapsed:?}");
-            break;
-        }
-        elapsed += retry_frequency;
-        smol::Timer::after(retry_frequency).await;
-    }
-    let client = maybe_client.unwrap();
-    client
-        .send_message(1, serde_json::to_vec(&crash_init).unwrap())
-        .unwrap();
-
-    let client = Arc::new(client);
+    let client = Arc::new(spawn_sidecar(crash_init.clone()).await);
     let handler = CrashHandler::attach(unsafe {
         let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
