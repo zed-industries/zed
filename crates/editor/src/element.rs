@@ -3143,6 +3143,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         rows: &Range<DisplayRow>,
         relative_to: Option<DisplayRow>,
+        use_display_offset: bool,
     ) -> HashMap<DisplayRow, DisplayRowDelta> {
         let mut relative_rows: HashMap<DisplayRow, DisplayRowDelta> = Default::default();
         let Some(relative_to) = relative_to else {
@@ -3152,6 +3153,7 @@ impl EditorElement {
         let start = rows.start.min(relative_to);
         let end = rows.end.max(relative_to);
 
+        // todo!() can we pass this in?
         let buffer_rows = snapshot
             .row_infos(start)
             .take(1 + end.minus(start) as usize)
@@ -3166,18 +3168,28 @@ impl EditorElement {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
                 delta += 1;
+            } else if use_display_offset && buffer_rows[i as usize].wrapped {
+                if rows.contains(&DisplayRow(i + start.0)) {
+                    relative_rows.insert(DisplayRow(i + start.0), delta);
+                }
+                delta += 1;
             }
             i += 1;
         }
         delta = 1;
         i = head_idx.min(buffer_rows.len() as u32 - 1);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
+        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() && !use_display_offset {
             i -= 1;
         }
 
         while i > 0 {
             i -= 1;
             if buffer_rows[i as usize].buffer_row.is_some() {
+                if rows.contains(&DisplayRow(i + start.0)) {
+                    relative_rows.insert(DisplayRow(i + start.0), delta);
+                }
+                delta += 1;
+            } else if use_display_offset && buffer_rows[i as usize].wrapped {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -3234,7 +3246,8 @@ impl EditorElement {
         } else {
             None
         };
-        let relative_rows = self.calculate_relative_line_numbers(snapshot, &rows, relative_to);
+        let relative_rows =
+            self.calculate_relative_line_numbers(snapshot, &rows, relative_to, true);
         let mut line_number = String::new();
         let line_numbers = buffer_rows
             .iter()
@@ -3242,10 +3255,12 @@ impl EditorElement {
             .flat_map(|(ix, row_info)| {
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 line_number.clear();
-                let non_relative_number = row_info.buffer_row? + 1;
-                let number = relative_rows
-                    .get(&display_row)
-                    .unwrap_or(&non_relative_number);
+                let number = if let Some(relative_number) = relative_rows.get(&display_row) {
+                    *relative_number
+                } else {
+                    row_info.buffer_row? + 1
+                };
+
                 write!(&mut line_number, "{number}").unwrap();
                 if row_info
                     .diff_status
@@ -10851,6 +10866,7 @@ mod tests {
                     &snapshot,
                     &(DisplayRow(0)..DisplayRow(6)),
                     Some(DisplayRow(3)),
+                    false,
                 )
             })
             .unwrap();
@@ -10869,6 +10885,7 @@ mod tests {
                     &snapshot,
                     &(DisplayRow(3)..DisplayRow(6)),
                     Some(DisplayRow(1)),
+                    false,
                 )
             })
             .unwrap();
@@ -10885,6 +10902,7 @@ mod tests {
                     &snapshot,
                     &(DisplayRow(0)..DisplayRow(3)),
                     Some(DisplayRow(6)),
+                    false,
                 )
             })
             .unwrap();
@@ -10892,6 +10910,81 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(0)], 5);
         assert_eq!(relative_rows[&DisplayRow(1)], 4);
         assert_eq!(relative_rows[&DisplayRow(2)], 3);
+    }
+
+    #[gpui::test]
+    fn test_shape_line_numbers_wrapping(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        update_test_language_settings(cx, |s| {
+            s.defaults.preferred_line_length = Some(5 as u32);
+            s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+
+        let layouts = cx
+            .update_window(*window, |_, window, cx| {
+                element.layout_line_numbers(
+                    None,
+                    GutterDimensions {
+                        left_padding: Pixels::ZERO,
+                        right_padding: Pixels::ZERO,
+                        width: px(30.0),
+                        margin: Pixels::ZERO,
+                        git_blame_entries_width: None,
+                    },
+                    line_height,
+                    gpui::Point::default(),
+                    DisplayRow(0)..DisplayRow(6),
+                    &(0..6)
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    &BTreeMap::default(),
+                    Some(DisplayPoint::new(DisplayRow(0), 0)),
+                    &snapshot,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert_eq!(layouts.len(), 6);
+
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                element.calculate_relative_line_numbers(
+                    &snapshot,
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    Some(DisplayRow(3)),
+                    true,
+                )
+            })
+            .unwrap();
+        dbg!(&relative_rows);
+        assert_eq!(relative_rows[&DisplayRow(0)], 3);
+        assert_eq!(relative_rows[&DisplayRow(1)], 2);
+        assert_eq!(relative_rows[&DisplayRow(2)], 1);
+        // current line has no relative number
+        assert_eq!(relative_rows[&DisplayRow(4)], 1);
+        assert_eq!(relative_rows[&DisplayRow(5)], 2);
     }
 
     #[gpui::test]
