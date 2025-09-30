@@ -132,14 +132,13 @@ impl MetalRenderer {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
-        // Enumerate devices first and prefer low-power, non-removable GPUs when multiple exist.
-        // If enumeration yields no devices (seen on some environments), log and fall back to system_default().
-        // Exit only if both enumeration and system_default() fail.
         let mut devices = metal::Device::all();
         devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
         let Some(device) = devices.pop().or_else(|| {
+            // For some reason `all()` can return an empty list, see https://github.com/zed-industries/zed/issues/37689
+            // In that case, we fall back to the system default device.
             log::error!(
-                "unable to enumerate Metal devices; attempting to use system default device"
+                "Unable to enumerate Metal devices; attempting to use system default device"
             );
             metal::Device::system_default()
         }) else {
