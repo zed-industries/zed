@@ -1,3 +1,4 @@
+use agent_client_protocol as acp;
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
@@ -5,17 +6,9 @@ use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
-use project::agent_server_store::CODEX_NAME;
 
 #[derive(Clone)]
 pub struct Codex;
-
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-
-    crate::common_e2e_tests!(async |_, _, _| Codex, allow_option_id = "proceed_once");
-}
 
 impl AgentServer for Codex {
     fn telemetry_id(&self) -> &'static str {
@@ -27,7 +20,8 @@ impl AgentServer for Codex {
     }
 
     fn logo(&self) -> ui::IconName {
-        ui::IconName::AiOpenAi
+        // No dedicated Codex icon yet; use the generic AI icon.
+        ui::IconName::Ai
     }
 
     fn connect(
@@ -41,20 +35,27 @@ impl AgentServer for Codex {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
+        // No modes for Codex (yet).
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
+            // Look up the external agent registered under the "codex" name.
+            // The AgentServerStore is responsible for:
+            // - Downloading the correct GitHub release tar.gz for the OS/arch
+            // - Extracting the binary
+            // - Returning an AgentServerCommand to launch the binary
+            // - Always reporting "no updates" for now
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
-                        .get_external_agent(&CODEX_NAME.into())
+                        .get_external_agent(&"codex".into())
                         .context("Codex is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
-                        // For now, report that there are no updates.
-                        // (A future PR will use the GitHub Releases API to fetch them.)
+                        // For now, Codex should report that there are no updates.
+                        // The LocalCodex implementation in AgentServerStore should not send any updates.
                         delegate.new_version_available,
                         &mut cx.to_async(),
                     ))
