@@ -4,9 +4,9 @@ pub mod popover_menu;
 
 use anyhow::Result;
 use editor::{
+    Editor, SelectionEffects,
     actions::{MoveDown, MoveUp, SelectAll},
     scroll::Autoscroll,
-    Editor, SelectionEffects,
 };
 use gpui::{
     Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,

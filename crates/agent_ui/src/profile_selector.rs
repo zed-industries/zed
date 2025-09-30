@@ -10,7 +10,11 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
-use std::{rc::Rc, sync::atomic::Ordering, sync::{Arc, atomic::AtomicBool}};
+use std::{
+    rc::Rc,
+    sync::atomic::Ordering,
+    sync::{Arc, atomic::AtomicBool},
+};
 use ui::{
     Button, ButtonStyle, DocumentationSide, HighlightedLabel, Icon, IconName, Label, LabelSize,
     ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,

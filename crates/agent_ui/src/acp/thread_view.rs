@@ -123,8 +123,9 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
@@ -858,6 +859,9 @@ impl AcpThreadView {
             return;
         }
 
+        // Apply the profile immediately so the UI and thread swap models before the disk write.
+        thread.update(cx, |t, cx| t.set_profile(profile_id.clone(), cx));
+
         let fs = <dyn Fs>::global(cx);
         let id_for_settings = profile_id.clone();
         update_settings_file(fs, cx, move |s, _| {
@@ -865,7 +869,6 @@ impl AcpThreadView {
                 .get_or_insert_default()
                 .set_profile(id_for_settings.0.clone());
         });
-        thread.update(cx, |t, _| t.set_profile(profile_id.clone()));
 
         telemetry::event!(
             "agent_profile_switched",
@@ -4003,8 +4006,6 @@ impl AcpThreadView {
             .when(!enable_editor, |this| this.child(backdrop))
             .into_any()
     }
-
-
 
     pub(crate) fn as_native_connection(
         &self,
