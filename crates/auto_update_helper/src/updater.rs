@@ -38,6 +38,18 @@ pub(crate) const JOBS: &[Job] = &[
         std::fs::remove_file(&zed_wsl)
             .context(format!("Failed to remove old file {}", zed_wsl.display()))
     },
+    |app_dir| {
+        let zed_wsl = app_dir.join("OpenConsole.exe");
+        log::info!("Removing old file: {}", zed_wsl.display());
+        std::fs::remove_file(&zed_wsl)
+            .context(format!("Failed to remove old file {}", zed_wsl.display()))
+    },
+    |app_dir| {
+        let zed_wsl = app_dir.join("conpty.dll");
+        log::info!("Removing old file: {}", zed_wsl.display());
+        std::fs::remove_file(&zed_wsl)
+            .context(format!("Failed to remove old file {}", zed_wsl.display()))
+    },
     // Copy new files
     |app_dir| {
         let zed_executable_source = app_dir.join("install\\Zed.exe");
@@ -74,6 +86,38 @@ pub(crate) const JOBS: &[Job] = &[
     |app_dir| {
         let zed_wsl_source = app_dir.join("install\\bin\\zed");
         let zed_wsl_dest = app_dir.join("bin\\zed");
+        log::info!(
+            "Copying new file {} to {}",
+            zed_wsl_source.display(),
+            zed_wsl_dest.display()
+        );
+        std::fs::copy(&zed_wsl_source, &zed_wsl_dest)
+            .map(|_| ())
+            .context(format!(
+                "Failed to copy new file {} to {}",
+                zed_wsl_source.display(),
+                zed_wsl_dest.display()
+            ))
+    },
+    |app_dir| {
+        let zed_wsl_source = app_dir.join("install\\OpenConsole.exe");
+        let zed_wsl_dest = app_dir.join("OpenConsole.exe");
+        log::info!(
+            "Copying new file {} to {}",
+            zed_wsl_source.display(),
+            zed_wsl_dest.display()
+        );
+        std::fs::copy(&zed_wsl_source, &zed_wsl_dest)
+            .map(|_| ())
+            .context(format!(
+                "Failed to copy new file {} to {}",
+                zed_wsl_source.display(),
+                zed_wsl_dest.display()
+            ))
+    },
+    |app_dir| {
+        let zed_wsl_source = app_dir.join("install\\conpty.dll");
+        let zed_wsl_dest = app_dir.join("conpty.dll");
         log::info!(
             "Copying new file {} to {}",
             zed_wsl_source.display(),
