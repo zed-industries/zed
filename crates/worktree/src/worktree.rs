@@ -4841,10 +4841,20 @@ impl BackgroundScanner {
 
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
-        let path = job
+        let Some(path) = job
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
-            .unwrap();
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Failed to strip prefix '{}' from path '{}'",
+                    snapshot.abs_path.as_path().display(),
+                    job.abs_path.display()
+                )
+            })
+            .log_err()
+        else {
+            return;
+        };
 
         if let Ok(Some(metadata)) = smol::block_on(self.fs.metadata(&job.abs_path.join(*DOT_GIT)))
             && metadata.is_dir
