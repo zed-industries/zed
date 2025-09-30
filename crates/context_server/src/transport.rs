@@ -2,9 +2,10 @@ pub mod http;
 pub mod sse;
 mod stdio_transport;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::Stream;
+use gpui::{App, AsyncApp};
 use http_client::HttpClient;
 use std::{pin::Pin, sync::Arc};
 use url::Url;
@@ -23,6 +24,7 @@ pub trait Transport: Send + Sync {
 pub fn build_transport(
     http_client: Arc<dyn HttpClient>,
     endpoint: &Url,
+    cx: &App,
 ) -> Result<Arc<dyn Transport>> {
     log::info!("Creating transport for endpoint: {}", endpoint);
     match endpoint.scheme() {
@@ -31,18 +33,19 @@ pub fn build_transport(
             Ok(Arc::new(HttpTransport::new(
                 http_client,
                 endpoint.to_string(),
+                cx,
             )))
-        },
+        }
         "sse" => {
             log::info!("Using SSE transport for {}", endpoint);
             Ok(Arc::new(SseTransport::new(
                 http_client,
                 endpoint.to_string(),
             )))
-        },
+        }
         _ => {
             log::error!("Unsupported URL scheme: {}", endpoint.scheme());
             Err(anyhow!("unsupported scheme {}", endpoint.scheme()))
-        },
+        }
     }
 }

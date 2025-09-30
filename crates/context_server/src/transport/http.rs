@@ -2,9 +2,10 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
+use gpui::{App, BackgroundExecutor};
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use smol::channel;
+use smol::channel; // todo!() can this be futures::channel::mpsc()
 use std::{pin::Pin, sync::Arc};
 
 use crate::transport::Transport;
@@ -20,6 +21,7 @@ pub struct HttpTransport {
     http_client: Arc<dyn HttpClient>,
     endpoint: String,
     session_id: Arc<SyncMutex<Option<String>>>,
+    executor: BackgroundExecutor,
     response_tx: channel::Sender<String>,
     response_rx: channel::Receiver<String>,
     error_tx: channel::Sender<String>,
@@ -29,12 +31,13 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    pub fn new(http_client: Arc<dyn HttpClient>, endpoint: String) -> Self {
+    pub fn new(http_client: Arc<dyn HttpClient>, endpoint: String, cx: &App) -> Self {
         let (response_tx, response_rx) = channel::unbounded();
         let (error_tx, error_rx) = channel::unbounded();
 
         Self {
             http_client,
+            executor: cx.background_executor().clone(),
             endpoint,
             session_id: Arc::new(SyncMutex::new(None)),
             response_tx,
@@ -161,6 +164,7 @@ impl HttpTransport {
             let mut in_message = false;
 
             while let Some(line_result) = lines.next().await {
+                dbg!(&line_result); // do we see `data: `? or do we just get one JSON blob per line
                 match line_result {
                     Ok(line) => {
                         if line.is_empty() {
@@ -237,18 +241,19 @@ impl Drop for HttpTransport {
         let session_id = self.session_id.lock().clone();
 
         if let Some(session_id) = session_id {
-            smol::spawn(async move {
-                let request = Request::builder()
-                    .method(Method::DELETE)
-                    .uri(&endpoint)
-                    .header(HEADER_SESSION_ID, &session_id)
-                    .body(AsyncBody::empty());
+            self.executor
+                .spawn(async move {
+                    let request = Request::builder()
+                        .method(Method::DELETE)
+                        .uri(&endpoint)
+                        .header(HEADER_SESSION_ID, &session_id)
+                        .body(AsyncBody::empty());
 
-                if let Ok(request) = request {
-                    let _ = http_client.send(request).await;
-                }
-            })
-            .detach();
+                    if let Ok(request) = request {
+                        let _ = http_client.send(request).await;
+                    }
+                })
+                .detach();
         }
     }
 }
