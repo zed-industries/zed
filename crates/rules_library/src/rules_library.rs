@@ -22,8 +22,7 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, Tooltip, Window, div, prelude::*,
+    Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Render, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, client_side_decorations};
@@ -1112,8 +1111,6 @@ impl RulesLibrary {
                     .justify_end()
                     .child(
                         IconButton::new("new-rule", IconName::Plus)
-                            .style(ButtonStyle::Transparent)
-                            .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action("New Rule", &NewRule, window, cx)
                             })
@@ -1157,13 +1154,15 @@ impl RulesLibrary {
                             h_flex()
                                 .group("active-editor-header")
                                 .pt_2()
-                                .px_2p5()
+                                .pl_1p5()
+                                .pr_2p5()
                                 .gap_2()
                                 .justify_between()
                                 .child(
                                     div()
                                         .w_full()
                                         .on_action(cx.listener(Self::move_down_from_title))
+                                        .pl_1()
                                         .border_1()
                                         .border_color(transparent_black())
                                         .rounded_sm()
@@ -1205,7 +1204,6 @@ impl RulesLibrary {
                                     h_flex()
                                         .h_full()
                                         .flex_shrink_0()
-                                        .gap(DynamicSpacing::Base04.rems(cx))
                                         .children(rule_editor.token_count.map(|token_count| {
                                             let token_count: SharedString =
                                                 token_count.to_string().into();
@@ -1258,7 +1256,6 @@ impl RulesLibrary {
                                                 .into_any()
                                         } else {
                                             IconButton::new("delete-rule", IconName::Trash)
-                                                .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(
                                                         "Delete Rule",
@@ -1275,7 +1272,6 @@ impl RulesLibrary {
                                         })
                                         .child(
                                             IconButton::new("duplicate-rule", IconName::BookCopy)
-                                                .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(
                                                         "Duplicate Rule",
@@ -1292,10 +1288,8 @@ impl RulesLibrary {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("toggle-default-rule", IconName::Star)
-                                                .icon_size(IconSize::Small)
+                                            IconButton::new("toggle-default-rule", IconName::Link)
                                                 .toggle_state(rule_metadata.default)
-                                                .selected_icon(IconName::StarFilled)
                                                 .icon_color(if rule_metadata.default {
                                                     Color::Accent
                                                 } else {
@@ -1332,8 +1326,8 @@ impl RulesLibrary {
                                 .on_action(cx.listener(Self::focus_picker))
                                 .on_action(cx.listener(Self::inline_assist))
                                 .on_action(cx.listener(Self::move_up_from_body))
-                                .flex_grow()
                                 .h_full()
+                                .flex_grow()
                                 .child(
                                     h_flex()
                                         .py_2()
