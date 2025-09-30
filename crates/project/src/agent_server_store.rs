@@ -298,16 +298,6 @@ impl AgentServerStore {
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
             ),
-            (
-                CODEX_NAME.into(),
-                Box::new(RemoteExternalAgentServer {
-                    project_id,
-                    upstream_client: upstream_client.clone(),
-                    name: CODEX_NAME.into(),
-                    status_tx: None,
-                    new_version_available_tx: None,
-                }) as Box<dyn ExternalAgentServer>,
-            ),
         ]
         .into_iter()
         .collect();

@@ -1088,11 +1088,6 @@ impl AgentConfiguration {
                         IconName::AiClaude,
                         "Claude Code",
                     ))
-                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    .child(self.render_agent_server(
-                        IconName::Ai,
-                        "Codex",
-                    ))
                     .map(|mut parent| {
                         for agent in user_defined_agents {
                             parent = parent.child(Divider::horizontal().color(DividerColor::BorderFaded))
