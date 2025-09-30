@@ -10,9 +10,19 @@ pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 
 #[derive(Clone, Debug, Default)]
 pub struct Chunk {
+    /// If bit[i] is set, then the character at index i is the start of a UTF-8 character in the
+    /// text.
     chars: u128,
+    /// The number of set bits is the number of UTF-16 code units it would take to represent the
+    /// text.
+    ///
+    /// Bit[i] is set if text[i] is the start of a UTF-8 character. If the character would
+    /// take two UTF-16 code units, then bit[i+1] is also set. (Rust chars never take more
+    /// than two UTF-16 code units.)
     chars_utf16: u128,
+    /// If bit[i] is set, then the character at index i is an ascii newline.
     newlines: u128,
+    /// If bit[i] is set, then the character at index i is an ascii tab.
     pub tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
