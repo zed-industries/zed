@@ -3,12 +3,17 @@ use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, prelude::*};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use gpui::{
+    Action, AnyElement, App, BackgroundExecutor, Context, DismissEvent, Entity, FocusHandle,
+    Focusable, SharedString, Subscription, Task, Window,
+};
+use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicBool};
 use ui::{
-    ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    Button, ButtonStyle, DocumentationSide, HighlightedLabel, Icon, IconName, Label, LabelSize,
+    ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -25,9 +30,11 @@ pub trait ProfileProvider {
 
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
+    pending_refresh: bool,
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
-    menu_handle: PopoverMenuHandle<ContextMenu>,
+    picker: Option<Entity<Picker<ProfilePickerDelegate>>>,
+    picker_handle: PopoverMenuHandle<Picker<ProfilePickerDelegate>>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -40,125 +47,90 @@ impl ProfileSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
-            this.refresh_profiles(cx);
+            this.pending_refresh = true;
+            cx.notify();
         });
 
         Self {
             profiles: AgentProfile::available_profiles(cx),
+            pending_refresh: false,
             fs,
             provider,
-            menu_handle: PopoverMenuHandle::default(),
+            picker: None,
+            picker_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
         }
     }
 
-    pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
-        self.menu_handle.clone()
+    pub fn menu_handle(&self) -> PopoverMenuHandle<Picker<ProfilePickerDelegate>> {
+        self.picker_handle.clone()
     }
 
-    fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        self.profiles = AgentProfile::available_profiles(cx);
-    }
-
-    fn build_context_menu(
-        &self,
+    fn ensure_picker(
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            let settings = AgentSettings::get_global(cx);
+    ) -> Entity<Picker<ProfilePickerDelegate>> {
+        if self.picker.is_none() {
+            let delegate = ProfilePickerDelegate::new(
+                self.fs.clone(),
+                self.provider.clone(),
+                self.profiles.clone(),
+                cx.background_executor().clone(),
+                cx,
+            );
 
-            let mut found_non_builtin = false;
-            for (profile_id, profile_name) in self.profiles.iter() {
-                if !builtin_profiles::is_builtin(profile_id) {
-                    found_non_builtin = true;
-                    continue;
-                }
-                menu = menu.item(self.menu_entry_for_profile(
-                    profile_id.clone(),
-                    profile_name,
-                    settings,
-                    cx,
-                ));
-            }
+            let picker = cx.new(|cx| {
+                Picker::list(delegate, window, cx)
+                    .show_scrollbar(true)
+                    .width(rems(22.))
+                    .max_height(Some(rems(20.).into()))
+            });
 
-            if found_non_builtin {
-                menu = menu.separator().header("Custom Profiles");
-                for (profile_id, profile_name) in self.profiles.iter() {
-                    if builtin_profiles::is_builtin(profile_id) {
-                        continue;
-                    }
-                    menu = menu.item(self.menu_entry_for_profile(
-                        profile_id.clone(),
-                        profile_name,
-                        settings,
-                        cx,
-                    ));
-                }
-            }
+            self.picker = Some(picker);
+        }
 
-            menu = menu.separator();
-            menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
-                move |window, cx| {
-                    window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
-                },
-            ));
-
-            menu
-        })
-    }
-
-    fn menu_entry_for_profile(
-        &self,
-        profile_id: AgentProfileId,
-        profile_name: &SharedString,
-        settings: &AgentSettings,
-        cx: &App,
-    ) -> ContextMenuEntry {
-        let documentation = match profile_name.to_lowercase().as_str() {
-            builtin_profiles::WRITE => Some("Get help to write anything."),
-            builtin_profiles::ASK => Some("Chat about your codebase."),
-            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
-            _ => None,
-        };
-        let thread_profile_id = self.provider.profile_id(cx);
-
-        let entry = ContextMenuEntry::new(profile_name.clone())
-            .toggleable(IconPosition::End, profile_id == thread_profile_id);
-
-        let entry = if let Some(doc_text) = documentation {
-            entry.documentation_aside(
-                documentation_side(settings.dock),
-                DocumentationEdge::Top,
-                move |_| Label::new(doc_text).into_any_element(),
-            )
-        } else {
-            entry
-        };
-
-        entry.handler({
-            let fs = self.fs.clone();
-            let provider = self.provider.clone();
-            move |_window, cx| {
-                update_settings_file(fs.clone(), cx, {
-                    let profile_id = profile_id.clone();
-                    move |settings, _cx| {
-                        settings
-                            .agent
-                            .get_or_insert_default()
-                            .set_profile(profile_id.0);
-                    }
+        if self.pending_refresh {
+            if let Some(picker) = &self.picker {
+                let profiles = AgentProfile::available_profiles(cx);
+                self.profiles = profiles.clone();
+                picker.update(cx, |picker, cx| {
+                    let query = picker.query(cx).to_string();
+                    picker
+                        .delegate
+                        .refresh_profiles(profiles.clone(), query, cx);
                 });
-
-                provider.set_profile(profile_id.clone(), cx);
             }
-        })
+            self.pending_refresh = false;
+        }
+
+        self.picker.as_ref().unwrap().clone()
+    }
+}
+
+impl Focusable for ProfileSelector {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(picker) = &self.picker {
+            picker.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.provider.profiles_supported(cx) {
+            return Button::new("tools-not-supported-button", "Tools Unsupported")
+                .disabled(true)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .tooltip(Tooltip::text("This model does not support tools."))
+                .into_any_element();
+        }
+
+        let picker = self.ensure_picker(window, cx);
         let settings = AgentSettings::get_global(cx);
         let profile_id = self.provider.profile_id(cx);
         let profile = settings.profiles.get(&profile_id);
@@ -166,54 +138,431 @@ impl Render for ProfileSelector {
         let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
-
-        if self.provider.profiles_supported(cx) {
-            let this = cx.entity();
-            let focus_handle = self.focus_handle.clone();
-            let trigger_button = Button::new("profile-selector-model", selected_profile)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .icon(IconName::ChevronDown)
-                .icon_size(IconSize::XSmall)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent));
-
-            PopoverMenu::new("profile-selector")
-                .trigger_with_tooltip(trigger_button, {
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Profile Menu",
-                            &ToggleProfileSelector,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .anchor(
-                    if documentation_side(settings.dock) == DocumentationSide::Left {
-                        gpui::Corner::BottomRight
-                    } else {
-                        gpui::Corner::BottomLeft
-                    },
-                )
-                .with_handle(self.menu_handle.clone())
-                .menu(move |window, cx| {
-                    Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
-                })
-                .offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(-2.0),
-                })
-                .into_any_element()
+        let focus_handle = self.focus_handle.clone();
+        let anchor = if documentation_side(settings.dock) == DocumentationSide::Left {
+            gpui::Corner::BottomRight
         } else {
-            Button::new("tools-not-supported-button", "Tools Unsupported")
-                .disabled(true)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .tooltip(Tooltip::text("This model does not support tools."))
-                .into_any_element()
+            gpui::Corner::BottomLeft
+        };
+
+        let trigger_button = Button::new("profile-selector", selected_profile)
+            .label_size(LabelSize::Small)
+            .color(Color::Muted)
+            .icon(IconName::ChevronDown)
+            .icon_size(IconSize::XSmall)
+            .icon_position(IconPosition::End)
+            .icon_color(Color::Muted)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent));
+
+        PickerPopoverMenu::new(
+            picker,
+            trigger_button,
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Toggle Profile Menu",
+                    &ToggleProfileSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            anchor,
+            cx,
+        )
+        .with_handle(self.picker_handle.clone())
+        .render(window, cx)
+        .into_any_element()
+    }
+}
+
+struct ProfileCandidate {
+    id: AgentProfileId,
+    name: SharedString,
+    is_builtin: bool,
+}
+
+#[derive(Clone)]
+struct ProfileMatchEntry {
+    candidate_index: usize,
+    positions: Vec<usize>,
+}
+
+enum ProfilePickerEntry {
+    Header(SharedString),
+    Profile(ProfileMatchEntry),
+    Configure,
+}
+
+pub(crate) struct ProfilePickerDelegate {
+    fs: Arc<dyn Fs>,
+    provider: Arc<dyn ProfileProvider>,
+    background: BackgroundExecutor,
+    candidates: Vec<ProfileCandidate>,
+    string_candidates: Arc<Vec<StringMatchCandidate>>,
+    filtered_entries: Vec<ProfilePickerEntry>,
+    selected_index: usize,
+    query: String,
+}
+
+impl ProfilePickerDelegate {
+    fn new(
+        fs: Arc<dyn Fs>,
+        provider: Arc<dyn ProfileProvider>,
+        profiles: AvailableProfiles,
+        background: BackgroundExecutor,
+        cx: &mut Context<ProfileSelector>,
+    ) -> Self {
+        let candidates = Self::candidates_from(profiles);
+        let string_candidates = Arc::new(Self::string_candidates(&candidates));
+
+        let mut this = Self {
+            fs,
+            provider,
+            background,
+            candidates,
+            string_candidates,
+            filtered_entries: Vec::new(),
+            selected_index: 0,
+            query: String::new(),
+        };
+
+        this.filtered_entries = this.default_entries();
+        this.selected_index = this
+            .index_of_profile(&this.provider.profile_id(cx))
+            .unwrap_or_else(|| this.first_selectable_index().unwrap_or(0));
+
+        this
+    }
+
+    fn refresh_profiles(
+        &mut self,
+        profiles: AvailableProfiles,
+        query: String,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.candidates = Self::candidates_from(profiles);
+        self.string_candidates = Arc::new(Self::string_candidates(&self.candidates));
+        self.query = query;
+
+        if self.query.is_empty() {
+            self.filtered_entries = self.default_entries();
+        } else {
+            let matches = self.search_blocking(&self.query);
+            self.filtered_entries = self.entries_from_matches(matches);
+        }
+
+        self.selected_index = self
+            .index_of_profile(&self.provider.profile_id(cx))
+            .unwrap_or_else(|| self.first_selectable_index().unwrap_or(0));
+        cx.notify();
+    }
+
+    fn candidates_from(profiles: AvailableProfiles) -> Vec<ProfileCandidate> {
+        profiles
+            .into_iter()
+            .map(|(id, name)| ProfileCandidate {
+                is_builtin: builtin_profiles::is_builtin(&id),
+                id,
+                name,
+            })
+            .collect()
+    }
+
+    fn string_candidates(candidates: &[ProfileCandidate]) -> Vec<StringMatchCandidate> {
+        candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| StringMatchCandidate::new(index, candidate.name.as_ref()))
+            .collect()
+    }
+
+    fn documentation(candidate: &ProfileCandidate) -> Option<&'static str> {
+        match candidate.name.to_lowercase().as_str() {
+            builtin_profiles::WRITE => Some("Get help to write anything."),
+            builtin_profiles::ASK => Some("Chat about your codebase."),
+            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
+            _ => None,
+        }
+    }
+
+    fn default_entries(&self) -> Vec<ProfilePickerEntry> {
+        let mut entries = Vec::new();
+        let mut builtin_indices = Vec::new();
+        let mut custom_indices = Vec::new();
+
+        for (idx, candidate) in self.candidates.iter().enumerate() {
+            if candidate.is_builtin {
+                builtin_indices.push(idx);
+            } else {
+                custom_indices.push(idx);
+            }
+        }
+
+        for idx in builtin_indices {
+            entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
+                candidate_index: idx,
+                positions: Vec::new(),
+            }));
+        }
+
+        if !custom_indices.is_empty() {
+            if !entries.is_empty() {
+                entries.push(ProfilePickerEntry::Header("Custom Profiles".into()));
+            }
+
+            for idx in custom_indices {
+                entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: idx,
+                    positions: Vec::new(),
+                }));
+            }
+        }
+
+        entries.push(ProfilePickerEntry::Configure);
+        entries
+    }
+
+    fn entries_from_matches(&self, matches: Vec<StringMatch>) -> Vec<ProfilePickerEntry> {
+        let mut entries = Vec::new();
+
+        for mat in matches {
+            if self.candidates.get(mat.candidate_id).is_some() {
+                entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: mat.candidate_id,
+                    positions: mat.positions,
+                }));
+            }
+        }
+
+        entries.push(ProfilePickerEntry::Configure);
+        entries
+    }
+
+    fn first_selectable_index(&self) -> Option<usize> {
+        self.filtered_entries
+            .iter()
+            .position(|entry| matches!(entry, ProfilePickerEntry::Profile(_)))
+    }
+
+    fn index_of_profile(&self, profile_id: &AgentProfileId) -> Option<usize> {
+        self.filtered_entries.iter().position(|entry| {
+            matches!(entry, ProfilePickerEntry::Profile(profile) if self
+                .candidates
+                .get(profile.candidate_index)
+                .map(|candidate| &candidate.id == profile_id)
+                .unwrap_or(false))
+        })
+    }
+
+    fn search_blocking(&self, query: &str) -> Vec<StringMatch> {
+        if query.is_empty() {
+            return self
+                .string_candidates
+                .iter()
+                .map(|candidate| StringMatch {
+                    candidate_id: candidate.id,
+                    score: 0.0,
+                    positions: Vec::new(),
+                    string: candidate.string.clone(),
+                })
+                .collect();
+        }
+
+        let cancel_flag = AtomicBool::new(false);
+
+        self.background.block(match_strings(
+            self.string_candidates.as_ref(),
+            query,
+            false,
+            true,
+            100,
+            &cancel_flag,
+            self.background.clone(),
+        ))
+    }
+}
+
+impl PickerDelegate for ProfilePickerDelegate {
+    type ListItem = AnyElement;
+
+    fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
+        "Search profiles…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.filtered_entries.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix.min(self.filtered_entries.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        if query.is_empty() {
+            self.query.clear();
+            self.filtered_entries = self.default_entries();
+            self.selected_index = self
+                .index_of_profile(&self.provider.profile_id(cx))
+                .unwrap_or_else(|| self.first_selectable_index().unwrap_or(0));
+            cx.notify();
+            return Task::ready(());
+        }
+
+        let string_candidates = self.string_candidates.clone();
+        let background = self.background.clone();
+        let provider = self.provider.clone();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        self.query = query.clone();
+
+        let cancel_for_future = cancel_flag.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let matches = match_strings(
+                string_candidates.as_ref(),
+                &query,
+                false,
+                true,
+                100,
+                cancel_for_future.as_ref(),
+                background,
+            )
+            .await;
+
+            this.update_in(cx, |this, _, cx| {
+                if this.delegate.query != query {
+                    return;
+                }
+
+                this.delegate.filtered_entries = this.delegate.entries_from_matches(matches);
+                this.delegate.selected_index = this
+                    .delegate
+                    .index_of_profile(&provider.profile_id(cx))
+                    .unwrap_or_else(|| this.delegate.first_selectable_index().unwrap_or(0));
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        match self.filtered_entries.get(self.selected_index) {
+            Some(ProfilePickerEntry::Profile(entry)) => {
+                if let Some(candidate) = self.candidates.get(entry.candidate_index) {
+                    let profile_id = candidate.id.clone();
+                    let fs = self.fs.clone();
+                    let provider = self.provider.clone();
+
+                    update_settings_file(fs, cx, {
+                        let profile_id = profile_id.clone();
+                        move |settings, _cx| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_profile(profile_id.0);
+                        }
+                    });
+
+                    provider.set_profile(profile_id, cx);
+                }
+
+                cx.emit(DismissEvent);
+            }
+            Some(ProfilePickerEntry::Configure) => {
+                window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
+                cx.emit(DismissEvent);
+            }
+            _ => {}
+        }
+    }
+
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        match self.filtered_entries.get(ix)? {
+            ProfilePickerEntry::Header(label) => Some(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .when(ix > 0, |this| {
+                        this.mt_1()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element(),
+            ),
+            ProfilePickerEntry::Profile(entry) => {
+                let candidate = self.candidates.get(entry.candidate_index)?;
+                let active_id = self.provider.profile_id(cx);
+                let is_active = active_id == candidate.id;
+
+                let mut item = ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(
+                        v_flex()
+                            .child(HighlightedLabel::new(
+                                candidate.name.clone(),
+                                entry.positions.clone(),
+                            ))
+                            .when_some(Self::documentation(candidate), |this, doc| {
+                                this.child(
+                                    Label::new(doc).size(LabelSize::XSmall).color(Color::Muted),
+                                )
+                            }),
+                    );
+
+                if is_active {
+                    item = item.end_slot(
+                        Icon::new(IconName::Check)
+                            .color(Color::Accent)
+                            .size(IconSize::Small),
+                    );
+                }
+
+                Some(item.into_any_element())
+            }
+            ProfilePickerEntry::Configure => Some(
+                ListItem::new(ix)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .start_slot(
+                        Icon::new(IconName::Settings)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(
+                        Label::new("Configure Profiles…")
+                            .color(Color::Accent)
+                            .size(LabelSize::Small),
+                    )
+                    .into_any_element(),
+            ),
         }
     }
 }
