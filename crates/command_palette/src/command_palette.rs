@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use agent_settings::AgentSettings;
 use client::parse_zed_link;
 use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
@@ -24,7 +25,7 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{OpenZedUrl, command_palette::Toggle};
+use zed_actions::{OpenZedUrl, agent::SwitchToProfile, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -94,7 +95,7 @@ impl CommandPalette {
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
-        let commands = window
+        let mut commands: Vec<Command> = window
             .available_actions(cx)
             .into_iter()
             .filter_map(|action| {
@@ -108,6 +109,32 @@ impl CommandPalette {
                 })
             })
             .collect();
+
+        let mut found_switch_profile = false;
+        commands.retain(|command| {
+            if command.action.as_any().is::<SwitchToProfile>() {
+                found_switch_profile = true;
+                false
+            } else {
+                true
+            }
+        });
+
+        if found_switch_profile {
+            let settings = AgentSettings::get_global(cx);
+
+            for (profile_id, profile) in settings.profiles.iter() {
+                let action = SwitchToProfile {
+                    profile_id: profile_id.as_str().to_string(),
+                    profile_name: Some(profile.name.to_string()),
+                };
+                let name = format!("agent: switch profile: {}", profile.name);
+                commands.push(Command {
+                    name,
+                    action: action.boxed_clone(),
+                });
+            }
+        }
 
         let delegate =
             CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
