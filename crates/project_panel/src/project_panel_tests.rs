@@ -532,6 +532,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -574,6 +575,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -592,6 +594,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     select_path(&panel, "root1/b", cx);
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -617,6 +620,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -691,6 +695,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -735,10 +740,11 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             });
             panel.cancel(&menu::Cancel, window, cx)
         });
-
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -781,6 +787,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -836,6 +843,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     // Test empty filename and filename with only whitespace
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -860,8 +868,10 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             editor.set_text("   ", window, cx);
         });
         assert!(panel.confirm_edit(window, cx).is_none());
-        panel.cancel(&menu::Cancel, window, cx)
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -951,9 +961,11 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -994,6 +1006,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
         &[
@@ -1050,6 +1063,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     // Add a file with the root folder selected. The filename editor is placed
     // before the first file in the root folder.
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -1082,6 +1096,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     );
 
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1103,6 +1118,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         panel.confirm_edit(window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1284,6 +1300,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.paste(&Default::default(), window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.executor().run_until_parked();
 
@@ -2023,9 +2040,11 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2051,7 +2070,9 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new directory name"
         );
         panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -2074,6 +2095,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         ]
     );
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -2104,7 +2126,9 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             "Edit state should not be None after conflicting new file name"
         );
         panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -3300,7 +3324,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             this.select_previous(&SelectPrevious, window, cx);
 
             this.paste(&Paste, window, cx);
-            // this.expand_selected_entry(&ExpandSelectedEntry, cx);
+            this.update_visible_entries(None, false, false, window, cx);
         })
     });
     cx.run_until_parked();
@@ -4132,6 +4156,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     let excluded_dir_path = "excluded_dir";
 
     panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4187,6 +4212,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4199,7 +4225,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
         &["v root1", "      .dockerignore"],
@@ -4228,9 +4254,12 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.run_until_parked();
+
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
+
     panel
         .update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
@@ -4240,6 +4269,8 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
+
+    cx.run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..13, cx),
@@ -4313,6 +4344,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx)
     });
+    cx.executor().run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -4327,8 +4359,10 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
     );
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.cancel(&menu::Cancel, window, cx)
+        panel.cancel(&menu::Cancel, window, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -5296,11 +5330,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     );
 
     let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5354,11 +5388,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     );
 
     let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5384,11 +5418,11 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 
     // Test 3: When explicitly called on ignored directory
     let ignored_dir_entry = find_project_entry(&panel, "root/dir1/ignored_dir", cx).unwrap();
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         let project = panel.project.read(cx);
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, cx);
-        panel.update_visible_entries(None, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -5473,11 +5507,11 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
         );
 
         let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             let project = panel.project.read(cx);
             let worktree = project.worktrees(cx).next().unwrap().read(cx);
             panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
-            panel.update_visible_entries(None, cx);
+            panel.update_visible_entries(None, false, false, window, cx);
         });
         cx.run_until_parked();
 
@@ -5643,6 +5677,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         panel.new_file(&NewFile, window, cx);
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -5655,7 +5690,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-
+    cx.run_until_parked();
     #[rustfmt::skip]
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5729,10 +5764,11 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     panel.update_in(cx, |panel, window, cx| {
         panel.new_file(&NewFile, window, cx);
     });
+    cx.run_until_parked();
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
-
+    cx.run_until_parked();
     #[rustfmt::skip]
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5751,6 +5787,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.confirm_edit(window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -5776,6 +5813,8 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     panel.update_in(cx, |panel, window, cx| {
         panel.new_directory(&NewDirectory, window, cx);
     });
+    cx.run_until_parked();
+
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.filename_editor.read(cx).is_focused(window));
     });
@@ -5799,6 +5838,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
         panel.confirm_edit(window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
 
     #[rustfmt::skip]
     assert_eq!(
@@ -6638,12 +6678,18 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
 
 fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
     let path = rel_path(path);
-    panel.update(cx, |panel, cx| {
+    panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
             if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                panel.update_visible_entries(Some((worktree.id(), entry_id)), cx);
+                panel.update_visible_entries(
+                    Some((worktree.id(), entry_id)),
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
                 return;
             }
         }
