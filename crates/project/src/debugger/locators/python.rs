@@ -81,13 +81,13 @@ impl DapLocator for PythonLocator {
             }
         }
 
-        Some(dbg!(DebugScenario {
+        Some(DebugScenario {
             adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: None,
             config,
             tcp_connection: None,
-        }))
+        })
     }
 
     async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
