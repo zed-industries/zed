@@ -8,7 +8,7 @@ use language::{Anchor, Buffer, ToOffset, ToPoint};
 use language_models::provider::ollama::OllamaLanguageModelProvider;
 use ollama::KeepAlive;
 use ollama::Model;
-use project::Project;
+
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{ops::Range, path::Path, sync::Arc, time::Duration};
@@ -216,7 +216,6 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,
@@ -229,12 +228,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
             (provider_ref.http_client(), url)
         } else {
             (
-                project
-                    .as_ref()
-                    .map(|p| p.read(cx).client().http_client() as Arc<dyn HttpClient>)
-                    .unwrap_or_else(|| {
-                        Arc::new(http_client::BlockedHttpClient::new()) as Arc<dyn HttpClient>
-                    }),
+                Arc::new(http_client::BlockedHttpClient::new()) as Arc<dyn HttpClient>,
                 "http://localhost:11434".to_string(),
             )
         };
@@ -386,7 +380,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
 
         let position = cursor_position.bias_right(&buffer_snapshot);
 
-        Some(EditPrediction {
+        Some(EditPrediction::Local {
             id: None,
             edits: vec![(position..position, remaining_completion.to_string())],
             edit_preview: None,
@@ -691,7 +685,7 @@ mod tests {
             cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), cx));
 
         provider.update(cx, |provider, cx| {
-            provider.refresh(None, buffer.clone(), cursor_position, false, cx);
+            provider.refresh(buffer.clone(), cursor_position, false, cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -713,8 +707,12 @@ mod tests {
 
         assert!(suggestion.is_some());
         let suggestion = suggestion.unwrap();
-        assert_eq!(suggestion.edits.len(), 1);
-        assert_eq!(suggestion.edits[0].1, "println!(\"Hello\");");
+        if let EditPrediction::Local { edits, .. } = &suggestion {
+            assert_eq!(edits.len(), 1);
+            assert_eq!(edits[0].1, "println!(\"Hello\");");
+        } else {
+            panic!("Expected Local EditPrediction");
+        }
 
         provider.update(cx, |provider, cx| {
             provider.accept(cx);
@@ -764,7 +762,7 @@ mod tests {
         });
 
         provider.update(cx, |provider, cx| {
-            provider.refresh(None, buffer.clone(), cursor_position, false, cx);
+            provider.refresh(buffer.clone(), cursor_position, false, cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -776,8 +774,12 @@ mod tests {
         });
 
         if let Some(suggestion) = suggestion {
-            assert_eq!(suggestion.edits.len(), 1);
-            assert!(suggestion.edits[0].1.contains("1, 2, 3"));
+            if let EditPrediction::Local { edits, .. } = &suggestion {
+                assert_eq!(edits.len(), 1);
+                assert!(edits[0].1.contains("1, 2, 3"));
+            } else {
+                panic!("Expected Local EditPrediction");
+            }
         }
     }
 
