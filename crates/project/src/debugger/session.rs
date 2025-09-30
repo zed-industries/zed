@@ -14,7 +14,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
@@ -33,24 +33,25 @@ use dap::{
 };
 use futures::channel::mpsc::UnboundedSender;
 use futures::channel::{mpsc, oneshot};
-use futures::compat::CompatSink;
+use futures::io::BufReader;
+use futures::{AsyncBufReadExt as _, SinkExt, StreamExt, TryStreamExt};
 use futures::{FutureExt, future::Shared};
-use futures::{SinkExt, StreamExt};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Task, WeakEntity,
 };
+use http_client::HttpClient;
 
-use gpui_tokio::Tokio;
+use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::ErrorExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smol::net::TcpListener;
 use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
-use std::pin::Pin;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::u64;
 use std::{
@@ -704,6 +705,9 @@ pub struct Session {
     memory: memory::Memory,
     quirks: SessionQuirks,
     remote_client: Option<Entity<RemoteClient>>,
+    node_runtime: Option<NodeRuntime>,
+    http_client: Option<Arc<dyn HttpClient>>,
+    companion_port: Option<u16>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -821,6 +825,8 @@ impl Session {
         task_context: TaskContext,
         quirks: SessionQuirks,
         remote_client: Option<Entity<RemoteClient>>,
+        node_runtime: Option<NodeRuntime>,
+        http_client: Option<Arc<dyn HttpClient>>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -877,6 +883,9 @@ impl Session {
                 memory: memory::Memory::new(),
                 quirks,
                 remote_client,
+                node_runtime,
+                http_client,
+                companion_port: None,
             }
         })
     }
@@ -1574,13 +1583,13 @@ impl Session {
                         log::error!("failed to deserialize launchBrowserInCompanion event");
                         return;
                     };
-                    let Some(remote_client) = self.remote_client.clone() else {
-                        log::error!(
-                            "no remote client so not handling launchBrowserInCompanion event"
-                        );
+                    self.launch_browser_for_remote_server(request, cx);
+                } else if event.event == "killCompanionBrowser" {
+                    let Some(request) = serde_json::from_value(event.body).ok() else {
+                        log::error!("failed to deserialize killCompanionBrowser event");
                         return;
                     };
-                    self.launch_browser_for_remote_server(remote_client, request, cx);
+                    self.kill_browser(request, cx);
                 }
             }
         }
@@ -2744,12 +2753,23 @@ impl Session {
 
     fn launch_browser_for_remote_server(
         &mut self,
-        remote_client: Entity<RemoteClient>,
-        request: LaunchBrowserInCompanionParams,
+        mut request: LaunchBrowserInCompanionParams,
         cx: &mut Context<Self>,
     ) {
-        let task = cx.spawn(async move |_, cx| {
-            let (port_for_dap, _child) =
+        let Some(remote_client) = self.remote_client.clone() else {
+            log::error!("can't launch browser in companion for non-remote project");
+            return;
+        };
+        let Some(http_client) = self.http_client.clone() else {
+            return;
+        };
+        let Some(node_runtime) = self.node_runtime.clone() else {
+            return;
+        };
+
+        let mut console_output = self.console_output(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let (dap_port, _child) =
                 if remote_client.read_with(cx, |client, _| client.shares_network_interface())? {
                     (request.server_port, None)
                 } else {
@@ -2775,111 +2795,289 @@ impl Session {
                     (port, Some(child))
                 };
 
-            let port_for_browser = {
-                let listener = TcpListener::bind("127.0.0.1:0")
-                    .await
-                    .context("getting port for browser")?;
-                listener.local_addr()?.port()
-            };
-
-            let path = request.path.clone();
-            let _child = spawn_browser(request, port_for_browser)?;
-
-            Tokio::spawn(cx, async move {
-                let url = format!("ws://localhost:{port_for_dap}{path}");
-                log::info!("will connect to DAP running on remote at {url}");
-                let (dap_stream, _response) = tokio_tungstenite::connect_async(&url)
-                    .await
-                    .context("connecting to DAP")?;
-                let (mut dap_in, mut dap_out) = dap_stream.split();
-                log::info!("established websocket connection to DAP running on remote");
-
-                let url = format!("ws://localhost:{port_for_browser}");
-                log::info!("will connect to browser running running locally at {url}");
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                let (browser_stream, _response) = tokio_tungstenite::connect_async(&url)
-                    .await
-                    .context("connecting to browser")?;
-                let (mut browser_in, mut browser_out) = browser_stream.split();
-                log::info!("established websocket connection to browser running locally");
-
-                let down_task = tokio::spawn(async move {
-                    while let Some(message) = dap_out.next().await {
-                        let message = message.context("reading message from DAP")?;
-                        browser_in
-                            .send(message)
-                            .await
-                            .context("sending message to browser")?;
+            let mut companion_process = None;
+            let companion_port =
+                if let Some(companion_port) = this.read_with(cx, |this, _| this.companion_port)? {
+                    companion_port
+                } else {
+                    let task = cx.spawn(async move |cx| spawn_companion(node_runtime, cx).await);
+                    match task.await {
+                        Ok((port, child)) => {
+                            companion_process = Some(child);
+                            port
+                        }
+                        Err(e) => {
+                            console_output
+                                .send(format!("Failed to launch browser companion process: {e}"))
+                                .await
+                                .ok();
+                            return Err(e);
+                        }
                     }
-                    anyhow::Ok(())
-                });
-                let up_task = tokio::spawn(async move {
-                    while let Some(message) = browser_out.next().await {
-                        let message = message.context("reading message from browser")?;
-                        dap_in
-                            .send(message)
-                            .await
-                            .context("sending message to DAP")?;
+                };
+            this.update(cx, |this, cx| {
+                this.companion_port = Some(companion_port);
+                let Some(mut child) = companion_process else {
+                    return;
+                };
+                if let Some(stderr) = child.stderr.take() {
+                    let mut console_output = console_output.clone();
+                    this.background_tasks.push(cx.spawn(async move |_, _| {
+                        let mut stderr = BufReader::new(stderr);
+                        let mut line = String::new();
+                        while let Ok(n) = stderr.read_line(&mut line).await
+                            && n > 0
+                        {
+                            console_output
+                                .send(format!("companion stderr: {line}"))
+                                .await
+                                .ok();
+                            line.clear();
+                        }
+                    }));
+                }
+                this.background_tasks.push(cx.spawn({
+                    let mut console_output = console_output.clone();
+                    async move |_, _| match child.status().await {
+                        Ok(status) => {
+                            if status.success() {
+                                console_output
+                                    .send(format!("Companion process exited normally"))
+                                    .await
+                                    .ok();
+                            } else {
+                                console_output
+                                    .send(format!(
+                                        "Companion process exited abnormally with {status:?}"
+                                    ))
+                                    .await
+                                    .ok();
+                            }
+                        }
+                        Err(e) => {
+                            console_output
+                                .send(format!("Failed to join companion process: {e}"))
+                                .await
+                                .ok();
+                        }
                     }
-                    anyhow::Ok(())
-                });
-                down_task.await.ok();
-                up_task.await.ok();
-                anyhow::Ok(())
-            })?
-            .await??;
+                }))
+            })?;
+
+            request
+                .other
+                .insert("proxyUri".into(), format!("127.0.0.1:{dap_port}").into());
+            // FIXME wslInfo?
+
+            let response = http_client
+                .get(
+                    &format!("http://127.0.0.1:{companion_port}/launch-and-attach"),
+                    serde_json::to_string(&request)
+                        .context("serializing request")?
+                        .into(),
+                    false,
+                )
+                .await;
+            match response {
+                Ok(response) => {
+                    if !response.status().is_success() {
+                        console_output
+                            .send(format!("Launch request to companion failed"))
+                            .await
+                            .ok();
+                        return Err(anyhow!("launch request failed"));
+                    }
+                }
+                Err(e) => {
+                    console_output
+                        .send(format!("Failed to read response from companion"))
+                        .await
+                        .ok();
+                    return Err(e);
+                }
+            }
+
             anyhow::Ok(())
         });
         self.background_tasks.push(cx.spawn(async move |_, _| {
             task.await.log_err();
         }));
     }
-}
 
-fn spawn_browser(
-    mut request: LaunchBrowserInCompanionParams,
-    port_for_browser: u16,
-) -> Result<smol::process::Child> {
-    if let Some(ix) = request
-        .browser_args
-        .iter()
-        .position(|arg| arg == "--remote-debugging-pipe")
-    {
-        request.browser_args[ix] = format!("--remote-debugging-port={port_for_browser}");
-        request
-            .browser_args
-            .retain(|arg| !arg.starts_with("--remote-debugging-io-pipes"));
-    } else {
-        // FIXME
-        bail!("expected --remote-debugging-pipe")
+    fn kill_browser(&self, request: KillCompanionBrowserParams, cx: &mut App) {
+        let Some(companion_port) = self.companion_port else {
+            log::error!("received killCompanionBrowser but js-debug-companion is not running");
+            return;
+        };
+        let Some(http_client) = self.http_client.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |_| {
+            http_client
+                .get(
+                    &format!("http://127.0.0.1:{companion_port}/launch-and-attach"),
+                    serde_json::to_string(&request)
+                        .context("serializing request")?
+                        .into(),
+                    false,
+                )
+                .await?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx)
     }
-
-    dbg!(&request.browser_args);
-
-    // FIXME
-    let path = match request.r#type.as_str() {
-        "edge" => "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        "chrome" => "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        other => bail!("unrecognized browser debugging type: {other:?}"),
-    };
-
-    let child = new_smol_command(path)
-        .args(request.browser_args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("spawning browser")?;
-    Ok(child)
 }
 
-#[derive(Deserialize)]
+// export interface ILaunchParams {
+//   type: 'chrome' | 'edge';
+//   path: string;
+//   proxyUri: string;
+//   launchId: number;
+//   browserArgs: string[];
+//   wslInfo?: IWslInfo;
+//   attach?: {
+//     host: string;
+//     port: number;
+//   };
+//   // See IChromiumLaunchConfiguration in js-debug for the full type, a subset of props are here:
+//   params: {
+//     env: Readonly<{ [key: string]: string | null }>;
+//     runtimeExecutable: string;
+//     userDataDir: boolean | string;
+//     cwd: string | null;
+//     webRoot: string | null;
+//   };
+// }
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LaunchBrowserInCompanionParams {
+    // FIXME move some of these into other
     r#type: String,
+    path: String,
     browser_args: Vec<String>,
     server_port: u16,
-    path: String,
     launch_id: u64,
     params: serde_json::Value,
+    #[serde(flatten)]
+    other: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KillCompanionBrowserParams {
+    launch_id: String,
+}
+
+async fn spawn_companion(
+    node_runtime: NodeRuntime,
+    cx: &mut AsyncApp,
+) -> Result<(u16, smol::process::Child)> {
+    let binary_path = node_runtime
+        .binary_path()
+        .await
+        .context("getting node path")?;
+    let path = cx
+        .spawn(async move |cx| get_or_install_companion(node_runtime, cx).await)
+        .await?;
+    log::info!("will launch js-debug-companion version {path:?}");
+
+    let port = {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("getting port for companion")?;
+        listener.local_addr()?.port()
+    };
+
+    // FIXME is this right?
+    let dir = paths::data_dir()
+        .join("js_debug_companion_state")
+        .to_string_lossy()
+        .to_string();
+
+    let child = new_smol_command(binary_path)
+        .arg(path)
+        .args([
+            format!("--listen=127.0.0.1:{port}"),
+            format!("--state={dir}"),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning companion child process")?;
+
+    Ok((port, child))
+}
+
+async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
+    // FIXME publish
+    const PACKAGE_NAME: &str = "C:\\Users\\Cole\\vscode-js-debug-companion";
+
+    async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
+        let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
+        node.npm_install_packages(temp_dir.path(), &[(PACKAGE_NAME, "latest")])
+            .await
+            .context("installing latest companion package")?;
+        let version = node
+            .npm_package_installed_version(temp_dir.path(), PACKAGE_NAME)
+            .await
+            .context("getting installed companion version")?
+            .context("companion was not installed")?;
+        smol::fs::rename(temp_dir.path(), dir.join(&version))
+            .await
+            .context("moving companion package into place")?;
+        Ok(dir.join(version))
+    }
+
+    let dir = paths::debug_adapters_dir().join("js-debug-companion");
+    let (latest_installed_version, latest_version) = cx
+        .background_spawn({
+            let dir = dir.clone();
+            let node = node.clone();
+            async move {
+                smol::fs::create_dir_all(&dir)
+                    .await
+                    .context("creating companion installation directory")?;
+
+                let mut children = smol::fs::read_dir(&dir)
+                    .await
+                    .context("reading companion installation directory")?
+                    .try_collect::<Vec<_>>()
+                    .await
+                    .context("reading companion installation directory entries")?;
+                children
+                    .sort_by_key(|child| semver::Version::parse(child.file_name().to_str()?).ok());
+
+                let latest_installed_version = children.last().and_then(|child| {
+                    let version = child.file_name().into_string().ok()?;
+                    Some((child.path(), version))
+                });
+                let latest_version = node
+                    .npm_package_latest_version(PACKAGE_NAME)
+                    .await
+                    .log_err();
+                anyhow::Ok((latest_installed_version, latest_version))
+            }
+        })
+        .await?;
+
+    let path = if let Some((installed_path, installed_version)) = latest_installed_version {
+        if let Some(latest_version) = latest_version
+            && latest_version != installed_version
+        {
+            cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
+                .detach();
+        }
+        Ok(installed_path)
+    } else {
+        cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
+            .await
+    };
+
+    Ok(path?
+        .join("node_modules")
+        .join(PACKAGE_NAME)
+        .join("out")
+        .join("cli.js"))
 }

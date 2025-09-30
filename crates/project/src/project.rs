@@ -1082,6 +1082,7 @@ impl Project {
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
                     breakpoint_store.clone(),
+                    false,
                     cx,
                 )
             });
@@ -1304,6 +1305,9 @@ impl Project {
                     remote.clone(),
                     breakpoint_store.clone(),
                     worktree_store.clone(),
+                    node.clone(),
+                    client.http_client(),
+                    fs.clone(),
                     cx,
                 )
             });
@@ -1501,6 +1505,7 @@ impl Project {
                 client.clone().into(),
                 breakpoint_store.clone(),
                 worktree_store.clone(),
+                fs.clone(),
                 cx,
             )
         })?;
