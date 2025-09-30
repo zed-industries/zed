@@ -110,31 +110,24 @@ impl CommandPalette {
             })
             .collect();
 
-        let mut found_switch_profile = false;
-        commands.retain(|command| {
-            if command.action.as_any().is::<SwitchToProfile>() {
-                found_switch_profile = true;
-                false
-            } else {
-                true
+        // Drop any preexisting SwitchToProfile (defensive)
+        commands.retain(|c| !c.action.as_any().is::<SwitchToProfile>());
+
+        // Inject one per profile
+        let settings = AgentSettings::get_global(cx);
+        for (profile_id, profile) in settings.profiles.iter() {
+            let action = SwitchToProfile {
+                profile_id: profile_id.as_str().to_string(),
+                profile_name: Some(profile.name.to_string()),
             }
-        });
-
-        if found_switch_profile {
-            let settings = AgentSettings::get_global(cx);
-
-            for (profile_id, profile) in settings.profiles.iter() {
-                let action = SwitchToProfile {
-                    profile_id: profile_id.as_str().to_string(),
-                    profile_name: Some(profile.name.to_string()),
-                };
-                let name = format!("agent: switch profile: {}", profile.name);
-                commands.push(Command {
-                    name,
-                    action: action.boxed_clone(),
-                });
+            .boxed_clone();
+            let name = format!("agent: switch profile: {}", profile.name);
+            if !commands.iter().any(|c| c.name == name) {
+                commands.push(Command { name, action });
             }
         }
+
+        commands.sort_by(|a, b| a.name.cmp(&b.name));
 
         let delegate =
             CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);

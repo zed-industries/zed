@@ -10,6 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::{
     Button, ButtonStyle, DocumentationSide, HighlightedLabel, Icon, IconName, Label, LabelSize,
@@ -190,6 +191,7 @@ struct ProfileMatchEntry {
 enum ProfilePickerEntry {
     Header(SharedString),
     Profile(ProfileMatchEntry),
+    NoResults,
     Configure,
 }
 
@@ -202,6 +204,7 @@ pub(crate) struct ProfilePickerDelegate {
     filtered_entries: Vec<ProfilePickerEntry>,
     selected_index: usize,
     query: String,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 impl ProfilePickerDelegate {
@@ -225,6 +228,7 @@ impl ProfilePickerDelegate {
             filtered_entries,
             selected_index: 0,
             query: String::new(),
+            cancel: None,
         };
 
         this.selected_index = this
@@ -277,7 +281,7 @@ impl ProfilePickerDelegate {
     }
 
     fn documentation(candidate: &ProfileCandidate) -> Option<&'static str> {
-        match candidate.name.to_lowercase().as_str() {
+        match candidate.id.as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
@@ -309,7 +313,6 @@ impl ProfilePickerDelegate {
 
     fn entries_from_matches(&self, matches: Vec<StringMatch>) -> Vec<ProfilePickerEntry> {
         let mut entries = Vec::new();
-
         for mat in matches {
             if self.candidates.get(mat.candidate_id).is_some() {
                 entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
@@ -318,7 +321,12 @@ impl ProfilePickerDelegate {
                 }));
             }
         }
-
+        if !entries
+            .iter()
+            .any(|e| matches!(e, ProfilePickerEntry::Profile(_)))
+        {
+            entries.push(ProfilePickerEntry::NoResults);
+        }
         entries.push(ProfilePickerEntry::Configure);
         entries
     }
@@ -370,6 +378,8 @@ impl ProfilePickerDelegate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use fs::FakeFs;
 
     #[test]
     fn entries_include_custom_profiles() {
@@ -397,6 +407,105 @@ mod tests {
             entry,
             ProfilePickerEntry::Header(label) if label.as_ref() == "Custom Profiles"
         )));
+    }
+
+    #[test]
+    fn fuzzy_filter_returns_no_results_and_keeps_configure() {
+        let candidates = vec![ProfileCandidate {
+            id: AgentProfileId("write".into()),
+            name: SharedString::from("Write"),
+            is_builtin: true,
+        }];
+
+        let delegate = ProfilePickerDelegate {
+            fs: Arc::new(FakeFs::new()),
+            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+            background: BackgroundExecutor::new(),
+            candidates,
+            string_candidates: Arc::new(Vec::new()),
+            filtered_entries: Vec::new(),
+            selected_index: 0,
+            query: String::new(),
+            cancel: None,
+        };
+
+        let matches = Vec::new(); // No matches
+        let entries = delegate.entries_from_matches(matches);
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| matches!(entry, ProfilePickerEntry::NoResults))
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| matches!(entry, ProfilePickerEntry::Configure))
+        );
+        assert_eq!(entries.len(), 2); // NoResults and Configure
+    }
+
+    #[test]
+    fn active_profile_selection_logic_works() {
+        let candidates = vec![
+            ProfileCandidate {
+                id: AgentProfileId("write".into()),
+                name: SharedString::from("Write"),
+                is_builtin: true,
+            },
+            ProfileCandidate {
+                id: AgentProfileId("ask".into()),
+                name: SharedString::from("Ask"),
+                is_builtin: true,
+            },
+        ];
+
+        let delegate = ProfilePickerDelegate {
+            fs: Arc::new(FakeFs::new()),
+            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+            background: BackgroundExecutor::new(),
+            candidates: candidates.clone(),
+            string_candidates: Arc::new(Vec::new()),
+            filtered_entries: vec![
+                ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: 0,
+                    positions: Vec::new(),
+                }),
+                ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: 1,
+                    positions: Vec::new(),
+                }),
+            ],
+            selected_index: 0,
+            query: String::new(),
+            cancel: None,
+        };
+
+        // Active profile should be found at index 0
+        let active_index = delegate.index_of_profile(&AgentProfileId("write".into()));
+        assert_eq!(active_index, Some(0));
+    }
+
+    struct TestProfileProvider {
+        profile_id: AgentProfileId,
+    }
+
+    impl TestProfileProvider {
+        fn new(profile_id: AgentProfileId) -> Self {
+            Self { profile_id }
+        }
+    }
+
+    impl ProfileProvider for TestProfileProvider {
+        fn profile_id(&self, _cx: &App) -> AgentProfileId {
+            self.profile_id.clone()
+        }
+
+        fn set_profile(&self, _profile_id: AgentProfileId, _cx: &mut App) {}
+
+        fn profiles_supported(&self, _cx: &App) -> bool {
+            true
+        }
     }
 }
 
@@ -436,13 +545,18 @@ impl PickerDelegate for ProfilePickerDelegate {
             return Task::ready(());
         }
 
+        if let Some(prev) = &self.cancel {
+            prev.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = Some(cancel.clone());
+
         let string_candidates = self.string_candidates.clone();
         let background = self.background.clone();
         let provider = self.provider.clone();
-        let cancel_flag = Arc::new(AtomicBool::new(false));
         self.query = query.clone();
 
-        let cancel_for_future = cancel_flag.clone();
+        let cancel_for_future = cancel.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let matches = match_strings(
@@ -490,7 +604,13 @@ impl PickerDelegate for ProfilePickerDelegate {
                         }
                     });
 
-                    provider.set_profile(profile_id, cx);
+                    provider.set_profile(profile_id.clone(), cx);
+
+                    telemetry::event!(
+                        "agent_profile_switched",
+                        profile_id = profile_id.as_str(),
+                        source = "picker"
+                    );
                 }
 
                 cx.emit(DismissEvent);
@@ -537,7 +657,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                 let active_id = self.provider.profile_id(cx);
                 let is_active = active_id == candidate.id;
 
-                let mut item = ListItem::new(ix)
+                let mut item = ListItem::new(SharedString::from(candidate.id.0.clone()))
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
@@ -564,8 +684,16 @@ impl PickerDelegate for ProfilePickerDelegate {
 
                 Some(item.into_any_element())
             }
+            ProfilePickerEntry::NoResults => Some(
+                ListItem::new("no-results")
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .disabled(true)
+                    .child(Label::new("No matching profiles").color(Color::Muted))
+                    .into_any_element(),
+            ),
             ProfilePickerEntry::Configure => Some(
-                ListItem::new(ix)
+                ListItem::new("configure")
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
