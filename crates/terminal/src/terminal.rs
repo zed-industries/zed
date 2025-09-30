@@ -775,7 +775,7 @@ impl TaskStatus {
 
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
-        match event {
+        match dbg!(event) {
             AlacTermEvent::Title(title) => {
                 // ignore default shell program title change as windows always sends those events
                 // and it would end up showing the shell executable path in breadcrumbs
@@ -1249,6 +1249,7 @@ impl Terminal {
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
+        dbg!("IIIInput");
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
@@ -1349,6 +1350,7 @@ impl Terminal {
     }
 
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+        dbg!("TTTTTTTTTTTT");
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
@@ -1929,13 +1931,14 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
-        if let Some(e) = e {
-            self.child_exited = Some(e);
-        }
+        // if let Some(e) = e {
+        //     self.child_exited = Some(e);
+        // }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                if error_code.is_none() {
+                    // if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2253,6 +2256,124 @@ mod tests {
             .unwrap()
             .subscribe(cx)
         });
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_eq!(
+            terminal.update(cx, |term, _| term.get_content()).trim(),
+            "hello"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_basic_terminal_11(cx: &mut TestAppContext) {
+        use std::time::Duration;
+
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(None, &Shell::System).build(None, &[]);
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program,
+                    args,
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                vec![],
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        let (shell_started_tx, shell_started_rx) = futures::channel::oneshot::channel::<()>();
+
+        cx.update(|cx| {
+            let mut tx = Some(shell_started_tx);
+            cx.subscribe(&terminal, move |_, e, cx| {
+                dbg!(e);
+                if matches!(e, Event::Wakeup) {
+                    if let Some(tx) = tx.take() {
+                        tx.send(()).unwrap();
+                    }
+                }
+            })
+        })
+        .detach();
+
+        cx.background_spawn(async move {
+            dbg!("?");
+            let a = completion_rx.recv().await.unwrap();
+            dbg!(a);
+        })
+        .detach();
+
+        shell_started_rx.await.unwrap();
+        terminal.update(cx, |terminal, cx| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
+            dbg!(success);
+        });
+
+        cx.executor().timer(Duration::from_secs(1)).await;
+
+        // assert_eq!(
+        //     completion_rx.recv().await.unwrap(),
+        //     Some(ExitStatus::default())
+        // );
+        // assert_eq!(
+        //     terminal.update(cx, |term, _| term.get_content()).trim(),
+        //     "hello"
+        // );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(None, &Shell::System)
+            .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program,
+                    args,
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                vec![],
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        cx.update(|cx| {
+            cx.subscribe(&terminal, |_, e, cx| {
+                dbg!(e);
+            })
+        })
+        .detach();
         assert_eq!(
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
