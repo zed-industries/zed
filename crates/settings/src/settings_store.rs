@@ -512,14 +512,9 @@ impl SettingsStore {
         }
     }
 
-    pub fn update_file(&mut self, file: SettingsFile, update: impl FnOnce(&mut SettingsContent)) {
-        todo!();
-    }
-
     pub fn get_overrides_for_field<T>(
         &self,
         target_file: SettingsFile,
-        _metadata: (), // todo!
         get: fn(&SettingsContent) -> &Option<T>,
     ) -> Vec<SettingsFile> {
         let all_files = self.get_all_files();
@@ -554,10 +549,9 @@ impl SettingsStore {
     pub fn get_value_from_file<T>(
         &self,
         target_file: SettingsFile,
-        _metadata: (), // todo!
         pick: fn(&SettingsContent) -> &Option<T>,
     ) -> (SettingsFile, &T) {
-        // Add a metadata field for overriding the "overrides" tag, for contextually different settings
+        // TODO: Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
         // todo(settings_ui) cache all files
@@ -1732,16 +1726,16 @@ mod tests {
         let default_value = get(&store.default_settings).unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
             (SettingsFile::User, &0)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::User, (), get),
+            store.get_value_from_file(SettingsFile::User, get),
             (SettingsFile::User, &0)
         );
         store.set_user_settings(r#"{}"#, cx).unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
             (SettingsFile::Default, &default_value)
         );
         store
@@ -1754,11 +1748,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
             (SettingsFile::Local(local.clone()), &80)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::User, (), get),
+            store.get_value_from_file(SettingsFile::User, get),
             (SettingsFile::Default, &default_value)
         );
     }
@@ -1835,11 +1829,11 @@ mod tests {
 
         // each local child should only inherit from it's parent
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_2_child.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local_2_child.clone()), get),
             (SettingsFile::Local(local_2.clone()), &2)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
             (SettingsFile::Local(local_1.clone()), &1)
         );
 
@@ -1865,7 +1859,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), get),
             (SettingsFile::Local(local_1.clone()), &1)
         );
         store
@@ -1887,7 +1881,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), (), get),
+            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
             (SettingsFile::Local(local_1.clone()), &1)
         );
     }
@@ -1959,7 +1953,7 @@ mod tests {
             )
             .unwrap();
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Default, (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Default, get);
         assert_eq!(
             overrides,
             vec![
@@ -1970,7 +1964,7 @@ mod tests {
             ]
         );
 
-        let overrides = store.get_overrides_for_field(SettingsFile::User, (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::User, get);
         assert_eq!(
             overrides,
             vec![
@@ -1980,24 +1974,19 @@ mod tests {
             ]
         );
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_root.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_root.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_child2.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child2.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt1_root.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_root.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt1_subdir.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_subdir.clone()), get);
         assert_eq!(overrides, vec![]);
 
         let wt0_deep_child = (
@@ -2015,11 +2004,10 @@ mod tests {
             .unwrap();
 
         let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child.clone()), (), get);
+            store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), (), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
         assert_eq!(overrides, vec![]);
     }
 }

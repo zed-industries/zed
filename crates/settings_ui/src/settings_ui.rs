@@ -49,9 +49,9 @@ impl<T> AnySettingField for SettingField<T> {
     }
 
     fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile {
-        let (file, _) =
-            cx.global::<SettingsStore>()
-                .get_value_from_file(file.to_settings(), (), self.pick);
+        let (file, _) = cx
+            .global::<SettingsStore>()
+            .get_value_from_file(file.to_settings(), self.pick);
         return file;
     }
 }
@@ -741,7 +741,7 @@ fn render_text_field(
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
-    let (read_from, initial_text) = store.get_value_from_file(file.to_settings(), (), field.pick);
+    let (read_from, initial_text) = store.get_value_from_file(file.to_settings(), field.pick);
     let initial_text = Some(initial_text.clone()).filter(|s| !s.is_empty());
 
     SettingsEditor::new()
@@ -768,7 +768,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
 
-    let (read_from, &value) = store.get_value_from_file(file.to_settings(), (), field.pick);
+    let (read_from, &value) = store.get_value_from_file(file.to_settings(), field.pick);
 
     let toggle_state = if value.into() {
         ui::ToggleState::Selected
@@ -804,7 +804,7 @@ where
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
     let store = SettingsStore::global(cx);
-    let (read_from, &current_value) = store.get_value_from_file(file.to_settings(), (), field.pick);
+    let (read_from, &current_value) = store.get_value_from_file(file.to_settings(), field.pick);
 
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
