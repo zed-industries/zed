@@ -76,7 +76,7 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 /// Extensions that should no longer be loaded.
 ///
 /// The snippets extension is no longer needed because it has been integrated into the core editor.
-const SUPRESSED_EXTENSIONS: &[&str] = &["snippets"];
+const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets"];
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
@@ -687,7 +687,12 @@ impl ExtensionStore {
                 );
             }
 
-            let response: GetExtensionsResponse = serde_json::from_slice(&body)?;
+            let mut response: GetExtensionsResponse = serde_json::from_slice(&body)?;
+
+            response
+                .data
+                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(&extension.id.as_ref()));
+
             Ok(response.data)
         })
     }
@@ -1121,7 +1126,7 @@ impl ExtensionStore {
         }
 
         extensions_to_load
-            .retain(|extension_id| !SUPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
+            .retain(|extension_id| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
             return Task::ready(());
