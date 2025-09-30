@@ -37,7 +37,7 @@ impl SnippetExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "simple-completion-language-server-{arch}-{os}.tar.gz",
+            "simple-completion-language-server-{arch}-{os}.{ext}",
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",
@@ -48,7 +48,21 @@ impl SnippetExtension {
                 zed::Os::Linux => "unknown-linux-gnu",
                 zed::Os::Windows => "pc-windows-msvc",
             },
+            ext = match platform {
+                zed::Os::Windows => "zip",
+                _ => "tar.gz",
+            }
         );
+
+        let format = match platform {
+            zed::Os::Windows => zed::DownloadedFileType::Zip,
+            _ => zed::DownloadedFileType::GzipTar,
+        };
+
+        let exe_suffix = match platform {
+            zed::Os::Windows => ".exe",
+            _ => "",
+        };
 
         let asset = release
             .assets
@@ -57,7 +71,7 @@ impl SnippetExtension {
             .ok_or_else(|| format!("no asset found matching {:?}", asset_name))?;
 
         let version_dir = format!("simple-completion-language-server-{}", release.version);
-        let binary_path = format!("{version_dir}/simple-completion-language-server");
+        let binary_path = format!("{version_dir}/simple-completion-language-server{exe_suffix}");
 
         if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(
@@ -65,12 +79,8 @@ impl SnippetExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(
-                &asset.download_url,
-                &version_dir,
-                zed::DownloadedFileType::GzipTar,
-            )
-            .map_err(|e| format!("failed to download file: {e}"))?;
+            zed::download_file(&asset.download_url, &version_dir, format)
+                .map_err(|e| format!("failed to download file: {e}"))?;
 
             let entries =
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
