@@ -488,18 +488,6 @@ impl SettingsStore {
         files
     }
 
-    fn get_content_for_file_mut(&mut self, file: SettingsFile) -> Option<&mut SettingsContent> {
-        match file {
-            SettingsFile::User => self
-                .user_settings
-                .as_mut()
-                .map(|settings| settings.content.as_mut()),
-            SettingsFile::Default => todo!("Cannot modify default settings"),
-            SettingsFile::Server => self.server_settings.as_deref_mut(),
-            SettingsFile::Local(key) => self.local_settings.get_mut(&key),
-        }
-    }
-
     fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
         match file {
             SettingsFile::User => self
