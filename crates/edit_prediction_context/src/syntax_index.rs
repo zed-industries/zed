@@ -229,6 +229,27 @@ impl SyntaxIndex {
         }
     }
 
+    pub fn indexed_file_paths(&self, cx: &App) -> Task<Vec<ProjectPath>> {
+        let state = self.state.clone();
+        let project = self.project.clone();
+
+        cx.spawn(async move |cx| {
+            let state = state.lock().await;
+            let Some(project) = project.upgrade() else {
+                return vec![];
+            };
+            project
+                .read_with(cx, |project, cx| {
+                    state
+                        .files
+                        .keys()
+                        .filter_map(|entry_id| project.path_for_entry(*entry_id, cx))
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    }
+
     fn handle_worktree_store_event(
         &mut self,
         _worktree_store: Entity<WorktreeStore>,
