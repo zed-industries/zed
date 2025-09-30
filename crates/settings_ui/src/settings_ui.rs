@@ -22,16 +22,17 @@ use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 struct SettingField<T: 'static> {
-    pick: fn(&SettingsContent) -> &T,
-    pick_mut: fn(&mut SettingsContent) -> &mut T,
+    pick: fn(&SettingsContent) -> &Option<T>,
+    pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
 }
 
 trait AnySettingField {
     fn as_any(&self) -> &dyn Any;
     fn type_name(&self) -> &'static str;
     fn type_id(&self) -> TypeId;
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile;
 }
 
 impl<T> AnySettingField for SettingField<T> {
@@ -46,6 +47,13 @@ impl<T> AnySettingField for SettingField<T> {
     fn type_id(&self) -> TypeId {
         TypeId::of::<T>()
     }
+
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile {
+        let (file, _) = cx
+            .global::<SettingsStore>()
+            .get_value_from_file(file.to_settings(), self.pick);
+        return file;
+    }
 }
 
 #[derive(Default, Clone)]
@@ -57,6 +65,7 @@ struct SettingFieldRenderer {
                 Box<
                     dyn Fn(
                         &dyn AnySettingField,
+                        SettingsUiFile,
                         Option<&SettingsFieldMetadata>,
                         &mut Window,
                         &mut App,
@@ -74,6 +83,7 @@ impl SettingFieldRenderer {
         &mut self,
         renderer: impl Fn(
             &SettingField<T>,
+            SettingsUiFile,
             Option<&SettingsFieldMetadata>,
             &mut Window,
             &mut App,
@@ -83,6 +93,7 @@ impl SettingFieldRenderer {
         let key = TypeId::of::<T>();
         let renderer = Box::new(
             move |any_setting_field: &dyn AnySettingField,
+                  settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
                   window: &mut Window,
                   cx: &mut App| {
@@ -90,7 +101,7 @@ impl SettingFieldRenderer {
                     .as_any()
                     .downcast_ref::<SettingField<T>>()
                     .unwrap();
-                renderer(field, metadata, window, cx)
+                renderer(field, settings_file, metadata, window, cx)
             },
         );
         self.renderers.borrow_mut().insert(key, renderer);
@@ -100,13 +111,14 @@ impl SettingFieldRenderer {
     fn render(
         &self,
         any_setting_field: &dyn AnySettingField,
+        settings_file: SettingsUiFile,
         metadata: Option<&SettingsFieldMetadata>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
         let key = any_setting_field.type_id();
         if let Some(renderer) = self.renderers.borrow().get(&key) {
-            renderer(any_setting_field, metadata, window, cx)
+            renderer(any_setting_field, settings_file, metadata, window, cx)
         } else {
             panic!(
                 "No renderer found for type: {}",
@@ -269,18 +281,19 @@ pub fn init(cx: &mut App) {
 }
 
 fn init_renderers(cx: &mut App) {
+    // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
-        .add_renderer::<Option<bool>>(|settings_field, _, _, cx| {
-            render_toggle_button(settings_field.clone(), cx).into_any_element()
+        .add_renderer::<bool>(|settings_field, file, _, _, cx| {
+            render_toggle_button(*settings_field, file, cx).into_any_element()
         })
-        .add_renderer::<Option<String>>(|settings_field, metadata, _, cx| {
-            render_text_field(settings_field.clone(), metadata, cx)
+        .add_renderer::<String>(|settings_field, file, metadata, _, cx| {
+            render_text_field(settings_field.clone(), file, metadata, cx)
         })
-        .add_renderer::<Option<SaturatingBool>>(|settings_field, _, _, cx| {
-            render_toggle_button(settings_field.clone(), cx)
+        .add_renderer::<SaturatingBool>(|settings_field, file, _, _, cx| {
+            render_toggle_button(*settings_field, file, cx)
         })
-        .add_renderer::<Option<CursorShape>>(|settings_field, _, window, cx| {
-            render_dropdown(settings_field.clone(), window, cx)
+        .add_renderer::<CursorShape>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
         });
 }
 
@@ -304,8 +317,8 @@ pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<Setting
 }
 
 pub struct SettingsWindow {
-    files: Vec<SettingsFile>,
-    current_file: SettingsFile,
+    files: Vec<SettingsUiFile>,
+    current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
     search: Entity<Editor>,
     navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
@@ -340,7 +353,7 @@ enum SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn render(&self, _file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(&self, file: SettingsUiFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
@@ -350,6 +363,9 @@ impl SettingsPageItem {
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
+                let file_set_in =
+                    SettingsUiFile::from_settings(setting_item.field.file_set_in(file.clone(), cx));
+
                 h_flex()
                     .id(setting_item.title)
                     .w_full()
@@ -361,8 +377,25 @@ impl SettingsPageItem {
                             .max_w_1_2()
                             .flex_shrink()
                             .child(
-                                Label::new(SharedString::new_static(setting_item.title))
-                                    .size(LabelSize::Default),
+                                h_flex()
+                                    .w_full()
+                                    .gap_4()
+                                    .child(
+                                        Label::new(SharedString::new_static(setting_item.title))
+                                            .size(LabelSize::Default),
+                                    )
+                                    .when_some(
+                                        file_set_in.filter(|file_set_in| file_set_in != &file),
+                                        |elem, file_set_in| {
+                                            elem.child(
+                                                Label::new(format!(
+                                                    "set in {}",
+                                                    file_set_in.name()
+                                                ))
+                                                .color(Color::Muted),
+                                            )
+                                        },
+                                    ),
                             )
                             .child(
                                 Label::new(SharedString::new_static(setting_item.description))
@@ -372,6 +405,7 @@ impl SettingsPageItem {
                     )
                     .child(renderer.render(
                         setting_item.field.as_ref(),
+                        file,
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
@@ -391,36 +425,53 @@ struct SettingItem {
 
 #[allow(unused)]
 #[derive(Clone, PartialEq)]
-enum SettingsFile {
+enum SettingsUiFile {
     User,                              // Uses all settings.
     Local((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
     Server(&'static str),              // Uses a special name, and the user settings
 }
 
-impl SettingsFile {
+impl SettingsUiFile {
     fn pages(&self) -> Vec<SettingsPage> {
         match self {
-            SettingsFile::User => user_settings_data(),
-            SettingsFile::Local(_) => project_settings_data(),
-            SettingsFile::Server(_) => user_settings_data(),
+            SettingsUiFile::User => user_settings_data(),
+            SettingsUiFile::Local(_) => project_settings_data(),
+            SettingsUiFile::Server(_) => user_settings_data(),
         }
     }
 
     fn name(&self) -> SharedString {
         match self {
-            SettingsFile::User => SharedString::new_static("User"),
+            SettingsUiFile::User => SharedString::new_static("User"),
             // TODO is PathStyle::local() ever not appropriate?
-            SettingsFile::Local((_, path)) => {
+            SettingsUiFile::Local((_, path)) => {
                 format!("Local ({})", path.display(PathStyle::local())).into()
             }
-            SettingsFile::Server(file) => format!("Server ({})", file).into(),
+            SettingsUiFile::Server(file) => format!("Server ({})", file).into(),
+        }
+    }
+
+    fn from_settings(file: settings::SettingsFile) -> Option<Self> {
+        Some(match file {
+            settings::SettingsFile::User => SettingsUiFile::User,
+            settings::SettingsFile::Local(location) => SettingsUiFile::Local(location),
+            settings::SettingsFile::Server => SettingsUiFile::Server("todo: server name"),
+            settings::SettingsFile::Default => return None,
+        })
+    }
+
+    fn to_settings(&self) -> settings::SettingsFile {
+        match self {
+            SettingsUiFile::User => settings::SettingsFile::User,
+            SettingsUiFile::Local(location) => settings::SettingsFile::Local(location.clone()),
+            SettingsUiFile::Server(_) => settings::SettingsFile::Server,
         }
     }
 }
 
 impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let current_file = SettingsFile::User;
+        let current_file = SettingsUiFile::User;
         let search = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Search settings…", window, cx);
@@ -496,26 +547,21 @@ impl SettingsWindow {
         let mut ui_files = vec![];
         let all_files = settings_store.get_all_files();
         for file in all_files {
-            let settings_ui_file = match file {
-                settings::SettingsFile::User => SettingsFile::User,
-                settings::SettingsFile::Global => continue,
-                settings::SettingsFile::Extension => continue,
-                settings::SettingsFile::Server => SettingsFile::Server("todo: server name"),
-                settings::SettingsFile::Default => continue,
-                settings::SettingsFile::Local(location) => SettingsFile::Local(location),
+            let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
+                continue;
             };
             ui_files.push(settings_ui_file);
         }
         ui_files.reverse();
-        if !ui_files.contains(&self.current_file) {
+        self.files = ui_files;
+        if !self.files.contains(&self.current_file) {
             self.change_file(0, cx);
         }
-        self.files = ui_files;
     }
 
     fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
-            self.current_file = SettingsFile::User;
+            self.current_file = SettingsUiFile::User;
             return;
         }
         if self.files[ix] == self.current_file {
@@ -682,25 +728,19 @@ impl Render for SettingsWindow {
     }
 }
 
+// fn read_field<T>(pick: fn(&SettingsContent) -> &Option<T>, file: SettingsFile, cx: &App) -> Option<T> {
+//     let (_, value) = cx.global::<SettingsStore>().get_value_from_file(file.to_settings(), (), pick);
+// }
+
 fn render_text_field(
-    field: SettingField<Option<String>>,
+    field: SettingField<String>,
+    file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
     cx: &mut App,
 ) -> AnyElement {
-    // TODO: in settings window state
-    let store = SettingsStore::global(cx);
-
-    // TODO: This clone needs to go!!
-    let defaults = store.raw_default_settings().clone();
-    let user_settings = store
-        .raw_user_settings()
-        .cloned()
-        .unwrap_or_default()
-        .content;
-
-    let initial_text = (field.pick)(&user_settings)
-        .clone()
-        .or_else(|| (field.pick)(&defaults).clone());
+    let (_, initial_text) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let initial_text = Some(initial_text.clone()).filter(|s| !s.is_empty());
 
     SettingsEditor::new()
         .when_some(initial_text, |editor, text| editor.with_initial_text(text))
@@ -719,24 +759,13 @@ fn render_text_field(
 }
 
 fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
-    field: SettingField<Option<B>>,
+    field: SettingField<B>,
+    file: SettingsUiFile,
     cx: &mut App,
 ) -> AnyElement {
-    // TODO: in settings window state
-    let store = SettingsStore::global(cx);
+    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
-    // TODO: This clone needs to go!!
-    let defaults = store.raw_default_settings().clone();
-    let user_settings = store
-        .raw_user_settings()
-        .cloned()
-        .unwrap_or_default()
-        .content;
-
-    let toggle_state = if (field.pick)(&user_settings)
-        .unwrap_or_else(|| (field.pick)(&defaults).unwrap())
-        .into()
-    {
+    let toggle_state = if value.into() {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
@@ -746,7 +775,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                let field = field.clone();
+                let field = field;
                 cx.update_global(move |store: &mut SettingsStore, cx| {
                     store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
                         *(field.pick_mut)(settings) = Some(state.into());
@@ -758,7 +787,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 }
 
 fn render_dropdown<T>(
-    field: SettingField<Option<T>>,
+    field: SettingField<T>,
+    file: SettingsUiFile,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
@@ -768,16 +798,9 @@ where
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
-    let store = SettingsStore::global(cx);
-    let defaults = store.raw_default_settings().clone();
-    let user_settings = store
-        .raw_user_settings()
-        .cloned()
-        .unwrap_or_default()
-        .content;
+    let (_, &current_value) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
-    let current_value =
-        (field.pick)(&user_settings).unwrap_or_else(|| (field.pick)(&defaults).unwrap());
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
 
@@ -894,7 +917,7 @@ mod test {
 
         let mut settings_window = SettingsWindow {
             files: Vec::default(),
-            current_file: crate::SettingsFile::User,
+            current_file: crate::SettingsUiFile::User,
             pages,
             search: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.unwrap(),
