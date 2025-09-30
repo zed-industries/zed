@@ -125,13 +125,6 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (identifier) @name
-            value: (arrow_function)) @item))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
             name: (object_pattern
                 (shorthand_property_identifier_pattern) @name @item))))
 
@@ -154,22 +147,7 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (identifier) @name
-            value: (call_expression)) @item))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: (object)) @item))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            !value) @item))
+            name: (identifier) @name) @item))
 
 (class_declaration
     "class" @context
@@ -209,6 +187,8 @@
 (pair
     key: (_) @name
     value: (arrow_function)) @item
+
+
 
 ; Add support for (node:test, bun:test and Jest) runnable
 (
