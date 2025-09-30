@@ -1430,8 +1430,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                GlobalTheme::reload_current_theme(cx);
-                GlobalTheme::reload_current_icon_theme(cx);
+                GlobalTheme::reload_theme(cx);
+                GlobalTheme::reload_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {

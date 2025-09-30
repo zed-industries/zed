@@ -69,10 +69,6 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// and you should add a default to default.json for documentation.
     fn from_settings(content: &SettingsContent) -> Self;
 
-    fn missing_default() -> anyhow::Error {
-        anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
-    }
-
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
     fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut SettingsContent) {}

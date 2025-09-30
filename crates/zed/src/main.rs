@@ -1360,7 +1360,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
                 theme_registry.load_user_theme(&theme_path, fs).await?;
 
                 cx.update(|cx| {
-                    GlobalTheme::reload_current_theme(cx);
+                    GlobalTheme::reload_theme(cx);
                 })
             }
         })
@@ -1383,7 +1383,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
                     .await?;
 
                 cx.update(|cx| {
-                    GlobalTheme::reload_current_icon_theme(cx);
+                    GlobalTheme::reload_icon_theme(cx);
                 })
             }
         })
@@ -1415,7 +1415,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(GlobalTheme::reload_current_theme)?;
+                cx.update(GlobalTheme::reload_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1441,7 +1441,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                         .await
                         .log_err()
                 {
-                    cx.update(GlobalTheme::reload_current_theme).log_err();
+                    cx.update(GlobalTheme::reload_theme).log_err();
                 }
             }
         }

@@ -124,8 +124,8 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         settings.theme_overrides.clone(),
     );
 
-    let theme = GlobalTheme::current_theme(cx);
-    let icon_theme = GlobalTheme::current_icon_theme(cx);
+    let theme = GlobalTheme::configured_theme(cx);
+    let icon_theme = GlobalTheme::configured_icon_theme(cx);
     cx.set_global(GlobalTheme { theme, icon_theme });
 
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -158,12 +158,12 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         if theme_name != prev_theme_name || theme_overrides != prev_theme_overrides {
             prev_theme_name = theme_name;
             prev_theme_overrides = theme_overrides;
-            GlobalTheme::reload_current_theme(cx);
+            GlobalTheme::reload_theme(cx);
         }
 
         if icon_theme_name != prev_icon_theme_name {
             prev_icon_theme_name = icon_theme_name;
-            GlobalTheme::reload_current_icon_theme(cx);
+            GlobalTheme::reload_icon_theme(cx);
         }
     })
     .detach();
@@ -440,7 +440,7 @@ pub struct GlobalTheme {
 impl Global for GlobalTheme {}
 
 impl GlobalTheme {
-    fn current_theme(cx: &mut App) -> Arc<Theme> {
+    fn configured_theme(cx: &mut App) -> Arc<Theme> {
         let themes = ThemeRegistry::default_global(cx);
         let theme_settings = ThemeSettings::get_global(cx);
         let system_appearance = SystemAppearance::global(cx);
@@ -466,13 +466,13 @@ impl GlobalTheme {
     ///
     /// Reads the [`ThemeSettings`] to know which theme should be loaded,
     /// taking into account the current [`SystemAppearance`].
-    pub fn reload_current_theme(cx: &mut App) {
-        let theme = Self::current_theme(cx);
+    pub fn reload_theme(cx: &mut App) {
+        let theme = Self::configured_theme(cx);
         cx.update_global::<Self, _>(|this, _| this.theme = theme);
         cx.refresh_windows();
     }
 
-    fn current_icon_theme(cx: &mut App) -> Arc<IconTheme> {
+    fn configured_icon_theme(cx: &mut App) -> Arc<IconTheme> {
         let themes = ThemeRegistry::default_global(cx);
         let theme_settings = ThemeSettings::get_global(cx);
         let system_appearance = SystemAppearance::global(cx);
@@ -494,8 +494,8 @@ impl GlobalTheme {
     ///
     /// Reads the [`ThemeSettings`] to know which icon theme should be loaded,
     /// taking into account the current [`SystemAppearance`].
-    pub fn reload_current_icon_theme(cx: &mut App) {
-        let icon_theme = Self::current_icon_theme(cx);
+    pub fn reload_icon_theme(cx: &mut App) {
+        let icon_theme = Self::configured_icon_theme(cx);
         cx.update_global::<Self, _>(|this, _| this.icon_theme = icon_theme);
         cx.refresh_windows();
     }
