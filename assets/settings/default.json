@@ -1,5 +1,7 @@
 {
-  "project_name": null,
+  /// The displayed name of this project. If not set or empty, the root directory name
+  /// will be displayed.
+  "project_name": "",
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:

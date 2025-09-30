@@ -50,10 +50,10 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set, the root directory name
+    /// The displayed name of this project. If not set or empty, the root directory name
     /// will be displayed.
     ///
-    /// Default: none
+    /// Default: ""
     pub project_name: Option<String>,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
