@@ -374,7 +374,7 @@ impl PickerDelegate for RulePickerDelegate {
                                 .child(Label::new(rule.title.clone().unwrap_or("Untitled".into()))),
                         )
                         .end_slot::<IconButton>(default.then(|| {
-                            IconButton::new("toggle-default-rule", IconName::Link)
+                            IconButton::new("toggle-default-rule", IconName::Paperclip)
                                 .toggle_state(true)
                                 .icon_color(Color::Accent)
                                 .icon_size(IconSize::Small)
@@ -1288,36 +1288,41 @@ impl RulesLibrary {
                                                 }),
                                         )
                                         .child(
-                                            IconButton::new("toggle-default-rule", IconName::Link)
-                                                .toggle_state(rule_metadata.default)
-                                                .icon_color(if rule_metadata.default {
-                                                    Color::Accent
+                                            IconButton::new(
+                                                "toggle-default-rule",
+                                                IconName::Paperclip,
+                                            )
+                                            .toggle_state(rule_metadata.default)
+                                            .icon_color(if rule_metadata.default {
+                                                Color::Accent
+                                            } else {
+                                                Color::Muted
+                                            })
+                                            .map(|this| {
+                                                if rule_metadata.default {
+                                                    this.tooltip(Tooltip::text(
+                                                        "Remove from Default Rules",
+                                                    ))
                                                 } else {
-                                                    Color::Muted
-                                                })
-                                                .map(|this| {
-                                                    if rule_metadata.default {
-                                                        this.tooltip(Tooltip::text(
-                                                            "Remove from Default Rules",
-                                                        ))
-                                                    } else {
-                                                        this.tooltip(move |window, cx| {
-                                                            Tooltip::with_meta(
-                                                                "Add to Default Rules",
-                                                                None,
-                                                                "Always included in every thread.",
-                                                                window,
-                                                                cx,
-                                                            )
-                                                        })
-                                                    }
-                                                })
-                                                .on_click(|_, window, cx| {
+                                                    this.tooltip(move |window, cx| {
+                                                        Tooltip::with_meta(
+                                                            "Add to Default Rules",
+                                                            None,
+                                                            "Always included in every thread.",
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                }
+                                            })
+                                            .on_click(
+                                                |_, window, cx| {
                                                     window.dispatch_action(
                                                         Box::new(ToggleDefaultRule),
                                                         cx,
                                                     );
-                                                }),
+                                                },
+                                            ),
                                         ),
                                 ),
                         )
