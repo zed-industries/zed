@@ -1970,7 +1970,10 @@ impl ProjectPanel {
                 }
                 panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
-                        panel.state.selection = Some(next_selection);
+                        panel.update_visible_entries(
+                            Some((next_selection.worktree_id, next_selection.entry_id)),
+                            cx,
+                        );
                         panel.autoscroll(cx);
                     } else {
                         panel.select_last(&SelectLast {}, window, cx);
