@@ -11923,17 +11923,16 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     );
     fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
         move |params, _| async move {
-            assert_eq!(
-                params.context.only,
-                Some(vec!["code-action-1".into(), "code-action-2".into()])
-            );
+            let requested_code_actions = params.context.only.expect("Expected code action request");
+            assert_eq!(requested_code_actions.len(), 1);
+
             let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
-            Ok(Some(vec![
-                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+            let code_action = match requested_code_actions[0].as_str() {
+                "code-action-1" => lsp::CodeAction {
                     kind: Some("code-action-1".into()),
                     edit: Some(lsp::WorkspaceEdit::new(
                         [(
-                            uri.clone(),
+                            uri,
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
                                 "applied-code-action-1-edit\n".to_string(),
@@ -11947,8 +11946,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
-                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                },
+                "code-action-2" => lsp::CodeAction {
                     kind: Some("code-action-2".into()),
                     edit: Some(lsp::WorkspaceEdit::new(
                         [(
@@ -11962,8 +11961,12 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         .collect(),
                     )),
                     ..Default::default()
-                }),
-            ]))
+                },
+                req => panic!("Unexpected code action request: {:?}", req),
+            };
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                code_action,
+            )]))
         },
     );
 
