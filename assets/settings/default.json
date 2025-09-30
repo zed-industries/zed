@@ -1242,6 +1242,9 @@
       // The minimum column number to show the inline blame information at
       "min_column": 0
     },
+    "blame": {
+      "show_avatar": true
+    },
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true

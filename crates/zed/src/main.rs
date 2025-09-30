@@ -176,12 +176,6 @@ pub fn main() {
         return;
     }
 
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    if let Some(socket) = &args.askpass {
-        askpass::main(socket);
-        return;
-    }
-
     // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
     if let Some(socket) = &args.nc {
         match nc::main(socket) {
@@ -259,6 +253,9 @@ pub fn main() {
             .unwrap_or("unknown"),
     );
 
+    #[cfg(windows)]
+    check_for_conpty_dll();
+
     let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
@@ -270,6 +267,7 @@ pub fn main() {
         .spawn(crashes::init(InitCrashHandler {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
+            binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
@@ -1245,11 +1243,6 @@ struct Args {
     #[arg(long)]
     system_specs: bool,
 
-    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long, hide = true)]
-    askpass: Option<String>,
-
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
@@ -1512,4 +1505,22 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(target_os = "windows")]
+fn check_for_conpty_dll() {
+    use windows::{
+        Win32::{Foundation::FreeLibrary, System::LibraryLoader::LoadLibraryW},
+        core::w,
+    };
+
+    if let Ok(hmodule) = unsafe { LoadLibraryW(w!("conpty.dll")) } {
+        unsafe {
+            FreeLibrary(hmodule)
+                .context("Failed to free conpty.dll")
+                .log_err();
+        }
+    } else {
+        log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
 }

@@ -67,7 +67,7 @@ impl TryFrom<&str> for EncryptedPassword {
                 unsafe {
                     CryptProtectMemory(
                         value.as_mut_ptr() as _,
-                        len,
+                        padded_length,
                         CRYPTPROTECTMEMORY_SAME_PROCESS,
                     )?;
                 }
@@ -97,7 +97,7 @@ pub(crate) fn decrypt(mut password: EncryptedPassword) -> Result<String> {
             unsafe {
                 CryptUnprotectMemory(
                     password.0.as_mut_ptr() as _,
-                    password.1,
+                    password.0.len().try_into()?,
                     CRYPTPROTECTMEMORY_SAME_PROCESS,
                 )
                 .context("while decrypting a SSH password")?

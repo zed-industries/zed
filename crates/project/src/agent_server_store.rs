@@ -609,7 +609,7 @@ fn get_or_npm_install_builtin_agent(
                     if let Ok(latest_version) = latest_version
                         && &latest_version != &file_name.to_string_lossy()
                     {
-                        download_latest_version(
+                        let download_result = download_latest_version(
                             fs,
                             dir.clone(),
                             node_runtime,
@@ -617,7 +617,9 @@ fn get_or_npm_install_builtin_agent(
                         )
                         .await
                         .log_err();
-                        if let Some(mut new_version_available) = new_version_available {
+                        if let Some(mut new_version_available) = new_version_available
+                            && download_result.is_some()
+                        {
                             new_version_available.send(Some(latest_version)).ok();
                         }
                     }
@@ -702,7 +704,7 @@ async fn download_latest_version(
         &dir.join(&version),
         RenameOptions {
             ignore_if_exists: true,
-            overwrite: false,
+            overwrite: true,
         },
     )
     .await?;

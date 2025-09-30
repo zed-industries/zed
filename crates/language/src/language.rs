@@ -75,7 +75,7 @@ use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
+pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,

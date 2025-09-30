@@ -31,7 +31,7 @@ impl Diff {
             let buffer = new_buffer.clone();
             async move |_, cx| {
                 let language = language_registry
-                    .language_for_file_path(Path::new(&path))
+                    .load_language_for_file_path(Path::new(&path))
                     .await
                     .log_err();
 
