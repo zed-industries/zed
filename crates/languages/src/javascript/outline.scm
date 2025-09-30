@@ -123,8 +123,7 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (identifier) @name
-            value: (arrow_function)) @item))
+            name: (identifier) @name) @item))
 
 (class_declaration
     "class" @context
