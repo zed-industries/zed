@@ -162,6 +162,7 @@ pub enum SettingsFile {
     User,
     Server,
     Default,
+    /// Local also represents project settings in ssh projects as well as local projects
     Local((WorktreeId, Arc<RelPath>)),
 }
 
@@ -550,16 +551,16 @@ impl SettingsStore {
         overrides
     }
 
-    pub fn get_value_from_file<T: Debug>(
+    pub fn get_value_from_file<T>(
         &self,
         target_file: SettingsFile,
         _metadata: (), // todo!
-        get: fn(&SettingsContent) -> &Option<T>,
+        pick: fn(&SettingsContent) -> &Option<T>,
     ) -> (SettingsFile, &T) {
         // Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
-        // todo! cache all files
+        // todo(settings_ui) cache all files
         let all_files = self.get_all_files();
         let mut found_file = false;
 
@@ -580,7 +581,7 @@ impl SettingsStore {
             let Some(content) = self.get_content_for_file(file.clone()) else {
                 continue;
             };
-            if let Some(value) = get(content).as_ref() {
+            if let Some(value) = pick(content).as_ref() {
                 return (file, value);
             }
         }
