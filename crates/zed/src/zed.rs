@@ -282,10 +282,9 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             .find(|display| display.uuid().ok() == Some(uuid))
     });
     let app_id = ReleaseChannel::global(cx).app_id();
-    let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
-        Ok(val) if val == "server" => gpui::WindowDecorations::Server,
-        Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-        _ => gpui::WindowDecorations::Client,
+    let window_decorations = match WorkspaceSettings::get_global(cx).window_decorations {
+        settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+        settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
     };
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
