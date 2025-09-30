@@ -35,7 +35,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, update_settings_file};
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ use ui::{
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::{Chat, ToggleModelSelector};
+use zed_actions::agent::{Chat, SwitchToProfile, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
 use super::entry_view_state::EntryViewState;
@@ -3874,6 +3874,9 @@ impl AcpThreadView {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
             }))
+            .on_action(cx.listener(|this, action: &SwitchToProfile, window, cx| {
+                this.switch_profile_via_action(action, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
                 if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.update(cx, |mode_selector, cx| {
@@ -3952,6 +3955,53 @@ impl AcpThreadView {
             )
             .when(!enable_editor, |this| this.child(backdrop))
             .into_any()
+    }
+
+    fn switch_profile_via_action(
+        &mut self,
+        action: &SwitchToProfile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.profile_id.is_empty() {
+            return;
+        }
+
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        if !thread
+            .read(cx)
+            .model()
+            .is_some_and(|model| model.supports_tools())
+        {
+            return;
+        }
+
+        let profile_id = AgentProfileId(Arc::<str>::from(action.profile_id.clone()));
+        let settings = AgentSettings::get_global(cx);
+
+        if !settings.profiles.contains_key(&profile_id) {
+            return;
+        }
+
+        if thread.read(cx).profile() == &profile_id {
+            return;
+        }
+
+        let fs = <dyn Fs>::global(cx);
+        let settings_profile = profile_id.clone();
+        update_settings_file(fs, cx, move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_profile(settings_profile.0.clone());
+        });
+
+        thread.update(cx, |thread, _| {
+            thread.set_profile(profile_id);
+        });
     }
 
     pub(crate) fn as_native_connection(
