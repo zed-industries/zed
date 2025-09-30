@@ -214,6 +214,7 @@ impl ProfilePickerDelegate {
     ) -> Self {
         let candidates = Self::candidates_from(profiles);
         let string_candidates = Arc::new(Self::string_candidates(&candidates));
+        let filtered_entries = Self::entries_from_candidates(&candidates);
 
         let mut this = Self {
             fs,
@@ -221,12 +222,11 @@ impl ProfilePickerDelegate {
             background,
             candidates,
             string_candidates,
-            filtered_entries: Vec::new(),
+            filtered_entries,
             selected_index: 0,
             query: String::new(),
         };
 
-        this.filtered_entries = this.default_entries();
         this.selected_index = this
             .index_of_profile(&this.provider.profile_id(cx))
             .unwrap_or_else(|| this.first_selectable_index().unwrap_or(0));
@@ -245,7 +245,7 @@ impl ProfilePickerDelegate {
         self.query = query;
 
         if self.query.is_empty() {
-            self.filtered_entries = self.default_entries();
+            self.filtered_entries = Self::entries_from_candidates(&self.candidates);
         } else {
             let matches = self.search_blocking(&self.query);
             self.filtered_entries = self.entries_from_matches(matches);
@@ -285,37 +285,22 @@ impl ProfilePickerDelegate {
         }
     }
 
-    fn default_entries(&self) -> Vec<ProfilePickerEntry> {
+    fn entries_from_candidates(candidates: &[ProfileCandidate]) -> Vec<ProfilePickerEntry> {
         let mut entries = Vec::new();
-        let mut builtin_indices = Vec::new();
-        let mut custom_indices = Vec::new();
+        let mut inserted_custom_header = false;
 
-        for (idx, candidate) in self.candidates.iter().enumerate() {
-            if candidate.is_builtin {
-                builtin_indices.push(idx);
-            } else {
-                custom_indices.push(idx);
+        for (idx, candidate) in candidates.iter().enumerate() {
+            if !candidate.is_builtin && !inserted_custom_header {
+                if !entries.is_empty() {
+                    entries.push(ProfilePickerEntry::Header("Custom Profiles".into()));
+                }
+                inserted_custom_header = true;
             }
-        }
 
-        for idx in builtin_indices {
             entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
                 candidate_index: idx,
                 positions: Vec::new(),
             }));
-        }
-
-        if !custom_indices.is_empty() {
-            if !entries.is_empty() {
-                entries.push(ProfilePickerEntry::Header("Custom Profiles".into()));
-            }
-
-            for idx in custom_indices {
-                entries.push(ProfilePickerEntry::Profile(ProfileMatchEntry {
-                    candidate_index: idx,
-                    positions: Vec::new(),
-                }));
-            }
         }
 
         entries.push(ProfilePickerEntry::Configure);
@@ -382,6 +367,39 @@ impl ProfilePickerDelegate {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entries_include_custom_profiles() {
+        let candidates = vec![
+            ProfileCandidate {
+                id: AgentProfileId("write".into()),
+                name: SharedString::from("Write"),
+                is_builtin: true,
+            },
+            ProfileCandidate {
+                id: AgentProfileId("my-custom".into()),
+                name: SharedString::from("My Custom"),
+                is_builtin: false,
+            },
+        ];
+
+        let entries = ProfilePickerDelegate::entries_from_candidates(&candidates);
+
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ProfilePickerEntry::Profile(profile)
+                if candidates[profile.candidate_index].id.as_str() == "my-custom"
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ProfilePickerEntry::Header(label) if label.as_ref() == "Custom Profiles"
+        )));
+    }
+}
+
 impl PickerDelegate for ProfilePickerDelegate {
     type ListItem = AnyElement;
 
@@ -410,7 +428,7 @@ impl PickerDelegate for ProfilePickerDelegate {
     ) -> Task<()> {
         if query.is_empty() {
             self.query.clear();
-            self.filtered_entries = self.default_entries();
+            self.filtered_entries = Self::entries_from_candidates(&self.candidates);
             self.selected_index = self
                 .index_of_profile(&self.provider.profile_id(cx))
                 .unwrap_or_else(|| self.first_selectable_index().unwrap_or(0));
