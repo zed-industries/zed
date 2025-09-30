@@ -138,6 +138,10 @@ pub struct SemanticTokenView {
 pub struct MultibufferSemanticToken {
     pub range: Range<usize>,
     pub style: HighlightStyle,
+
+    // These are only used in the debug syntax tree.
+    pub lsp_type: u32,
+    pub lsp_modifiers: u32,
 }
 
 impl DisplayMap {
@@ -1568,6 +1572,8 @@ impl SemanticTokenView {
                         token.token_type,
                         token.token_modifiers,
                     )?,
+                    lsp_type: token.token_type,
+                    lsp_modifiers: token.token_modifiers,
                 })
             })
             .collect::<Vec<_>>();
