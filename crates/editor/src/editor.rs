@@ -142,7 +142,7 @@ use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
+    ToOffsetUtf16,
 };
 use parking_lot::Mutex;
 use persistence::DB;
@@ -15176,12 +15176,8 @@ impl Editor {
                 }
 
                 let mut new_range = old_range.clone();
-                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
-                {
-                    new_range = match containing_range {
-                        MultiOrSingleBufferOffsetRange::Single(_) => break,
-                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
-                    };
+                while let Some((node, range)) = buffer.syntax_ancestor(new_range.clone()) {
+                    new_range = range;
                     if !node.is_named() {
                         continue;
                     }
@@ -15311,20 +15307,14 @@ impl Editor {
                     && let Some((_, ancestor_range)) =
                         buffer.syntax_ancestor(selection.start..selection.end)
                 {
-                    match ancestor_range {
-                        MultiOrSingleBufferOffsetRange::Single(range) => range,
-                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
-                    }
+                    ancestor_range
                 } else {
                     selection.range()
                 };
 
                 let mut parent = child.clone();
                 while let Some((_, ancestor_range)) = buffer.syntax_ancestor(parent.clone()) {
-                    parent = match ancestor_range {
-                        MultiOrSingleBufferOffsetRange::Single(range) => range,
-                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
-                    };
+                    parent = ancestor_range;
                     if parent.start < child.start || parent.end > child.end {
                         break;
                     }
@@ -16919,7 +16909,8 @@ impl Editor {
         let item_id = item.item_id();
 
         if split {
-            workspace.split_item(SplitDirection::Right, item, window, cx);
+            let pane = workspace.adjacent_pane(window, cx);
+            workspace.add_item(pane, item, None, true, true, window, cx);
         } else if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
             let (preview_item_id, preview_item_idx) =
                 workspace.active_pane().read_with(cx, |pane, _| {
@@ -24458,8 +24449,8 @@ fn all_edits_insertions_or_deletions(
 struct MissingEditPredictionKeybindingTooltip;
 
 impl Render for MissingEditPredictionKeybindingTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::tooltip_container(cx, |container, cx| {
             container
                 .flex_shrink_0()
                 .max_w_80()

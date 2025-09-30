@@ -671,7 +671,7 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter = { version = "0.25.10", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -716,6 +716,7 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 windows-core = "0.61"
+windows-sys = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"

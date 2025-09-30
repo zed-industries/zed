@@ -1411,7 +1411,6 @@ dependencies = [
  "log",
  "parking_lot",
  "rodio",
- "rubato",
  "serde",
  "settings",
  "smol",
@@ -4112,9 +4111,9 @@ dependencies = [
 
 [[package]]
 name = "crc"
-version = "3.2.1"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69e6e4d7b33a94f0991c26729976b10ebde1d34c3ee82408fb536164fa10d636"
+checksum = "9710d3b3739c2e349eb44fe848ad0b7c8cb1e42bd87ee49371df2f7acaf3e675"
 dependencies = [
  "crc-catalog",
 ]
@@ -5185,6 +5184,7 @@ dependencies = [
  "language",
  "log",
  "ordered-float 2.10.1",
+ "postage",
  "pretty_assertions",
  "project",
  "regex",
@@ -13545,18 +13545,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 
 [[package]]
-name = "rubato"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5258099699851cfd0082aeb645feb9c084d9a5e1f1b8d5372086b989fc5e56a1"
-dependencies = [
- "num-complex",
- "num-integer",
- "num-traits",
- "realfft",
-]
-
-[[package]]
 name = "rules_library"
 version = "0.1.0"
 dependencies = [
@@ -14619,9 +14607,9 @@ checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
-version = "0.10.8"
+version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
+checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -16948,9 +16936,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.6"
+version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7cf18d43cbf0bfca51f657132cc616a5097edc4424d538bae6fa60142eaf9f0"
+checksum = "78f873475d258561b06f1c595d93308a7ed124d9977cb26b148c2084a4a3cc87"
 dependencies = [
  "cc",
  "regex",
@@ -17753,6 +17741,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "menu",
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
@@ -20386,7 +20375,6 @@ dependencies = [
  "url",
  "urlencoding",
  "util",
- "util_macros",
  "uuid",
  "vim",
  "vim_mode_setting",
@@ -20394,6 +20382,7 @@ dependencies = [
  "web_search",
  "web_search_providers",
  "windows 0.61.1",
+ "windows-sys 0.61.0",
  "winresource",
  "workspace",
  "workspace-hack",
@@ -20775,7 +20764,9 @@ dependencies = [
  "language_model",
  "language_models",
  "languages",
+ "log",
  "node_runtime",
+ "ordered-float 2.10.1",
  "paths",
  "project",
  "prompt_store",
@@ -20792,6 +20783,7 @@ dependencies = [
  "workspace-hack",
  "zeta",
  "zeta2",
+ "zlog",
 ]
 
 [[package]]

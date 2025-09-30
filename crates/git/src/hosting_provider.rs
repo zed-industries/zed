@@ -17,8 +17,8 @@ pub struct PullRequest {
 #[derive(Clone)]
 pub struct GitRemote {
     pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
-    pub owner: String,
-    pub repo: String,
+    pub owner: SharedString,
+    pub repo: SharedString,
 }
 
 impl std::fmt::Debug for GitRemote {

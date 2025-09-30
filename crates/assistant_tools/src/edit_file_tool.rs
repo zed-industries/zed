@@ -1161,7 +1161,7 @@ async fn build_buffer(
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
     let language = cx
-        .update(|_cx| language_registry.language_for_file_path(&path))?
+        .update(|_cx| language_registry.load_language_for_file_path(&path))?
         .await
         .ok();
     let buffer = cx.new(|cx| {

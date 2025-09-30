@@ -2618,7 +2618,7 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
         let start_x = em_width;
 
-        let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        let mut last_used_color: Option<(Hsla, Oid)> = None;
         let blame_renderer = cx.global::<GlobalBlameRenderer>().0.clone();
 
         let shaped_lines = blamed_rows
@@ -2635,7 +2635,8 @@ impl EditorElement {
                     self.editor.clone(),
                     workspace.clone(),
                     buffer_id,
-                    blame_renderer.clone(),
+                    &*blame_renderer,
+                    window,
                     cx,
                 )?;
 
@@ -7513,27 +7514,25 @@ fn render_blame_entry(
     blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    last_used_color: &mut Option<(PlayerColor, Oid)>,
+    last_used_color: &mut Option<(Hsla, Oid)>,
     editor: Entity<Editor>,
     workspace: Entity<Workspace>,
     buffer: BufferId,
-    renderer: Arc<dyn BlameRenderer>,
+    renderer: &dyn BlameRenderer,
+    window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
-    let mut sha_color = cx
-        .theme()
-        .players()
-        .color_for_participant(blame_entry.sha.into());
+    let index: u32 = blame_entry.sha.into();
+    let mut sha_color = cx.theme().players().color_for_participant(index).cursor;
 
     // If the last color we used is the same as the one we get for this line, but
     // the commit SHAs are different, then we try again to get a different color.
-    match *last_used_color {
-        Some((color, sha)) if sha != blame_entry.sha && color.cursor == sha_color.cursor => {
-            let index: u32 = blame_entry.sha.into();
-            sha_color = cx.theme().players().color_for_participant(index + 1);
-        }
-        _ => {}
-    };
+    if let Some((color, sha)) = *last_used_color
+        && sha != blame_entry.sha
+        && color == sha_color
+    {
+        sha_color = cx.theme().players().color_for_participant(index + 1).cursor;
+    }
     last_used_color.replace((sha_color, blame_entry.sha));
 
     let blame = blame.read(cx);
@@ -7547,7 +7546,8 @@ fn render_blame_entry(
         workspace.downgrade(),
         editor,
         ix,
-        sha_color.cursor,
+        sha_color,
+        window,
         cx,
     )
 }

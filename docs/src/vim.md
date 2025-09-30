@@ -352,6 +352,7 @@ These commands modify editor options locally for the current buffer.
 | `:se[t] [no]wrap`               | Lines longer than the width of the window will wrap and displaying continues on the next line |
 | `:se[t] [no]nu[mber]`           | Print the line number in front of each line                                                   |
 | `:se[t] [no]r[elative]nu[mber]` | Changes the displayed number to be relative to the cursor                                     |
+| `:se[t] [no]i[gnore]c[ase]`     | Controls whether the buffer and project search use case-sensitive matching                    |
 
 ### Command mnemonics
 
