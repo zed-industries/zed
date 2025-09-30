@@ -3059,7 +3059,9 @@ impl ScrollHandle {
     fn scroll_to_active_item(&self) {
         let mut state = self.0.borrow_mut();
 
-        let Some(active_item_index) = state.active_item else { return; }; 
+        let Some(active_item_index) = state.active_item else { 
+            return; 
+        }; 
         let active_item = match state.child_bounds.get(active_item_index) {
             Some(bounds) => {
                 let mut scroll_offset = state.offset.borrow_mut();
