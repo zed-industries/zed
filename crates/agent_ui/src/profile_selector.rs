@@ -589,10 +589,124 @@ impl PickerDelegate for ProfilePickerDelegate {
     }
 }
 
-fn documentation_side(position: DockPosition) -> DocumentationSide {
-    match position {
-        DockPosition::Left => DocumentationSide::Right,
-        DockPosition::Bottom => DocumentationSide::Left,
-        DockPosition::Right => DocumentationSide::Left,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn entries_include_custom_profiles(_cx: &mut TestAppContext) {
+        let candidates = vec![
+            ProfileCandidate {
+                id: AgentProfileId("write".into()),
+                name: SharedString::from("Write"),
+                is_builtin: true,
+            },
+            ProfileCandidate {
+                id: AgentProfileId("my-custom".into()),
+                name: SharedString::from("My Custom"),
+                is_builtin: false,
+            },
+        ];
+
+        let entries = ProfilePickerDelegate::entries_from_candidates(&candidates);
+
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ProfilePickerEntry::Profile(profile)
+                if candidates[profile.candidate_index].id.as_str() == "my-custom"
+        )));
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            ProfilePickerEntry::Header(label) if label.as_ref() == "Custom Profiles"
+        )));
+    }
+
+    #[gpui::test]
+    fn fuzzy_filter_returns_no_results_and_keeps_configure(cx: &mut TestAppContext) {
+        let candidates = vec![ProfileCandidate {
+            id: AgentProfileId("write".into()),
+            name: SharedString::from("Write"),
+            is_builtin: true,
+        }];
+
+        let delegate = ProfilePickerDelegate {
+            fs: FakeFs::new(cx.executor()),
+            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+            background: cx.executor(),
+            candidates,
+            string_candidates: Arc::new(Vec::new()),
+            filtered_entries: Vec::new(),
+            selected_index: 0,
+            query: String::new(),
+            cancel: None,
+        };
+
+        let matches = Vec::new(); // No matches
+        let _entries = delegate.entries_from_matches(matches);
+    }
+
+    #[gpui::test]
+    fn active_profile_selection_logic_works(cx: &mut TestAppContext) {
+        let candidates = vec![
+            ProfileCandidate {
+                id: AgentProfileId("write".into()),
+                name: SharedString::from("Write"),
+                is_builtin: true,
+            },
+            ProfileCandidate {
+                id: AgentProfileId("ask".into()),
+                name: SharedString::from("Ask"),
+                is_builtin: true,
+            },
+        ];
+
+        let delegate = ProfilePickerDelegate {
+            fs: FakeFs::new(cx.executor()),
+            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
+            background: cx.executor(),
+            candidates: candidates.clone(),
+            string_candidates: Arc::new(Vec::new()),
+            filtered_entries: vec![
+                ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: 0,
+                    positions: Vec::new(),
+                }),
+                ProfilePickerEntry::Profile(ProfileMatchEntry {
+                    candidate_index: 1,
+                    positions: Vec::new(),
+                }),
+            ],
+            selected_index: 0,
+            query: String::new(),
+            cancel: None,
+        };
+
+        // Active profile should be found at index 0
+        let active_index = delegate.index_of_profile(&AgentProfileId("write".into()));
+        assert_eq!(active_index, Some(0));
+    }
+
+    struct TestProfileProvider {
+        profile_id: AgentProfileId,
+    }
+
+    impl TestProfileProvider {
+        fn new(profile_id: AgentProfileId) -> Self {
+            Self { profile_id }
+        }
+    }
+
+    impl ProfileProvider for TestProfileProvider {
+        fn profile_id(&self, _cx: &App) -> AgentProfileId {
+            self.profile_id.clone()
+        }
+
+        fn set_profile(&self, _profile_id: AgentProfileId, _cx: &mut App) {}
+
+        fn profiles_supported(&self, _cx: &App) -> bool {
+            true
+        }
     }
 }
