@@ -333,6 +333,7 @@ pub struct SettingsWindow {
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
+    page_index: usize,
 }
 
 struct SettingsPage {
@@ -574,6 +575,7 @@ impl SettingsWindow {
             navbar_entries.push(NavBarEntry {
                 title: page.title,
                 is_root: true,
+                page_index,
             });
             if !page.expanded {
                 continue;
@@ -590,6 +592,7 @@ impl SettingsWindow {
                 navbar_entries.push(NavBarEntry {
                     title,
                     is_root: false,
+                    page_index,
                 });
             }
         }
@@ -668,7 +671,7 @@ impl SettingsWindow {
                 }
                 this.build_navbar();
                 this.navbar_entry = 0;
-                cx.notify()
+                cx.notify();
             })
             .ok();
         }));
@@ -850,12 +853,7 @@ impl SettingsWindow {
             return 0;
         }
 
-        self.navbar_entries
-            .iter()
-            .take(index + 1)
-            .map(|entry| entry.is_root as usize)
-            .sum::<usize>()
-            - 1
+        self.navbar_entries[index].page_index
     }
 
     fn page_for_navbar_index(&mut self, index: usize) -> &mut SettingsPage {
@@ -1051,7 +1049,15 @@ mod test {
         }
 
         fn assert_search_results(&self, other: &Self) {
-            assert_eq!(self.navbar_entries, other.navbar_entries);
+            // page index could be different because of filtered out pages
+            assert!(
+                self.navbar_entries
+                    .iter()
+                    .zip(other.navbar_entries.iter())
+                    .all(|(entry, other)| {
+                        entry.is_root == other.is_root && entry.title == other.title
+                    })
+            );
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
                 other.page_items().collect::<Vec<_>>()
@@ -1063,6 +1069,20 @@ mod test {
         fn item(mut self, item: SettingsPageItem) -> Self {
             self.items.push(item);
             self
+        }
+    }
+
+    impl SettingsPageItem {
+        fn basic_item(title: &'static str, description: &'static str) -> Self {
+            SettingsPageItem::SettingItem(SettingItem {
+                title,
+                description,
+                field: Box::new(SettingField {
+                    pick: |settings_content| &settings_content.auto_update,
+                    pick_mut: |settings_content| &mut settings_content.auto_update,
+                }),
+                metadata: None,
+            })
         }
     }
 
@@ -1352,19 +1372,7 @@ mod test {
                 SettingsWindow::new_builder(window, cx)
                     .add_page("General", |page| {
                         page.item(SettingsPageItem::SectionHeader("General settings"))
-                            .item(SettingsPageItem::SettingItem(SettingItem {
-                                title: "test title",
-                                description: "General test",
-                                field: Box::new(SettingField {
-                                    pick: |settings_content| {
-                                        &settings_content.workspace.confirm_quit
-                                    },
-                                    pick_mut: |settings_content| {
-                                        &mut settings_content.workspace.confirm_quit
-                                    },
-                                }),
-                                metadata: None,
-                            }))
+                            .item(SettingsPageItem::basic_item("test title", "General test"))
                     })
                     .build()
             });
@@ -1373,19 +1381,7 @@ mod test {
                 SettingsWindow::new_builder(window, cx)
                     .add_page("General", |page| {
                         page.item(SettingsPageItem::SectionHeader("General settings"))
-                            .item(SettingsPageItem::SettingItem(SettingItem {
-                                title: "test title",
-                                description: "General test",
-                                field: Box::new(SettingField {
-                                    pick: |settings_content| {
-                                        &settings_content.workspace.confirm_quit
-                                    },
-                                    pick_mut: |settings_content| {
-                                        &mut settings_content.workspace.confirm_quit
-                                    },
-                                }),
-                                metadata: None,
-                            }))
+                            .item(SettingsPageItem::basic_item("test title", "General test"))
                     })
                     .add_page("Theme", |page| {
                         page.item(SettingsPageItem::SectionHeader("Theme settings"))
@@ -1394,6 +1390,69 @@ mod test {
             });
 
             actual.update(cx, |settings, cx| settings.search("gen", window, cx));
+
+            (actual, expected)
+        });
+
+        cx.cx.run_until_parked();
+
+        cx.update(|_window, cx| {
+            let expected = expected.read(cx);
+            let actual = actual.read(cx);
+            expected.assert_search_results(&actual);
+        })
+    }
+
+    #[gpui::test]
+    fn test_search_render_page_with_filtered_out_navbar_entries(cx: &mut gpui::TestAppContext) {
+        let cx = cx.add_empty_window();
+        let (actual, expected) = cx.update(|window, cx| {
+            register_settings(cx);
+
+            let actual = cx.new(|cx| {
+                SettingsWindow::new_builder(window, cx)
+                    .add_page("General", |page| {
+                        page.item(SettingsPageItem::SectionHeader("General settings"))
+                            .item(SettingsPageItem::basic_item(
+                                "Confirm Quit",
+                                "Whether to confirm before quitting Zed",
+                            ))
+                            .item(SettingsPageItem::basic_item(
+                                "Auto Update",
+                                "Automatically update Zed",
+                            ))
+                    })
+                    .add_page("AI", |page| {
+                        page.item(SettingsPageItem::basic_item(
+                            "Disable AI",
+                            "Whether to disable all AI features in Zed",
+                        ))
+                    })
+                    .add_page("Appearance & Behavior", |page| {
+                        page.item(SettingsPageItem::SectionHeader("Cursor")).item(
+                            SettingsPageItem::basic_item(
+                                "Cursor Shape",
+                                "Cursor shape for the editor",
+                            ),
+                        )
+                    })
+                    .build()
+            });
+
+            let expected = cx.new(|cx| {
+                SettingsWindow::new_builder(window, cx)
+                    .add_page("Appearance & Behavior", |page| {
+                        page.item(SettingsPageItem::SectionHeader("Cursor")).item(
+                            SettingsPageItem::basic_item(
+                                "Cursor Shape",
+                                "Cursor shape for the editor",
+                            ),
+                        )
+                    })
+                    .build()
+            });
+
+            actual.update(cx, |settings, cx| settings.search("cursor", window, cx));
 
             (actual, expected)
         });
