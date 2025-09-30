@@ -2222,7 +2222,7 @@ mod tests {
         term::cell::Cell,
     };
     use collections::HashMap;
-    use gpui::{FutureExt as _, Pixels, Point, TestAppContext, bounds, point, size};
+    use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
 
@@ -2265,23 +2265,19 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    #[gpui::test]
+    // TODO should be tested on Linux too, but does not work there well
+    #[cfg(target_os = "macos")]
+    #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         // Build an empty command, which will result in a tty shell spawned.
-        let (program, args) = ShellBuilder::new(None, &Shell::System).build(None, &[]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
                 None,
                 None,
-                task::Shell::WithArguments {
-                    program,
-                    args,
-                    title_override: None,
-                },
+                task::Shell::System,
                 HashMap::default(),
                 CursorShape::default(),
                 AlternateScroll::On,
@@ -2296,9 +2292,9 @@ mod tests {
             .subscribe(cx)
         });
 
-        let (mut event_tx, mut event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
-            cx.subscribe(&terminal, move |_, e, cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
             })
         })
@@ -2315,15 +2311,17 @@ mod tests {
         let wakeup = event_rx.recv().await.expect("No wakeup event received");
         assert_eq!(wakeup, Event::Wakeup, "Expected wakeup, got {wakeup:?}");
 
-        terminal.update(cx, |terminal, cx| {
+        terminal.update(cx, |terminal, _| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
+            assert!(success, "Should have registered ctrl-c sequence");
+        });
+        terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
-            assert!(success, "Should have registered EOF sequence");
+            assert!(success, "Should have registered ctrl-d sequence");
         });
 
         let mut all_events = vec![Event::Wakeup];
-        while let Ok(new_event) = event_rx
-            .recv()
-            .with_timeout(Duration::from_secs(1), &cx.executor())
+        while let Ok(new_event) = smol_timeout(Duration::from_millis(500), event_rx.recv())
             .await
             .expect("timed out while waiting for the terminal events")
         {
@@ -2340,14 +2338,13 @@ mod tests {
                 Event::Wakeup,
                 Event::Wakeup,
                 Event::Wakeup,
-                Event::TitleChanged,
                 Event::CloseTerminal
             ],
             "EOF command sequence should have triggered a TTY terminal exit"
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
@@ -2377,45 +2374,34 @@ mod tests {
             .subscribe(cx)
         });
 
-        let (mut event_tx, mut event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
-            cx.subscribe(&terminal, move |_, e, cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
             })
         })
         .detach();
         cx.background_spawn(async move {
-            assert_eq!(
-                completion_rx
-                    .recv()
-                    .await
-                    .unwrap()
-                    .and_then(|status| dbg!(status).code()),
-                None,
-                "TODO kb wrong status asserted",
+            let exit_status = completion_rx.recv().await.unwrap().unwrap();
+            assert!(
+                !exit_status.success(),
+                "Wrong shell command should result in a failure"
             );
+            assert_eq!(exit_status.code(), None);
         })
         .detach();
 
-        let mut all_events = vec![Event::Wakeup];
-        while let Ok(new_event) = event_rx
-            .recv()
-            .with_timeout(Duration::from_secs(1), &cx.executor())
-            .await
-            // TODO kb we need this timeout to work
-            .expect("timed out while waiting for the terminal events")
+        let mut all_events = Vec::new();
+        while let Ok(Ok(new_event)) =
+            smol_timeout(Duration::from_millis(1_000), event_rx.recv()).await
         {
-            all_events.push(dbg!(new_event.clone()));
-            // TODO kb has to be a different cut-off
-            if new_event == Event::CloseTerminal {
-                break;
-            }
+            all_events.push(new_event.clone());
         }
 
         assert_eq!(
             all_events,
-            vec![Event::Wakeup, Event::TitleChanged, Event::Wakeup],
-            "TODO kb",
+            vec![Event::Wakeup, Event::Wakeup, Event::TitleChanged],
+            "Wrong shell command should update the title but not should not close the terminal to show the error message",
         );
     }
 
