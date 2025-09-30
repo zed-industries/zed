@@ -12089,6 +12089,8 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "askpass",
+ "async-compression",
+ "async-tar",
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",

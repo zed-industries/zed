@@ -483,6 +483,7 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                     default_mode: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
+                codex: None,
                 custom: collections::HashMap::default(),
             },
             cx,

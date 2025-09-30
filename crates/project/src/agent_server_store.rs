@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
+use client::Client;
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
@@ -194,6 +195,28 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
+        self.external_agents.insert(
+            CODEX_NAME.into(),
+            Box::new(LocalCodex {
+                fs: fs.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .codex
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+            }),
+        );
+        self.external_agents.insert(
+            CODEX_NAME.into(),
+            Box::new(LocalCodex {
+                fs: fs.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .codex
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+            }),
+        );
         self.external_agents
             .extend(new_settings.custom.iter().map(|(name, settings)| {
                 (
@@ -271,6 +294,16 @@ impl AgentServerStore {
                     project_id,
                     upstream_client: upstream_client.clone(),
                     name: CLAUDE_CODE_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
+            (
+                CODEX_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: CODEX_NAME.into(),
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
@@ -950,6 +983,129 @@ impl ExternalAgentServer for LocalClaudeCode {
     }
 }
 
+struct LocalCodex {
+    fs: Arc<dyn Fs>,
+    project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+}
+
+impl ExternalAgentServer for LocalCodex {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let fs = self.fs.clone();
+        let project_environment = self.project_environment.downgrade();
+        let custom_command = self.custom_command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                })?
+                .await
+                .unwrap_or_default();
+
+            let (mut command, login) = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                (custom_command, None)
+            } else {
+                let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
+                fs.create_dir(&dir).await?;
+
+                // Find or install the latest Codex release (no update checks for now).
+                let http = cx.update(|cx| Client::global(cx).http_client())?;
+                let release = ::http_client::github::latest_github_release(
+                    "zed-industries/codex-acp",
+                    true,
+                    false,
+                    http.clone(),
+                )
+                .await
+                .context("fetching Codex latest release")?;
+
+                let version_dir = dir.join(&release.tag_name);
+                if !fs.is_dir(&version_dir).await {
+                    // Determine the asset name based on CPU architecture.
+                    let arch = if cfg!(target_arch = "x86_64") {
+                        "x86_64"
+                    } else if cfg!(target_arch = "aarch64") {
+                        "aarch64"
+                    } else {
+                        std::env::consts::ARCH
+                    };
+                    let asset_name = format!("{arch}.tar.gz");
+                    let asset_url = release
+                        .assets
+                        .iter()
+                        .find(|a| a.name == asset_name)
+                        .map(|a| a.browser_download_url.clone())
+                        .context(format!(
+                            "no asset named {asset_name} in release {}",
+                            release.tag_name
+                        ))?;
+
+                    let http = http.clone();
+                    let mut response = http
+                        .get(&asset_url, Default::default(), true)
+                        .await
+                        .context("downloading Codex binary")?;
+                    anyhow::ensure!(
+                        response.status().is_success(),
+                        "failed to download Codex release: {}",
+                        response.status()
+                    );
+
+                    // Decompress and extract the tar.gz into the version directory.
+                    let reader = futures::io::BufReader::new(response.body_mut());
+                    let decoder = async_compression::futures::bufread::GzipDecoder::new(reader);
+                    let mut archive = async_tar::Archive::new(decoder);
+                    archive
+                        .unpack(&version_dir)
+                        .await
+                        .context("extracting Codex binary")?;
+                }
+
+                let bin_name = if cfg!(windows) {
+                    "codex-acp.exe"
+                } else {
+                    "codex-acp"
+                };
+                let bin_path = version_dir.join(bin_name);
+                anyhow::ensure!(
+                    fs.is_file(&bin_path).await,
+                    "Missing Codex binary at {} after installation",
+                    bin_path.to_string_lossy()
+                );
+
+                let mut cmd = AgentServerCommand {
+                    path: bin_path,
+                    args: Vec::new(),
+                    env: None,
+                };
+                cmd.env = Some(env);
+                (cmd, None)
+            };
+
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
@@ -991,11 +1147,13 @@ impl ExternalAgentServer for LocalCustomAgent {
 
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
+pub const CODEX_NAME: &'static str = "codex";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
+    pub codex: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
@@ -1070,6 +1228,7 @@ impl settings::Settings for AllAgentServersSettings {
         Self {
             gemini: agent_settings.gemini.map(Into::into),
             claude: agent_settings.claude.map(Into::into),
+            codex: agent_settings.codex.map(Into::into),
             custom: agent_settings
                 .custom
                 .into_iter()

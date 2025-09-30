@@ -26,7 +26,7 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, GEMINI_NAME},
+    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -1014,7 +1014,9 @@ impl AgentConfiguration {
             .agent_server_store
             .read(cx)
             .external_agents()
-            .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
+            .filter(|name| {
+                name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1085,6 +1087,11 @@ impl AgentConfiguration {
                     .child(self.render_agent_server(
                         IconName::AiClaude,
                         "Claude Code",
+                    ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    .child(self.render_agent_server(
+                        IconName::Ai,
+                        "Codex",
                     ))
                     .map(|mut parent| {
                         for agent in user_defined_agents {
