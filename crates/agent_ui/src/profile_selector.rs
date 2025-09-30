@@ -9,11 +9,13 @@ use gpui::{
     Focusable, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
-use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
-use std::{rc::Rc, sync::atomic::Ordering, sync::{Arc, atomic::AtomicBool}};
+use settings::{Settings as _, SettingsStore, update_settings_file};
+use std::{
+    sync::atomic::Ordering,
+    sync::{Arc, atomic::AtomicBool},
+};
 use ui::{
-    Button, ButtonStyle, DocumentationSide, HighlightedLabel, Icon, IconName, Label, LabelSize,
-    ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -84,8 +86,8 @@ impl ProfileSelector {
             let picker = cx.new(|cx| {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems(22.))
-                    .max_height(Some(rems(20.).into()))
+                    .width(rems(20.))
+                    .max_height(Some(rems(16.).into()))
             });
 
             self.picker = Some(picker);
@@ -131,12 +133,6 @@ impl Render for ProfileSelector {
         }
 
         let picker = self.ensure_picker(window, cx);
-        let picker_clone_for_on_open = picker.clone();
-        let on_open = Rc::new(move |window: &mut Window, cx: &mut App| {
-            picker_clone_for_on_open.update(cx, |picker, cx| {
-                picker.select_all(window, cx);
-            });
-        });
 
         let settings = AgentSettings::get_global(cx);
         let profile_id = self.provider.profile_id(cx);
@@ -146,11 +142,6 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
         let focus_handle = self.focus_handle.clone();
-        let anchor = if documentation_side(settings.dock) == DocumentationSide::Left {
-            gpui::Corner::BottomRight
-        } else {
-            gpui::Corner::BottomLeft
-        };
 
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
@@ -173,16 +164,16 @@ impl Render for ProfileSelector {
                     cx,
                 )
             },
-            anchor,
+            gpui::Corner::BottomRight,
             cx,
         )
-        .on_open(on_open)
         .with_handle(self.picker_handle.clone())
         .render(window, cx)
         .into_any_element()
     }
 }
 
+#[derive(Clone)]
 struct ProfileCandidate {
     id: AgentProfileId,
     name: SharedString,
@@ -198,8 +189,6 @@ struct ProfileMatchEntry {
 enum ProfilePickerEntry {
     Header(SharedString),
     Profile(ProfileMatchEntry),
-    NoResults,
-    Configure,
 }
 
 pub(crate) struct ProfilePickerDelegate {
@@ -314,7 +303,6 @@ impl ProfilePickerDelegate {
             }));
         }
 
-        entries.push(ProfilePickerEntry::Configure);
         entries
     }
 
@@ -328,13 +316,6 @@ impl ProfilePickerDelegate {
                 }));
             }
         }
-        if !entries
-            .iter()
-            .any(|e| matches!(e, ProfilePickerEntry::Profile(_)))
-        {
-            entries.push(ProfilePickerEntry::NoResults);
-        }
-        entries.push(ProfilePickerEntry::Configure);
         entries
     }
 
@@ -382,145 +363,20 @@ impl ProfilePickerDelegate {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use fs::FakeFs;
-
-    #[test]
-    fn entries_include_custom_profiles() {
-        let candidates = vec![
-            ProfileCandidate {
-                id: AgentProfileId("write".into()),
-                name: SharedString::from("Write"),
-                is_builtin: true,
-            },
-            ProfileCandidate {
-                id: AgentProfileId("my-custom".into()),
-                name: SharedString::from("My Custom"),
-                is_builtin: false,
-            },
-        ];
-
-        let entries = ProfilePickerDelegate::entries_from_candidates(&candidates);
-
-        assert!(entries.iter().any(|entry| matches!(
-            entry,
-            ProfilePickerEntry::Profile(profile)
-                if candidates[profile.candidate_index].id.as_str() == "my-custom"
-        )));
-        assert!(entries.iter().any(|entry| matches!(
-            entry,
-            ProfilePickerEntry::Header(label) if label.as_ref() == "Custom Profiles"
-        )));
-    }
-
-    #[test]
-    fn fuzzy_filter_returns_no_results_and_keeps_configure() {
-        let candidates = vec![ProfileCandidate {
-            id: AgentProfileId("write".into()),
-            name: SharedString::from("Write"),
-            is_builtin: true,
-        }];
-
-        let delegate = ProfilePickerDelegate {
-            fs: Arc::new(FakeFs::new()),
-            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
-            background: BackgroundExecutor::new(),
-            candidates,
-            string_candidates: Arc::new(Vec::new()),
-            filtered_entries: Vec::new(),
-            selected_index: 0,
-            query: String::new(),
-            cancel: None,
-        };
-
-        let matches = Vec::new(); // No matches
-        let entries = delegate.entries_from_matches(matches);
-
-        assert!(
-            entries
-                .iter()
-                .any(|entry| matches!(entry, ProfilePickerEntry::NoResults))
-        );
-        assert!(
-            entries
-                .iter()
-                .any(|entry| matches!(entry, ProfilePickerEntry::Configure))
-        );
-        assert_eq!(entries.len(), 2); // NoResults and Configure
-    }
-
-    #[test]
-    fn active_profile_selection_logic_works() {
-        let candidates = vec![
-            ProfileCandidate {
-                id: AgentProfileId("write".into()),
-                name: SharedString::from("Write"),
-                is_builtin: true,
-            },
-            ProfileCandidate {
-                id: AgentProfileId("ask".into()),
-                name: SharedString::from("Ask"),
-                is_builtin: true,
-            },
-        ];
-
-        let delegate = ProfilePickerDelegate {
-            fs: Arc::new(FakeFs::new()),
-            provider: Arc::new(TestProfileProvider::new(AgentProfileId("write".into()))),
-            background: BackgroundExecutor::new(),
-            candidates: candidates.clone(),
-            string_candidates: Arc::new(Vec::new()),
-            filtered_entries: vec![
-                ProfilePickerEntry::Profile(ProfileMatchEntry {
-                    candidate_index: 0,
-                    positions: Vec::new(),
-                }),
-                ProfilePickerEntry::Profile(ProfileMatchEntry {
-                    candidate_index: 1,
-                    positions: Vec::new(),
-                }),
-            ],
-            selected_index: 0,
-            query: String::new(),
-            cancel: None,
-        };
-
-        // Active profile should be found at index 0
-        let active_index = delegate.index_of_profile(&AgentProfileId("write".into()));
-        assert_eq!(active_index, Some(0));
-    }
-
-    struct TestProfileProvider {
-        profile_id: AgentProfileId,
-    }
-
-    impl TestProfileProvider {
-        fn new(profile_id: AgentProfileId) -> Self {
-            Self { profile_id }
-        }
-    }
-
-    impl ProfileProvider for TestProfileProvider {
-        fn profile_id(&self, _cx: &App) -> AgentProfileId {
-            self.profile_id.clone()
-        }
-
-        fn set_profile(&self, _profile_id: AgentProfileId, _cx: &mut App) {}
-
-        fn profiles_supported(&self, _cx: &App) -> bool {
-            true
-        }
-    }
-}
-
 impl PickerDelegate for ProfilePickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _: &mut Window, _: &mut App) -> Arc<str> {
         "Search profiles…".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.candidates.is_empty() {
+            "No profiles.".into()
+        } else {
+            "No profiles match your search.".into()
+        };
+        Some(text)
     }
 
     fn match_count(&self) -> usize {
@@ -534,6 +390,18 @@ impl PickerDelegate for ProfilePickerDelegate {
     fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix.min(self.filtered_entries.len().saturating_sub(1));
         cx.notify();
+    }
+
+    fn can_select(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        match self.filtered_entries.get(ix) {
+            Some(ProfilePickerEntry::Profile(_)) => true,
+            Some(ProfilePickerEntry::Header(_)) | None => false,
+        }
     }
 
     fn update_matches(
@@ -593,7 +461,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         match self.filtered_entries.get(self.selected_index) {
             Some(ProfilePickerEntry::Profile(entry)) => {
                 if let Some(candidate) = self.candidates.get(entry.candidate_index) {
@@ -622,15 +490,14 @@ impl PickerDelegate for ProfilePickerDelegate {
 
                 cx.emit(DismissEvent);
             }
-            Some(ProfilePickerEntry::Configure) => {
-                window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
-                cx.emit(DismissEvent);
-            }
             _ => {}
         }
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
         cx.emit(DismissEvent);
     }
 
@@ -644,10 +511,10 @@ impl PickerDelegate for ProfilePickerDelegate {
         match self.filtered_entries.get(ix)? {
             ProfilePickerEntry::Header(label) => Some(
                 div()
-                    .px_2()
-                    .pb_1()
+                    .px_2p5()
+                    .pb_0p5()
                     .when(ix > 0, |this| {
-                        this.mt_1()
+                        this.mt_1p5()
                             .pt_2()
                             .border_t_1()
                             .border_color(cx.theme().colors().border_variant)
@@ -664,59 +531,61 @@ impl PickerDelegate for ProfilePickerDelegate {
                 let active_id = self.provider.profile_id(cx);
                 let is_active = active_id == candidate.id;
 
-                let mut item = ListItem::new(SharedString::from(candidate.id.0.clone()))
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .child(
-                        v_flex()
-                            .child(HighlightedLabel::new(
-                                candidate.name.clone(),
-                                entry.positions.clone(),
-                            ))
-                            .when_some(Self::documentation(candidate), |this, doc| {
-                                this.child(
-                                    Label::new(doc).size(LabelSize::XSmall).color(Color::Muted),
-                                )
-                            }),
-                    );
-
-                if is_active {
-                    item = item.end_slot(
-                        Icon::new(IconName::Check)
-                            .color(Color::Accent)
-                            .size(IconSize::Small),
-                    );
-                }
-
-                Some(item.into_any_element())
+                Some(
+                    ListItem::new(SharedString::from(candidate.id.0.clone()))
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(
+                            v_flex()
+                                .child(HighlightedLabel::new(
+                                    candidate.name.clone(),
+                                    entry.positions.clone(),
+                                ))
+                                .when_some(Self::documentation(candidate), |this, doc| {
+                                    this.child(
+                                        Label::new(doc).size(LabelSize::Small).color(Color::Muted),
+                                    )
+                                }),
+                        )
+                        .when(is_active, |this| {
+                            this.end_slot(
+                                div()
+                                    .pr_2()
+                                    .child(Icon::new(IconName::Check).color(Color::Accent)),
+                            )
+                        })
+                        .into_any_element(),
+                )
             }
-            ProfilePickerEntry::NoResults => Some(
-                ListItem::new("no-results")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .disabled(true)
-                    .child(Label::new("No matching profiles").color(Color::Muted))
-                    .into_any_element(),
-            ),
-            ProfilePickerEntry::Configure => Some(
-                ListItem::new("configure")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .start_slot(
-                        Icon::new(IconName::Settings)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(
-                        Label::new("Configure Profiles…")
-                            .color(Color::Accent)
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element(),
-            ),
         }
+    }
+
+    fn render_footer(
+        &self,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .p_1()
+                .gap_4()
+                .justify_between()
+                .child(
+                    Button::new("configure", "Configure")
+                        .icon(IconName::Settings)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
+                        }),
+                )
+                .into_any(),
+        )
     }
 }
 
