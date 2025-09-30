@@ -135,26 +135,16 @@ impl MetalRenderer {
         // Enumerate devices first and prefer low-power, non-removable GPUs when multiple exist.
         // If enumeration yields no devices (seen on some environments), log and fall back to system_default().
         // Exit only if both enumeration and system_default() fail.
-        let device = {
-            let mut devices = metal::Device::all();
-            if devices.is_empty() {
-                log::error!(
-                    "unable to enumerate Metal devices; attempting to use system default device"
-                );
-                if let Some(default_device) = metal::Device::system_default() {
-                    default_device
-                } else {
-                    log::error!(
-                        "unable to access a compatible graphics device (no Metal devices found)"
-                    );
-                    std::process::exit(1);
-                }
-            } else if devices.len() == 1 {
-                devices.remove(0)
-            } else {
-                devices.sort_by_key(|d| (d.is_removable(), !d.is_low_power()));
-                devices.remove(0)
-            }
+        let mut devices = metal::Device::all();
+        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
+        let Some(device) = devices.pop().or_else(|| {
+            log::error!(
+                "unable to enumerate Metal devices; attempting to use system default device"
+            );
+            metal::Device::system_default()
+        }) else {
+            log::error!("unable to access a compatible graphics device");
+            std::process::exit(1);
         };
 
         let layer = metal::MetalLayer::new();
