@@ -566,10 +566,8 @@ impl Pane {
         if !self.was_focused {
             self.was_focused = true;
             self.update_history(self.active_item_index);
-            if self.active_item().is_some() {
-                if self.active_item_index() == self.active_item_index && !self.suppress_scroll {
-                    self.update_active_tab(self.active_item_index);
-                }
+            if !self.suppress_scroll && self.items.get(self.active_item_index).is_some() {
+                self.update_active_tab(self.active_item_index);
             }
             cx.emit(Event::Focus);
             cx.notify();

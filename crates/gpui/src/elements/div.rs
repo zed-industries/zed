@@ -3059,31 +3059,29 @@ impl ScrollHandle {
     fn scroll_to_active_item(&self) {
         let mut state = self.0.borrow_mut();
 
-        let active_item = match state.active_item {
-            Some(ix) => match state.child_bounds.get(ix) {
-                Some(bounds) => {
-                    let mut scroll_offset = state.offset.borrow_mut();
+        let Some(active_item_index) = state.active_item else { return; }; 
+        let active_item = match state.child_bounds.get(active_item_index) {
+            Some(bounds) => {
+                let mut scroll_offset = state.offset.borrow_mut();
 
-                    if state.overflow.y == Overflow::Scroll {
-                        if bounds.top() + scroll_offset.y < state.bounds.top() {
-                            scroll_offset.y = state.bounds.top() - bounds.top();
-                        } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                            scroll_offset.y = state.bounds.bottom() - bounds.bottom();
-                        }
+                if state.overflow.y == Overflow::Scroll {
+                    if bounds.top() + scroll_offset.y < state.bounds.top() {
+                        scroll_offset.y = state.bounds.top() - bounds.top();
+                    } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                        scroll_offset.y = state.bounds.bottom() - bounds.bottom();
                     }
-
-                    if state.overflow.x == Overflow::Scroll {
-                        if bounds.left() + scroll_offset.x < state.bounds.left() {
-                            scroll_offset.x = state.bounds.left() - bounds.left();
-                        } else if bounds.right() + scroll_offset.x > state.bounds.right() {
-                            scroll_offset.x = state.bounds.right() - bounds.right();
-                        }
-                    }
-                    None
                 }
-                None => Some(ix),
-            },
-            None => None,
+
+                if state.overflow.x == Overflow::Scroll {
+                    if bounds.left() + scroll_offset.x < state.bounds.left() {
+                        scroll_offset.x = state.bounds.left() - bounds.left();
+                    } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+                        scroll_offset.x = state.bounds.right() - bounds.right();
+                    }
+                }
+                None
+            }
+            None => Some(active_item_index),
         };
         state.active_item = active_item;
     }
