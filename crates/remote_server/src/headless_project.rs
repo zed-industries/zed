@@ -1,4 +1,5 @@
 use anyhow::{Context as _, Result, anyhow};
+use language::File;
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -15,6 +16,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
+    image_store::{ImageId, ImageStore},
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -41,6 +43,7 @@ pub struct HeadlessProject {
     pub session: AnyProtoClient,
     pub worktree_store: Entity<WorktreeStore>,
     pub buffer_store: Entity<BufferStore>,
+    pub image_store: Entity<ImageStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
     pub dap_store: Entity<DapStore>,
@@ -112,6 +115,15 @@ impl HeadlessProject {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             buffer_store
+        });
+
+        let image_store = cx.new(|cx| {
+            ImageStore::remote(
+                worktree_store.clone(),
+                session.clone(),
+                REMOTE_SERVER_PROJECT_ID,
+                cx,
+            )
         });
 
         let breakpoint_store =
@@ -260,6 +272,7 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_server_settings);
         session.add_entity_request_handler(Self::handle_get_directory_environment);
         session.add_entity_message_handler(Self::handle_toggle_lsp_logs);
+        session.add_entity_request_handler(Self::handle_open_image_by_path);
 
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
         session.add_entity_message_handler(BufferStore::handle_close_buffer);
@@ -292,6 +305,7 @@ impl HeadlessProject {
             fs,
             worktree_store,
             buffer_store,
+            image_store,
             lsp_store,
             task_store,
             dap_store,
@@ -522,6 +536,89 @@ impl HeadlessProject {
 
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_open_image_by_path(
+        this: Entity<Self>,
+        message: TypedEnvelope<proto::OpenImageByPath>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenImageResponse> {
+        let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
+        let project_id = message.payload.project_id;
+
+        // Load the raw file bytes from the worktree (no ImageItem creation on server)
+        let (worktree_store, session) = this.read_with(&cx, |this, _| {
+            (this.worktree_store.clone(), this.session.clone())
+        })?;
+
+        let worktree = worktree_store
+            .read_with(&cx, |store, cx| store.worktree_for_id(worktree_id, cx))?
+            .context("worktree not found")?;
+
+        let load_task = worktree.update(&mut cx, |worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        })?;
+
+        let loaded_file = load_task.await?;
+        let content = loaded_file.content;
+        let file = loaded_file.file;
+
+        // Convert file to proto while we still have sync access
+        let proto_file = worktree.read_with(&cx, |_worktree, cx| file.to_proto(cx))?;
+        // Generate a unique image ID using timestamp and random data
+        let image_id = ImageId::from(
+            std::num::NonZeroU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos() as u64,
+            )
+            .unwrap(),
+        );
+
+        // Guess the image format
+        let format = ::image::guess_format(&content)
+            .map(|f| format!("{:?}", f).to_lowercase())
+            .unwrap_or_else(|_| "unknown".to_string());
+
+        // Send the image state first
+        let state = proto::ImageState {
+            id: image_id.to_proto(),
+            file: Some(proto_file),
+            content_size: content.len() as u64,
+            format,
+        };
+
+        session.send(proto::CreateImageForPeer {
+            project_id,
+            peer_id: Some(REMOTE_SERVER_PEER_ID),
+            variant: Some(proto::create_image_for_peer::Variant::State(state)),
+        })?;
+
+        // Send the image data in chunks
+        const CHUNK_SIZE: usize = 256 * 1024; // 256KB chunks
+        let chunks: Vec<_> = content.chunks(CHUNK_SIZE).collect();
+        let total_chunks = chunks.len();
+
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            let is_last = i == total_chunks - 1;
+            session.send(proto::CreateImageForPeer {
+                project_id,
+                peer_id: Some(REMOTE_SERVER_PEER_ID),
+                variant: Some(proto::create_image_for_peer::Variant::Chunk(
+                    proto::ImageChunk {
+                        image_id: image_id.to_proto(),
+                        data: chunk.to_vec(),
+                        is_last,
+                    },
+                )),
+            })?;
+        }
+
+        Ok(proto::OpenImageResponse {
+            image_id: image_id.to_proto(),
         })
     }
 
