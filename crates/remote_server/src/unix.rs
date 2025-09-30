@@ -815,7 +815,7 @@ pub(crate) fn execute_p2p() -> Result<()> {
             log::info!("ADDR: home relay: {}", home_relay);
 
             let ticket = iroh.ticket().await;
-            log::info!("TICKET: {}", ticket);
+            println!("TICKET: {}", ticket);
 
             // TODO: better shutdown
             loop {}
