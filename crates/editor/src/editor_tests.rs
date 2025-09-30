@@ -11943,7 +11943,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                     kind: Some("code-action-1".into()),
                     edit: Some(lsp::WorkspaceEdit::new(
                         [(
-                            uri.clone(),
+                            uri,
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
                                 "applied-code-action-1-edit\n".to_string(),
