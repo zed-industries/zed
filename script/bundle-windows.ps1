@@ -147,7 +147,6 @@ function DownloadAMDGpuServices {
 }
 
 function DownloadConpty {
-    # If you update the Conpty version, please also update the version in `crates/zed/build.rs`.
     $url = "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001"
     $zipPath = ".\conpty.zip"
     Invoke-WebRequest -Uri $url -OutFile $zipPath
@@ -161,7 +160,7 @@ function CollectFiles {
     Move-Item -Path "$innoDir\zed.sh" -Destination "$innoDir\bin\zed" -Force
     Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
     Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
-    Move-Item -Path ".\conpty\build\native\runtimes\OpenConsole.exe" -Destination "$innoDir\OpenConsole.exe" -Force
+    Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\OpenConsole.exe" -Force
     Move-Item -Path ".\conpty\runtimes\win10-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
 }
 
