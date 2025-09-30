@@ -1991,8 +1991,7 @@ mod tests {
             )
             .unwrap();
 
-        let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child), get);
         assert_eq!(overrides, vec![]);
 
         let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1), get);
