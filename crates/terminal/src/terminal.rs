@@ -1929,16 +1929,13 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
-        // if let Some(e) = e {
-        //     self.child_exited = Some(e);
-        // }
+        if let Some(e) = e {
+            self.child_exited = Some(e);
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                // if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
-                //     cx.emit(Event::CloseTerminal);
-                // }
-                if error_code.is_none() {
+                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2213,6 +2210,8 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::{
         IndexedCell, TerminalBounds, TerminalBuilder, TerminalContent, content_index_for_mouse,
@@ -2223,7 +2222,7 @@ mod tests {
         term::cell::Cell,
     };
     use collections::HashMap;
-    use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
+    use gpui::{FutureExt as _, Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
 
@@ -2269,10 +2268,6 @@ mod tests {
     #[cfg(unix)]
     #[gpui::test]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
-        use std::time::Duration;
-
-        use gpui::FutureExt;
-
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
@@ -2352,7 +2347,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[gpui::test]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2377,24 +2371,51 @@ mod tests {
                 0,
                 Some(completion_tx),
                 cx,
-                vec![],
+                Vec::new(),
             )
             .unwrap()
             .subscribe(cx)
         });
+
+        let (mut event_tx, mut event_rx) = smol::channel::unbounded::<Event>();
         cx.update(|cx| {
-            cx.subscribe(&terminal, |_, e, _| {
-                dbg!(e);
+            cx.subscribe(&terminal, move |_, e, cx| {
+                event_tx.send_blocking(e.clone()).unwrap();
             })
         })
         .detach();
+        cx.background_spawn(async move {
+            assert_eq!(
+                completion_rx
+                    .recv()
+                    .await
+                    .unwrap()
+                    .and_then(|status| dbg!(status).code()),
+                None,
+                "TODO kb wrong status asserted",
+            );
+        })
+        .detach();
+
+        let mut all_events = vec![Event::Wakeup];
+        while let Ok(new_event) = event_rx
+            .recv()
+            .with_timeout(Duration::from_secs(1), &cx.executor())
+            .await
+            // TODO kb we need this timeout to work
+            .expect("timed out while waiting for the terminal events")
+        {
+            all_events.push(dbg!(new_event.clone()));
+            // TODO kb has to be a different cut-off
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+
         assert_eq!(
-            completion_rx.recv().await.unwrap(),
-            Some(ExitStatus::default())
-        );
-        assert_eq!(
-            terminal.update(cx, |term, _| term.get_content()).trim(),
-            "hello"
+            all_events,
+            vec![Event::Wakeup, Event::TitleChanged, Event::Wakeup],
+            "TODO kb",
         );
     }
 
