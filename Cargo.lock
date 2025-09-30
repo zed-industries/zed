@@ -3080,6 +3080,7 @@ name = "cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "clap",
  "collections",
  "core-foundation 0.10.0",
@@ -20215,7 +20216,6 @@ dependencies = [
  "agent_ui",
  "anyhow",
  "ashpd 0.11.0",
- "askpass",
  "assets",
  "assistant_tools",
  "audio",
