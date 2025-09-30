@@ -2216,6 +2216,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_rayon_stack_overflow() {
+        let sz = 2usize.pow(30);
+        let layout = std::alloc::Layout::from_size_align(sz, 16).unwrap();
+        // SAFETY: Size is nonzero.
+        let massive_alloc = unsafe { std::alloc::alloc(layout) };
+        // SAFETY: `sz` is the same as used for the allocation and the pointer is unaliased.
+        unsafe { massive_alloc.write_bytes(b'A', sz) };
+        // SAFETY: `massive_alloc` is initialised by the write above for `sz * sizeof(u8)`.
+        let text =
+            unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(massive_alloc, sz)) };
+        let pool: rayon::ThreadPool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let mut rope = Rope::new();
+            rope.push_large(text);
+        });
+    }
+
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {
         while !text.is_char_boundary(offset) {
             match bias {
