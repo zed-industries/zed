@@ -284,16 +284,16 @@ fn init_renderers(cx: &mut App) {
     // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
         .add_renderer::<bool>(|settings_field, file, _, _, cx| {
-            render_toggle_button(settings_field.clone(), file, cx).into_any_element()
+            render_toggle_button(*settings_field, file, cx).into_any_element()
         })
         .add_renderer::<String>(|settings_field, file, metadata, _, cx| {
             render_text_field(settings_field.clone(), file, metadata, cx)
         })
         .add_renderer::<SaturatingBool>(|settings_field, file, _, _, cx| {
-            render_toggle_button(settings_field.clone(), file, cx)
+            render_toggle_button(*settings_field, file, cx)
         })
         .add_renderer::<CursorShape>(|settings_field, file, _, window, cx| {
-            render_dropdown(settings_field.clone(), file, window, cx)
+            render_dropdown(*settings_field, file, window, cx)
         });
 }
 
@@ -405,7 +405,7 @@ impl SettingsPageItem {
                     )
                     .child(renderer.render(
                         setting_item.field.as_ref(),
-                        file.clone(),
+                        file,
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
@@ -775,7 +775,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                let field = field.clone();
+                let field = field;
                 cx.update_global(move |store: &mut SettingsStore, cx| {
                     store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
                         *(field.pick_mut)(settings) = Some(state.into());

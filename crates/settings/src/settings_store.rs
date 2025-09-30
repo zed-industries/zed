@@ -1737,7 +1737,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::Local(local.clone()), &80)
+            (SettingsFile::Local(local), &80)
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::User, get),
@@ -1817,8 +1817,8 @@ mod tests {
 
         // each local child should only inherit from it's parent
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_2_child.clone()), get),
-            (SettingsFile::Local(local_2.clone()), &2)
+            store.get_value_from_file(SettingsFile::Local(local_2_child), get),
+            (SettingsFile::Local(local_2), &2)
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
@@ -1853,7 +1853,7 @@ mod tests {
         store
             .set_local_settings(
                 local_1_adjacent_child.0,
-                local_1_adjacent_child.1.clone(),
+                local_1_adjacent_child.1,
                 LocalSettingsKind::Settings,
                 Some(r#"{"preferred_line_length": 3}"#),
                 cx,
@@ -1869,8 +1869,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
-            (SettingsFile::Local(local_1.clone()), &1)
+            store.get_value_from_file(SettingsFile::Local(local_1_child), get),
+            (SettingsFile::Local(local_1), &1)
         );
     }
 
@@ -1962,19 +1962,19 @@ mod tests {
             ]
         );
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_root.clone()), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_root), get);
         assert_eq!(overrides, vec![]);
 
         let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child2.clone()), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child2), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_root.clone()), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_root), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_subdir.clone()), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_subdir), get);
         assert_eq!(overrides, vec![]);
 
         let wt0_deep_child = (
@@ -1992,10 +1992,10 @@ mod tests {
             .unwrap();
 
         let overrides =
-            store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child.clone()), get);
+            store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1), get);
         assert_eq!(overrides, vec![]);
     }
 }
