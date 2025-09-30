@@ -7,7 +7,9 @@ use editor::{
     display_map::ToDisplayPoint,
 };
 use futures::AsyncWriteExt as _;
-use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions};
+use gpui::{
+    Action, App, AppContext as _, Context, Global, Keystroke, Task, WeakEntity, Window, actions,
+};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -2352,7 +2354,8 @@ mod test {
 
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        cx.simulate_keystrokes(": w ! enter");
+        cx.simulate_keystrokes(": w !");
+        cx.simulate_keystrokes("enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
@@ -2510,7 +2513,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_w_command(cx: &mut TestAppContext) {
+    async fn test_command_write_filename(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.workspace(|workspace, _, cx| {
@@ -2518,18 +2521,14 @@ mod test {
         });
 
         cx.simulate_keystrokes(": w space other.rs");
-        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
 
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/other.rs"), "", cx);
         });
 
         cx.simulate_keystrokes(": w space dir/file.rs");
-        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
 
         cx.simulate_prompt_answer("Replace");
         cx.run_until_parked();
@@ -2539,9 +2538,7 @@ mod test {
         });
 
         cx.simulate_keystrokes(": w ! space other.rs");
-        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
 
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/other.rs"), "", cx);
