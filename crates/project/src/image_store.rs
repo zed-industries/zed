@@ -997,7 +997,7 @@ mod tests {
             .await
             .unwrap();
 
-        let image_id = cx.read_entity(&image, |item, _| item.id).unwrap();
+        let image_id = cx.update(|cx| image.read(cx).id);
 
         // Verify the image is stored in opened_images with a strong reference
         let is_in_store = project.update(cx, |project, cx| {
