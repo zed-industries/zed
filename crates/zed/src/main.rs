@@ -1518,11 +1518,20 @@ fn dump_all_gpui_actions() {
     .unwrap();
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn check_for_conpty_dll() {
-    use windows_sys::{Win32::System::LibraryLoader::LoadLibraryW, w};
-    let hmodule = unsafe { LoadLibraryW(w!("conpty.dll")) };
-    if hmodule.is_null() {
+    use windows::{
+        Win32::{Foundation::FreeLibrary, System::LibraryLoader::LoadLibraryW},
+        core::w,
+    };
+
+    if let Ok(hmodule) = unsafe { LoadLibraryW(w!("conpty.dll")) } {
+        unsafe {
+            FreeLibrary(hmodule)
+                .context("Failed to free conpty.dll")
+                .log_err();
+        }
+    } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
     }
 }
