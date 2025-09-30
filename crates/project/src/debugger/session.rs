@@ -1577,7 +1577,6 @@ impl Session {
             Events::ProgressUpdate(_) => {}
             Events::Invalidated(_) => {}
             Events::Other(event) => {
-                // FIXME handle killRemoteBrowser too
                 if event.event == "launchBrowserInCompanion" {
                     let Some(request) = serde_json::from_value(event.body).ok() else {
                         log::error!("failed to deserialize launchBrowserInCompanion event");
@@ -2867,15 +2866,14 @@ impl Session {
             request
                 .other
                 .insert("proxyUri".into(), format!("127.0.0.1:{dap_port}").into());
-            // FIXME wslInfo?
+            // TODO pass wslInfo as needed
 
             let response = http_client
-                .get(
+                .post_json(
                     &format!("http://127.0.0.1:{companion_port}/launch-and-attach"),
                     serde_json::to_string(&request)
                         .context("serializing request")?
                         .into(),
-                    false,
                 )
                 .await;
             match response {
@@ -2915,12 +2913,11 @@ impl Session {
 
         cx.spawn(async move |_| {
             http_client
-                .get(
-                    &format!("http://127.0.0.1:{companion_port}/launch-and-attach"),
+                .post_json(
+                    &format!("http://127.0.0.1:{companion_port}/kill"),
                     serde_json::to_string(&request)
                         .context("serializing request")?
                         .into(),
-                    false,
                 )
                 .await?;
             anyhow::Ok(())
@@ -2929,36 +2926,10 @@ impl Session {
     }
 }
 
-// export interface ILaunchParams {
-//   type: 'chrome' | 'edge';
-//   path: string;
-//   proxyUri: string;
-//   launchId: number;
-//   browserArgs: string[];
-//   wslInfo?: IWslInfo;
-//   attach?: {
-//     host: string;
-//     port: number;
-//   };
-//   // See IChromiumLaunchConfiguration in js-debug for the full type, a subset of props are here:
-//   params: {
-//     env: Readonly<{ [key: string]: string | null }>;
-//     runtimeExecutable: string;
-//     userDataDir: boolean | string;
-//     cwd: string | null;
-//     webRoot: string | null;
-//   };
-// }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LaunchBrowserInCompanionParams {
-    // FIXME move some of these into other
-    r#type: String,
-    path: String,
-    browser_args: Vec<String>,
     server_port: u16,
-    launch_id: u64,
-    params: serde_json::Value,
     #[serde(flatten)]
     other: HashMap<String, serde_json::Value>,
 }
@@ -2989,7 +2960,6 @@ async fn spawn_companion(
         listener.local_addr()?.port()
     };
 
-    // FIXME is this right?
     let dir = paths::data_dir()
         .join("js_debug_companion_state")
         .to_string_lossy()
@@ -3012,7 +2982,7 @@ async fn spawn_companion(
 
 async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
     // FIXME publish
-    const PACKAGE_NAME: &str = "C:\\Users\\Cole\\vscode-js-debug-companion";
+    const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
