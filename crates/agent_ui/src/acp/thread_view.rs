@@ -3712,13 +3712,10 @@ impl AcpThreadView {
                         None
                     } else {
                         Some(
-                            Label::new(format!(
-                                "{separator}{}{separator}",
-                                parent.display(path_style)
-                            ))
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
+                            Label::new(format!("{}{separator}", parent.display(path_style)))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
                         )
                     }
                 });
