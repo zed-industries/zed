@@ -27,6 +27,33 @@
     "interface" @context
     name: (_) @name) @item
 
+; Object destructuring patterns
+(program
+    (export_statement
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (object_pattern
+                    (shorthand_property_identifier_pattern) @name @item)))))
+
+(program
+    (export_statement
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (object_pattern
+                    (pair_pattern
+                        key: (_) @name) @item)))))
+
+; Array destructuring patterns
+(program
+    (export_statement
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
+
 (program
     (export_statement
         (lexical_declaration
@@ -34,7 +61,31 @@
             ; Multiple names may be exported - @item is on the declarator to keep
             ; ranges distinct.
             (variable_declarator
-                name: (_) @name) @item)))
+                name: (identifier) @name) @item)))
+
+; Object destructuring patterns
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
+
+; Array destructuring patterns
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
 
 (program
     (lexical_declaration
@@ -42,7 +93,38 @@
         ; Multiple names may be defined - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (_) @name) @item))
+            name: (identifier) @name) @item))
+
+; Object destructuring patterns
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
+
+; Array destructuring patterns
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: (arrow_function)) @item))
 
 (class_declaration
     "class" @context
@@ -73,6 +155,10 @@
         (accessibility_modifier)
     ]* @context
     name: (_) @name) @item
+
+(pair
+    key: (_) @name
+    value: (arrow_function)) @item
 
 ; Add support for (node:test, bun:test and Jest) runnable
 (
