@@ -599,7 +599,6 @@ impl TestServer {
                 prediction_api_key: None,
                 prediction_model: None,
                 zed_client_checksum_seed: None,
-                slack_panics_webhook: None,
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
