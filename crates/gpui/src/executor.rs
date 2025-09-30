@@ -391,7 +391,7 @@ impl BackgroundExecutor {
     }
 
     /// in tests, run all tasks that are ready to run. If after doing so
-    /// the test still has outstanding tasks, this will panic. (See also `allow_parking`)
+    /// the test still has outstanding tasks, this will panic. (See also [`Self::allow_parking`])
     #[cfg(any(test, feature = "test-support"))]
     pub fn run_until_parked(&self) {
         self.dispatcher.as_test().unwrap().run_until_parked()
@@ -405,7 +405,7 @@ impl BackgroundExecutor {
         self.dispatcher.as_test().unwrap().allow_parking();
     }
 
-    /// undoes the effect of [`allow_parking`].
+    /// undoes the effect of [`Self::allow_parking`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn forbid_parking(&self) {
         self.dispatcher.as_test().unwrap().forbid_parking();
@@ -480,7 +480,7 @@ impl ForegroundExecutor {
 /// Variant of `async_task::spawn_local` that includes the source location of the spawn in panics.
 ///
 /// Copy-modified from:
-/// https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405
+/// <https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405>
 #[track_caller]
 fn spawn_local_with_source_location<Fut, S>(
     future: Fut,

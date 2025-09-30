@@ -4,6 +4,7 @@ path_suffixes = ["tsx"]
 line_comments = ["// "]
 block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
 documentation_comment = { start = "/**", prefix = "* ", end = "*/", tab_size = 1 }
+wrap_characters = { start_prefix = "<", start_suffix = ">", end_prefix = "</", end_suffix = ">" }
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
@@ -27,6 +28,9 @@ close_tag_node_name = "jsx_closing_element"
 jsx_element_node_name = "jsx_element"
 tag_name_node_name = "identifier"
 tag_name_node_name_alternates = ["member_expression"]
+
+[overrides.default]
+linked_edit_characters = ["."]
 
 [overrides.element]
 line_comments = { remove = true }

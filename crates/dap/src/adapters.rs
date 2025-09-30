@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
-use util::archive::extract_zip;
+use util::{archive::extract_zip, rel_path::RelPath};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -44,7 +44,7 @@ pub trait DapDelegate: Send + Sync + 'static {
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
@@ -70,6 +70,12 @@ impl AsRef<str> for DebugAdapterName {
 
 impl Borrow<str> for DebugAdapterName {
     fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<SharedString> for DebugAdapterName {
+    fn borrow(&self) -> &SharedString {
         &self.0
     }
 }
@@ -232,7 +238,7 @@ impl DebugAdapterBinary {
             cwd: self
                 .cwd
                 .as_ref()
-                .map(|cwd| cwd.to_string_lossy().to_string()),
+                .map(|cwd| cwd.to_string_lossy().into_owned()),
             connection: self.connection.as_ref().map(|c| c.to_proto()),
             launch_type: match self.request_args.request {
                 StartDebuggingRequestArgumentsRequest::Launch => {
@@ -279,7 +285,7 @@ pub async fn download_adapter_from_github(
     }
 
     if !adapter_path.exists() {
-        fs.create_dir(&adapter_path.as_path())
+        fs.create_dir(adapter_path.as_path())
             .await
             .context("Failed creating adapter path")?;
     }

@@ -10,7 +10,7 @@ Java language support in Zed is provided by:
 
 You will need to install a Java runtime (OpenJDK).
 
-- MacOS: `brew install openjdk`
+- macOS: `brew install openjdk`
 - Ubuntu: `sudo add-apt-repository ppa:openjdk-23 && sudo apt-get install openjdk-23`
 - Windows: `choco install openjdk`
 - Arch Linux: `sudo pacman -S jre-openjdk-headless`
@@ -154,7 +154,7 @@ There are also many more options you can pass directly to the language server, f
 
 If you prefer, you can install JDTLS yourself and the extension can be configured to use that instead.
 
-- MacOS: `brew install jdtls`
+- macOS: `brew install jdtls`
 - Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
 
 Or manually download install:

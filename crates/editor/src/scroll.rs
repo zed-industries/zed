@@ -12,7 +12,7 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{Along, App, Axis, Context, Global, Pixels, Task, Window, point, px};
+use gpui::{Along, App, Axis, Context, Pixels, Task, Window, point, px};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -21,6 +21,7 @@ use std::{
     cmp::Ordering,
     time::{Duration, Instant},
 };
+use ui::scrollbars::ScrollbarAutoHide;
 use util::ResultExt;
 use workspace::{ItemId, WorkspaceId};
 
@@ -28,11 +29,6 @@ pub const SCROLL_EVENT_SEPARATION: Duration = Duration::from_millis(28);
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct WasScrolled(pub(crate) bool);
-
-#[derive(Default)]
-pub struct ScrollbarAutoHide(pub bool);
-
-impl Global for ScrollbarAutoHide {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
@@ -327,7 +323,7 @@ impl ScrollManager {
             cx.notify();
         }
 
-        if cx.default_global::<ScrollbarAutoHide>().0 {
+        if cx.default_global::<ScrollbarAutoHide>().should_hide() {
             self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
@@ -348,8 +344,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
-        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
+    pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
+        self.autoscroll_request.take()
     }
 
     pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {
@@ -675,7 +671,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+        if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
         }
@@ -703,20 +699,20 @@ impl Editor {
         if matches!(
             settings.defaults.soft_wrap,
             SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) {
-            if (settings.defaults.preferred_line_length as f32) < visible_column_count {
-                visible_column_count = settings.defaults.preferred_line_length as f32;
-            }
+        ) && (settings.defaults.preferred_line_length as f32) < visible_column_count
+        {
+            visible_column_count = settings.defaults.preferred_line_length as f32;
         }
 
         // If the scroll position is currently at the left edge of the document
         // (x == 0.0) and the intent is to scroll right, the gutter's margin
         // should first be added to the current position, otherwise the cursor
         // will end at the column position minus the margin, which looks off.
-        if current_position.x == 0.0 && amount.columns(visible_column_count) > 0. {
-            if let Some(last_position_map) = &self.last_position_map {
-                current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
-            }
+        if current_position.x == 0.0
+            && amount.columns(visible_column_count) > 0.
+            && let Some(last_position_map) = &self.last_position_map
+        {
+            current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
         }
         let new_position = current_position
             + point(
@@ -749,12 +745,10 @@ impl Editor {
 
         if let (Some(visible_lines), Some(visible_columns)) =
             (self.visible_line_count(), self.visible_column_count())
+            && newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
+            && newest_head.column() <= screen_top.column() + visible_columns as u32
         {
-            if newest_head.row() <= DisplayRow(screen_top.row().0 + visible_lines as u32)
-                && newest_head.column() <= screen_top.column() + visible_columns as u32
-            {
-                return Ordering::Equal;
-            }
+            return Ordering::Equal;
         }
 
         Ordering::Greater

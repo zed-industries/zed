@@ -227,6 +227,8 @@ pub trait Component {
     /// Example:
     ///
     /// ```
+    /// use documented::Documented;
+    ///
     /// /// This is a doc comment.
     /// #[derive(Documented)]
     /// struct MyComponent;

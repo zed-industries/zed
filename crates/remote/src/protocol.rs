@@ -31,8 +31,8 @@ pub async fn read_message<S: AsyncRead + Unpin>(
     stream.read_exact(buffer).await?;
 
     let len = message_len_from_buffer(buffer);
-    let result = read_message_with_len(stream, buffer, len).await;
-    result
+
+    read_message_with_len(stream, buffer, len).await
 }
 
 pub async fn write_message<S: AsyncWrite + Unpin>(
@@ -47,6 +47,16 @@ pub async fn write_message<S: AsyncWrite + Unpin>(
     buffer.clear();
     buffer.reserve(message_len as usize);
     message.encode(buffer)?;
+    stream.write_all(buffer).await?;
+    Ok(())
+}
+
+pub async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+) -> Result<()> {
+    let len = buffer.len() as u32;
+    stream.write_all(len.to_le_bytes().as_slice()).await?;
     stream.write_all(buffer).await?;
     Ok(())
 }

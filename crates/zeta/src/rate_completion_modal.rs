@@ -267,13 +267,13 @@ impl RateCompletionModal {
                 .unwrap_or(self.selected_index);
             cx.notify();
 
-            if let Some(prev_completion) = self.active_completion.as_ref() {
-                if completion.id == prev_completion.completion.id {
-                    if focus {
-                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
-                    }
-                    return;
+            if let Some(prev_completion) = self.active_completion.as_ref()
+                && completion.id == prev_completion.completion.id
+            {
+                if focus {
+                    window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                 }
+                return;
             }
         }
 
@@ -291,7 +291,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
-                editor.set_placeholder_text("Add your feedback…", cx);
+                editor.set_placeholder_text("Add your feedback…", window, cx);
                 if focus {
                     cx.focus_self(window);
                 }
@@ -607,7 +607,7 @@ impl Render for RateCompletionModal {
                                     .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
-                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                self.active_completion.as_ref().is_some_and(|selected| {
                                                     selected.completion.id == completion.id
                                                 });
                                             let rated =
@@ -619,8 +619,8 @@ impl Render for RateCompletionModal {
                                                 (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                                             };
 
-                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("untitled".to_string());
-                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().to_string());
+                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or("untitled".to_string());
+                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().into_owned());
 
                                             ListItem::new(completion.id)
                                                 .inset(true)

@@ -1,5 +1,5 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
+    HeadingLevel, Image, Link, MarkdownParagraph, MarkdownParagraphChunk, ParsedMarkdown,
     ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock, ParsedMarkdownElement,
     ParsedMarkdownHeading, ParsedMarkdownListItem, ParsedMarkdownListItemType, ParsedMarkdownTable,
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
@@ -51,6 +51,7 @@ pub struct RenderContext {
     buffer_text_style: TextStyle,
     text_style: TextStyle,
     border_color: Hsla,
+    element_background_color: Hsla,
     text_color: Hsla,
     window_rem_size: Pixels,
     text_muted_color: Hsla,
@@ -84,6 +85,7 @@ impl RenderContext {
             text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
+            element_background_color: theme.colors().element_background,
             text_color: theme.colors().text,
             window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
@@ -111,11 +113,10 @@ impl RenderContext {
     /// buffer font size changes. The callees of this function should be reimplemented to use real
     /// relative sizing once that is implemented in GPUI
     pub fn scaled_rems(&self, rems: f32) -> Rems {
-        return self
-            .buffer_text_style
+        self.buffer_text_style
             .font_size
             .to_rems(self.window_rem_size)
-            .mul(rems);
+            .mul(rems)
     }
 
     /// This ensures that children inside of block quotes
@@ -165,6 +166,7 @@ pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderConte
         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
         HorizontalRule(_) => render_markdown_rule(cx),
+        Image(image) => render_markdown_image(image, cx),
     }
 }
 
@@ -277,7 +279,11 @@ fn render_markdown_list_item(
         .items_start()
         .children(vec![
             bullet,
-            div().children(contents).pr(cx.scaled_rems(1.0)).w_full(),
+            v_flex()
+                .children(contents)
+                .gap(cx.scaled_rems(1.0))
+                .pr(cx.scaled_rems(1.0))
+                .w_full(),
         ]);
 
     cx.with_common_p(item).into_any()
@@ -459,13 +465,13 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = paragraph_len(&cell);
+        let length = paragraph_len(cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = paragraph_len(&cell);
+            let length = paragraph_len(cell);
 
             if length > max_lengths[index] {
                 max_lengths[index] = length;
@@ -516,6 +522,7 @@ fn render_markdown_table_row(
     cx: &mut RenderContext,
 ) -> AnyElement {
     let mut items = vec![];
+    let count = parsed.children.len();
 
     for (index, cell) in parsed.children.iter().enumerate() {
         let alignment = alignments
@@ -538,18 +545,29 @@ fn render_markdown_table_row(
             .children(contents)
             .px_2()
             .py_1()
-            .border_color(cx.border_color);
+            .border_color(cx.border_color)
+            .border_l_1();
+
+        if count == index + 1 {
+            cell = cell.border_r_1();
+        }
 
         if is_header {
-            cell = cell.border_2()
-        } else {
-            cell = cell.border_1()
+            cell = cell.bg(cx.element_background_color)
         }
 
         items.push(cell);
     }
 
-    h_flex().children(items).into_any_element()
+    let mut row = h_flex().border_color(cx.border_color);
+
+    if is_header {
+        row = row.border_y_1();
+    } else {
+        row = row.border_b_1();
+    }
+
+    row.children(items).into_any_element()
 }
 
 fn render_markdown_block_quote(
@@ -723,65 +741,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
             }
 
             MarkdownParagraphChunk::Image(image) => {
-                let image_resource = match image.link.clone() {
-                    Link::Web { url } => Resource::Uri(url.into()),
-                    Link::Path { path, .. } => Resource::Path(Arc::from(path)),
-                };
-
-                let element_id = cx.next_id(&image.source_range);
-
-                let image_element = div()
-                    .id(element_id)
-                    .cursor_pointer()
-                    .child(
-                        img(ImageSource::Resource(image_resource))
-                            .max_w_full()
-                            .with_fallback({
-                                let alt_text = image.alt_text.clone();
-                                move || div().children(alt_text.clone()).into_any_element()
-                            }),
-                    )
-                    .tooltip({
-                        let link = image.link.clone();
-                        move |_, cx| {
-                            InteractiveMarkdownElementTooltip::new(
-                                Some(link.to_string()),
-                                "open image",
-                                cx,
-                            )
-                            .into()
-                        }
-                    })
-                    .on_click({
-                        let workspace = workspace_clone.clone();
-                        let link = image.link.clone();
-                        move |_, window, cx| {
-                            if window.modifiers().secondary() {
-                                match &link {
-                                    Link::Web { url } => cx.open_url(url),
-                                    Link::Path { path, .. } => {
-                                        if let Some(workspace) = &workspace {
-                                            _ = workspace.update(cx, |workspace, cx| {
-                                                workspace
-                                                    .open_abs_path(
-                                                        path.clone(),
-                                                        OpenOptions {
-                                                            visible: Some(OpenVisible::None),
-                                                            ..Default::default()
-                                                        },
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .detach();
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .into_any();
-                any_element.push(image_element);
+                any_element.push(render_markdown_image(image, cx));
             }
         }
     }
@@ -794,25 +754,93 @@ fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
     div().py(cx.scaled_rems(0.5)).child(rule).into_any()
 }
 
+fn render_markdown_image(image: &Image, cx: &mut RenderContext) -> AnyElement {
+    let image_resource = match image.link.clone() {
+        Link::Web { url } => Resource::Uri(url.into()),
+        Link::Path { path, .. } => Resource::Path(Arc::from(path)),
+    };
+
+    let element_id = cx.next_id(&image.source_range);
+    let workspace = cx.workspace.clone();
+
+    div()
+        .id(element_id)
+        .cursor_pointer()
+        .child(
+            img(ImageSource::Resource(image_resource))
+                .max_w_full()
+                .with_fallback({
+                    let alt_text = image.alt_text.clone();
+                    move || div().children(alt_text.clone()).into_any_element()
+                })
+                .when_some(image.height, |this, height| this.h(height))
+                .when_some(image.width, |this, width| this.w(width)),
+        )
+        .tooltip({
+            let link = image.link.clone();
+            let alt_text = image.alt_text.clone();
+            move |_, cx| {
+                InteractiveMarkdownElementTooltip::new(
+                    Some(alt_text.clone().unwrap_or(link.to_string().into())),
+                    "open image",
+                    cx,
+                )
+                .into()
+            }
+        })
+        .on_click({
+            let link = image.link.clone();
+            move |_, window, cx| {
+                if window.modifiers().secondary() {
+                    match &link {
+                        Link::Web { url } => cx.open_url(url),
+                        Link::Path { path, .. } => {
+                            if let Some(workspace) = &workspace {
+                                _ = workspace.update(cx, |workspace, cx| {
+                                    workspace
+                                        .open_abs_path(
+                                            path.clone(),
+                                            OpenOptions {
+                                                visible: Some(OpenVisible::None),
+                                                ..Default::default()
+                                            },
+                                            window,
+                                            cx,
+                                        )
+                                        .detach();
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .into_any()
+}
+
 struct InteractiveMarkdownElementTooltip {
     tooltip_text: Option<SharedString>,
-    action_text: String,
+    action_text: SharedString,
 }
 
 impl InteractiveMarkdownElementTooltip {
-    pub fn new(tooltip_text: Option<String>, action_text: &str, cx: &mut App) -> Entity<Self> {
+    pub fn new(
+        tooltip_text: Option<SharedString>,
+        action_text: impl Into<SharedString>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
         cx.new(|_cx| Self {
             tooltip_text,
-            action_text: action_text.to_string(),
+            action_text: action_text.into(),
         })
     }
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |el, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |el, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),
                 ..Default::default()

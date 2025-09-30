@@ -33,13 +33,12 @@ impl SharedScreen {
         cx: &mut Context<Self>,
     ) -> Self {
         let my_sid = track.sid();
-        cx.subscribe(&room, move |_, _, ev, cx| match ev {
-            call::room::Event::RemoteVideoTrackUnsubscribed { sid } => {
-                if sid == &my_sid {
-                    cx.emit(Event::Close)
-                }
+        cx.subscribe(&room, move |_, _, ev, cx| {
+            if let call::room::Event::RemoteVideoTrackUnsubscribed { sid } = ev
+                && sid == &my_sid
+            {
+                cx.emit(Event::Close)
             }
-            _ => {}
         })
         .detach();
 

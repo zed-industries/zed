@@ -221,14 +221,14 @@ impl Vim {
             if actions.is_empty() {
                 return None;
             }
-            if globals.replayer.is_none() {
-                if let Some(recording_register) = globals.recording_register {
-                    globals
-                        .recordings
-                        .entry(recording_register)
-                        .or_default()
-                        .push(ReplayableAction::Action(Repeat.boxed_clone()));
-                }
+            if globals.replayer.is_none()
+                && let Some(recording_register) = globals.recording_register
+            {
+                globals
+                    .recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(Repeat.boxed_clone()));
             }
 
             let mut mode = None;
@@ -320,10 +320,10 @@ impl Vim {
         // vim doesn't treat 3a1 as though you literally repeated a1
         // 3 times, instead it inserts the content thrice at the insert position.
         if let Some(to_repeat) = repeatable_insert(&actions[0]) {
-            if let Some(ReplayableAction::Action(action)) = actions.last() {
-                if NormalBefore.partial_eq(&**action) {
-                    actions.pop();
-                }
+            if let Some(ReplayableAction::Action(action)) = actions.last()
+                && NormalBefore.partial_eq(&**action)
+            {
+                actions.pop();
             }
 
             let mut new_actions = actions.clone();

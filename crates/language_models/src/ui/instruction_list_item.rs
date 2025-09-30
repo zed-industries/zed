@@ -37,7 +37,7 @@ impl IntoElement for InstructionListItem {
         let item_content = if let (Some(button_label), Some(button_link)) =
             (self.button_label, self.button_link)
         {
-            let link = button_link.clone();
+            let link = button_link;
             let unique_id = SharedString::from(format!("{}-button", self.label));
 
             h_flex()
@@ -47,7 +47,7 @@ impl IntoElement for InstructionListItem {
                     Button::new(unique_id, button_label)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(&link)),
                 )

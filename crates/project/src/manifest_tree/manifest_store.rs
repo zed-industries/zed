@@ -1,4 +1,4 @@
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{App, Global, SharedString};
 use parking_lot::RwLock;
 use std::{ops::Deref, sync::Arc};
@@ -11,13 +11,13 @@ struct ManifestProvidersState {
 }
 
 #[derive(Clone, Default)]
-pub struct ManifestProviders(Arc<RwLock<ManifestProvidersState>>);
+pub struct ManifestProvidersStore(Arc<RwLock<ManifestProvidersState>>);
 
 #[derive(Default)]
-struct GlobalManifestProvider(ManifestProviders);
+struct GlobalManifestProvider(ManifestProvidersStore);
 
 impl Deref for GlobalManifestProvider {
-    type Target = ManifestProviders;
+    type Target = ManifestProvidersStore;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -26,7 +26,7 @@ impl Deref for GlobalManifestProvider {
 
 impl Global for GlobalManifestProvider {}
 
-impl ManifestProviders {
+impl ManifestProvidersStore {
     /// Returns the global [`ManifestStore`].
     ///
     /// Inserts a default [`ManifestStore`] if one does not yet exist.
@@ -44,5 +44,8 @@ impl ManifestProviders {
 
     pub(super) fn get(&self, name: &SharedString) -> Option<Arc<dyn ManifestProvider>> {
         self.0.read().providers.get(name).cloned()
+    }
+    pub(crate) fn manifest_file_names(&self) -> HashSet<ManifestName> {
+        self.0.read().providers.keys().cloned().collect()
     }
 }

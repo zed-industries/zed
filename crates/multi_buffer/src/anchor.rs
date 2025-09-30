@@ -76,27 +76,26 @@ impl Anchor {
             if text_cmp.is_ne() {
                 return text_cmp;
             }
-            if self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some() {
-                if let Some(base_text) = snapshot
+            if (self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some())
+                && let Some(base_text) = snapshot
                     .diffs
                     .get(&excerpt.buffer_id)
                     .map(|diff| diff.base_text())
-                {
-                    let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
-                    let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
-                    return match (self_anchor, other_anchor) {
-                        (Some(a), Some(b)) => a.cmp(&b, base_text),
-                        (Some(_), None) => match other.text_anchor.bias {
-                            Bias::Left => Ordering::Greater,
-                            Bias::Right => Ordering::Less,
-                        },
-                        (None, Some(_)) => match self.text_anchor.bias {
-                            Bias::Left => Ordering::Less,
-                            Bias::Right => Ordering::Greater,
-                        },
-                        (None, None) => Ordering::Equal,
-                    };
-                }
+            {
+                let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
+                let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
+                return match (self_anchor, other_anchor) {
+                    (Some(a), Some(b)) => a.cmp(&b, base_text),
+                    (Some(_), None) => match other.text_anchor.bias {
+                        Bias::Left => Ordering::Greater,
+                        Bias::Right => Ordering::Less,
+                    },
+                    (None, Some(_)) => match self.text_anchor.bias {
+                        Bias::Left => Ordering::Less,
+                        Bias::Right => Ordering::Greater,
+                    },
+                    (None, None) => Ordering::Equal,
+                };
             }
         }
         Ordering::Equal
@@ -107,51 +106,49 @@ impl Anchor {
     }
 
     pub fn bias_left(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Left {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
-                    diff_base_anchor: self.diff_base_anchor.map(|a| {
-                        if let Some(base_text) = snapshot
-                            .diffs
-                            .get(&excerpt.buffer_id)
-                            .map(|diff| diff.base_text())
-                        {
-                            if a.buffer_id == Some(base_text.remote_id()) {
-                                return a.bias_left(base_text);
-                            }
-                        }
-                        a
-                    }),
-                };
-            }
+        if self.text_anchor.bias != Bias::Left
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
+        {
+            return Self {
+                buffer_id: self.buffer_id,
+                excerpt_id: self.excerpt_id,
+                text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
+                diff_base_anchor: self.diff_base_anchor.map(|a| {
+                    if let Some(base_text) = snapshot
+                        .diffs
+                        .get(&excerpt.buffer_id)
+                        .map(|diff| diff.base_text())
+                        && a.buffer_id == Some(base_text.remote_id())
+                    {
+                        return a.bias_left(base_text);
+                    }
+                    a
+                }),
+            };
         }
         *self
     }
 
     pub fn bias_right(&self, snapshot: &MultiBufferSnapshot) -> Anchor {
-        if self.text_anchor.bias != Bias::Right {
-            if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                return Self {
-                    buffer_id: self.buffer_id,
-                    excerpt_id: self.excerpt_id,
-                    text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
-                    diff_base_anchor: self.diff_base_anchor.map(|a| {
-                        if let Some(base_text) = snapshot
-                            .diffs
-                            .get(&excerpt.buffer_id)
-                            .map(|diff| diff.base_text())
-                        {
-                            if a.buffer_id == Some(base_text.remote_id()) {
-                                return a.bias_right(&base_text);
-                            }
-                        }
-                        a
-                    }),
-                };
-            }
+        if self.text_anchor.bias != Bias::Right
+            && let Some(excerpt) = snapshot.excerpt(self.excerpt_id)
+        {
+            return Self {
+                buffer_id: self.buffer_id,
+                excerpt_id: self.excerpt_id,
+                text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
+                diff_base_anchor: self.diff_base_anchor.map(|a| {
+                    if let Some(base_text) = snapshot
+                        .diffs
+                        .get(&excerpt.buffer_id)
+                        .map(|diff| diff.base_text())
+                        && a.buffer_id == Some(base_text.remote_id())
+                    {
+                        return a.bias_right(base_text);
+                    }
+                    a
+                }),
+            };
         }
         *self
     }
@@ -212,7 +209,7 @@ impl AnchorRangeExt for Range<Anchor> {
     }
 
     fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
-        self.start.cmp(&other.start, &buffer).is_le() && other.end.cmp(&self.end, &buffer).is_le()
+        self.start.cmp(&other.start, buffer).is_le() && other.end.cmp(&self.end, buffer).is_le()
     }
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {

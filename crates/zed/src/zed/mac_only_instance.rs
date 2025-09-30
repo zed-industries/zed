@@ -37,20 +37,19 @@ fn address() -> SocketAddr {
     let mut user_port = port;
     let mut sys = System::new_all();
     sys.refresh_all();
-    if let Ok(current_pid) = sysinfo::get_current_pid() {
-        if let Some(uid) = sys
+    if let Ok(current_pid) = sysinfo::get_current_pid()
+        && let Some(uid) = sys
             .process(current_pid)
             .and_then(|process| process.user_id())
-        {
-            let uid_u32 = get_uid_as_u32(uid);
-            // Ensure that the user ID is not too large to avoid overflow when
-            // calculating the port number. This seems unlikely but it doesn't
-            // hurt to be safe.
-            let max_port = 65535;
-            let max_uid: u32 = max_port - port as u32;
-            let wrapped_uid: u16 = (uid_u32 % max_uid) as u16;
-            user_port += wrapped_uid;
-        }
+    {
+        let uid_u32 = get_uid_as_u32(uid);
+        // Ensure that the user ID is not too large to avoid overflow when
+        // calculating the port number. This seems unlikely but it doesn't
+        // hurt to be safe.
+        let max_port = 65535;
+        let max_uid: u32 = max_port - port as u32;
+        let wrapped_uid: u16 = (uid_u32 % max_uid) as u16;
+        user_port += wrapped_uid;
     }
 
     SocketAddr::V4(SocketAddrV4::new(LOCALHOST, user_port))
@@ -108,18 +107,21 @@ pub fn ensure_only_instance() -> IsOnlyInstance {
         }
     };
 
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let mut stream = match stream {
-                Ok(stream) => stream,
-                Err(_) => return,
-            };
+    thread::Builder::new()
+        .name("EnsureSingleton".to_string())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(stream) => stream,
+                    Err(_) => return,
+                };
 
-            _ = stream.set_nodelay(true);
-            _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
-            _ = stream.write_all(instance_handshake().as_bytes());
-        }
-    });
+                _ = stream.set_nodelay(true);
+                _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
+                _ = stream.write_all(instance_handshake().as_bytes());
+            }
+        })
+        .unwrap();
 
     IsOnlyInstance::Yes
 }

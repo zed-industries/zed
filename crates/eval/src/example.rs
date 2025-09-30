@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     fmt::{self, Debug},
-    path::Path,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -20,6 +19,7 @@ use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
+use util::rel_path::RelPath;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -64,7 +64,7 @@ impl ExampleMetadata {
         self.url
             .split('/')
             .next_back()
-            .unwrap_or(&"")
+            .unwrap_or("")
             .trim_end_matches(".git")
             .into()
     }
@@ -255,7 +255,7 @@ impl ExampleContext {
                     thread.update(cx, |thread, _cx| {
                         if let Some(tool_use) = pending_tool_use {
                             let mut tool_metrics = tool_metrics.lock().unwrap();
-                            if let Some(tool_result) = thread.tool_result(&tool_use_id) {
+                            if let Some(tool_result) = thread.tool_result(tool_use_id) {
                                 let message = if tool_result.is_error {
                                     format!("✖︎ {}", tool_use.name)
                                 } else {
@@ -335,7 +335,7 @@ impl ExampleContext {
             for message in thread.messages().skip(message_count_before) {
                 messages.push(Message {
                     _role: message.role,
-                    text: message.to_string(),
+                    text: message.to_message_content(),
                     tool_use: thread
                         .tool_uses_for_message(message.id, cx)
                         .into_iter()
@@ -354,7 +354,7 @@ impl ExampleContext {
         Ok(response)
     }
 
-    pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
+    pub fn edits(&self) -> HashMap<Arc<RelPath>, FileEdits> {
         self.agent_thread
             .read_with(&self.app, |thread, cx| {
                 let action_log = thread.action_log().read(cx);

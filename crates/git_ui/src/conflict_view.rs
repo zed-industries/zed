@@ -55,7 +55,7 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
         buffers: Default::default(),
     });
 
-    let buffers = buffer.read(cx).all_buffers().clone();
+    let buffers = buffer.read(cx).all_buffers();
     for buffer in buffers {
         buffer_added(editor, buffer, cx);
     }
@@ -112,7 +112,7 @@ fn excerpt_for_buffer_updated(
 }
 
 fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
-    let Some(project) = &editor.project else {
+    let Some(project) = editor.project() else {
         return;
     };
     let git_store = project.read(cx).git_store().clone();
@@ -129,7 +129,7 @@ fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Ed
             let subscription = cx.subscribe(&conflict_set, conflicts_updated);
             BufferConflicts {
                 block_ids: Vec::new(),
-                conflict_set: conflict_set.clone(),
+                conflict_set,
                 _subscription: subscription,
             }
         });
@@ -156,7 +156,7 @@ fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mu
         .unwrap()
         .buffers
         .retain(|buffer_id, buffer| {
-            if removed_buffer_ids.contains(&buffer_id) {
+            if removed_buffer_ids.contains(buffer_id) {
                 removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
                 false
             } else {
@@ -222,12 +222,12 @@ fn conflicts_updated(
                 let precedes_start = range
                     .context
                     .start
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_le();
                 let follows_end = range
                     .context
                     .end
-                    .cmp(&conflict_range.start, &buffer_snapshot)
+                    .cmp(&conflict_range.start, buffer_snapshot)
                     .is_ge();
                 precedes_start && follows_end
             }) else {
@@ -268,12 +268,12 @@ fn conflicts_updated(
             let precedes_start = range
                 .context
                 .start
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_le();
             let follows_end = range
                 .context
                 .end
-                .cmp(&conflict.range.start, &buffer_snapshot)
+                .cmp(&conflict.range.start, buffer_snapshot)
                 .is_ge();
             precedes_start && follows_end
         }) else {
@@ -437,7 +437,6 @@ fn render_conflict_buttons(
             Button::new("both", "Use Both")
                 .label_size(LabelSize::Small)
                 .on_click({
-                    let editor = editor.clone();
                     let conflict = conflict.clone();
                     let ours = conflict.ours.clone();
                     let theirs = conflict.theirs.clone();
@@ -469,7 +468,7 @@ pub(crate) fn resolve_conflict(
         let Some((workspace, project, multibuffer, buffer)) = editor
             .update(cx, |editor, cx| {
                 let workspace = editor.workspace()?;
-                let project = editor.project.clone()?;
+                let project = editor.project()?.clone();
                 let multibuffer = editor.buffer().clone();
                 let buffer_id = resolved_conflict.ours.end.buffer_id?;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;

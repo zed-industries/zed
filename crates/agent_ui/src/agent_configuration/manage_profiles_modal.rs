@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent_settings::{AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use editor::Editor;
 use fs::Fs;
@@ -16,7 +16,6 @@ use workspace::{ModalView, Workspace};
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AgentPanel, ManageProfiles};
-use agent::agent_profile::AgentProfile;
 
 use super::tool_picker::ToolPickerMode;
 
@@ -156,7 +155,7 @@ impl ManageProfilesModal {
     ) {
         let name_editor = cx.new(|cx| Editor::single_line(window, cx));
         name_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Profile name", cx);
+            editor.set_placeholder_text("Profile name", window, cx);
         });
 
         self.mode = Mode::NewProfile(NewProfileMode {
@@ -464,7 +463,7 @@ impl ManageProfilesModal {
                 },
             ))
             .child(ListSeparator)
-            .child(h_flex().p_2().child(mode.name_editor.clone()))
+            .child(h_flex().p_2().child(mode.name_editor))
     }
 
     fn render_view_profile(
@@ -594,7 +593,7 @@ impl ManageProfilesModal {
                                         .inset(true)
                                         .spacing(ListItemSpacing::Sparse)
                                         .start_slot(
-                                            Icon::new(IconName::Hammer)
+                                            Icon::new(IconName::ToolHammer)
                                                 .size(IconSize::Small)
                                                 .color(Color::Muted),
                                         )
@@ -763,7 +762,7 @@ impl Render for ManageProfilesModal {
                         .pb_1()
                         .child(ProfileModalHeader::new(
                             format!("{profile_name} — Configure MCP Tools"),
-                            Some(IconName::Hammer),
+                            Some(IconName::ToolHammer),
                         ))
                         .child(ListSeparator)
                         .child(tool_picker.clone())

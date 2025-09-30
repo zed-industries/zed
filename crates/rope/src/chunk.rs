@@ -13,7 +13,7 @@ pub struct Chunk {
     chars: u128,
     chars_utf16: u128,
     newlines: u128,
-    tabs: u128,
+    pub tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
 
@@ -49,7 +49,7 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(&slice.text);
+        self.text.push_str(slice.text);
     }
 
     #[inline(always)]
@@ -66,6 +66,11 @@ impl Chunk {
     #[inline(always)]
     pub fn slice(&self, range: Range<usize>) -> ChunkSlice<'_> {
         self.as_slice().slice(range)
+    }
+
+    #[inline(always)]
+    pub fn chars(&self) -> u128 {
+        self.chars
     }
 }
 
@@ -92,7 +97,7 @@ impl Into<Chunk> for ChunkSlice<'_> {
 
 impl<'a> ChunkSlice<'a> {
     #[inline(always)]
-    pub fn is_empty(self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 
@@ -408,7 +413,7 @@ impl<'a> ChunkSlice<'a> {
         }
 
         let row_offset_range = self.offset_range_for_row(point.0.row);
-        let line = self.slice(row_offset_range.clone());
+        let line = self.slice(row_offset_range);
         if point.0.column == 0 {
             Point::new(point.0.row, 0)
         } else if point.0.column >= line.len_utf16().0 as u32 {
@@ -543,7 +548,7 @@ impl Iterator for Tabs {
         // Since tabs are 1 byte the tab offset is the same as the byte offset
         let position = TabPosition {
             byte_offset: tab_offset,
-            char_offset: char_offset,
+            char_offset,
         };
         // Remove the tab we've just seen
         self.tabs ^= 1 << tab_offset;
@@ -612,7 +617,7 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_chunks(mut rng: StdRng) {
-        let chunk_len = rng.gen_range(0..=MAX_BASE);
+        let chunk_len = rng.random_range(0..=MAX_BASE);
         let text = RandomCharIter::new(&mut rng)
             .take(chunk_len)
             .collect::<String>();
@@ -623,12 +628,12 @@ mod tests {
         let text = &text[..ix];
 
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::new(&text);
+        let chunk = Chunk::new(text);
         verify_chunk(chunk.as_slice(), text);
 
         for _ in 0..10 {
-            let mut start = rng.gen_range(0..=chunk.text.len());
-            let mut end = rng.gen_range(start..=chunk.text.len());
+            let mut start = rng.random_range(0..=chunk.text.len());
+            let mut end = rng.random_range(start..=chunk.text.len());
             while !chunk.text.is_char_boundary(start) {
                 start -= 1;
             }
@@ -645,7 +650,7 @@ mod tests {
 
     #[gpui::test(iterations = 1000)]
     fn test_nth_set_bit_random(mut rng: StdRng) {
-        let set_count = rng.gen_range(0..=128);
+        let set_count = rng.random_range(0..=128);
         let mut set_bits = (0..128).choose_multiple(&mut rng, set_count);
         set_bits.sort();
         let mut n = 0;

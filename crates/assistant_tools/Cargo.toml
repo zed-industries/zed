@@ -15,6 +15,7 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
+action_log.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
@@ -62,7 +63,6 @@ ui.workspace = true
 util.workspace = true
 watch.workspace = true
 web_search.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 

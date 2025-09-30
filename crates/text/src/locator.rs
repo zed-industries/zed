@@ -1,9 +1,5 @@
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::iter;
-use std::sync::LazyLock;
-
-static MIN: LazyLock<Locator> = LazyLock::new(Locator::min);
-static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 
 /// An identifier for a position in a ordered collection.
 ///
@@ -16,20 +12,22 @@ static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 pub struct Locator(SmallVec<[u64; 4]>);
 
 impl Locator {
-    pub fn min() -> Self {
-        Self(smallvec![u64::MIN])
+    pub const fn min() -> Self {
+        // SAFETY: 1 is <= 4
+        Self(unsafe { SmallVec::from_const_with_len_unchecked([u64::MIN; 4], 1) })
     }
 
-    pub fn max() -> Self {
-        Self(smallvec![u64::MAX])
+    pub const fn max() -> Self {
+        // SAFETY: 1 is <= 4
+        Self(unsafe { SmallVec::from_const_with_len_unchecked([u64::MAX; 4], 1) })
     }
 
-    pub fn min_ref() -> &'static Self {
-        &MIN
+    pub const fn min_ref() -> &'static Self {
+        const { &Self::min() }
     }
 
-    pub fn max_ref() -> &'static Self {
-        &MAX
+    pub const fn max_ref() -> &'static Self {
+        const { &Self::max() }
     }
 
     pub fn assign(&mut self, other: &Self) {
@@ -69,7 +67,7 @@ impl Default for Locator {
 impl sum_tree::Item for Locator {
     type Summary = Locator;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         self.clone()
     }
 }
@@ -82,14 +80,12 @@ impl sum_tree::KeyedItem for Locator {
     }
 }
 
-impl sum_tree::Summary for Locator {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for Locator {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &()) {
+    fn add_summary(&mut self, summary: &Self) {
         self.assign(summary);
     }
 }
@@ -106,13 +102,13 @@ mod tests {
         let mut rhs = Default::default();
         while lhs == rhs {
             lhs = Locator(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
+                (0..rng.random_range(1..=5))
+                    .map(|_| rng.random_range(0..=100))
                     .collect(),
             );
             rhs = Locator(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
+                (0..rng.random_range(1..=5))
+                    .map(|_| rng.random_range(0..=100))
                     .collect(),
             );
         }

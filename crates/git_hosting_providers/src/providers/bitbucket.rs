@@ -1,11 +1,21 @@
 use std::str::FromStr;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use url::Url;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    RemoteUrl,
+    PullRequest, RemoteUrl,
 };
+
+fn pull_request_regex() -> &'static Regex {
+    static PULL_REQUEST_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        // This matches Bitbucket PR reference pattern: (pull request #xxx)
+        Regex::new(r"\(pull request #(\d+)\)").unwrap()
+    });
+    &PULL_REQUEST_REGEX
+}
 
 pub struct Bitbucket {
     name: String,
@@ -95,6 +105,22 @@ impl GitHostingProvider for Bitbucket {
                 .as_deref(),
         );
         permalink
+    }
+
+    fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
+        // Check first line of commit message for PR references
+        let first_line = message.lines().next()?;
+
+        // Try to match against our PR patterns
+        let capture = pull_request_regex().captures(first_line)?;
+        let number = capture.get(1)?.as_str().parse::<u32>().ok()?;
+
+        // Construct the PR URL in Bitbucket format
+        let mut url = self.base_url();
+        let path = format!("/{}/{}/pull-requests/{}", remote.owner, remote.repo, number);
+        url.set_path(&path);
+
+        Some(PullRequest { number, url })
     }
 }
 
@@ -202,5 +228,35 @@ mod tests {
         let expected_url =
             "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-24:48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_bitbucket_pull_requests() {
+        use indoc::indoc;
+
+        let remote = ParsedGitRemote {
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
+        };
+
+        let bitbucket = Bitbucket::public_instance();
+
+        // Test message without PR reference
+        let message = "This does not contain a pull request";
+        assert!(bitbucket.extract_pull_request(&remote, message).is_none());
+
+        // Pull request number at end of first line
+        let message = indoc! {r#"
+            Merged in feature-branch (pull request #123)
+
+            Some detailed description of the changes.
+        "#};
+
+        let pr = bitbucket.extract_pull_request(&remote, message).unwrap();
+        assert_eq!(pr.number, 123);
+        assert_eq!(
+            pr.url.as_str(),
+            "https://bitbucket.org/zed-industries/zed/pull-requests/123"
+        );
     }
 }

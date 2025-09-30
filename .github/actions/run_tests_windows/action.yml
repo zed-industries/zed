@@ -23,4 +23,5 @@ runs:
     - name: Run tests
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
-      run: cargo nextest run --workspace --no-fail-fast
+      run: |
+        cargo nextest run --workspace --no-fail-fast

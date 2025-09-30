@@ -59,6 +59,8 @@ pub struct ThemeColors {
     pub element_disabled: Hsla,
     /// Background Color. Used for the area that shows where a dragged element will be dropped.
     pub drop_target_background: Hsla,
+    /// Border Color. Used for the border that shows where a dragged element will be dropped.
+    pub drop_target_border: Hsla,
     /// Used for the background of a ghost element that should have the same background as the surface it's on.
     ///
     /// Elements might include: Buttons, Inputs, Checkboxes, Radio Buttons...
@@ -304,6 +306,7 @@ pub enum ThemeColorField {
     ElementSelected,
     ElementDisabled,
     DropTargetBackground,
+    DropTargetBorder,
     GhostElementBackground,
     GhostElementHover,
     GhostElementActive,
@@ -418,6 +421,7 @@ impl ThemeColors {
             ThemeColorField::ElementSelected => self.element_selected,
             ThemeColorField::ElementDisabled => self.element_disabled,
             ThemeColorField::DropTargetBackground => self.drop_target_background,
+            ThemeColorField::DropTargetBorder => self.drop_target_border,
             ThemeColorField::GhostElementBackground => self.ghost_element_background,
             ThemeColorField::GhostElementHover => self.ghost_element_hover,
             ThemeColorField::GhostElementActive => self.ghost_element_active,

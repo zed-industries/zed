@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use project::{ImageItem, image_store};
@@ -67,7 +68,7 @@ impl Tool for ReadFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::ToolRead
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -200,7 +201,7 @@ impl Tool for ReadFileTool {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
             }
@@ -260,37 +261,30 @@ impl Tool for ReadFileTool {
                 Ok(result)
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
-                let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
+                let buffer_content =
+                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&file_path), cx)
+                        .await?;
 
-                if file_size <= outline::AUTO_OUTLINE_SIZE {
-                    // File is small enough, so return its contents.
-                    let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer, cx);
+                })?;
 
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
-                    })?;
-
-                    Ok(result.into())
-                } else {
-                    // File is too big, so return the outline
-                    // and a suggestion to read again with line numbers.
-                    let outline =
-                        outline::file_outline(project, file_path, action_log, None, cx).await?;
+                if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
-                        Here is an outline of its symbols:
-
-                        {outline}
+                        {}
 
                         Using the line numbers in this outline, you can call this tool again
                         while specifying the start_line and end_line fields to see the
                         implementations of symbols in the outline.
-                        
+
                         Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content."
+                        to search the file for specific content.", buffer_content.text
                     }
                     .into())
+                } else {
+                    Ok(buffer_content.text.into())
                 }
             }
         })
@@ -304,7 +298,7 @@ mod test {
     use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
-    use project::{FakeFs, Project, WorktreeSettings};
+    use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -682,19 +676,21 @@ mod test {
 
         cx.update(|cx| {
             use gpui::UpdateGlobal;
-            use project::WorktreeSettings;
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec![
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = Some(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                     ]);
-                    settings.private_files = Some(vec![
-                        "**/.mysecrets".to_string(),
-                        "**/*.privatekey".to_string(),
-                        "**/*.mysensitive".to_string(),
-                    ]);
+                    settings.project.worktree.private_files = Some(
+                        vec![
+                            "**/.mysecrets".to_string(),
+                            "**/*.privatekey".to_string(),
+                            "**/*.mysensitive".to_string(),
+                        ]
+                        .into(),
+                    );
                 });
             });
         });
@@ -973,10 +969,11 @@ mod test {
         // Set global settings
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions =
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
-                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/.env".to_string()].into());
                 });
             });
         });

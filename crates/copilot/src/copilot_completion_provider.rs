@@ -3,7 +3,6 @@ use anyhow::Result;
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
-use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -58,11 +57,19 @@ impl EditPredictionProvider for CopilotCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
+    }
+
+    fn supports_jump_to_edit() -> bool {
         false
     }
 
     fn is_refreshing(&self) -> bool {
-        self.pending_refresh.is_some()
+        self.pending_refresh.is_some() && self.completions.is_empty()
     }
 
     fn is_enabled(
@@ -76,7 +83,6 @@ impl EditPredictionProvider for CopilotCompletionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -241,7 +247,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(EditPrediction {
+                Some(EditPrediction::Local {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,
@@ -273,14 +279,11 @@ mod tests {
     use indoc::indoc;
     use language::{
         Point,
-        language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
-            WordsCompletionMode,
-        },
+        language_settings::{CompletionSettingsContent, LspInsertMode, WordsCompletionMode},
     };
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, SettingsStore};
     use std::future::Future;
     use util::{
         path,
@@ -291,11 +294,11 @@ mod tests {
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -343,8 +346,8 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction());
-            // Since we have both, the copilot suggestion is not shown inline
+            assert!(editor.has_active_edit_prediction());
+            // Since we have both, the copilot suggestion is existing but does not show up as ghost text
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
 
@@ -523,11 +526,11 @@ mod tests {
     ) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -934,8 +937,9 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction(),);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
+            assert_eq!(editor.display_text(cx), "one\ntwo.\nthree\n");
         });
     }
 
@@ -1074,11 +1078,9 @@ mod tests {
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(
             marked_string,
-            vec![complete_from_marker.clone(), replace_range_marker.clone()],
+            vec![complete_from_marker, replace_range_marker.clone()],
         );
 
-        let complete_from_position =
-            cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
         let replace_range =
             cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
@@ -1087,10 +1089,6 @@ mod tests {
                 let completions = completions.clone();
                 async move {
                     assert_eq!(params.text_document_position.text_document.uri, url.clone());
-                    assert_eq!(
-                        params.text_document_position.position,
-                        complete_from_position
-                    );
                     Ok(Some(lsp::CompletionResponse::Array(
                         completions
                             .iter()
@@ -1123,7 +1121,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, f);
+                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });
         });
     }

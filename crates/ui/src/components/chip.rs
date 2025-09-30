@@ -6,9 +6,9 @@ use gpui::{AnyElement, Hsla, IntoElement, ParentElement, Styled};
 /// # Usage Example
 ///
 /// ```
-/// use ui::{Chip};
+/// use ui::Chip;
 ///
-///    Chip::new("This Chip")
+/// let chip = Chip::new("This Chip");
 /// ```
 #[derive(IntoElement, RegisterComponent)]
 pub struct Chip {

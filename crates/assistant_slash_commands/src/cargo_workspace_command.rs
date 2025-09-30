@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 pub struct CargoWorkspaceSlashCommand;
@@ -79,7 +80,7 @@ impl CargoWorkspaceSlashCommand {
     fn path_to_cargo_toml(project: Entity<Project>, cx: &mut App) -> Option<Arc<Path>> {
         let worktree = project.read(cx).worktrees(cx).next()?;
         let worktree = worktree.read(cx);
-        let entry = worktree.entry_for_path("Cargo.toml")?;
+        let entry = worktree.entry_for_path(RelPath::new("Cargo.toml").unwrap())?;
         let path = ProjectPath {
             worktree_id: worktree.id(),
             path: entry.path.clone(),
@@ -150,7 +151,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
                     }],
                     run_commands_in_text: false,
                 }
-                .to_event_stream())
+                .into_event_stream())
             })
         });
         output.unwrap_or_else(|error| Task::ready(Err(error)))

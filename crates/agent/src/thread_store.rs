@@ -10,6 +10,7 @@ use assistant_tool::{Tool, ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt as _, StreamExt as _,
     channel::{mpsc, oneshot},
@@ -39,10 +40,9 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+use zed_env_vars::ZED_STATELESS;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -74,7 +74,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -86,8 +86,8 @@ const RULES_FILE_NAMES: [&'static str; 9] = [
     "GEMINI.md",
 ];
 
-pub fn init(cx: &mut App) {
-    ThreadsDatabase::init(cx);
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
+    ThreadsDatabase::init(fs, cx);
 }
 
 /// A system prompt shared by all threads created by this ThreadStore
@@ -205,6 +205,22 @@ impl ThreadStore {
         (this, ready_rx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(project: Entity<Project>, cx: &mut App) -> Self {
+        Self {
+            project,
+            tools: cx.new(|_| ToolWorkingSet::default()),
+            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
+            prompt_store: None,
+            context_server_tool_ids: HashMap::default(),
+            threads: Vec::new(),
+            project_context: SharedProjectContext::default(),
+            reload_system_prompt_tx: mpsc::channel(0).0,
+            _reload_system_prompt_task: Task::ready(()),
+            _subscriptions: vec![],
+        }
+    }
+
     fn handle_project_event(
         &mut self,
         _project: Entity<Project>,
@@ -219,7 +235,7 @@ impl ThreadStore {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == Path::new(name))
+                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
                 }) {
                     self.enqueue_system_prompt_reload();
                 }
@@ -312,7 +328,7 @@ impl ThreadStore {
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
-        let root_name = tree.root_name().into();
+        let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
 
         let mut context = WorktreeContext {
@@ -352,7 +368,7 @@ impl ThreadStore {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(name)
+                    .entry_for_path(RelPath::unix(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -565,33 +581,32 @@ impl ThreadStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Tools)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::ListTools>(())
                     .await
                     .log_err()
-                {
-                    let tool_ids = tool_working_set
-                        .update(cx, |tool_working_set, cx| {
-                            tool_working_set.extend(
-                                response.tools.into_iter().map(|tool| {
-                                    Arc::new(ContextServerTool::new(
-                                        context_server_store.clone(),
-                                        server.id(),
-                                        tool,
-                                    )) as Arc<dyn Tool>
-                                }),
-                                cx,
-                            )
-                        })
-                        .log_err();
+            {
+                let tool_ids = tool_working_set
+                    .update(cx, |tool_working_set, cx| {
+                        tool_working_set.extend(
+                            response.tools.into_iter().map(|tool| {
+                                Arc::new(ContextServerTool::new(
+                                    context_server_store.clone(),
+                                    server.id(),
+                                    tool,
+                                )) as Arc<dyn Tool>
+                            }),
+                            cx,
+                        )
+                    })
+                    .log_err();
 
-                    if let Some(tool_ids) = tool_ids {
-                        this.update(cx, |this, _| {
-                            this.context_server_tool_ids.insert(server_id, tool_ids);
-                        })
-                        .log_err();
-                    }
+                if let Some(tool_ids) = tool_ids {
+                    this.update(cx, |this, _| {
+                        this.context_server_tool_ids.insert(server_id, tool_ids);
+                    })
+                    .log_err();
                 }
             }
         })
@@ -681,13 +696,14 @@ impl SerializedThreadV0_1_0 {
         let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
 
         for message in self.0.messages {
-            if message.role == Role::User && !message.tool_results.is_empty() {
-                if let Some(last_message) = messages.last_mut() {
-                    debug_assert!(last_message.role == Role::Assistant);
+            if message.role == Role::User
+                && !message.tool_results.is_empty()
+                && let Some(last_message) = messages.last_mut()
+            {
+                debug_assert!(last_message.role == Role::Assistant);
 
-                    last_message.tool_results = message.tool_results;
-                    continue;
-                }
+                last_message.tool_results = message.tool_results;
+                continue;
             }
 
             messages.push(message);
@@ -854,13 +870,13 @@ impl ThreadsDatabase {
         GlobalThreadsDatabase::global(cx).0.clone()
     }
 
-    fn init(cx: &mut App) {
+    fn init(fs: Arc<dyn Fs>, cx: &mut App) {
         let executor = cx.background_executor().clone();
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
                 let threads_dir = paths::data_dir().join("threads");
-                async move { ThreadsDatabase::new(threads_dir, executor) }
+                async move { ThreadsDatabase::new(fs, threads_dir, executor).await }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -869,16 +885,31 @@ impl ThreadsDatabase {
         cx.set_global(GlobalThreadsDatabase(database_future));
     }
 
-    pub fn new(threads_dir: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
-        std::fs::create_dir_all(&threads_dir)?;
+    pub async fn new(
+        fs: Arc<dyn Fs>,
+        threads_dir: PathBuf,
+        executor: BackgroundExecutor,
+    ) -> Result<Self> {
+        fs.create_dir(&threads_dir).await?;
 
         let sqlite_path = threads_dir.join("threads.db");
         let mdb_path = threads_dir.join("threads-db.1.mdb");
 
-        let needs_migration_from_heed = mdb_path.exists();
+        let needs_migration_from_heed = fs.is_file(&mdb_path).await;
 
         let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             Connection::open_file(&sqlite_path.to_string_lossy())
         };
@@ -906,7 +937,14 @@ impl ThreadsDatabase {
                 .spawn(async move {
                     log::info!("Starting threads.db migration");
                     Self::migrate_from_heed(&mdb_path, db_connection, executor_clone)?;
-                    std::fs::remove_dir_all(mdb_path)?;
+                    fs.remove_dir(
+                        &mdb_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await?;
                     log::info!("threads.db migrated to sqlite");
                     Ok::<(), anyhow::Error>(())
                 })

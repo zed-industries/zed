@@ -1,7 +1,7 @@
 pub mod extension;
 pub mod registry;
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
@@ -10,7 +10,7 @@ use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
     Project,
@@ -282,8 +282,18 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
-    pub fn all_server_ids(&self) -> Vec<ContextServerId> {
-        self.servers.keys().cloned().collect()
+    pub fn server_ids(&self, cx: &App) -> HashSet<ContextServerId> {
+        self.servers
+            .keys()
+            .cloned()
+            .chain(
+                self.registry
+                    .read(cx)
+                    .context_server_descriptors()
+                    .into_iter()
+                    .map(|(id, _)| ContextServerId(id)),
+            )
+            .collect()
     }
 
     pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
@@ -368,7 +378,7 @@ impl ContextServerStore {
     }
 
     pub fn restart_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
-        if let Some(state) = self.servers.get(&id) {
+        if let Some(state) = self.servers.get(id) {
             let configuration = state.configuration();
 
             self.stop_server(&state.server().id(), cx)?;
@@ -397,9 +407,8 @@ impl ContextServerStore {
             let server = server.clone();
             let configuration = configuration.clone();
             async move |this, cx| {
-                match server.clone().start(&cx).await {
+                match server.clone().start(cx).await {
                     Ok(_) => {
-                        log::info!("Started {} context server", id);
                         debug_assert!(server.client().is_some());
 
                         this.update(cx, |this, cx| {
@@ -501,7 +510,7 @@ impl ContextServerStore {
             .next()
             .map(|worktree| settings::SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path: Path::new(""),
+                path: RelPath::empty(),
             });
         &ProjectSettings::get(location, cx).context_servers
     }
@@ -588,7 +597,7 @@ impl ContextServerStore {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
-                if !configured_servers.contains_key(&server_id) {
+                if !configured_servers.contains_key(server_id) {
                     if disabled_servers.contains_key(&server_id.0) {
                         servers_to_stop.insert(server_id.clone());
                     } else {
@@ -642,8 +651,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_status(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -722,8 +731,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_status_events(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -761,7 +770,7 @@ mod tests {
             &store,
             vec![
                 (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id.clone(), ContextServerStatus::Running),
+                (server_1_id, ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Starting),
                 (server_2_id.clone(), ContextServerStatus::Running),
                 (server_2_id.clone(), ContextServerStatus::Stopped),
@@ -784,7 +793,7 @@ mod tests {
 
     #[gpui::test(iterations = 25)]
     async fn test_context_server_concurrent_starts(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
+        const SERVER_1_ID: &str = "mcp-1";
 
         let (_fs, project) = setup_context_server_test(
             cx,
@@ -845,8 +854,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
-        const SERVER_2_ID: &'static str = "mcp-2";
+        const SERVER_1_ID: &str = "mcp-1";
+        const SERVER_2_ID: &str = "mcp-2";
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
         let server_2_id = ContextServerId(SERVER_2_ID.into());
@@ -916,7 +925,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -935,7 +944,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -962,7 +971,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        ContextServerSettings::Extension {
+                        settings::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -971,12 +980,13 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        ContextServerSettings::Custom {
+                        settings::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
                                 args: vec!["arg".to_string()],
                                 env: None,
+                                timeout: None,
                             },
                         },
                     ),
@@ -1002,7 +1012,7 @@ mod tests {
                 vec![
                     (
                         server_1_id.0.clone(),
-                        ContextServerSettings::Extension {
+                        settings::ContextServerSettingsContent::Extension {
                             enabled: true,
                             settings: json!({
                                 "somevalue": false
@@ -1011,12 +1021,13 @@ mod tests {
                     ),
                     (
                         server_2_id.0.clone(),
-                        ContextServerSettings::Custom {
+                        settings::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: ContextServerCommand {
                                 path: "somebinary".into(),
                                 args: vec!["anotherArg".to_string()],
                                 env: None,
+                                timeout: None,
                             },
                         },
                     ),
@@ -1037,7 +1048,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1060,7 +1071,7 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Extension {
+                    settings::ContextServerSettingsContent::Extension {
                         enabled: true,
                         settings: json!({
                             "somevalue": false
@@ -1084,7 +1095,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
-        const SERVER_1_ID: &'static str = "mcp-1";
+        const SERVER_1_ID: &str = "mcp-1";
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
 
@@ -1099,6 +1110,7 @@ mod tests {
                         path: "somebinary".into(),
                         args: vec!["arg".to_string()],
                         env: None,
+                        timeout: None,
                     },
                 },
             )],
@@ -1145,12 +1157,13 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Custom {
+                    settings::ContextServerSettingsContent::Custom {
                         enabled: false,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
+                            timeout: None,
                         },
                     },
                 )],
@@ -1173,11 +1186,12 @@ mod tests {
             set_context_server_configuration(
                 vec![(
                     server_1_id.0.clone(),
-                    ContextServerSettings::Custom {
+                    settings::ContextServerSettingsContent::Custom {
                         enabled: true,
                         command: ContextServerCommand {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
+                            timeout: None,
                             env: None,
                         },
                     },
@@ -1190,18 +1204,17 @@ mod tests {
     }
 
     fn set_context_server_configuration(
-        context_servers: Vec<(Arc<str>, ContextServerSettings)>,
+        context_servers: Vec<(Arc<str>, settings::ContextServerSettingsContent)>,
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                let mut settings = ProjectSettings::default();
-                for (id, config) in context_servers {
-                    settings.context_servers.insert(id, config);
-                }
-                store
-                    .set_user_settings(&serde_json::to_string(&settings).unwrap(), cx)
-                    .unwrap();
+                store.update_user_settings(cx, |content| {
+                    content.project.context_servers.clear();
+                    for (id, config) in context_servers {
+                        content.project.context_servers.insert(id, config);
+                    }
+                });
             })
         });
     }
@@ -1231,6 +1244,7 @@ mod tests {
                 path: "somebinary".into(),
                 args: vec!["arg".to_string()],
                 env: None,
+                timeout: None,
             },
         }
     }
@@ -1319,6 +1333,7 @@ mod tests {
                 path: self.path.clone(),
                 args: vec!["arg1".to_string(), "arg2".to_string()],
                 env: None,
+                timeout: None,
             }))
         }
 

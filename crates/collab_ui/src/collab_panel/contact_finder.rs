@@ -148,7 +148,7 @@ impl PickerDelegate for ContactFinderDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let user = &self.potential_contacts[ix];
+        let user = &self.potential_contacts.get(ix)?;
         let request_status = self.user_store.read(cx).contact_request_status(user);
 
         let icon_path = match request_status {

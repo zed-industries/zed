@@ -1,0 +1,2 @@
+postgrest_llm: postgrest crates/collab/postgrest_llm.conf
+website: cd ../zed.dev; npm run dev -- --port=3000

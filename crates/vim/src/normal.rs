@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
+use gpui::{Action, Context, Window, actions};
 use language::{Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -94,6 +96,10 @@ actions!(
         Redo,
         /// Undoes all changes to the most recently changed line.
         UndoLastLine,
+        /// Go to tab page (with count support).
+        GoToTab,
+        /// Go to previous tab page (with count support).
+        GoToPreviousTab,
     ]
 );
 
@@ -113,9 +119,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
+    Vim::action(editor, cx, Vim::go_to_tab);
+    Vim::action(editor, cx, Vim::go_to_previous_tab);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
@@ -132,7 +141,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &HelixDelete, window, cx| {
         vim.record_current_action(cx);
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     if selection.is_empty() {
@@ -146,7 +155,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &HelixCollapseSelection, window, cx| {
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(cx, |_, editor, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let mut point = selection.head();
@@ -198,7 +207,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
         let times = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, window, cx);
             }
@@ -207,7 +216,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Redo, window, cx| {
         let times = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
-        vim.update_editor(window, cx, |_, editor, window, cx| {
+        vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, window, cx);
             }
@@ -215,13 +224,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &UndoLastLine, window, cx| {
         Vim::take_forced_motion(cx);
-        vim.update_editor(window, cx, |vim, editor, window, cx| {
+        vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let Some(last_change) = editor.change_list.last_before_grouping() else {
                 return;
             };
 
-            let anchors = last_change.iter().cloned().collect::<Vec<_>>();
+            let anchors = last_change.to_vec();
             let mut last_row = None;
             let ranges: Vec<_> = anchors
                 .iter()
@@ -495,10 +504,19 @@ impl Vim {
                     self.replace_with_register_object(object, around, window, cx)
                 }
                 Some(Operator::Exchange) => self.exchange_object(object, around, window, cx),
+                Some(Operator::HelixMatch) => {
+                    self.select_current_object(object, around, window, cx)
+                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
+            Some(Operator::HelixNext { around }) => {
+                self.select_next_object(object, around, window, cx);
+            }
+            Some(Operator::HelixPrevious { around }) => {
+                self.select_previous_object(object, around, window, cx);
+            }
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }
@@ -526,7 +544,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(
                 SelectionEffects::default().nav_history(motion.push_to_jump_list()),
@@ -546,7 +564,7 @@ impl Vim {
     fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
             });
@@ -557,7 +575,7 @@ impl Vim {
         self.start_recording(cx);
         if self.mode.is_visual() {
             let current_mode = self.mode;
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         if current_mode == Mode::VisualLine {
@@ -581,7 +599,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (
@@ -601,7 +619,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, _| {
                     (next_line_end(map, cursor, 1), SelectionGoal::None)
@@ -618,7 +636,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
                 return;
             };
@@ -637,7 +655,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -678,7 +696,7 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(cx);
@@ -725,7 +743,7 @@ impl Vim {
         self.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, _, cx| {
                 let selections = editor.selections.all::<Point>(cx);
 
@@ -754,7 +772,7 @@ impl Vim {
         self.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -804,7 +822,7 @@ impl Vim {
             times -= 1;
         }
 
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 for _ in 0..times {
                     editor.join_lines_impl(insert_whitespace, window, cx)
@@ -828,10 +846,29 @@ impl Vim {
         )
     }
 
-    fn show_location(&mut self, _: &ShowLocation, window: &mut Window, cx: &mut Context<Self>) {
+    fn yank_to_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
+    fn show_location(&mut self, _: &ShowLocation, _: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
-        self.update_editor(window, cx, |vim, editor, _window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
             let Some((buffer, point, _)) = editor
                 .buffer()
@@ -843,12 +880,12 @@ impl Vim {
             let filename = if let Some(file) = buffer.read(cx).file() {
                 if count.is_some() {
                     if let Some(local) = file.as_local() {
-                        local.abs_path(cx).to_string_lossy().to_string()
+                        local.abs_path(cx).to_string_lossy().into_owned()
                     } else {
-                        file.full_path(cx).to_string_lossy().to_string()
+                        file.full_path(cx).to_string_lossy().into_owned()
                     }
                 } else {
-                    file.path().to_string_lossy().to_string()
+                    file.path().display(file.path_style(cx)).into_owned()
                 }
             } else {
                 "[No Name]".into()
@@ -875,7 +912,7 @@ impl Vim {
     fn toggle_comments(&mut self, _: &ToggleComments, window: &mut Window, cx: &mut Context<Self>) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), window, cx);
@@ -897,7 +934,7 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let (map, display_selections) = editor.selections.all_display(cx);
@@ -975,16 +1012,63 @@ impl Vim {
             self.switch_mode(Mode::Insert, true, window, cx);
         }
     }
+
+    fn go_to_tab(&mut self, _: &GoToTab, window: &mut Window, cx: &mut Context<Self>) {
+        let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+
+        if let Some(tab_index) = count {
+            // <count>gt goes to tab <count> (1-based).
+            let zero_based_index = tab_index.saturating_sub(1);
+            window.dispatch_action(
+                workspace::pane::ActivateItem(zero_based_index).boxed_clone(),
+                cx,
+            );
+        } else {
+            // If no count is provided, go to the next tab.
+            window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+        }
+    }
+
+    fn go_to_previous_tab(
+        &mut self,
+        _: &GoToPreviousTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+
+        if let Some(count) = count {
+            // gT with count goes back that many tabs with wraparound (not the same as gt!).
+            if let Some(workspace) = self.workspace(window) {
+                let pane = workspace.read(cx).active_pane().read(cx);
+                let item_count = pane.items().count();
+                if item_count > 0 {
+                    let current_index = pane.active_item_index();
+                    let target_index = (current_index as isize - count as isize)
+                        .rem_euclid(item_count as isize)
+                        as usize;
+                    window.dispatch_action(
+                        workspace::pane::ActivateItem(target_index).boxed_clone(),
+                        cx,
+                    );
+                }
+            }
+        } else {
+            // No count provided, go to the previous tab.
+            window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
+        }
+    }
 }
 #[cfg(test)]
 mod test {
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings, motion,
+        motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1715,8 +1799,8 @@ mod test {
     async fn test_f_and_t_smartcase(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_smartcase_find = Some(true);
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
             });
         });
 
@@ -1882,8 +1966,12 @@ mod test {
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                    settings.defaults.preferred_line_length = Some(5);
+                settings.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(5);
                 });
             })
         });
@@ -1910,6 +1998,14 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\n").await;
+        cx.simulate_shared_keystrokes("Y p").await;
+        cx.shared_state().await.assert_eq("helllˇolo\n");
     }
 
     #[gpui::test]
@@ -2106,5 +2202,81 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_go_to_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        cx.simulate_keystrokes("3 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 2);
+        });
+
+        cx.simulate_keystrokes("4 g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("1 g t");
+        cx.simulate_keystrokes("g t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_previous_tab_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Open 4 tabs.
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.items(cx).count(), 4);
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("2 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
+
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 0);
+        });
+
+        // Wraparound: gT from first tab should go to last.
+        cx.simulate_keystrokes("g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 3);
+        });
+
+        cx.simulate_keystrokes("6 g shift-t");
+        cx.workspace(|workspace, _, cx| {
+            assert_eq!(workspace.active_pane().read(cx).active_item_index(), 1);
+        });
     }
 }

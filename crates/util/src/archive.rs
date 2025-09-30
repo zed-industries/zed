@@ -154,7 +154,7 @@ mod tests {
                 let mut builder =
                     ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
-                let metadata = std::fs::metadata(&path)?;
+                let metadata = std::fs::metadata(path)?;
                 let perms = metadata.permissions().mode() as u16;
                 builder = builder.unix_permissions(perms);
                 writer.write_entry_whole(builder, &data).await?;

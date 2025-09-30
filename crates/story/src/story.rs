@@ -194,7 +194,7 @@ impl RenderOnce for StorySection {
             // Section title
             .py_2()
             // Section description
-            .when_some(self.description.clone(), |section, description| {
+            .when_some(self.description, |section, description| {
                 section.child(Story::description(description, cx))
             })
             .child(div().flex().flex_col().gap_2().children(children))

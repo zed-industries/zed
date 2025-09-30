@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
@@ -107,7 +108,7 @@ impl Tool for MovePathTool {
                 .and_then(|project_path| project.entry_for_path(&project_path, cx))
             {
                 Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.rename_entry(entity.id, project_path.path, cx),
+                    Some(project_path) => project.rename_entry(entity.id, project_path, cx),
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path

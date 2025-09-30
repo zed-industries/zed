@@ -7,6 +7,7 @@ use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
+mod api_key;
 pub mod provider;
 mod settings;
 pub mod ui;
@@ -104,7 +105,7 @@ fn register_language_model_providers(
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     registry.register_provider(
-        CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+        CloudLanguageModelProvider::new(user_store, client.clone(), cx),
         cx,
     );
 

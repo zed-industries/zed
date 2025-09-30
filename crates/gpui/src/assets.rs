@@ -1,4 +1,4 @@
-use crate::{DevicePixels, Result, SharedString, Size, size};
+use crate::{DevicePixels, Pixels, Result, SharedString, Size, size};
 use smallvec::SmallVec;
 
 use image::{Delay, Frame};
@@ -42,6 +42,8 @@ pub(crate) struct RenderImageParams {
 pub struct RenderImage {
     /// The ID associated with this image
     pub id: ImageId,
+    /// The scale factor of this image on render.
+    pub(crate) scale_factor: f32,
     data: SmallVec<[Frame; 1]>,
 }
 
@@ -60,6 +62,7 @@ impl RenderImage {
 
         Self {
             id: ImageId(NEXT_ID.fetch_add(1, SeqCst)),
+            scale_factor: 1.0,
             data: data.into(),
         }
     }
@@ -75,6 +78,12 @@ impl RenderImage {
     pub fn size(&self, frame_index: usize) -> Size<DevicePixels> {
         let (width, height) = self.data[frame_index].buffer().dimensions();
         size(width.into(), height.into())
+    }
+
+    /// Get the size of this image, in pixels for display, adjusted for the scale factor.
+    pub(crate) fn render_size(&self, frame_index: usize) -> Size<Pixels> {
+        self.size(frame_index)
+            .map(|v| (v.0 as f32 / self.scale_factor).into())
     }
 
     /// Get the delay of this frame from the previous

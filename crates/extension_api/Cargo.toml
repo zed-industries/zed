@@ -1,6 +1,6 @@
 [package]
 name = "zed_extension_api"
-version = "0.6.0"
+version = "0.7.0"
 description = "APIs for creating Zed extensions in Rust"
 repository = "https://github.com/zed-industries/zed"
 documentation = "https://docs.rs/zed_extension_api"

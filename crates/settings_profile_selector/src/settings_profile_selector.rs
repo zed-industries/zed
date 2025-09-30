@@ -126,7 +126,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         let mat = self.matches.get(self.selected_index)?;
         let profile_name = self.profile_names.get(mat.candidate_id)?;
-        return Self::update_active_profile_name_global(profile_name.clone(), cx);
+        Self::update_active_profile_name_global(profile_name.clone(), cx)
     }
 
     fn update_active_profile_name_global(
@@ -135,7 +135,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Option<String> {
         if let Some(profile_name) = profile_name {
             cx.set_global(ActiveSettingsProfileName(profile_name.clone()));
-            return Some(profile_name.clone());
+            return Some(profile_name);
         }
 
         if cx.has_global::<ActiveSettingsProfileName>() {
@@ -257,8 +257,8 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
-        let profile_name = &self.profile_names[mat.candidate_id];
+        let mat = &self.matches.get(ix)?;
+        let profile_name = &self.profile_names.get(mat.candidate_id)?;
 
         Some(
             ListItem::new(ix)
@@ -576,6 +576,44 @@ mod tests {
         cx.update(|_, cx| {
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_settings_profile_selector_is_in_user_configuration_order(
+        cx: &mut TestAppContext,
+    ) {
+        // Must be unique names (HashMap)
+        let profiles_json = json!({
+            "z": {},
+            "e": {},
+            "d": {},
+            " ": {},
+            "r": {},
+            "u": {},
+            "l": {},
+            "3": {},
+            "s": {},
+            "!": {},
+        });
+        let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(picker.delegate.matches.len(), 11);
+            assert_eq!(picker.delegate.matches[0].string, display_name(&None));
+            assert_eq!(picker.delegate.matches[1].string, "z");
+            assert_eq!(picker.delegate.matches[2].string, "e");
+            assert_eq!(picker.delegate.matches[3].string, "d");
+            assert_eq!(picker.delegate.matches[4].string, " ");
+            assert_eq!(picker.delegate.matches[5].string, "r");
+            assert_eq!(picker.delegate.matches[6].string, "u");
+            assert_eq!(picker.delegate.matches[7].string, "l");
+            assert_eq!(picker.delegate.matches[8].string, "3");
+            assert_eq!(picker.delegate.matches[9].string, "s");
+            assert_eq!(picker.delegate.matches[10].string, "!");
         });
     }
 }

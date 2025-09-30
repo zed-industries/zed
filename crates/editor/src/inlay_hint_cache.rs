@@ -20,12 +20,14 @@ use anyhow::Context as _;
 use clock::Global;
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
-use language::{Buffer, BufferSnapshot, language_settings::InlayHintKind};
+use language::{
+    Buffer, BufferSnapshot,
+    language_settings::{InlayHintKind, InlayHintSettings},
+};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
 use collections::{HashMap, HashSet, hash_map};
-use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
@@ -475,10 +477,7 @@ impl InlayHintCache {
             let excerpt_cached_hints = excerpt_cached_hints.read();
             let mut excerpt_cache = excerpt_cached_hints.ordered_hints.iter().fuse().peekable();
             shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
-                let Some(buffer) = shown_anchor
-                    .buffer_id
-                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
-                else {
+                let Some(buffer) = multi_buffer.buffer_for_anchor(*shown_anchor, cx) else {
                     return false;
                 };
                 let buffer_snapshot = buffer.read(cx).snapshot();
@@ -498,16 +497,14 @@ impl InlayHintCache {
                                 cmp::Ordering::Less | cmp::Ordering::Equal => {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
-                                    {
-                                        if let Some(anchor) = multi_buffer_snapshot
+                                        && let Some(anchor) = multi_buffer_snapshot
                                             .anchor_in_excerpt(*excerpt_id, cached_hint.position)
-                                        {
-                                            to_insert.push(Inlay::hint(
-                                                cached_hint_id.id(),
-                                                anchor,
-                                                cached_hint,
-                                            ));
-                                        }
+                                    {
+                                        to_insert.push(Inlay::hint(
+                                            cached_hint_id.id(),
+                                            anchor,
+                                            cached_hint,
+                                        ));
                                     }
                                     excerpt_cache.next();
                                 }
@@ -522,16 +519,16 @@ impl InlayHintCache {
             for cached_hint_id in excerpt_cache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
-                if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    if let Some(anchor) = multi_buffer_snapshot
+                if !old_kinds.contains(&cached_hint_kind)
+                    && new_kinds.contains(&cached_hint_kind)
+                    && let Some(anchor) = multi_buffer_snapshot
                         .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
-                    {
-                        to_insert.push(Inlay::hint(
-                            cached_hint_id.id(),
-                            anchor,
-                            maybe_missed_cached_hint,
-                        ));
-                    }
+                {
+                    to_insert.push(Inlay::hint(
+                        cached_hint_id.id(),
+                        anchor,
+                        maybe_missed_cached_hint,
+                    ));
                 }
             }
         }
@@ -620,44 +617,44 @@ impl InlayHintCache {
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
-            if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
-                if let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state {
-                    let hint_to_resolve = cached_hint.clone();
-                    let server_id = *server_id;
-                    cached_hint.resolve_state = ResolveState::Resolving;
-                    drop(guard);
-                    cx.spawn_in(window, async move |editor, cx| {
-                        let resolved_hint_task = editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
-                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
-                                hint_to_resolve,
-                                buffer,
-                                server_id,
-                                cx,
-                            )
-                        })?;
-                        if let Some(resolved_hint_task) = resolved_hint_task {
-                            let mut resolved_hint =
-                                resolved_hint_task.await.context("hint resolve task")?;
-                            editor.read_with(cx, |editor, _| {
-                                if let Some(excerpt_hints) =
-                                    editor.inlay_hint_cache.hints.get(&excerpt_id)
+            if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
+                && let ResolveState::CanResolve(server_id, _) = &cached_hint.resolve_state
+            {
+                let hint_to_resolve = cached_hint.clone();
+                let server_id = *server_id;
+                cached_hint.resolve_state = ResolveState::Resolving;
+                drop(guard);
+                cx.spawn_in(window, async move |editor, cx| {
+                    let resolved_hint_task = editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                        editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                            hint_to_resolve,
+                            buffer,
+                            server_id,
+                            cx,
+                        )
+                    })?;
+                    if let Some(resolved_hint_task) = resolved_hint_task {
+                        let mut resolved_hint =
+                            resolved_hint_task.await.context("hint resolve task")?;
+                        editor.read_with(cx, |editor, _| {
+                            if let Some(excerpt_hints) =
+                                editor.inlay_hint_cache.hints.get(&excerpt_id)
+                            {
+                                let mut guard = excerpt_hints.write();
+                                if let Some(cached_hint) = guard.hints_by_id.get_mut(&id)
+                                    && cached_hint.resolve_state == ResolveState::Resolving
                                 {
-                                    let mut guard = excerpt_hints.write();
-                                    if let Some(cached_hint) = guard.hints_by_id.get_mut(&id) {
-                                        if cached_hint.resolve_state == ResolveState::Resolving {
-                                            resolved_hint.resolve_state = ResolveState::Resolved;
-                                            *cached_hint = resolved_hint;
-                                        }
-                                    }
+                                    resolved_hint.resolve_state = ResolveState::Resolved;
+                                    *cached_hint = resolved_hint;
                                 }
-                            })?;
-                        }
+                            }
+                        })?;
+                    }
 
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
-                }
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
             }
         }
     }
@@ -990,8 +987,8 @@ fn fetch_and_update_hints(
 
                 let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
-                if !editor.registered_buffers.contains_key(&query.buffer_id) {
-                    if let Some(project) = editor.project.as_ref() {
+                if !editor.registered_buffers.contains_key(&query.buffer_id)
+                    && let Some(project) = editor.project.as_ref() {
                         project.update(cx, |project, cx| {
                             editor.registered_buffers.insert(
                                 query.buffer_id,
@@ -999,7 +996,6 @@ fn fetch_and_update_hints(
                             );
                         })
                     }
-                }
 
                 editor
                     .semantics_provider
@@ -1240,14 +1236,12 @@ fn apply_hint_update(
             .inlay_hint_cache
             .allowed_hint_kinds
             .contains(&new_hint.kind)
-        {
-            if let Some(new_hint_position) =
+            && let Some(new_hint_position) =
                 multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
-            {
-                splice
-                    .to_insert
-                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
-            }
+        {
+            splice
+                .to_insert
+                .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
         }
         let new_id = InlayId::Hint(new_inlay_id);
         cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
@@ -1309,13 +1303,13 @@ pub mod tests {
     use futures::StreamExt;
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::{Capability, FakeLspAdapter, language_settings::AllLanguageSettingsContent};
+    use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
     use util::path;
@@ -1326,15 +1320,17 @@ pub mod tests {
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(allowed_hint_kinds.contains(&Some(InlayHintKind::Type))),
+                show_parameter_hints: Some(
+                    allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1347,7 +1343,7 @@ pub mod tests {
                         let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         Ok(Some(vec![lsp::InlayHint {
                             position: lsp::Position::new(0, i),
@@ -1436,15 +1432,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1457,7 +1453,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         let current_call_id =
                             Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1543,15 +1539,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_no_hint_updates_for_unrelated_language_files(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1602,7 +1598,7 @@ pub mod tests {
                                             "Rust" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/main.rs"))
+                                                    lsp::Uri::from_file_path(path!("/a/main.rs"))
                                                         .unwrap(),
                                                 );
                                                 rs_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1611,7 +1607,7 @@ pub mod tests {
                                             "Markdown" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/other.md"))
+                                                    lsp::Uri::from_file_path(path!("/a/other.md"))
                                                         .unwrap(),
                                                 );
                                                 md_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1773,15 +1769,17 @@ pub mod tests {
     async fn test_hint_setting_changes(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(allowed_hint_kinds.contains(&Some(InlayHintKind::Type))),
+                show_parameter_hints: Some(
+                    allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1797,7 +1795,7 @@ pub mod tests {
                         async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![
                                 lsp::InlayHint {
@@ -1934,16 +1932,19 @@ pub mod tests {
             ),
         ] {
             update_test_language_settings(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                    show_parameter_hints: new_allowed_hint_kinds
-                        .contains(&Some(InlayHintKind::Parameter)),
-                    show_other_hints: new_allowed_hint_kinds.contains(&None),
-                    show_background: false,
+                settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                    show_value_hints: Some(true),
+                    enabled: Some(true),
+                    edit_debounce_ms: Some(0),
+                    scroll_debounce_ms: Some(0),
+                    show_type_hints: Some(
+                        new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                    ),
+                    show_parameter_hints: Some(
+                        new_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                    ),
+                    show_other_hints: Some(new_allowed_hint_kinds.contains(&None)),
+                    show_background: Some(false),
                     toggle_on_modifiers_press: None,
                 })
             });
@@ -1978,16 +1979,19 @@ pub mod tests {
 
         let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: another_allowed_hint_kinds
-                    .contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: another_allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(
+                    another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                ),
+                show_parameter_hints: Some(
+                    another_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(another_allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2035,16 +2039,19 @@ pub mod tests {
 
         let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: final_allowed_hint_kinds
-                    .contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: final_allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(
+                    final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                ),
+                show_parameter_hints: Some(
+                    final_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(final_allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2110,15 +2117,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_hint_request_cancellation(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2135,7 +2142,7 @@ pub mod tests {
                             let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![lsp::InlayHint {
                                 position: lsp::Position::new(0, i),
@@ -2247,15 +2254,15 @@ pub mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2298,7 +2305,7 @@ pub mod tests {
                                 async move {
                                     assert_eq!(
                                         params.text_document.uri,
-                                        lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                        lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
@@ -2548,15 +2555,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2641,11 +2648,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -2872,15 +2879,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: false,
-                show_parameter_hints: false,
-                show_other_hints: false,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(false),
+                show_parameter_hints: Some(false),
+                show_other_hints: Some(false),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2952,11 +2959,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -3049,15 +3056,15 @@ pub mod tests {
             .unwrap();
 
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3082,15 +3089,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_inside_char_boundary_range_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3124,7 +3131,7 @@ pub mod tests {
                             async move {
                                 assert_eq!(
                                     params.text_document.uri,
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 );
                                 let query_start = params.range.start;
                                 Ok(Some(vec![lsp::InlayHint {
@@ -3175,15 +3182,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_toggle_inlay_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3196,7 +3203,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
 
                         let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -3252,15 +3259,15 @@ pub mod tests {
             .unwrap();
 
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3313,15 +3320,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_inlays_at_the_same_place(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3359,7 +3366,7 @@ pub mod tests {
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                             );
                             Ok(Some(
                                 serde_json::from_value(json!([
@@ -3546,7 +3553,7 @@ pub mod tests {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 let hint = &excerpt_hints.hints_by_id[id];
-                let mut label = hint.text();
+                let mut label = hint.text().to_string();
                 if hint.padding_left {
                     label.insert(0, ' ');
                 }
@@ -3564,7 +3571,7 @@ pub mod tests {
         editor
             .visible_inlay_hints(cx)
             .into_iter()
-            .map(|hint| hint.text.to_string())
+            .map(|hint| hint.text().to_string())
             .collect()
     }
 }

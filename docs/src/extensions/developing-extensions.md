@@ -19,9 +19,15 @@ Before starting to develop an extension for Zed, be sure to [install Rust via ru
 
 When developing an extension, you can use it in Zed without needing to publish it by installing it as a _dev extension_.
 
-From the extensions page, click the `Install Dev Extension` button and select the directory containing your extension.
+From the extensions page, click the `Install Dev Extension` button (or the {#action zed::InstallDevExtension} action) and select the directory containing your extension.
+
+If you need to troubleshoot, you can check the Zed.log ({#action zed::OpenLog}) for additional output. For debug output, close and relaunch zed with the `zed --foreground` from the command line which show more verbose INFO level logging.
 
 If you already have a published extension with the same name installed, your dev extension will override it.
+
+After installing the `Extensions` page will indicate that that the upstream extension is "Overridden by dev extension".
+
+Pre-installed extensions with the same name have to be uninstalled before installing the dev extension. See [#31106](https://github.com/zed-industries/zed/issues/31106) for more.
 
 ## Directory Structure of a Zed Extension
 

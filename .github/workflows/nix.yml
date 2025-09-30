@@ -20,7 +20,7 @@ jobs:
       matrix:
         system:
           - os: x86 Linux
-            runner: buildjet-16vcpu-ubuntu-2204
+            runner: namespace-profile-16x32-ubuntu-2204
             install_nix: true
           - os: arm Mac
             runner: [macOS, ARM64, test]

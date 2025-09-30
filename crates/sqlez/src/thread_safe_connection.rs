@@ -95,6 +95,14 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
                 let mut migration_result =
                     anyhow::Result::<()>::Err(anyhow::anyhow!("Migration never run"));
 
+                let foreign_keys_enabled: bool =
+                    connection.select_row::<i32>("PRAGMA foreign_keys")?()
+                        .unwrap_or(None)
+                        .map(|enabled| enabled != 0)
+                        .unwrap_or(false);
+
+                connection.exec("PRAGMA foreign_keys = OFF;")?()?;
+
                 for _ in 0..MIGRATION_RETRIES {
                     migration_result = connection
                         .with_savepoint("thread_safe_multi_migration", || M::migrate(connection));
@@ -104,6 +112,9 @@ impl<M: Migrator> ThreadSafeConnectionBuilder<M> {
                     }
                 }
 
+                if foreign_keys_enabled {
+                    connection.exec("PRAGMA foreign_keys = ON;")?()?;
+                }
                 migration_result
             })
             .await?;
@@ -238,11 +249,14 @@ pub fn background_thread_queue() -> WriteQueueConstructor {
     Box::new(|| {
         let (sender, receiver) = channel::<QueuedWrite>();
 
-        thread::spawn(move || {
-            while let Ok(write) = receiver.recv() {
-                write()
-            }
-        });
+        thread::Builder::new()
+            .name("sqlezWorker".to_string())
+            .spawn(move || {
+                while let Ok(write) = receiver.recv() {
+                    write()
+                }
+            })
+            .unwrap();
 
         let sender = UnboundedSyncSender::new(sender);
         Box::new(move |queued_write| {
@@ -278,12 +292,8 @@ mod test {
 
         enum TestDomain {}
         impl Domain for TestDomain {
-            fn name() -> &'static str {
-                "test"
-            }
-            fn migrations() -> &'static [&'static str] {
-                &["CREATE TABLE test(col1 TEXT, col2 TEXT) STRICT;"]
-            }
+            const NAME: &str = "test";
+            const MIGRATIONS: &[&str] = &["CREATE TABLE test(col1 TEXT, col2 TEXT) STRICT;"];
         }
 
         for _ in 0..100 {
@@ -312,12 +322,9 @@ mod test {
     fn wild_zed_lost_failure() {
         enum TestWorkspace {}
         impl Domain for TestWorkspace {
-            fn name() -> &'static str {
-                "workspace"
-            }
+            const NAME: &str = "workspace";
 
-            fn migrations() -> &'static [&'static str] {
-                &["
+            const MIGRATIONS: &[&str] = &["
                     CREATE TABLE workspaces(
                         workspace_id INTEGER PRIMARY KEY,
                         dock_visible INTEGER, -- Boolean
@@ -336,8 +343,7 @@ mod test {
                             ON DELETE CASCADE
                             ON UPDATE CASCADE
                     ) STRICT;
-                "]
-            }
+                "];
         }
 
         let builder =

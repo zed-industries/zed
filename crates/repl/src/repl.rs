@@ -5,6 +5,7 @@ pub mod notebook;
 mod outputs;
 mod repl_editor;
 mod repl_sessions_ui;
+mod repl_settings;
 mod repl_store;
 mod session;
 
@@ -22,6 +23,7 @@ pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
     ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
+pub use crate::repl_settings::ReplSettings;
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 
@@ -31,6 +33,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);
     ::editor::init_settings(cx);
+    ReplSettings::register(cx);
     repl_sessions_ui::init(cx);
     ReplStore::init(fs, cx);
 }

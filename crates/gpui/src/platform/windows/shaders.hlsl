@@ -1,6 +1,10 @@
+#include "alpha_correction.hlsl"
+
 cbuffer GlobalParams: register(b0) {
+    float4 gamma_ratios;
     float2 global_viewport_size;
-    uint2 _pad;
+    float grayscale_enhanced_contrast;
+    uint _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -914,7 +918,7 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     float2 dx = ddx(input.st_position);
     float2 dy = ddy(input.st_position);
     PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
-    
+
     Background background = sprite.color;
     Bounds bounds = sprite.bounds;
 
@@ -1021,13 +1025,18 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
 }
 
 float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
+    const float WAVE_FREQUENCY = 2.0;
+    const float WAVE_HEIGHT_RATIO = 0.8;
+
     Underline underline = underlines[input.underline_id];
     if (underline.wavy) {
         float half_thickness = underline.thickness * 0.5;
         float2 origin = underline.bounds.origin;
+
         float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
-        float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-        float amplitude = 1. / (2. * underline.thickness);
+        float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
+        float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
         float sine = sin(st.x * frequency) * amplitude;
         float dSine = cos(st.x * frequency) * amplitude * frequency;
         float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
@@ -1093,7 +1102,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    return float4(input.color.rgb, input.color.a * sample);
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
 /*

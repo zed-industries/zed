@@ -5,6 +5,7 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod redact;
+pub mod rel_path;
 pub mod schemars;
 pub mod serde;
 pub mod shell_env;
@@ -128,11 +129,9 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     }
 
     for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            if s.as_bytes()[i] == b'\n' {
-                // Since the i-th character is \n, valid to slice at i + 1.
-                return &s[..i + 1];
-            }
+        if s.is_char_boundary(i) && s.as_bytes()[i] == b'\n' {
+            // Since the i-th character is \n, valid to slice at i + 1.
+            return &s[..i + 1];
         }
     }
 
@@ -258,6 +257,9 @@ fn load_shell_from_passwd() -> Result<()> {
             &mut result,
         )
     };
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+
+    // SAFETY: If `getpwuid_r` doesn't error, we have the entry here.
     let entry = unsafe { pwd.assume_init() };
 
     anyhow::ensure!(
@@ -266,7 +268,6 @@ fn load_shell_from_passwd() -> Result<()> {
         uid,
         status
     );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
     anyhow::ensure!(
         entry.pw_uid == uid,
         "passwd entry has different uid ({}) than getuid ({}) returned",
@@ -303,11 +304,11 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path_escaped =
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
-    return Ok(zed_path_escaped.to_string());
+    Ok(zed_path_escaped.to_string())
 }
 
 #[cfg(unix)]
-pub fn load_login_shell_environment() -> Result<()> {
+pub async fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -315,7 +316,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(paths::home_dir())? {
+    for (name, value) in shell_env::capture(paths::home_dir()).await? {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -331,7 +332,7 @@ pub fn load_login_shell_environment() -> Result<()> {
 /// Configures the process to start a new session, to prevent interactive shells from taking control
 /// of the terminal.
 ///
-/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+/// For more details: <https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell>
 pub fn set_pre_exec_to_start_new_session(
     command: &mut std::process::Command,
 ) -> &mut std::process::Command {
@@ -598,7 +599,7 @@ pub fn get_windows_system_shell() -> String {
             .or_else(|| find_pwsh_in_msix(true))
             .or_else(|| find_pwsh_in_programfiles(true, true))
             .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or("powershell.exe".to_string())
     });
 
@@ -669,9 +670,12 @@ where
     let file = caller.file();
     #[cfg(target_os = "windows")]
     let file = caller.file().replace('\\', "/");
-    // In this codebase, the first segment of the file path is
-    // the 'crates' folder, followed by the crate name.
-    let target = file.split('/').nth(1);
+    // In this codebase all crates reside in a `crates` directory,
+    // so discard the prefix up to that segment to find the crate name
+    let target = file
+        .split_once("crates/")
+        .and_then(|(_, s)| s.split_once('/'))
+        .map(|(p, _)| p);
 
     log::logger().log(
         &log::Record::builder()
@@ -814,7 +818,8 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{Rng, seq::SliceRandom};
+    use rand::prelude::*;
+
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -824,7 +829,7 @@ mod rng {
         pub fn new(rng: T) -> Self {
             Self {
                 rng,
-                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+                simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
 
@@ -839,18 +844,18 @@ mod rng {
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.simple_text {
-                return if self.rng.gen_range(0..100) < 5 {
+                return if self.rng.random_range(0..100) < 5 {
                     Some('\n')
                 } else {
-                    Some(self.rng.gen_range(b'a'..b'z' + 1).into())
+                    Some(self.rng.random_range(b'a'..b'z' + 1).into())
                 };
             }
 
-            match self.rng.gen_range(0..100) {
+            match self.rng.random_range(0..100) {
                 // whitespace
                 0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                20..=32 => char::from_u32(self.rng.random_range(('α' as u32)..('ω' as u32 + 1))),
                 // // three-byte characters
                 33..=45 => ['✋', '✅', '❌', '❎', '⭐']
                     .choose(&mut self.rng)
@@ -858,7 +863,7 @@ mod rng {
                 // // four-byte characters
                 46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
                 // ascii letters
-                _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+                _ => Some(self.rng.random_range(b'a'..b'z' + 1).into()),
             }
         }
     }
@@ -884,10 +889,10 @@ macro_rules! maybe {
         (|| $block)()
     };
     (async $block:block) => {
-        (|| async $block)()
+        (async || $block)()
     };
     (async move $block:block) => {
-        (|| async move $block)()
+        (async move || $block)()
     };
 }
 
@@ -1056,6 +1061,18 @@ pub fn get_system_shell() -> String {
     }
 }
 
+pub fn get_default_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        "/bin/sh".to_string()
+    }
+}
+
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
     Timeout,
@@ -1077,6 +1094,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     fn from(result: anyhow::Result<O>) -> Self {
         ConnectionResult::Result(result)
     }
+}
+
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
 }
 
 #[cfg(test)]

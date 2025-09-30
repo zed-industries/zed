@@ -185,10 +185,10 @@ impl LineLayout {
 
             if width > wrap_width && boundary > last_boundary {
                 // When used line_clamp, we should limit the number of lines.
-                if let Some(max_lines) = max_lines {
-                    if boundaries.len() >= max_lines - 1 {
-                        break;
-                    }
+                if let Some(max_lines) = max_lines
+                    && boundaries.len() >= max_lines - 1
+                {
+                    break;
                 }
 
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
@@ -634,15 +634,15 @@ struct CacheKeyRef<'a> {
     force_width: Option<Pixels>,
 }
 
-impl PartialEq for (dyn AsCacheKeyRef + '_) {
+impl PartialEq for dyn AsCacheKeyRef + '_ {
     fn eq(&self, other: &dyn AsCacheKeyRef) -> bool {
         self.as_cache_key_ref() == other.as_cache_key_ref()
     }
 }
 
-impl Eq for (dyn AsCacheKeyRef + '_) {}
+impl Eq for dyn AsCacheKeyRef + '_ {}
 
-impl Hash for (dyn AsCacheKeyRef + '_) {
+impl Hash for dyn AsCacheKeyRef + '_ {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_cache_key_ref().hash(state)
     }
