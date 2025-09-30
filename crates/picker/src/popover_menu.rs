@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use gpui::{
     AnyView, Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
 };
@@ -21,7 +19,6 @@ where
     tooltip: TT,
     handle: Option<PopoverMenuHandle<Picker<P>>>,
     anchor: Corner,
-    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -47,17 +44,11 @@ where
             tooltip,
             handle: None,
             anchor,
-            on_open: None,
         }
     }
 
     pub fn with_handle(mut self, handle: PopoverMenuHandle<Picker<P>>) -> Self {
         self.handle = Some(handle);
-        self
-    }
-
-    pub fn on_open(mut self, on_open: Rc<dyn Fn(&mut Window, &mut App)>) -> Self {
-        self.on_open = Some(on_open);
         self
     }
 }
@@ -95,7 +86,6 @@ where
             .trigger_with_tooltip(self.trigger, self.tooltip)
             .anchor(self.anchor)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
-            .when_some(self.on_open, |menu, on_open| menu.on_open(on_open))
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
