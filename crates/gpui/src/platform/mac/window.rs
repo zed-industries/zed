@@ -1530,8 +1530,11 @@ impl PlatformWindow for MacWindow {
                             // There is no documented API for "Fill" action, so we'll just zoom the window
                             window.zoom_(nil);
                         }
+                        "None" | "" => {
+                            // Do nothing - respect the "Do Nothing" system setting
+                        }
                         _ => {
-                            window.zoom_(nil);
+                            // Default to doing nothing for unrecognized settings
                         }
                     }
                 }
