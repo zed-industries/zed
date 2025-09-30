@@ -21,7 +21,7 @@ impl AgentServer for Codex {
 
     fn logo(&self) -> ui::IconName {
         // No dedicated Codex icon yet; use the generic AI icon.
-        ui::IconName::Ai
+        ui::IconName::AiOpenAi
     }
 
     fn connect(

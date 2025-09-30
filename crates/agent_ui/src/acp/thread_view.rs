@@ -1012,11 +1012,13 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            if !connection
-                .auth_methods()
-                .iter()
-                .any(|method| method.id.0.as_ref() == "claude-login")
-            {
+            let auth_methods = connection.auth_methods();
+            let has_supported_auth = auth_methods.iter().any(|method| {
+                let id = method.id.0.as_ref();
+                id == "claude-login" || id == "spawn-gemini-cli" || id == "spawn-codex-acp"
+            });
+            let can_login = has_supported_auth || auth_methods.is_empty() || self.login.is_some();
+            if !can_login {
                 return;
             };
             let this = cx.weak_entity();
@@ -1517,7 +1519,8 @@ impl AcpThreadView {
         configuration_view.take();
         pending_auth_method.replace(method.clone());
         let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli")
+            || method.0.as_ref() == "spawn-gemini-cli"
+            || method.0.as_ref() == "spawn-codex-acp")
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
