@@ -166,11 +166,10 @@ impl ContextServerStore {
     pub fn new(
         worktree_store: Entity<WorktreeStore>,
         weak_project: WeakEntity<Project>,
-        run_servers: bool,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
-            run_servers,
+            true,
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
