@@ -4,9 +4,9 @@ pub mod popover_menu;
 
 use anyhow::Result;
 use editor::{
-    Editor, SelectionEffects,
-    actions::{MoveDown, MoveUp},
+    actions::{MoveDown, MoveUp, SelectAll},
     scroll::Autoscroll,
+    Editor, SelectionEffects,
 };
 use gpui::{
     Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -354,6 +354,14 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.focus_handle(cx).focus(window);
+    }
+
+    pub fn select_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Head::Editor(editor) = &self.head {
+            editor.update(cx, |editor, cx| {
+                editor.select_all(&SelectAll, window, cx);
+            });
+        }
     }
 
     /// Handles the selecting an index, and passing the change to the delegate.

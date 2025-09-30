@@ -10,8 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::{rc::Rc, sync::atomic::Ordering, sync::{Arc, atomic::AtomicBool}};
 use ui::{
     Button, ButtonStyle, DocumentationSide, HighlightedLabel, Icon, IconName, Label, LabelSize,
     ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -132,6 +131,13 @@ impl Render for ProfileSelector {
         }
 
         let picker = self.ensure_picker(window, cx);
+        let picker_clone_for_on_open = picker.clone();
+        let on_open = Rc::new(move |window: &mut Window, cx: &mut App| {
+            picker_clone_for_on_open.update(cx, |picker, cx| {
+                picker.select_all(window, cx);
+            });
+        });
+
         let settings = AgentSettings::get_global(cx);
         let profile_id = self.provider.profile_id(cx);
         let profile = settings.profiles.get(&profile_id);
@@ -170,6 +176,7 @@ impl Render for ProfileSelector {
             anchor,
             cx,
         )
+        .on_open(on_open)
         .with_handle(self.picker_handle.clone())
         .render(window, cx)
         .into_any_element()
