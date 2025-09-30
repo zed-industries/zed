@@ -65,6 +65,8 @@
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
+extern crate self as gpui;
+
 #[macro_use]
 mod action;
 mod app;
