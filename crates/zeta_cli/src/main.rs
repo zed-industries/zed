@@ -122,7 +122,7 @@ enum OutputFormat {
     #[default]
     Prompt,
     Request,
-    Both,
+    Full,
 }
 
 #[derive(Debug, Clone)]
@@ -299,15 +299,18 @@ async fn get_context(
                         .await?;
 
                     let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
-                    let prompt_string = planned_prompt.to_prompt_string()?.0;
+                    let (prompt_string, section_labels) = planned_prompt.to_prompt_string()?;
+                    // let sections = planned_prompt
+
                     match zeta2_args.output_format {
                         OutputFormat::Prompt => anyhow::Ok(prompt_string),
                         OutputFormat::Request => {
                             anyhow::Ok(serde_json::to_string_pretty(&request)?)
                         }
-                        OutputFormat::Both => anyhow::Ok(serde_json::to_string_pretty(&json!({
+                        OutputFormat::Full => anyhow::Ok(serde_json::to_string_pretty(&json!({
                             "request": request,
                             "prompt": prompt_string,
+                            "section_labels": section_labels,
                         }))?),
                     }
                 })
