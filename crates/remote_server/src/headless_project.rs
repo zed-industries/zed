@@ -16,7 +16,7 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
-    image_store::{ImageId, ImageStore},
+    image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind},
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -43,7 +43,6 @@ pub struct HeadlessProject {
     pub session: AnyProtoClient,
     pub worktree_store: Entity<WorktreeStore>,
     pub buffer_store: Entity<BufferStore>,
-    pub image_store: Entity<ImageStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
     pub dap_store: Entity<DapStore>,
@@ -115,15 +114,6 @@ impl HeadlessProject {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             buffer_store
-        });
-
-        let image_store = cx.new(|cx| {
-            ImageStore::remote(
-                worktree_store.clone(),
-                session.clone(),
-                REMOTE_SERVER_PROJECT_ID,
-                cx,
-            )
         });
 
         let breakpoint_store =
@@ -305,7 +295,6 @@ impl HeadlessProject {
             fs,
             worktree_store,
             buffer_store,
-            image_store,
             lsp_store,
             task_store,
             dap_store,
