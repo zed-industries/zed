@@ -50,10 +50,10 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set, the root directory name
+    /// The displayed name of this project. If not set or empty, the root directory name
     /// will be displayed.
     ///
-    /// Default: none
+    /// Default: ""
     pub project_name: Option<String>,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
@@ -256,6 +256,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Git blame settings.
+    pub blame: Option<BlameSettings>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -303,6 +305,16 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: Option<bool>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct BlameSettings {
+    /// Whether to show the avatar of the author of the commit.
+    ///
+    /// Default: true
+    pub show_avatar: Option<bool>,
 }
 
 #[skip_serializing_none]

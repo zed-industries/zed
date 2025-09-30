@@ -2485,7 +2485,7 @@ impl LocalLspStore {
                     name: None,
                     message: proto::update_language_server::Variant::RegisteredForBuffer(
                         proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                             buffer_id: buffer_id.to_proto(),
                         },
                     ),
@@ -3188,7 +3188,7 @@ impl LocalLspStore {
                         let pattern = watcher_path
                             .as_path()
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
@@ -3196,7 +3196,7 @@ impl LocalLspStore {
                                     path.display(),
                                     e
                                 );
-                                watcher_path.as_path().to_string_lossy().to_string()
+                                watcher_path.as_path().to_string_lossy().into_owned()
                             });
                         (path, pattern)
                     }
@@ -3212,7 +3212,7 @@ impl LocalLspStore {
                         let path = glob_literal_prefix(Path::new(&rp.pattern));
                         let pattern = Path::new(&rp.pattern)
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
@@ -3285,7 +3285,7 @@ impl LocalLspStore {
                     Some((
                         worktree.clone(),
                         RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
-                        relative.to_string_lossy().to_string(),
+                        relative.to_string_lossy().into_owned(),
                     ))
                 }
                 lsp::GlobPattern::Relative(rp) => {
@@ -4622,7 +4622,9 @@ impl LspStore {
                                 message:
                                     proto::update_language_server::Variant::RegisteredForBuffer(
                                         proto::RegisteredForBuffer {
-                                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                                            buffer_abs_path: abs_path
+                                                .to_string_lossy()
+                                                .into_owned(),
                                             buffer_id: buffer_id.to_proto(),
                                         },
                                     ),
@@ -10582,7 +10584,7 @@ impl LspStore {
                 name: Some(adapter.name()),
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                         buffer_id: buffer_id.to_proto(),
                     },
                 ),
@@ -10843,7 +10845,7 @@ impl LspStore {
                 abs_path,
                 signature,
             } => {
-                result.path = abs_path.to_string_lossy().to_string();
+                result.path = abs_path.to_string_lossy().into_owned();
                 result.signature = signature.to_vec();
             }
         }
@@ -12831,7 +12833,7 @@ async fn populate_labels_for_symbols(
             continue;
         };
         let language = language_registry
-            .language_for_file_path(Path::new(file_name))
+            .load_language_for_file_path(Path::new(file_name))
             .await
             .ok()
             .or_else(|| {

@@ -17,7 +17,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntry, DiskState, File,
+    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState, File,
     IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
     OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
     ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
@@ -54,7 +54,7 @@ use util::post_inc;
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExcerptId(usize);
+pub struct ExcerptId(u32);
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
@@ -77,12 +77,6 @@ pub struct MultiBuffer {
     title: Option<String>,
     capability: Capability,
     buffer_changed_since_sync: Rc<Cell<bool>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MultiOrSingleBufferOffsetRange {
-    Single(Range<usize>),
-    Multi(Range<usize>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,7 +172,7 @@ impl PathKey {
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().to_string().into())
+            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
         } else {
             Self::namespaced(0, buffer.entity_id().to_string().into())
         }
@@ -6013,7 +6007,7 @@ impl MultiBufferSnapshot {
         &self,
         buffer_id: BufferId,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<Point>> + '_ {
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, Point>> + '_ {
         self.lift_buffer_metadata(Point::zero()..self.max_point(), move |buffer, range| {
             if buffer.remote_id() != buffer_id {
                 return None;
@@ -6022,16 +6016,16 @@ impl MultiBufferSnapshot {
                 buffer
                     .diagnostics_in_range(range, false)
                     .filter(move |diagnostic| diagnostic.diagnostic.group_id == group_id)
-                    .map(move |DiagnosticEntry { diagnostic, range }| (range, diagnostic)),
+                    .map(move |DiagnosticEntryRef { diagnostic, range }| (range, diagnostic)),
             )
         })
-        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
+        .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
     pub fn diagnostics_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = DiagnosticEntry<T>> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'a, T>> + 'a
     where
         T: 'a
             + text::ToOffset
@@ -6048,13 +6042,13 @@ impl MultiBufferSnapshot {
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
-        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
+        .map(|(range, diagnostic, _)| DiagnosticEntryRef { diagnostic, range })
     }
 
     pub fn diagnostics_with_buffer_ids_in_range<'a, T>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (BufferId, DiagnosticEntry<T>)> + 'a
+    ) -> impl Iterator<Item = (BufferId, DiagnosticEntryRef<'a, T>)> + 'a
     where
         T: 'a
             + text::ToOffset
@@ -6071,25 +6065,23 @@ impl MultiBufferSnapshot {
                     .map(|entry| (entry.range, entry.diagnostic)),
             )
         })
-        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntry { diagnostic, range }))
+        .map(|(range, diagnostic, b)| (b.buffer_id, DiagnosticEntryRef { diagnostic, range }))
     }
 
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node<'_>, MultiOrSingleBufferOffsetRange)> {
+    ) -> Option<(tree_sitter::Node<'_>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
         let node_range = node.byte_range();
-        let range = if excerpt.contains_buffer_range(node_range.clone()) {
-            MultiOrSingleBufferOffsetRange::Multi(excerpt.map_range_from_buffer(node_range))
-        } else {
-            MultiOrSingleBufferOffsetRange::Single(node_range)
+        if !excerpt.contains_buffer_range(node_range.clone()) {
+            return None;
         };
-        Some((node, range))
+        Some((node, excerpt.map_range_from_buffer(node_range)))
     }
 
     pub fn syntax_next_sibling<T: ToOffset>(
@@ -7202,7 +7194,7 @@ impl ExcerptId {
     }
 
     pub fn max() -> Self {
-        Self(usize::MAX)
+        Self(u32::MAX)
     }
 
     pub fn to_proto(self) -> u64 {
@@ -7222,7 +7214,7 @@ impl ExcerptId {
 
 impl From<ExcerptId> for usize {
     fn from(val: ExcerptId) -> Self {
-        val.0
+        val.0 as usize
     }
 }
 

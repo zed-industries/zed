@@ -241,7 +241,7 @@ impl Item for FileDiffView {
             buffer
                 .read(cx)
                 .file()
-                .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+                .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
                 .unwrap_or_else(|| "untitled".into())
         };
         let old_path = path(&self.old_buffer);

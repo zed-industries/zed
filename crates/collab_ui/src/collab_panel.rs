@@ -3170,8 +3170,8 @@ struct JoinChannelTooltip {
 }
 
 impl Render for JoinChannelTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |container, cx| {
             let participants = self
                 .channel_store
                 .read(cx)

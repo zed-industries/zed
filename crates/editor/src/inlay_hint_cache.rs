@@ -3571,7 +3571,7 @@ pub mod tests {
         editor
             .visible_inlay_hints(cx)
             .into_iter()
-            .map(|hint| hint.text.to_string())
+            .map(|hint| hint.text().to_string())
             .collect()
     }
 }

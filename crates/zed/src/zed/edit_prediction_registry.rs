@@ -205,42 +205,48 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                if std::env::var("ZED_ZETA2").is_ok() {
-                    let zeta = zeta2::Zeta::global(client, &user_store, cx);
-                    let provider = cx.new(|cx| {
-                        zeta2::ZetaEditPredictionProvider::new(
-                            editor.project(),
-                            &client,
-                            &user_store,
-                            cx,
-                        )
-                    });
-
-                    if let Some(buffer) = &singleton_buffer
-                        && buffer.read(cx).file().is_some()
-                        && let Some(project) = editor.project()
-                    {
-                        zeta.update(cx, |zeta, cx| {
-                            zeta.register_buffer(buffer, project, cx);
+                if let Some(project) = editor.project() {
+                    if std::env::var("ZED_ZETA2").is_ok() {
+                        let zeta = zeta2::Zeta::global(client, &user_store, cx);
+                        let provider = cx.new(|cx| {
+                            zeta2::ZetaEditPredictionProvider::new(
+                                project.clone(),
+                                &client,
+                                &user_store,
+                                cx,
+                            )
                         });
-                    }
 
-                    editor.set_edit_prediction_provider(Some(provider), window, cx);
-                } else {
-                    let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+                        // TODO [zeta2] handle multibuffers
+                        if let Some(buffer) = &singleton_buffer
+                            && buffer.read(cx).file().is_some()
+                        {
+                            zeta.update(cx, |zeta, cx| {
+                                zeta.register_buffer(buffer, project, cx);
+                            });
+                        }
 
-                    if let Some(buffer) = &singleton_buffer
-                        && buffer.read(cx).file().is_some()
-                        && let Some(project) = editor.project()
-                    {
-                        zeta.update(cx, |zeta, cx| {
-                            zeta.register_buffer(buffer, project, cx);
+                        editor.set_edit_prediction_provider(Some(provider), window, cx);
+                    } else {
+                        let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
+                        if let Some(buffer) = &singleton_buffer
+                            && buffer.read(cx).file().is_some()
+                        {
+                            zeta.update(cx, |zeta, cx| {
+                                zeta.register_buffer(buffer, project, cx);
+                            });
+                        }
+
+                        let provider = cx.new(|_| {
+                            zeta::ZetaEditPredictionProvider::new(
+                                zeta,
+                                project.clone(),
+                                singleton_buffer,
+                            )
                         });
+                        editor.set_edit_prediction_provider(Some(provider), window, cx);
                     }
-
-                    let provider =
-                        cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
-                    editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }
             }
         }

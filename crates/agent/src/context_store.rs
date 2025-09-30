@@ -312,7 +312,7 @@ impl ContextStore {
                 let item = image_item.read(cx);
                 this.insert_image(
                     Some(item.project_path(cx)),
-                    Some(item.file.full_path(cx).to_string_lossy().to_string()),
+                    Some(item.file.full_path(cx).to_string_lossy().into_owned()),
                     item.image.clone(),
                     remove_if_exists,
                     cx,

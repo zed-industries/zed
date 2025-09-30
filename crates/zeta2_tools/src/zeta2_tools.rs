@@ -185,7 +185,7 @@ impl Zeta2Inspector {
                     cx.background_executor().timer(THROTTLE_TIME).await;
                     if let Some(task) = zeta
                         .update(cx, |zeta, cx| {
-                            zeta.request_prediction(&project, &buffer, position, cx)
+                            zeta.refresh_prediction(&project, &buffer, position, cx)
                         })
                         .ok()
                     {
@@ -252,6 +252,7 @@ impl Zeta2Inspector {
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
+                        file_indexing_parallelism: zeta_options.file_indexing_parallelism,
                     },
                     cx,
                 );

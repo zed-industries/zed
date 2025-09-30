@@ -74,6 +74,8 @@ actions!(
         Yank,
         /// Yanks the entire line.
         YankLine,
+        /// Yanks from cursor to end of line.
+        YankToEndOfLine,
         /// Toggles the case of selected text.
         ChangeCase,
         /// Converts selected text to uppercase.
@@ -117,6 +119,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::convert_to_rot13);
     Vim::action(editor, cx, Vim::convert_to_rot47);
     Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
@@ -843,6 +846,25 @@ impl Vim {
         )
     }
 
+    fn yank_to_end_of_line(
+        &mut self,
+        _: &YankToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
+        self.yank_motion(
+            motion::Motion::EndOfLine {
+                display_lines: false,
+            },
+            count,
+            forced_motion,
+            window,
+            cx,
+        )
+    }
+
     fn show_location(&mut self, _: &ShowLocation, _: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -858,9 +880,9 @@ impl Vim {
             let filename = if let Some(file) = buffer.read(cx).file() {
                 if count.is_some() {
                     if let Some(local) = file.as_local() {
-                        local.abs_path(cx).to_string_lossy().to_string()
+                        local.abs_path(cx).to_string_lossy().into_owned()
                     } else {
-                        file.full_path(cx).to_string_lossy().to_string()
+                        file.full_path(cx).to_string_lossy().into_owned()
                     }
                 } else {
                     file.path().display(file.path_style(cx)).into_owned()
@@ -1976,6 +1998,14 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\n").await;
+        cx.simulate_shared_keystrokes("Y p").await;
+        cx.shared_state().await.assert_eq("helllˇolo\n");
     }
 
     #[gpui::test]

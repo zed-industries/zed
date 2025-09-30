@@ -75,7 +75,7 @@ use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
+pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
@@ -749,6 +749,7 @@ pub struct LanguageConfig {
     pub hard_tabs: Option<bool>,
     /// How many columns a tab should occupy.
     #[serde(default)]
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// How to soft-wrap long lines of text.
     #[serde(default)]
@@ -845,6 +846,7 @@ pub struct BlockCommentConfig {
     /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: u32,
 }
 

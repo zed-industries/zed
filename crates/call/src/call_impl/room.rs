@@ -23,7 +23,7 @@ use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
 use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -86,6 +86,7 @@ pub struct Room {
     room_update_completed_rx: watch::Receiver<Option<()>>,
     pending_room_update: Option<Task<()>>,
     maintain_connection: Option<Task<Option<()>>>,
+    created: Instant,
 }
 
 impl EventEmitter<Event> for Room {}
@@ -157,6 +158,7 @@ impl Room {
             maintain_connection: Some(maintain_connection),
             room_update_completed_tx,
             room_update_completed_rx,
+            created: cx.background_executor().now(),
         }
     }
 
@@ -827,7 +829,17 @@ impl Room {
                                 },
                             );
 
-                            Audio::play_sound(Sound::Joined, cx);
+                            // When joining a room start_room_connection gets
+                            // called but we have already played the join sound.
+                            // Dont play extra sounds over that.
+                            if this.created.elapsed() > Duration::from_millis(100) {
+                                if let proto::ChannelRole::Guest = role {
+                                    Audio::play_sound(Sound::GuestJoined, cx);
+                                } else {
+                                    Audio::play_sound(Sound::Joined, cx);
+                                }
+                            }
+
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
                                     .get(&ParticipantIdentity(user.id.to_string()))
