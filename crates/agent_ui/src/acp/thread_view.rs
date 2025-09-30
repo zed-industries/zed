@@ -123,8 +123,9 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
@@ -827,6 +828,55 @@ impl AcpThreadView {
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
+    }
+
+    fn switch_profile_via_action(
+        &mut self,
+        action: &SwitchToProfile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.profile_id.is_empty() {
+            return;
+        }
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let profile_id = AgentProfileId(Arc::<str>::from(action.profile_id.as_str()));
+        let settings = AgentSettings::get_global(cx);
+        let Some(target) = settings.profiles.get(&profile_id) else {
+            return;
+        };
+        if &profile_id == thread.read(cx).profile() {
+            return;
+        }
+
+        // Only block if target requires tools but model doesn’t support them.
+        let model_supports_tools = thread.read(cx).model().is_some_and(|m| m.supports_tools());
+        let target_requires_tools = target.tools.values().any(|enabled| *enabled);
+        if target_requires_tools && !model_supports_tools {
+            return;
+        }
+
+        // Apply the profile immediately so the UI and thread swap models before the disk write.
+        thread.update(cx, |t, cx| t.set_profile(profile_id.clone(), cx));
+
+        let fs = <dyn Fs>::global(cx);
+        let id_for_settings = profile_id.clone();
+        update_settings_file(fs, cx, move |s, _| {
+            s.agent
+                .get_or_insert_default()
+                .set_profile(id_for_settings.0.clone());
+        });
+
+        telemetry::event!(
+            "agent_profile_switched",
+            profile_id = profile_id.as_str(),
+            source = "palette"
+        );
+
+        cx.notify();
     }
 
     pub fn expand_message_editor(
@@ -3955,53 +4005,6 @@ impl AcpThreadView {
             )
             .when(!enable_editor, |this| this.child(backdrop))
             .into_any()
-    }
-
-    fn switch_profile_via_action(
-        &mut self,
-        action: &SwitchToProfile,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if action.profile_id.is_empty() {
-            return;
-        }
-
-        let Some(thread) = self.as_native_thread(cx) else {
-            return;
-        };
-
-        if !thread
-            .read(cx)
-            .model()
-            .is_some_and(|model| model.supports_tools())
-        {
-            return;
-        }
-
-        let profile_id = AgentProfileId(Arc::<str>::from(action.profile_id.clone()));
-        let settings = AgentSettings::get_global(cx);
-
-        if !settings.profiles.contains_key(&profile_id) {
-            return;
-        }
-
-        if thread.read(cx).profile() == &profile_id {
-            return;
-        }
-
-        let fs = <dyn Fs>::global(cx);
-        let settings_profile = profile_id.clone();
-        update_settings_file(fs, cx, move |settings, _| {
-            settings
-                .agent
-                .get_or_insert_default()
-                .set_profile(settings_profile.0.clone());
-        });
-
-        thread.update(cx, |thread, _| {
-            thread.set_profile(profile_id);
-        });
     }
 
     pub(crate) fn as_native_connection(
