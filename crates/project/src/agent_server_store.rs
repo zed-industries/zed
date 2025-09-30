@@ -909,7 +909,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                     "claude-code-acp".into(),
                     "@zed-industries/claude-code-acp".into(),
                     "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.2.5".parse().unwrap()),
+                    Some("0.5.2".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -928,7 +928,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                         command: Some(command.path.to_string_lossy().into_owned()),
                         args: vec![
                             Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-code/cli.js")
+                                .join("@anthropic-ai/claude-agent-sdk/cli.js")
                                 .to_string_lossy()
                                 .to_string(),
                             "/login".into(),
