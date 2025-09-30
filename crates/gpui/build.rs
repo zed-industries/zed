@@ -248,6 +248,7 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod windows {
     use std::{
+        ffi::OsString,
         fs,
         io::Write,
         path::{Path, PathBuf},
@@ -326,19 +327,47 @@ mod windows {
         }
     }
 
-    fn find_windows_sdk_bin() -> String {
-        if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE)
-            .open_subkey("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")
-        {
-            let install_folder: String = key.get_value("InstallationFolder").unwrap_or_default(); // "C:\Program Files (x86)\Windows Kits\10\"
-            let product_version: String = key.get_value("ProductVersion").unwrap_or_default(); // "10.0.22621" NOTE: does not include trailing `.0`
+    /// Locate `binary` in the newest installed Windows SDK.
+    ///
+    /// Returns `None` if the SDK is not found in the registry or the binary does not exist
+    /// in any `InstallationFolder\bin\<ProductVersion>.<patch>\x64` directory.
+    pub fn find_latest_windows_sdk_binary(
+        binary: &str,
+    ) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")?;
 
-            if !install_folder.is_empty() && !product_version.is_empty() {
-                return format!("{}bin\\{}.0\\x64\\", install_folder, product_version);
+        let install_folder: String = key.get_value("InstallationFolder")?; // "C:\Program Files (x86)\Windows Kits\10\"
+        let product_version: String = key.get_value("ProductVersion")?; // "10.0.22621" NOTE: does not include the patch number
+
+        let install_folder_bin = Path::new(&install_folder).join("bin");
+
+        let mut candidates: Vec<(u32, OsString)> = std::fs::read_dir(&install_folder_bin)?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                if !e.file_type().ok()?.is_dir() {
+                    return None;
+                }
+                let name = e.file_name();
+                let name_str = name.to_string_lossy();
+
+                let tail = name_str.strip_prefix(&product_version)?;
+                let patch = tail.strip_prefix('.')?.parse::<u32>().ok()?;
+                Some((patch, name))
+            })
+            .collect();
+
+        // Highest patch first
+        candidates.sort_by_key(|(p, _)| std::cmp::Reverse(*p));
+
+        for (_, dir_name) in candidates {
+            let candidate = install_folder_bin.join(&dir_name).join("x64").join(binary);
+            if candidate.is_file() {
+                return Ok(Some(candidate));
             }
         }
 
-        String::default()
+        Ok(None)
     }
 
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
@@ -361,11 +390,8 @@ mod windows {
             return path.trim().to_string();
         }
 
-        // Try to find the latest Windows SDK path in registry.
-        let path = format!("{}{}", find_windows_sdk_bin(), "fxc.exe");
-
-        if Path::new(&path).exists() {
-            return path;
+        if let Ok(Some(path)) = find_latest_windows_sdk_binary("fxc.exe") {
+            return path.to_string_lossy().into_owned();
         }
 
         panic!("Failed to find fxc.exe");
