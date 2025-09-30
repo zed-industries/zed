@@ -1051,7 +1051,6 @@ mod test {
         }
 
         fn assert_search_results(&self, other: &Self) {
-            // todo! assert that rendered paged as well and it's items.
             assert_eq!(self.navbar_entries, other.navbar_entries);
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
