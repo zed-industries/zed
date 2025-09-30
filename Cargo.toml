@@ -273,7 +273,7 @@ cloud_llm_client = { path = "crates/cloud_llm_client" }
 cloud_zeta2_prompt = { path = "crates/cloud_zeta2_prompt" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
-collections = { path = "crates/collections" }
+collections = { path = "crates/collections", package = "zed-collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
@@ -417,7 +417,7 @@ ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 ui_prompt = { path = "crates/ui_prompt" }
-util = { path = "crates/util" }
+util = { path = "crates/util", package = "zed-util" }
 util_macros = { path = "crates/util_macros" }
 vercel = { path = "crates/vercel" }
 vim = { path = "crates/vim" }

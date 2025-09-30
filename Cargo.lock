@@ -11,7 +11,6 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "buffer_diff",
- "collections",
  "editor",
  "env_logger 0.11.8",
  "file_icons",
@@ -36,10 +35,11 @@ dependencies = [
  "terminal",
  "ui",
  "url",
- "util",
  "uuid",
  "watch",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -47,7 +47,6 @@ name = "acp_tools"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "collections",
  "gpui",
  "language",
  "markdown",
@@ -57,9 +56,10 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -69,7 +69,6 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "clock",
- "collections",
  "ctor",
  "futures 0.3.31",
  "gpui",
@@ -82,9 +81,10 @@ dependencies = [
  "serde_json",
  "settings",
  "text",
- "util",
  "watch",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -104,9 +104,9 @@ dependencies = [
  "release_channel",
  "smallvec",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -149,7 +149,6 @@ dependencies = [
  "chrono",
  "client",
  "cloud_llm_client",
- "collections",
  "component",
  "context_server",
  "convert_case 0.8.0",
@@ -185,10 +184,11 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "time",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_env_vars",
  "zstd",
 ]
@@ -228,7 +228,6 @@ dependencies = [
  "client",
  "clock",
  "cloud_llm_client",
- "collections",
  "context_server",
  "ctor",
  "db",
@@ -273,12 +272,13 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
- "util",
  "uuid",
  "watch",
  "web_search",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zed_env_vars",
  "zlog",
  "zstd",
@@ -296,7 +296,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "client",
- "collections",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -320,9 +319,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "ui",
- "util",
  "watch",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -331,7 +331,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cloud_llm_client",
- "collections",
  "convert_case 0.8.0",
  "fs",
  "gpui",
@@ -343,8 +342,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -371,7 +371,6 @@ dependencies = [
  "chrono",
  "client",
  "cloud_llm_client",
- "collections",
  "command_palette_hooks",
  "component",
  "context_server",
@@ -437,10 +436,11 @@ dependencies = [
  "unindent",
  "url",
  "urlencoding",
- "util",
  "watch",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -809,9 +809,9 @@ dependencies = [
  "proto",
  "smol",
  "tempfile",
- "util",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-util",
  "zeroize",
 ]
 
@@ -837,7 +837,6 @@ dependencies = [
  "client",
  "clock",
  "cloud_llm_client",
- "collections",
  "context_server",
  "fs",
  "futures 0.3.31",
@@ -866,10 +865,11 @@ dependencies = [
  "text",
  "ui",
  "unindent",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_env_vars",
 ]
 
@@ -879,7 +879,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "collections",
  "derive_more",
  "extension",
  "futures 0.3.31",
@@ -891,9 +890,10 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -903,7 +903,6 @@ dependencies = [
  "anyhow",
  "assistant_slash_command",
  "chrono",
- "collections",
  "context_server",
  "editor",
  "feature_flags",
@@ -925,10 +924,11 @@ dependencies = [
  "smol",
  "text",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -940,7 +940,6 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "clock",
- "collections",
  "ctor",
  "derive_more",
  "gpui",
@@ -958,9 +957,10 @@ dependencies = [
  "serde_json",
  "settings",
  "text",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -977,7 +977,6 @@ dependencies = [
  "client",
  "clock",
  "cloud_llm_client",
- "collections",
  "component",
  "derive_more",
  "diffy",
@@ -1024,11 +1023,12 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "unindent",
- "util",
  "watch",
  "web_search",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -1403,7 +1403,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-tar",
- "collections",
  "crossbeam",
  "denoise",
  "gpui",
@@ -1415,8 +1414,9 @@ dependencies = [
  "settings",
  "smol",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -1480,9 +1480,9 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -2483,8 +2483,8 @@ dependencies = [
  "sum_tree",
  "text",
  "unindent",
- "util",
  "workspace-hack",
+ "zed-util",
  "zlog",
 ]
 
@@ -2622,7 +2622,6 @@ dependencies = [
  "anyhow",
  "audio",
  "client",
- "collections",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -2637,8 +2636,9 @@ dependencies = [
  "serde",
  "settings",
  "telemetry",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -2937,7 +2937,6 @@ dependencies = [
  "anyhow",
  "client",
  "clock",
- "collections",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -2949,8 +2948,9 @@ dependencies = [
  "settings",
  "text",
  "time",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -3086,7 +3086,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "clap",
- "collections",
  "core-foundation 0.10.0",
  "core-services",
  "exec",
@@ -3098,9 +3097,10 @@ dependencies = [
  "release_channel",
  "serde",
  "tempfile",
- "util",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -3114,7 +3114,6 @@ dependencies = [
  "clock",
  "cloud_api_client",
  "cloud_llm_client",
- "collections",
  "credentials_provider",
  "derive_more",
  "feature_flags",
@@ -3152,10 +3151,11 @@ dependencies = [
  "tokio-rustls 0.26.2",
  "tokio-socks",
  "url",
- "util",
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -3336,7 +3336,6 @@ dependencies = [
  "client",
  "clock",
  "collab_ui",
- "collections",
  "command_palette_hooks",
  "context_server",
  "ctor",
@@ -3411,11 +3410,12 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unindent",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -3428,7 +3428,6 @@ dependencies = [
  "channel",
  "chrono",
  "client",
- "collections",
  "db",
  "editor",
  "futures 0.3.31",
@@ -3455,18 +3454,10 @@ dependencies = [
  "title_bar",
  "tree-sitter-md",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
-]
-
-[[package]]
-name = "collections"
-version = "0.1.0"
-dependencies = [
- "indexmap 2.9.0",
- "rustc-hash 2.1.1",
- "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -3507,7 +3498,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "command_palette_hooks",
  "ctor",
  "db",
@@ -3529,9 +3519,10 @@ dependencies = [
  "theme",
  "time",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -3539,17 +3530,16 @@ dependencies = [
 name = "command_palette_hooks"
 version = "0.1.0"
 dependencies = [
- "collections",
  "derive_more",
  "gpui",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
 name = "component"
 version = "0.1.0"
 dependencies = [
- "collections",
  "documented",
  "gpui",
  "inventory",
@@ -3557,6 +3547,7 @@ dependencies = [
  "strum 0.27.1",
  "theme",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -3619,7 +3610,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "collections",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -3633,8 +3623,9 @@ dependencies = [
  "smol",
  "tempfile",
  "url",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -3670,7 +3661,6 @@ dependencies = [
  "chrono",
  "client",
  "clock",
- "collections",
  "command_palette_hooks",
  "ctor",
  "dirs 4.0.0",
@@ -3699,9 +3689,10 @@ dependencies = [
  "task",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -4415,7 +4406,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "client",
- "collections",
  "dap-types",
  "fs",
  "futures 0.3.31",
@@ -4438,8 +4428,9 @@ dependencies = [
  "telemetry",
  "tree-sitter",
  "tree-sitter-go",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -4459,7 +4450,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "collections",
  "dap",
  "dotenvy",
  "fs",
@@ -4474,8 +4464,9 @@ dependencies = [
  "shlex",
  "smol",
  "task",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -4572,8 +4563,8 @@ dependencies = [
  "sqlez",
  "sqlez_macros",
  "tempfile",
- "util",
  "workspace-hack",
+ "zed-util",
  "zed_env_vars",
 ]
 
@@ -4599,8 +4590,8 @@ dependencies = [
  "gpui",
  "serde_json",
  "task",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -4616,9 +4607,9 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -4629,7 +4620,6 @@ dependencies = [
  "anyhow",
  "bitflags 2.9.0",
  "client",
- "collections",
  "command_palette_hooks",
  "dap",
  "dap_adapters",
@@ -4672,9 +4662,10 @@ dependencies = [
  "tree-sitter-json",
  "ui",
  "unindent",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -4792,7 +4783,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "component",
  "ctor",
  "editor",
@@ -4812,9 +4802,10 @@ dependencies = [
  "theme",
  "ui",
  "unindent",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -4969,9 +4960,9 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "util",
  "workspace-hack",
  "zed",
+ "zed-util",
  "zlog",
 ]
 
@@ -5163,7 +5154,6 @@ dependencies = [
  "arrayvec",
  "clap",
  "cloud_llm_client",
- "collections",
  "futures 0.3.31",
  "gpui",
  "hashbrown 0.15.3",
@@ -5183,8 +5173,9 @@ dependencies = [
  "strum 0.27.1",
  "text",
  "tree-sitter",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -5198,7 +5189,6 @@ dependencies = [
  "buffer_diff",
  "client",
  "clock",
- "collections",
  "convert_case 0.8.0",
  "criterion",
  "ctor",
@@ -5257,11 +5247,12 @@ dependencies = [
  "unicode-segmentation",
  "unindent",
  "url",
- "util",
  "uuid",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -5543,7 +5534,6 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
- "collections",
  "debug_adapter_extension",
  "dirs 4.0.0",
  "dotenvy",
@@ -5578,10 +5568,11 @@ dependencies = [
  "terminal_view",
  "toml 0.8.20",
  "unindent",
- "util",
  "uuid",
  "watch",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -5660,7 +5651,6 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
- "collections",
  "dap",
  "fs",
  "futures 0.3.31",
@@ -5678,10 +5668,11 @@ dependencies = [
  "task",
  "toml 0.8.20",
  "url",
- "util",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -5717,7 +5708,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "client",
- "collections",
  "criterion",
  "ctor",
  "dap",
@@ -5751,11 +5741,12 @@ dependencies = [
  "theme_extension",
  "toml 0.8.20",
  "url",
- "util",
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -5765,7 +5756,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "db",
  "editor",
  "extension",
@@ -5787,10 +5777,11 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -5883,9 +5874,9 @@ dependencies = [
  "system_specs",
  "ui",
  "urlencoding",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -5904,7 +5895,6 @@ name = "file_finder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "ctor",
  "editor",
  "file_icons",
@@ -5924,9 +5914,10 @@ dependencies = [
  "text",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -5938,8 +5929,8 @@ dependencies = [
  "serde",
  "settings",
  "theme",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -6206,7 +6197,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "cocoa 0.26.0",
- "collections",
  "fsevent",
  "futures 0.3.31",
  "git",
@@ -6226,9 +6216,10 @@ dependencies = [
  "tempfile",
  "text",
  "time",
- "util",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -6447,8 +6438,8 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "log",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -6786,7 +6777,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
- "collections",
  "derive_more",
  "futures 0.3.31",
  "git2",
@@ -6809,9 +6799,10 @@ dependencies = [
  "time",
  "unindent",
  "url",
- "util",
  "uuid",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -6844,8 +6835,8 @@ dependencies = [
  "serde_json",
  "settings",
  "url",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -6859,7 +6850,6 @@ dependencies = [
  "call",
  "chrono",
  "cloud_llm_client",
- "collections",
  "command_palette_hooks",
  "component",
  "ctor",
@@ -6895,11 +6885,12 @@ dependencies = [
  "time_format",
  "ui",
  "unindent",
- "util",
  "watch",
  "windows 0.61.1",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zeroize",
  "zlog",
@@ -6967,9 +6958,9 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -7047,7 +7038,6 @@ dependencies = [
  "calloop-wayland-source",
  "cbindgen",
  "cocoa 0.26.0",
- "collections",
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",
@@ -7108,7 +7098,6 @@ dependencies = [
  "thiserror 2.0.12",
  "unicode-segmentation",
  "usvg",
- "util",
  "util_macros",
  "uuid",
  "waker-fn",
@@ -7126,6 +7115,8 @@ dependencies = [
  "x11rb",
  "xim",
  "xkbcommon",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -7147,8 +7138,8 @@ dependencies = [
  "anyhow",
  "gpui",
  "tokio",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -7965,9 +7956,9 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -8086,10 +8077,10 @@ dependencies = [
  "serde_json_lenient",
  "theme",
  "ui",
- "util",
  "util_macros",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -8102,9 +8093,9 @@ dependencies = [
  "gpui",
  "release_channel",
  "smol",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -8404,8 +8395,8 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -8486,7 +8477,6 @@ name = "keymap_editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "command_palette",
  "component",
  "db",
@@ -8513,10 +8503,11 @@ dependencies = [
  "tree-sitter-rust",
  "ui",
  "ui_input",
- "util",
  "vim",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -8576,7 +8567,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "clock",
- "collections",
  "ctor",
  "diffy",
  "ec4rs",
@@ -8624,9 +8614,10 @@ dependencies = [
  "tree-sitter-typescript",
  "unicase",
  "unindent",
- "util",
  "watch",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -8636,7 +8627,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "collections",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -8647,8 +8637,9 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -8661,7 +8652,6 @@ dependencies = [
  "client",
  "cloud_api_types",
  "cloud_llm_client",
- "collections",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -8678,8 +8668,9 @@ dependencies = [
  "smol",
  "telemetry_events",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -8696,7 +8687,6 @@ dependencies = [
  "chrono",
  "client",
  "cloud_llm_client",
- "collections",
  "component",
  "convert_case 0.8.0",
  "copilot",
@@ -8732,10 +8722,11 @@ dependencies = [
  "tokio",
  "ui",
  "ui_input",
- "util",
  "vercel",
  "workspace-hack",
  "x_ai",
+ "zed-collections",
+ "zed-util",
  "zed_env_vars",
 ]
 
@@ -8767,9 +8758,9 @@ dependencies = [
  "project",
  "settings",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -8778,7 +8769,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "command_palette_hooks",
  "copilot",
  "editor",
@@ -8795,9 +8785,10 @@ dependencies = [
  "theme",
  "tree-sitter",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -8812,7 +8803,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "chrono",
- "collections",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -8867,9 +8857,10 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "url",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -9051,9 +9042,9 @@ dependencies = [
  "picker",
  "project",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -9188,7 +9179,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "audio",
- "collections",
  "core-foundation 0.10.0",
  "core-video",
  "coreaudio-rs 0.12.1",
@@ -9217,8 +9207,9 @@ dependencies = [
  "smallvec",
  "tokio-tungstenite 0.26.2",
  "ui",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -9302,7 +9293,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-pipe",
- "collections",
  "ctor",
  "futures 0.3.31",
  "gpui",
@@ -9315,8 +9305,9 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -9439,7 +9430,6 @@ version = "0.1.0"
 dependencies = [
  "assets",
  "base64 0.22.1",
- "collections",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -9454,8 +9444,9 @@ dependencies = [
  "sum_tree",
  "theme",
  "ui",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -9464,7 +9455,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-recursion",
- "collections",
  "editor",
  "fs",
  "gpui",
@@ -9478,9 +9468,10 @@ dependencies = [
  "settings",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -9685,7 +9676,6 @@ name = "migrator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "convert_case 0.8.0",
  "log",
  "pretty_assertions",
@@ -9693,6 +9683,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -9881,7 +9872,6 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "clock",
- "collections",
  "ctor",
  "gpui",
  "indoc",
@@ -9901,8 +9891,9 @@ dependencies = [
  "text",
  "theme",
  "tree-sitter",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -10098,10 +10089,10 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "util",
  "watch",
  "which 6.0.3",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -10145,7 +10136,6 @@ dependencies = [
  "anyhow",
  "channel",
  "client",
- "collections",
  "component",
  "db",
  "gpui",
@@ -10154,9 +10144,10 @@ dependencies = [
  "sum_tree",
  "time",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -10631,10 +10622,10 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -10875,9 +10866,9 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -10886,7 +10877,6 @@ name = "outline_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "db",
  "editor",
  "file_icons",
@@ -10907,10 +10897,11 @@ dependencies = [
  "smol",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -11080,8 +11071,8 @@ version = "0.1.0"
 dependencies = [
  "dirs 4.0.0",
  "ignore",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -11178,10 +11169,10 @@ checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 name = "perf"
 version = "0.1.0"
 dependencies = [
- "collections",
  "serde",
  "serde_json",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -11949,7 +11940,6 @@ name = "prettier"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "fs",
  "gpui",
  "language",
@@ -11960,8 +11950,9 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -12088,7 +12079,6 @@ dependencies = [
  "circular-buffer",
  "client",
  "clock",
- "collections",
  "context_server",
  "dap",
  "dap_adapters",
@@ -12141,11 +12131,12 @@ dependencies = [
  "toml 0.8.20",
  "unindent",
  "url",
- "util",
  "watch",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zeroize",
  "zlog",
 ]
@@ -12156,7 +12147,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "command_palette_hooks",
  "db",
  "editor",
@@ -12177,10 +12167,11 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -12202,9 +12193,9 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -12229,7 +12220,6 @@ dependencies = [
  "anyhow",
  "assets",
  "chrono",
- "collections",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12244,9 +12234,10 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
- "util",
  "uuid",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -12360,12 +12351,12 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "prost 0.9.0",
  "prost-build 0.9.0",
  "serde",
  "typed-path",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -12849,10 +12840,10 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "windows-registry 0.6.0",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -13003,7 +12994,6 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-trait",
- "collections",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -13022,9 +13012,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "urlencoding",
- "util",
  "which 6.0.3",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -13040,7 +13031,6 @@ dependencies = [
  "clap",
  "client",
  "clock",
- "collections",
  "crash-handler",
  "crashes",
  "dap",
@@ -13087,10 +13077,11 @@ dependencies = [
  "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
- "util",
  "watch",
  "workspace",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -13113,7 +13104,6 @@ dependencies = [
  "async-tungstenite",
  "base64 0.22.1",
  "client",
- "collections",
  "command_palette_hooks",
  "editor",
  "env_logger 0.11.8",
@@ -13148,10 +13138,11 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-typescript",
  "ui",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -13347,8 +13338,8 @@ dependencies = [
  "pulldown-cmark 0.12.2",
  "theme",
  "ui",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -13443,8 +13434,8 @@ dependencies = [
  "smallvec",
  "sum_tree",
  "unicode-segmentation",
- "util",
  "workspace-hack",
+ "zed-util",
  "zlog",
 ]
 
@@ -13462,7 +13453,6 @@ dependencies = [
  "async-tungstenite",
  "base64 0.22.1",
  "chrono",
- "collections",
  "futures 0.3.31",
  "gpui",
  "parking_lot",
@@ -13474,8 +13464,9 @@ dependencies = [
  "sha2",
  "strum 0.27.1",
  "tracing",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
  "zstd",
 ]
@@ -13511,7 +13502,6 @@ name = "rules_library"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "editor",
  "gpui",
  "language",
@@ -13527,9 +13517,10 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -14181,7 +14172,6 @@ dependencies = [
  "anyhow",
  "bitflags 2.9.0",
  "client",
- "collections",
  "editor",
  "futures 0.3.31",
  "gpui",
@@ -14196,9 +14186,10 @@ dependencies = [
  "theme",
  "ui",
  "unindent",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -14449,9 +14440,9 @@ dependencies = [
  "db",
  "gpui",
  "serde_json",
- "util",
  "uuid",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -14459,7 +14450,6 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14484,8 +14474,9 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-json",
  "unindent",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -14545,9 +14536,9 @@ dependencies = [
  "strum 0.27.1",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zlog",
 ]
 
@@ -14818,7 +14809,6 @@ name = "snippet_provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -14831,8 +14821,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "snippet",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -14848,9 +14839,9 @@ dependencies = [
  "picker",
  "settings",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -14921,7 +14912,6 @@ name = "sqlez"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "futures 0.3.31",
  "indoc",
  "libsqlite3-sys",
@@ -14930,9 +14920,10 @@ dependencies = [
  "smol",
  "sqlformat",
  "thread_local",
- "util",
  "uuid",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -15265,8 +15256,8 @@ dependencies = [
  "ordered-float 2.10.1",
  "rand 0.9.1",
  "rope",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -15395,7 +15386,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "collections",
  "edit_prediction",
  "editor",
  "env_logger 0.11.8",
@@ -15415,8 +15405,9 @@ dependencies = [
  "theme",
  "ui",
  "unicode-segmentation",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -15430,8 +15421,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "util",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -15898,7 +15889,6 @@ name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "ctor",
  "editor",
  "fuzzy",
@@ -15914,9 +15904,10 @@ dependencies = [
  "smol",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -15979,7 +15970,6 @@ name = "task"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "futures 0.3.31",
  "gpui",
  "hex",
@@ -15993,8 +15983,9 @@ dependencies = [
  "serde_json_lenient",
  "sha2",
  "shellexpand 2.1.2",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -16003,7 +15994,6 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "editor",
  "file_icons",
  "fuzzy",
@@ -16019,9 +16009,10 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -16085,7 +16076,6 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
- "collections",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -16104,9 +16094,10 @@ dependencies = [
  "thiserror 2.0.12",
  "url",
  "urlencoding",
- "util",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -16128,7 +16119,6 @@ dependencies = [
  "async-recursion",
  "breadcrumbs",
  "client",
- "collections",
  "db",
  "dirs 4.0.0",
  "editor",
@@ -16152,9 +16142,10 @@ dependencies = [
  "terminal",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -16164,7 +16155,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clock",
- "collections",
  "ctor",
  "gpui",
  "http_client",
@@ -16176,8 +16166,9 @@ dependencies = [
  "rope",
  "smallvec",
  "sum_tree",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -16186,7 +16177,6 @@ name = "theme"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "collections",
  "derive_more",
  "fs",
  "futures 0.3.31",
@@ -16202,9 +16192,10 @@ dependencies = [
  "settings",
  "strum 0.27.1",
  "thiserror 2.0.12",
- "util",
  "uuid",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
 ]
 
 [[package]]
@@ -16225,7 +16216,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "collections",
  "gpui",
  "indexmap 2.9.0",
  "log",
@@ -16238,6 +16228,7 @@ dependencies = [
  "theme",
  "vscode_theme",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -16254,9 +16245,9 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -16472,7 +16463,6 @@ dependencies = [
  "chrono",
  "client",
  "cloud_llm_client",
- "collections",
  "db",
  "gpui",
  "http_client",
@@ -16490,10 +16480,11 @@ dependencies = [
  "theme",
  "tree-sitter-md",
  "ui",
- "util",
  "windows 0.61.1",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -16710,9 +16701,9 @@ dependencies = [
  "picker",
  "project",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -17300,9 +17291,9 @@ dependencies = [
  "strum 0.27.1",
  "theme",
  "ui_macros",
- "util",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-util",
 ]
 
 [[package]]
@@ -17524,45 +17515,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "util"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-fs",
- "async_zip",
- "collections",
- "command-fds",
- "dirs 4.0.0",
- "dunce",
- "futures 0.3.31",
- "futures-lite 1.13.0",
- "git2",
- "globset",
- "indoc",
- "itertools 0.14.0",
- "libc",
- "log",
- "nix 0.29.0",
- "pretty_assertions",
- "rand 0.9.1",
- "regex",
- "rust-embed",
- "schemars 1.0.1",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "shlex",
- "smol",
- "take-until",
- "tempfile",
- "tendril",
- "unicase",
- "util_macros",
- "walkdir",
- "workspace-hack",
-]
-
-[[package]]
 name = "util_macros"
 version = "0.1.0"
 dependencies = [
@@ -17684,7 +17636,6 @@ dependencies = [
  "assets",
  "async-compat",
  "async-trait",
- "collections",
  "command_palette",
  "command_palette_hooks",
  "db",
@@ -17718,11 +17669,12 @@ dependencies = [
  "theme",
  "tokio",
  "ui",
- "util",
  "util_macros",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
 ]
 
@@ -18465,10 +18417,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cloud_llm_client",
- "collections",
  "gpui",
  "serde",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -19601,7 +19553,6 @@ dependencies = [
  "call",
  "client",
  "clock",
- "collections",
  "component",
  "dap",
  "db",
@@ -19632,10 +19583,11 @@ dependencies = [
  "tempfile",
  "theme",
  "ui",
- "util",
  "uuid",
  "windows 0.61.1",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -19839,7 +19791,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clock",
- "collections",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -19863,8 +19814,9 @@ dependencies = [
  "smol",
  "sum_tree",
  "text",
- "util",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zlog",
 ]
 
@@ -20219,7 +20171,6 @@ dependencies = [
  "cli",
  "client",
  "collab_ui",
- "collections",
  "command_palette",
  "component",
  "copilot",
@@ -20329,7 +20280,11 @@ dependencies = [
  "ui_prompt",
  "url",
  "urlencoding",
+<<<<<<< HEAD
  "util",
+=======
+ "util_macros",
+>>>>>>> f7ae85ff97 (WIP: Update crate names)
  "uuid",
  "vim",
  "vim_mode_setting",
@@ -20340,6 +20295,8 @@ dependencies = [
  "winresource",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zed_env_vars",
  "zeta",
@@ -20347,6 +20304,54 @@ dependencies = [
  "zeta2_tools",
  "zlog",
  "zlog_settings",
+]
+
+[[package]]
+name = "zed-collections"
+version = "0.1.1"
+dependencies = [
+ "indexmap 2.9.0",
+ "rustc-hash 2.1.1",
+ "workspace-hack",
+]
+
+[[package]]
+name = "zed-util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-fs",
+ "async_zip",
+ "command-fds",
+ "dirs 4.0.0",
+ "dunce",
+ "futures 0.3.31",
+ "futures-lite 1.13.0",
+ "git2",
+ "globset",
+ "indoc",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "nix 0.29.0",
+ "pretty_assertions",
+ "rand 0.9.1",
+ "regex",
+ "rust-embed",
+ "schemars 1.0.1",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "shlex",
+ "smol",
+ "take-until",
+ "tempfile",
+ "tendril",
+ "unicase",
+ "util_macros",
+ "walkdir",
+ "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
@@ -20572,7 +20577,6 @@ dependencies = [
  "clock",
  "cloud_api_types",
  "cloud_llm_client",
- "collections",
  "command_palette_hooks",
  "copilot",
  "ctor",
@@ -20609,11 +20613,12 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-collections",
+ "zed-util",
  "zed_actions",
  "zlog",
 ]
@@ -20644,11 +20649,11 @@ dependencies = [
  "serde_json",
  "settings",
  "thiserror 2.0.12",
- "util",
  "uuid",
  "workspace",
  "workspace-hack",
  "worktree",
+ "zed-util",
 ]
 
 [[package]]
@@ -20659,7 +20664,6 @@ dependencies = [
  "clap",
  "client",
  "cloud_llm_client",
- "collections",
  "edit_prediction_context",
  "editor",
  "futures 0.3.31",
@@ -20675,9 +20679,10 @@ dependencies = [
  "text",
  "ui",
  "ui_input",
- "util",
  "workspace",
  "workspace-hack",
+ "zed-collections",
+ "zed-util",
  "zeta2",
  "zlog",
 ]
@@ -20717,9 +20722,9 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "terminal_view",
- "util",
  "watch",
  "workspace-hack",
+ "zed-util",
  "zeta",
  "zeta2",
  "zlog",
@@ -20766,20 +20771,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "collections",
  "log",
  "tempfile",
  "workspace-hack",
+ "zed-collections",
 ]
 
 [[package]]
 name = "zlog_settings"
 version = "0.1.0"
 dependencies = [
- "collections",
  "gpui",
  "settings",
  "workspace-hack",
+ "zed-collections",
  "zlog",
 ]
 
