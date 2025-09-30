@@ -259,6 +259,9 @@ pub fn main() {
             .unwrap_or("unknown"),
     );
 
+    #[cfg(windows)]
+    check_for_conpty_dll();
+
     let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
@@ -270,6 +273,7 @@ pub fn main() {
         .spawn(crashes::init(InitCrashHandler {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
+            binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
@@ -1512,4 +1516,13 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(windows)]
+fn check_for_conpty_dll() {
+    use windows_sys::{Win32::System::LibraryLoader::LoadLibraryW, w};
+    let hmodule = unsafe { LoadLibraryW(w!("conpty.dll")) };
+    if hmodule.is_null() {
+        log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
 }

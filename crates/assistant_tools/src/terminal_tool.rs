@@ -139,18 +139,25 @@ impl Tool for TerminalTool {
             env
         });
 
+        let build_cmd = {
+            let input_command = input.command.clone();
+            move || {
+                ShellBuilder::new(
+                    remote_shell.as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(input_command.clone()), &[])
+            }
+        };
+
         let Some(window) = window else {
             // Headless setup, a test or eval. Our terminal subsystem requires a workspace,
             // so bypass it and provide a convincing imitation using a pty.
             let task = cx.background_spawn(async move {
                 let env = env.await;
                 let pty_system = native_pty_system();
-                let (command, args) = ShellBuilder::new(
-                    remote_shell.as_deref(),
-                    &Shell::Program(get_default_system_shell()),
-                )
-                .redirect_stdin_to_dev_null()
-                .build(Some(input.command.clone()), &[]);
+                let (command, args) = build_cmd();
                 let mut cmd = CommandBuilder::new(command);
                 cmd.args(args);
                 for (k, v) in env {
@@ -187,16 +194,10 @@ impl Tool for TerminalTool {
             };
         };
 
-        let command = input.command.clone();
         let terminal = cx.spawn({
             let project = project.downgrade();
             async move |cx| {
-                let (command, args) = ShellBuilder::new(
-                    remote_shell.as_deref(),
-                    &Shell::Program(get_default_system_shell()),
-                )
-                .redirect_stdin_to_dev_null()
-                .build(Some(input.command), &[]);
+                let (command, args) = build_cmd();
                 let env = env.await;
                 project
                     .update(cx, |project, cx| {
@@ -215,17 +216,17 @@ impl Tool for TerminalTool {
             }
         });
 
-        let command_markdown =
-            cx.new(|cx| Markdown::new(format!("```bash\n{}\n```", command).into(), None, None, cx));
-
-        let card = cx.new(|cx| {
-            TerminalToolCard::new(
-                command_markdown.clone(),
-                working_dir.clone(),
-                cx.entity_id(),
+        let command_markdown = cx.new(|cx| {
+            Markdown::new(
+                format!("```bash\n{}\n```", input.command).into(),
+                None,
+                None,
                 cx,
             )
         });
+
+        let card =
+            cx.new(|cx| TerminalToolCard::new(command_markdown, working_dir, cx.entity_id(), cx));
 
         let output = cx.spawn({
             let card = card.clone();
@@ -267,7 +268,7 @@ impl Tool for TerminalTool {
                 let previous_len = content.len();
                 let (processed_content, finished_with_empty_output) = process_content(
                     &content,
-                    &command,
+                    &input.command,
                     exit_status.map(portable_pty::ExitStatus::from),
                 );
 

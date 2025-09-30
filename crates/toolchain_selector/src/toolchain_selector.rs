@@ -1047,8 +1047,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     let toolchain = toolchain.clone();
                     let scope = scope.clone();
 
-                    this.end_slot(IconButton::new(id, IconName::Trash))
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                    this.end_slot(IconButton::new(id, IconName::Trash).on_click(cx.listener(
+                        move |this, _, _, cx| {
                             this.delegate.project.update(cx, |this, cx| {
                                 this.remove_toolchain(toolchain.clone(), scope.clone(), cx)
                             });
@@ -1076,7 +1076,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                             }
                             cx.stop_propagation();
                             cx.notify();
-                        }))
+                        },
+                    )))
                 }),
         )
     }

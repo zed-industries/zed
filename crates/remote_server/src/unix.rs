@@ -349,6 +349,7 @@ pub fn execute_run(
         .spawn(crashes::init(crashes::InitCrashHandler {
             session_id: id,
             zed_version: VERSION.to_owned(),
+            binary: "zed-remote-server".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
         }))
@@ -543,6 +544,7 @@ pub(crate) fn execute_proxy(
     smol::spawn(crashes::init(crashes::InitCrashHandler {
         session_id: id,
         zed_version: VERSION.to_owned(),
+        binary: "zed-remote-server".to_string(),
         release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
         commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
     }))

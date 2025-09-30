@@ -9,6 +9,10 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 |                   | Anthropic | Output              | $75.00                       | $82.50                  |
 |                   | Anthropic | Input - Cache Write | $18.75                       | $20.625                 |
 |                   | Anthropic | Input - Cache Read  | $1.50                        | $1.65                   |
+| Claude Sonnet 4.5 | Anthropic | Input               | $3.00                        | $3.30                   |
+|                   | Anthropic | Output              | $15.00                       | $16.50                  |
+|                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
+|                   | Anthropic | Input - Cache Read  | $0.30                        | $0.33                   |
 | Claude Sonnet 4   | Anthropic | Input               | $3.00                        | $3.30                   |
 |                   | Anthropic | Output              | $15.00                       | $16.50                  |
 |                   | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |

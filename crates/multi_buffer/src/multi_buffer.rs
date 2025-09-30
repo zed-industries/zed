@@ -54,7 +54,7 @@ use util::post_inc;
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ExcerptId(usize);
+pub struct ExcerptId(u32);
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
@@ -77,12 +77,6 @@ pub struct MultiBuffer {
     title: Option<String>,
     capability: Capability,
     buffer_changed_since_sync: Rc<Cell<bool>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MultiOrSingleBufferOffsetRange {
-    Single(Range<usize>),
-    Multi(Range<usize>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6077,19 +6071,17 @@ impl MultiBufferSnapshot {
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node<'_>, MultiOrSingleBufferOffsetRange)> {
+    ) -> Option<(tree_sitter::Node<'_>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
         let node_range = node.byte_range();
-        let range = if excerpt.contains_buffer_range(node_range.clone()) {
-            MultiOrSingleBufferOffsetRange::Multi(excerpt.map_range_from_buffer(node_range))
-        } else {
-            MultiOrSingleBufferOffsetRange::Single(node_range)
+        if !excerpt.contains_buffer_range(node_range.clone()) {
+            return None;
         };
-        Some((node, range))
+        Some((node, excerpt.map_range_from_buffer(node_range)))
     }
 
     pub fn syntax_next_sibling<T: ToOffset>(
@@ -7202,7 +7194,7 @@ impl ExcerptId {
     }
 
     pub fn max() -> Self {
-        Self(usize::MAX)
+        Self(u32::MAX)
     }
 
     pub fn to_proto(self) -> u64 {
@@ -7222,7 +7214,7 @@ impl ExcerptId {
 
 impl From<ExcerptId> for usize {
     fn from(val: ExcerptId) -> Self {
-        val.0
+        val.0 as usize
     }
 }
 
