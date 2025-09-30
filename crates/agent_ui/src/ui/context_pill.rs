@@ -704,7 +704,7 @@ impl ContextPillHover {
 
 impl Render for ContextPillHover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, move |this, window, cx| {
+        tooltip_container(cx, move |this, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

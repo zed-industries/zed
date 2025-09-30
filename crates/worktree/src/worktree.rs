@@ -1103,7 +1103,7 @@ impl LocalWorktree {
             }
         });
         self._background_scanner_tasks = vec![background_scanner, scan_state_updater];
-        self.is_scanning = watch::channel_with(true);
+        *self.is_scanning.0.borrow_mut() = true;
     }
 
     fn set_snapshot(

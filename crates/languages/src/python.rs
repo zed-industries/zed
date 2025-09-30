@@ -154,11 +154,16 @@ impl LspAdapter for TyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
-        _cx: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut ret = json!({});
+        let mut ret = cx
+            .update(|cx| {
+                language_server_settings(delegate.as_ref(), &self.name(), cx)
+                    .and_then(|s| s.settings.clone())
+            })?
+            .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
         }) {
@@ -171,10 +176,9 @@ impl LspAdapter for TyLspAdapter {
                         "sysPrefix": sys_prefix
                     }
                 });
-                ret.as_object_mut()?.insert(
-                    "pythonExtension".into(),
-                    json!({ "activeEnvironment": environment }),
-                );
+                ret.as_object_mut()?
+                    .entry("pythonExtension")
+                    .or_insert_with(|| json!({ "activeEnvironment": environment }));
                 Some(())
             });
         }
@@ -463,7 +467,6 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1008,6 +1011,16 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
+fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+    if let Some(venv) = venv
+        && let Ok(p) = venv.strip_prefix(wr)
+    {
+        p.components().count()
+    } else {
+        usize::MAX
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -1069,12 +1082,7 @@ impl ToolchainLister for PythonToolchainProvider {
             let proj_ordering = || {
                 let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
                 let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                match (&lhs_project, &rhs_project) {
-                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                    (Some(l), None) if l == &wr => Ordering::Less,
-                    (None, Some(r)) if r == &wr => Ordering::Greater,
-                    _ => Ordering::Equal,
-                }
+                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
             };
 
             // Compare environment priorities

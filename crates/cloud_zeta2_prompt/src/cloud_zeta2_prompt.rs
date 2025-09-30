@@ -5,6 +5,7 @@ use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat, ReferencedDe
 use indoc::indoc;
 use ordered_float::OrderedFloat;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::Serialize;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::{cmp::Reverse, collections::BinaryHeap, ops::Range, path::Path};
@@ -75,7 +76,7 @@ pub enum DeclarationStyle {
     Declaration,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct SectionLabels {
     pub excerpt_index: usize,
     pub section_ranges: Vec<(Arc<Path>, Range<usize>)>,

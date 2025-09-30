@@ -473,7 +473,7 @@ fn generate_big_table_of_actions() -> String {
         output.push_str(action.name);
         output.push_str("</code><br>\n");
         if !action.deprecated_aliases.is_empty() {
-            output.push_str("Deprecated Aliases:");
+            output.push_str("Deprecated Alias(es): ");
             for alias in action.deprecated_aliases.iter() {
                 output.push_str("<code>");
                 output.push_str(alias);
