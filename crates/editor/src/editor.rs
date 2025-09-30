@@ -122,7 +122,7 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
@@ -404,7 +404,7 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
 pub trait DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
@@ -413,7 +413,7 @@ pub trait DiagnosticRenderer {
 
     fn render_hover(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
         cx: &mut App,
@@ -15970,11 +15970,11 @@ impl Editor {
             active_group_id = Some(active_group.group_id);
         }
 
-        fn filtered(
+        fn filtered<'a>(
             snapshot: EditorSnapshot,
             severity: GoToDiagnosticSeverityFilter,
-            diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
-        ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
+            diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, usize>>,
+        ) -> impl Iterator<Item = DiagnosticEntryRef<'a, usize>> {
             diagnostics
                 .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
@@ -15998,7 +15998,7 @@ impl Editor {
                 .filter(|entry| entry.range.start >= selection.start),
         );
 
-        let mut found: Option<DiagnosticEntry<usize>> = None;
+        let mut found: Option<DiagnosticEntryRef<usize>> = None;
         if direction == Direction::Prev {
             'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
             {
@@ -17521,7 +17521,7 @@ impl Editor {
     fn activate_diagnostics(
         &mut self,
         buffer_id: BufferId,
-        diagnostic: DiagnosticEntry<usize>,
+        diagnostic: DiagnosticEntryRef<'_, usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -17710,7 +17710,7 @@ impl Editor {
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::from(diagnostic_entry.diagnostic.message)
+                                SharedString::new(&*diagnostic_entry.diagnostic.message)
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
