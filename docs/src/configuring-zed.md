@@ -410,7 +410,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values from `6` to `100` pixels (inclusive)
+A font size from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
