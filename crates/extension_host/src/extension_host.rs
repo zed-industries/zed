@@ -73,6 +73,11 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
+/// Extensions that should no longer be loaded.
+///
+/// The snippets extension is no longer needed because it has been integrated into the core editor.
+const SUPRESSED_EXTENSIONS: &[&str] = &["snippets"];
+
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
@@ -1114,6 +1119,9 @@ impl ExtensionStore {
             }
             self.modified_extensions.clear();
         }
+
+        extensions_to_load
+            .retain(|extension_id| !SUPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
             return Task::ready(());

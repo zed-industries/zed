@@ -214,7 +214,6 @@ members = [
     "extensions/proto",
     "extensions/ruff",
     "extensions/slash-commands-example",
-    "extensions/snippets",
     "extensions/test-extension",
 
     #
