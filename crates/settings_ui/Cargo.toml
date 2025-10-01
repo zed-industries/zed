@@ -16,14 +16,15 @@ default = []
 test-support = []
 
 [dependencies]
-project.workspace = true
-fs.workspace = true
 anyhow.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
+project.workspace = true
 serde.workspace = true
 settings.workspace = true
 strum.workspace = true
@@ -34,15 +35,16 @@ workspace-hack.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-settings.workspace = true
-futures.workspace = true
-language.workspace = true
 assets.workspace = true
-paths.workspace = true
-zlog.workspace = true
 client.workspace = true
-session.workspace = true
+futures.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+language.workspace = true
 node_runtime.workspace = true
+paths.workspace = true
+session.workspace = true
+settings.workspace = true
+zlog.workspace = true
 
 [[example]]
 name = "ui"

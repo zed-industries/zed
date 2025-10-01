@@ -1,9 +1,10 @@
 use cloud_llm_client::predict_edits_v3::DeclarationScoreComponents;
+use collections::HashMap;
 use itertools::Itertools as _;
 use language::BufferSnapshot;
 use ordered_float::OrderedFloat;
 use serde::Serialize;
-use std::{cmp::Reverse, collections::HashMap, ops::Range};
+use std::{cmp::Reverse, ops::Range};
 use strum::EnumIter;
 use text::{Point, ToPoint};
 
@@ -251,6 +252,7 @@ fn score_declaration(
 pub struct DeclarationScores {
     pub signature: f32,
     pub declaration: f32,
+    pub retrieval: f32,
 }
 
 impl DeclarationScores {
@@ -258,7 +260,7 @@ impl DeclarationScores {
         // TODO: handle truncation
 
         // Score related to how likely this is the correct declaration, range 0 to 1
-        let accuracy_score = if components.is_same_file {
+        let retrieval = if components.is_same_file {
             // TODO: use declaration_line_distance_rank
             1.0 / components.same_file_declaration_count as f32
         } else {
@@ -274,13 +276,14 @@ impl DeclarationScores {
         };
 
         // For now instead of linear combination, the scores are just multiplied together.
-        let combined_score = 10.0 * accuracy_score * distance_score;
+        let combined_score = 10.0 * retrieval * distance_score;
 
         DeclarationScores {
             signature: combined_score * components.excerpt_vs_signature_weighted_overlap,
             // declaration score gets boosted both by being multiplied by 2 and by there being more
             // weighted overlap.
             declaration: 2.0 * combined_score * components.excerpt_vs_item_weighted_overlap,
+            retrieval,
         }
     }
 }

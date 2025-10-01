@@ -807,11 +807,10 @@ impl VimGlobals {
                 self.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.last_yank = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text().map(|string| string.into()));
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.last_yank.replace(text.into());
+                }
             }
-
             self.registers.insert('"', content.clone());
             if is_yank {
                 self.registers.insert('0', content);
@@ -885,10 +884,10 @@ impl VimGlobals {
 
     fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
-            if let Some(last_state) = &self.last_yank {
-                Some(last_state.as_ref()) != item.text().as_deref()
-            } else {
-                true
+            match (item.text().as_deref(), &self.last_yank) {
+                (Some(new), Some(last)) => last.as_ref() != new,
+                (Some(_), None) => true,
+                (None, _) => false,
             }
         })
     }

@@ -23,6 +23,7 @@ itertools.workspace = true
 language.workspace = true
 log.workspace = true
 ordered-float.workspace = true
+postage.workspace = true
 project.workspace = true
 regex.workspace = true
 serde.workspace = true

@@ -4176,7 +4176,6 @@ impl Workspace {
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
             .unwrap_or_else(|| {
                 self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
             })

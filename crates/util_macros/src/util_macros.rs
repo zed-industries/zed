@@ -135,9 +135,9 @@ impl PerfArgs {
 ///
 /// # Usage
 /// Applying this attribute to a test marks it as average importance by default.
-/// There are 4 levels of importance (`Critical`, `Important`, `Average`, `Fluff`);
-/// see the documentation on `Importance` for details. Add the importance as a
-/// parameter to override the default (e.g. `#[perf(important)]`).
+/// There are 5 levels of importance (`Critical`, `Important`, `Average`, `Iffy`,
+/// `Fluff`); see the documentation on `Importance` for details. Add the importance
+/// as a parameter to override the default (e.g. `#[perf(important)]`).
 ///
 /// Each test also has a weight factor. This is irrelevant on its own, but is considered
 /// when comparing results across different runs. By default, this is set to 50;

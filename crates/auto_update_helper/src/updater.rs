@@ -38,6 +38,20 @@ pub(crate) const JOBS: &[Job] = &[
         std::fs::remove_file(&zed_wsl)
             .context(format!("Failed to remove old file {}", zed_wsl.display()))
     },
+    |app_dir| {
+        let open_console = app_dir.join("OpenConsole.exe");
+        log::info!("Removing old file: {}", open_console.display());
+        std::fs::remove_file(&open_console).context(format!(
+            "Failed to remove old file {}",
+            open_console.display()
+        ))
+    },
+    |app_dir| {
+        let conpty = app_dir.join("conpty.dll");
+        log::info!("Removing old file: {}", conpty.display());
+        std::fs::remove_file(&conpty)
+            .context(format!("Failed to remove old file {}", conpty.display()))
+    },
     // Copy new files
     |app_dir| {
         let zed_executable_source = app_dir.join("install\\Zed.exe");
@@ -85,6 +99,38 @@ pub(crate) const JOBS: &[Job] = &[
                 "Failed to copy new file {} to {}",
                 zed_wsl_source.display(),
                 zed_wsl_dest.display()
+            ))
+    },
+    |app_dir| {
+        let open_console_source = app_dir.join("install\\OpenConsole.exe");
+        let open_console_dest = app_dir.join("OpenConsole.exe");
+        log::info!(
+            "Copying new file {} to {}",
+            open_console_source.display(),
+            open_console_dest.display()
+        );
+        std::fs::copy(&open_console_source, &open_console_dest)
+            .map(|_| ())
+            .context(format!(
+                "Failed to copy new file {} to {}",
+                open_console_source.display(),
+                open_console_dest.display()
+            ))
+    },
+    |app_dir| {
+        let conpty_source = app_dir.join("install\\conpty.dll");
+        let conpty_dest = app_dir.join("conpty.dll");
+        log::info!(
+            "Copying new file {} to {}",
+            conpty_source.display(),
+            conpty_dest.display()
+        );
+        std::fs::copy(&conpty_source, &conpty_dest)
+            .map(|_| ())
+            .context(format!(
+                "Failed to copy new file {} to {}",
+                conpty_source.display(),
+                conpty_dest.display()
             ))
     },
     // Clean up installer folder and updates folder

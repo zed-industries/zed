@@ -1103,7 +1103,7 @@ impl LocalWorktree {
             }
         });
         self._background_scanner_tasks = vec![background_scanner, scan_state_updater];
-        self.is_scanning = watch::channel_with(true);
+        *self.is_scanning.0.borrow_mut() = true;
     }
 
     fn set_snapshot(
@@ -4547,10 +4547,21 @@ impl BackgroundScanner {
 
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
-        let path = job
+        let Some(path) = job
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
-            .unwrap();
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "Failed to strip prefix '{}' from path '{}'",
+                    snapshot.abs_path.as_path().display(),
+                    job.abs_path.display()
+                )
+            })
+            .log_err()
+        else {
+            return;
+        };
+
         let Some(path) = RelPath::new(&path, PathStyle::local()).log_err() else {
             return;
         };

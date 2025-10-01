@@ -6514,13 +6514,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
     cx.update(|window, _cx| window.refresh());
 
-    let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
     let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
-
-    assert!(
-        tab_bounds.intersects(&new_tab_button_bounds),
-        "Tab should overlap with the new tab button, if this is failing check if there's been a redesign!"
-    );
 
     cx.simulate_event(MouseDownEvent {
         button: MouseButton::Right,

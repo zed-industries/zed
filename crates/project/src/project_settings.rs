@@ -307,6 +307,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: InlineBlameSettings,
+    /// Git blame settings.
+    pub blame: BlameSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -342,6 +344,14 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BlameSettings {
+    /// Whether to show the avatar of the author of the commit.
+    ///
+    /// Default: true
+    pub show_avatar: bool,
 }
 
 impl GitSettings {
@@ -445,6 +455,12 @@ impl Settings for ProjectSettings {
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            blame: {
+                let blame = git.blame.unwrap();
+                BlameSettings {
+                    show_avatar: blame.show_avatar.unwrap(),
                 }
             },
             branch_picker: {

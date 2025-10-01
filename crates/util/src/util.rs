@@ -14,7 +14,7 @@ pub mod size;
 pub mod test;
 pub mod time;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
@@ -290,8 +290,6 @@ fn load_shell_from_passwd() -> Result<()> {
 #[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    use anyhow::Context;
-
     let zed_path = std::env::current_exe()
         .context("Failed to determine current zed executable path.")?
         .to_string_lossy()
@@ -305,6 +303,59 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
     Ok(zed_path_escaped.to_string())
+}
+
+/// Returns a shell escaped path for the zed cli executable, this function
+/// should be called from the zed executable, not zed-cli.
+pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let parent = zed_path
+        .parent()
+        .context("Failed to determine parent directory of zed executable path.")?;
+
+    let possible_locations: &[&str] = if cfg!(target_os = "macos") {
+        // On macOS, the zed executable and zed-cli are inside the app bundle,
+        // so here ./cli is for both installed and development builds.
+        &["./cli"]
+    } else if cfg!(target_os = "windows") {
+        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
+        &["bin/zed.exe", "./cli.exe"]
+    } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
+        // bin is the standard, ./cli is for the target directory in development builds.
+        &["../bin/zed", "./cli"]
+    } else {
+        anyhow::bail!("unsupported platform for determining zed-cli path");
+    };
+
+    let zed_cli_path = possible_locations
+        .iter()
+        .find_map(|p| {
+            parent
+                .join(p)
+                .canonicalize()
+                .ok()
+                .filter(|p| p != &zed_path)
+        })
+        .with_context(|| {
+            format!(
+                "could not find zed-cli from any of: {}",
+                possible_locations.join(", ")
+            )
+        })?
+        .to_string_lossy()
+        .to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(zed_cli_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(shlex::try_quote(&zed_cli_path)
+            .context("Failed to shell-escape Zed executable path.")?
+            .to_string())
+    }
 }
 
 #[cfg(unix)]

@@ -6742,6 +6742,14 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
+    cx.set_state(indoc! {"The quick brownˇ"});
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state(indoc! {"The quick brownˇ"});
+
+    cx.set_state(indoc! {"The emacs foxˇ"});
+    cx.update_editor(|e, window, cx| e.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state(indoc! {"The emacs foxˇ"});
+
     cx.set_state(indoc! {"
         The quick« brownˇ»
         fox jumps overˇ
@@ -8264,7 +8272,7 @@ async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) 
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
                 edit_preview: None,
@@ -9153,6 +9161,64 @@ async fn test_unwrap_syntax_nodes(cx: &mut gpui::TestAppContext) {
     });
 
     cx.assert_editor_state(indoc! { r#"use mod1::{mod2::«mod3ˇ», mod5::«mod7ˇ»};"# });
+
+    cx.set_state(indoc! { r#"fn a() {
+          // what
+          // a
+          // ˇlong
+          // method
+          // I
+          // sure
+          // hope
+          // it
+          // works
+    }"# });
+
+    let buffer = cx.update_multibuffer(|multibuffer, _| multibuffer.as_singleton().unwrap());
+    let multi_buffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    cx.update(|_, cx| {
+        multi_buffer.update(cx, |multi_buffer, cx| {
+            multi_buffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer,
+                [Point::new(1, 0)..Point::new(1, 0)],
+                3,
+                cx,
+            );
+        });
+    });
+
+    let editor2 = cx.new_window_entity(|window, cx| {
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor2, &mut cx).await;
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(3, 0)..Point::new(3, 0)]);
+        })
+    });
+
+    cx.assert_editor_state(indoc! { "
+        fn a() {
+              // what
+              // a
+        ˇ      // long
+              // method"});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
+    });
+
+    // Although we could potentially make the action work when the syntax node
+    // is half-hidden, it seems a bit dangerous as you can't easily tell what it
+    // did. Maybe we could also expand the excerpt to contain the range?
+    cx.assert_editor_state(indoc! { "
+        fn a() {
+              // what
+              // a
+        ˇ      // long
+              // method"});
 }
 
 #[gpui::test]
@@ -11868,17 +11934,16 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     );
     fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
         move |params, _| async move {
-            assert_eq!(
-                params.context.only,
-                Some(vec!["code-action-1".into(), "code-action-2".into()])
-            );
+            let requested_code_actions = params.context.only.expect("Expected code action request");
+            assert_eq!(requested_code_actions.len(), 1);
+
             let uri = lsp::Uri::from_file_path(path!("/file.rs")).unwrap();
-            Ok(Some(vec![
-                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+            let code_action = match requested_code_actions[0].as_str() {
+                "code-action-1" => lsp::CodeAction {
                     kind: Some("code-action-1".into()),
                     edit: Some(lsp::WorkspaceEdit::new(
                         [(
-                            uri.clone(),
+                            uri,
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
                                 "applied-code-action-1-edit\n".to_string(),
@@ -11892,8 +11957,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         ..Default::default()
                     }),
                     ..Default::default()
-                }),
-                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                },
+                "code-action-2" => lsp::CodeAction {
                     kind: Some("code-action-2".into()),
                     edit: Some(lsp::WorkspaceEdit::new(
                         [(
@@ -11907,8 +11972,12 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         .collect(),
                     )),
                     ..Default::default()
-                }),
-            ]))
+                },
+                req => panic!("Unexpected code action request: {:?}", req),
+            };
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                code_action,
+            )]))
         },
     );
 
