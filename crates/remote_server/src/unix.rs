@@ -750,7 +750,7 @@ enum Im {
     },
 }
 
-pub(crate) fn execute_p2p(persist: bool, mut persist_to: Option<PathBuf>) -> Result<()> {
+pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Result<()> {
     init_logging_p2p();
 
     // Known bugs
@@ -781,10 +781,10 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_to: Option<PathBuf>) -> Res
     // let log_file = "/tmp/p2p.log"; // TODO: what?
     // let log_rx = init_logging_server(log_file.into())?;
 
-    if persist && persist_to.is_none() {
+    if persist && persist_at.is_none() {
         let mut secret_path = paths::config_dir().clone();
         secret_path.push("zedIrohNode.pub");
-        persist_to = Some(secret_path);
+        persist_at = Some(secret_path);
     }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
@@ -797,7 +797,7 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_to: Option<PathBuf>) -> Res
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
-        log::debug!("Persist to: [{:?}]", persist_to);
+        log::debug!("Persist to: [{:?}]", persist_at);
 
         client::init_settings(cx);
 
@@ -811,7 +811,7 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_to: Option<PathBuf>) -> Res
         let (s, mut r) = mpsc::unbounded::<Im>();
 
         gpui_tokio::Tokio::spawn(cx, async move {
-            let iroh = match IrohZedListener::accept(persist_to.as_ref(), s).await {
+            let iroh = match IrohZedListener::accept(persist_at.as_ref(), s).await {
                 Ok(iroh) => iroh,
                 Err(error) => {
                     log::error!("failed to start iroh {error:?}");
@@ -943,8 +943,8 @@ impl IrohZedListener {
         }
     }
 
-    async fn accept(persist_to: Option<&PathBuf>, tx: mpsc::UnboundedSender<Im>) -> Result<Self> {
-        let iroh_zed_node = IrohZedNode::create(persist_to).await;
+    async fn accept(persist_at: Option<&PathBuf>, tx: mpsc::UnboundedSender<Im>) -> Result<Self> {
+        let iroh_zed_node = IrohZedNode::create(persist_at).await;
         let endpoint = Endpoint::builder()
             .secret_key(iroh_zed_node.secret().clone())
             .discovery_n0()
