@@ -3476,6 +3476,7 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    // TODO kb instead, a `pub fn` that asks for `(BufferId, &Global)` parameters and re-creates the data if needed
     pub lsp_data: HashMap<BufferId, BufferLspData>,
 }
 
@@ -6461,6 +6462,7 @@ impl LspStore {
     pub fn inlay_hints(
         &mut self,
         invalidate_cache: bool,
+        debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
@@ -6549,6 +6551,9 @@ impl LspStore {
         } else {
             let next_hint_id = lsp_data.next_hint_id.clone();
             cx.spawn(async move |lsp_store, cx| {
+                if let Some(debounce) = debounce {
+                    cx.background_executor().timer(debounce).await;
+                }
                 lsp_store.update(cx, |lsp_store, cx| {
                     for (chunk, range_to_query) in ranges_to_query {
                         let new_fetch_task =
