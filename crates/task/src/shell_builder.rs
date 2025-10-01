@@ -349,4 +349,24 @@ mod test {
         assert_eq!(program, "nu");
         assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
     }
+
+    #[test]
+    fn test_shell_system_respects_env() {
+        // Shell::System should use get_system_shell() which checks SHELL env var
+        let shell_builder = ShellBuilder::new(None, &Shell::System);
+        let (program, _args) = shell_builder.build(Some("echo".into()), &["test".to_string()]);
+
+        // On Unix, should use either SHELL env var or fallback to /bin/sh
+        #[cfg(not(target_os = "windows"))]
+        {
+            let expected = std::env::var("SHELL").unwrap_or("/bin/sh".to_string());
+            assert_eq!(program, expected);
+        }
+
+        // On Windows, should use system shell
+        #[cfg(target_os = "windows")]
+        {
+            assert!(program.contains("powershell") || program.contains("cmd"));
+        }
+    }
 }
