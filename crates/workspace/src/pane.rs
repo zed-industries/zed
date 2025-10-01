@@ -196,6 +196,73 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
+// TODO naming
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub enum SplitBehavior {
+    /// clone the current item when splitting
+    #[default]
+    Clone,
+    /// create an empty new item when splitting
+    Empty,
+    /// move the current item
+    Move,
+}
+
+// TODO tuple struct seem to fail for default - maybe issues with deserializing from {}?
+// #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+// #[action(namespace = pane)]
+// #[serde(deny_unknown_fields)]
+// pub struct SplitLeft(#[serde(default)] SplitAnd);
+
+/// Splits the pane to the left.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitLeft {
+    pub behavior: SplitBehavior,
+}
+
+/// Splits the pane to the right.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitRight {
+    pub behavior: SplitBehavior,
+}
+
+/// Splits the pane upward.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitUp {
+    pub behavior: SplitBehavior,
+}
+
+/// Splits the pane downward.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitDown {
+    pub behavior: SplitBehavior,
+}
+
+/// Splits the pane horizontally.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitHorizontal {
+    pub behavior: SplitBehavior,
+}
+
+/// Splits the pane vertically.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct SplitVertical {
+    pub behavior: SplitBehavior,
+}
+
 actions!(
     pane,
     [
@@ -217,26 +284,7 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
-        /// Splits the pane to the left, cloning the current item.
-        SplitLeft,
-        /// Splits the pane upward, cloning the current item.
-        SplitUp,
-        /// Splits the pane to the right, cloning the current item.
-        SplitRight,
-        /// Splits the pane downward, cloning the current item.
-        SplitDown,
-        /// Splits the pane to the left, moving the current item.
-        SplitAndMoveLeft,
-        /// Splits the pane upward, moving the current item.
-        SplitAndMoveUp,
-        /// Splits the pane to the right, moving the current item.
-        SplitAndMoveRight,
-        /// Splits the pane downward, moving the current item.
-        SplitAndMoveDown,
-        /// Splits the pane horizontally.
-        SplitHorizontal,
-        /// Splits the pane vertically.
-        SplitVertical,
+        // TODO can we remove old bindings SplitAndMoveLeft...?
         /// Swaps the current item with the one to the left.
         SwapItemLeft,
         /// Swaps the current item with the one to the right.
@@ -278,7 +326,7 @@ pub enum Event {
     },
     Split {
         direction: SplitDirection,
-        clone_active_item: bool,
+        behavior: SplitBehavior,
     },
     ItemPinned,
     ItemUnpinned,
@@ -312,11 +360,11 @@ impl fmt::Debug for Event {
                 .finish(),
             Event::Split {
                 direction,
-                clone_active_item,
+                behavior,
             } => f
                 .debug_struct("Split")
                 .field("direction", direction)
-                .field("clone_active_item", clone_active_item)
+                .field("behavior", behavior)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -2294,20 +2342,20 @@ impl Pane {
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+    pub fn split(
+        &mut self,
+        direction: SplitDirection,
+        behavior: &SplitBehavior,
+        cx: &mut Context<Self>,
+    ) {
+        if self.items.len() <= 1 && *behavior == SplitBehavior::Move {
+            return;
+        }
+
         cx.emit(Event::Split {
             direction,
-            clone_active_item: true,
+            behavior: behavior.to_owned(),
         });
-    }
-
-    pub fn split_and_move(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        if self.items.len() > 1 {
-            cx.emit(Event::Split {
-                direction,
-                clone_active_item: false,
-            });
-        }
     }
 
     pub fn toolbar(&self) -> &Entity<Toolbar> {
@@ -3619,10 +3667,10 @@ fn default_render_tab_bar_buttons(
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("Split Right", SplitRight.boxed_clone())
-                            .action("Split Left", SplitLeft.boxed_clone())
-                            .action("Split Up", SplitUp.boxed_clone())
-                            .action("Split Down", SplitDown.boxed_clone())
+                        menu.action("Split Right", SplitRight::default().boxed_clone())
+                            .action("Split Left", SplitLeft::default().boxed_clone())
+                            .action("Split Up", SplitUp::default().boxed_clone())
+                            .action("Split Down", SplitDown::default().boxed_clone())
                     })
                     .into()
                 }),
@@ -3677,33 +3725,23 @@ impl Render for Pane {
             .size_full()
             .flex_none()
             .overflow_hidden()
-            .on_action(
-                cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitUp, _, cx| pane.split(SplitDirection::Up, cx)))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitLeft, _, cx| {
+                pane.split(SplitDirection::Left, &split.behavior, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), cx)
+            .on_action(cx.listener(|pane, split: &SplitUp, _, cx| {
+                pane.split(SplitDirection::Up, &split.behavior, cx)
             }))
-            .on_action(
-                cx.listener(|pane, _: &SplitRight, _, cx| pane.split(SplitDirection::Right, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
-                pane.split_and_move(SplitDirection::Up, cx)
+            .on_action(cx.listener(|pane, split: &SplitHorizontal, _, cx| {
+                pane.split(SplitDirection::horizontal(cx), &split.behavior, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
-                pane.split_and_move(SplitDirection::Down, cx)
+            .on_action(cx.listener(|pane, split: &SplitVertical, _, cx| {
+                pane.split(SplitDirection::vertical(cx), &split.behavior, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
-                pane.split_and_move(SplitDirection::Left, cx)
+            .on_action(cx.listener(|pane, split: &SplitRight, _, cx| {
+                pane.split(SplitDirection::Right, &split.behavior, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
-                pane.split_and_move(SplitDirection::Right, cx)
+            .on_action(cx.listener(|pane, split: &SplitDown, _, cx| {
+                pane.split(SplitDirection::Down, &split.behavior, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
