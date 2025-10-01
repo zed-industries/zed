@@ -138,7 +138,7 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 
 ### Auto-run Commands
 
-Control whether you want to allow the agent to run commands without asking you for permission.
+Control whether to allow the agent to run commands without asking you for permission.
 The default value is `false`.
 
 ```json
@@ -151,7 +151,7 @@ The default value is `false`.
 
 ### Single-file Review
 
-Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
+Control whether to display review actions (accept & reject) in single buffers after the agent is done performing edits.
 The default value is `false`.
 
 ```json
@@ -166,7 +166,7 @@ When set to false, these controls are only available in the multibuffer review t
 
 ### Sound Notification
 
-Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
+Control whether to hear a notification sound when the agent is done generating changes or needs your input.
 The default value is `false`.
 
 ```json
@@ -232,7 +232,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 
 ### Feedback Controls
 
-Control whether you want to see the thumbs up/down buttons to give Zed feedback about the agent's performance.
+Control whether to display the thumbs up/down buttons at the bottom of each agent response, allowing to give Zed feedback about the agent's performance.
 The default value is `true`.
 
 ```json
