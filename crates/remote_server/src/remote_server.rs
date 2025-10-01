@@ -31,7 +31,12 @@ pub enum Commands {
         #[arg(long)]
         identifier: String,
     },
-    P2p,
+    P2p {
+        #[arg(long)]
+        persist: bool,
+        #[arg(long)]
+        persist_to: Option<PathBuf>,
+    },
     Version,
 }
 
@@ -67,7 +72,10 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
                 }
             })
             .context("running proxy on the remote server"),
-        Commands::P2p => execute_p2p().context("running p2p on the remote server"),
+        Commands::P2p {
+            persist,
+            persist_to,
+        } => execute_p2p(persist, persist_to).context("running p2p on the remote server"),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
