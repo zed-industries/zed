@@ -94,6 +94,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub relative_line_numbers: Option<bool>,
+    /// Whether to show relative line numbers for wrapped lines (visual lines) rather than just buffer lines.
+    ///
+    /// Default: false
+    pub relative_line_numbers_for_wrapped_lines: Option<bool>,
     /// When to populate a new search's query based on the text under the cursor.
     ///
     /// Default: always

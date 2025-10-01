@@ -34,6 +34,7 @@ pub struct EditorSettings {
     pub scroll_sensitivity: f32,
     pub fast_scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
+    pub relative_line_numbers_for_wrapped_lines: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
     pub multi_cursor_modifier: MultiCursorModifier,
@@ -234,6 +235,9 @@ impl Settings for EditorSettings {
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
             relative_line_numbers: editor.relative_line_numbers.unwrap(),
+            relative_line_numbers_for_wrapped_lines: editor
+                .relative_line_numbers_for_wrapped_lines
+                .unwrap(),
             seed_search_query_from_cursor: editor.seed_search_query_from_cursor.unwrap(),
             use_smartcase_search: editor.use_smartcase_search.unwrap(),
             multi_cursor_modifier: editor.multi_cursor_modifier.unwrap(),
