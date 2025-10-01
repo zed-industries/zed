@@ -381,11 +381,34 @@ impl AgentConnection for AcpConnection {
                 Ok(response) => Ok(response),
                 Err(err) => {
                     if err.code != acp::ErrorCode::INTERNAL_ERROR.code {
+                        // Intercept Unauthorized to trigger auth UI instead of retrying
+                        if let Some(data) = &err.data {
+                            #[derive(Deserialize)]
+                            #[serde(deny_unknown_fields)]
+                            struct ErrorDetails {
+                                details: Box<str>,
+                            }
+                            if let Ok(ErrorDetails { details }) =
+                                serde_json::from_value::<ErrorDetails>(data.clone())
+                            {
+                                if details.contains("401") || details.contains("Unauthorized") {
+                                    return Err(anyhow!(acp_thread::AuthRequired::new()));
+                                }
+                            }
+                        }
+                        if err.message.contains("401") || err.message.contains("Unauthorized") {
+                            return Err(anyhow!(acp::Error::auth_required()));
+                        }
                         anyhow::bail!(err)
                     }
 
                     let Some(data) = &err.data else {
-                        anyhow::bail!(err)
+                        // INTERNAL_ERROR without data but Unauthorized in the message
+                        if err.message.contains("401") || err.message.contains("Unauthorized") {
+                            return Err(anyhow!(acp::Error::auth_required()));
+                        } else {
+                            anyhow::bail!(err)
+                        }
                     };
 
                     // Temporary workaround until the following PR is generally available:
@@ -407,11 +430,20 @@ impl AgentConnection for AcpConnection {
                                     stop_reason: acp::StopReason::Cancelled,
                                     meta: None,
                                 })
+                            } else if details.contains("401") || details.contains("Unauthorized") {
+                                Err(anyhow!(acp::Error::auth_required()))
                             } else {
                                 Err(anyhow!(details))
                             }
                         }
-                        Err(_) => Err(anyhow!(err)),
+                        Err(_) => {
+                            let msg = err.message.as_str();
+                            if msg.contains("401") || msg.contains("Unauthorized") {
+                                Err(anyhow!(acp_thread::AuthRequired::new()))
+                            } else {
+                                Err(anyhow!(err))
+                            }
+                        }
                     }
                 }
             }
