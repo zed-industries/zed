@@ -440,6 +440,15 @@ pub struct MutableSelectionsCollection<'a> {
     cx: &'a mut App,
 }
 
+impl<'a> fmt::Debug for MutableSelectionsCollection<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MutableSelectionsCollection")
+            .field("collection", &self.collection)
+            .field("selections_changed", &self.selections_changed)
+            .finish()
+    }
+}
+
 impl<'a> MutableSelectionsCollection<'a> {
     pub fn display_map(&mut self) -> DisplaySnapshot {
         self.collection.display_map(self.cx)

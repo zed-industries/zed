@@ -197,9 +197,7 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(user.is_some(), |parent| {
-                    parent.child(self.render_user_menu_button(cx))
-                })
+                .child(self.render_app_menu_button(cx))
                 .into_any_element(),
         );
 
@@ -636,7 +634,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_app_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let has_subscription_period = user_store.subscription_period().is_some();

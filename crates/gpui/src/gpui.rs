@@ -13,6 +13,8 @@
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
 //!
+//! - [Ownership and data flow](_ownership_and_data_flow)
+//!
 //! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
 //! kick off your application by passing a callback to [`Application::run`]. Inside this callback,
 //! you can create a new window with [`App::open_window`], and register your first root
@@ -106,6 +108,9 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+
+#[cfg(doc)]
+pub mod _ownership_and_data_flow;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]

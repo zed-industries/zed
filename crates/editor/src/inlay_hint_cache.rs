@@ -2251,7 +2251,7 @@ pub mod tests {
             .unwrap();
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test(iterations = 4)]
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettingsContent {

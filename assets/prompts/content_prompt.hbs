@@ -29,7 +29,9 @@ Generate {{content_type}} based on the following prompt:
 
 Match the indentation in the original file in the inserted {{content_type}}, don't include any indentation on blank lines.
 
-Immediately start with the following format with no remarks:
+Return ONLY the {{content_type}} to insert. Do NOT include any XML tags like <document>, <insert_here>, or any surrounding markup from the input.
+
+Respond with a code block containing the {{content_type}} to insert. Replace \{{INSERTED_CODE}} with your actual {{content_type}}:
 
 ```
 \{{INSERTED_CODE}}
@@ -66,7 +68,9 @@ Only make changes that are necessary to fulfill the prompt, leave everything els
 
 Start at the indentation level in the original file in the rewritten {{content_type}}. Don't stop until you've rewritten the entire section, even if you have no more changes to make, always write out the whole section with no unnecessary elisions.
 
-Immediately start with the following format with no remarks:
+Return ONLY the rewritten {{content_type}}. Do NOT include any XML tags like <document>, <rewrite_this>, or any surrounding markup from the input.
+
+Respond with a code block containing the rewritten {{content_type}}. Replace \{{REWRITTEN_CODE}} with your actual rewritten {{content_type}}:
 
 ```
 \{{REWRITTEN_CODE}}
