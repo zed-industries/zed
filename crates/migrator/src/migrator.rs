@@ -1273,22 +1273,97 @@ mod tests {
     }
 
     #[test]
-    fn test_flatten_code_action_formatters() {
+    fn test_flatten_code_action_formatters_basic_array() {
         assert_migrate_settings(
             r#"{
                 "formatter": [
-                    {
-                        "code_actions": {
-                            "included": true,
-                            "excluded": false,
-                        }
-                    }
+                  {
+                      "code_actions": {
+                          "included-1": true,
+                          "included-2": true,
+                          "excluded": false,
+                      }
+                  }
                 ]
             }"#,
             Some(
                 r#"{
                 "formatter": [
-                    { "code_action": "included" }
+                  { "code_action": "included-1" },
+                  { "code_action": "included-2" }
+                ]
+            }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_basic_object() {
+        assert_migrate_settings(
+            r#"
+{
+    "formatter": {
+        "code_actions": {
+            "included-1": true,
+            "excluded": false,
+            "included-2": true
+        }
+    }
+}"#,
+            Some(
+                r#"
+{
+    "formatter": [
+      { "code_action": "included-1" },
+      { "code_action": "included-2" }
+    ]
+}"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_multiple_action_blocks() {
+        assert_migrate_settings(
+            r#"{
+                "formatter": [
+                  {
+                      "code_actions": {
+                          "included-1": true,
+                          "included-2": true,
+                          "excluded": false,
+                      }
+                  },
+                  {
+                    "language_server": "ruff"
+                  },
+                  {
+                      "code_actions": {
+                          "excluded": false,
+                          "excluded-2": false,
+                      }
+                  }
+                  // some comment
+                  ,
+                  {
+                      "code_actions": {
+                        "excluded": false,
+                        "included-3": true,
+                        "included-4": true,
+                      }
+                  },
+                ]
+            }"#,
+            Some(
+                r#"{
+                "formatter": [
+                  { "code_action": "included-1" },
+                  { "code_action": "included-2" },
+                  {
+                    "language_server": "ruff"
+                  },
+                  { "code_action": "included-3" },
+                  { "code_action": "included-4" },
                 ]
             }"#,
             ),
