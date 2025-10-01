@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use gpui_macros::Action;
-pub use no_action::{NoAction, is_no_action};
+
 use serde_json::json;
 use std::{
     any::{Any, TypeId},
@@ -418,23 +418,4 @@ pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroAc
     inventory::iter::<MacroActionBuilder>
         .into_iter()
         .map(|builder| builder.0())
-}
-
-mod no_action {
-    use crate as gpui;
-    use std::any::Any as _;
-
-    actions!(
-        zed,
-        [
-            /// Action with special handling which unbinds the keybinding this is associated with,
-            /// if it is the highest precedence match.
-            NoAction
-        ]
-    );
-
-    /// Returns whether or not this action represents a removed key binding.
-    pub fn is_no_action(action: &dyn gpui::Action) -> bool {
-        action.as_any().type_id() == (NoAction {}).type_id()
-    }
 }

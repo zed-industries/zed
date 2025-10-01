@@ -677,6 +677,9 @@ impl KeymapEditor {
         let mut string_match_candidates = Vec::new();
 
         for key_binding in key_bindings {
+            let Some(action) = key_binding.action() else {
+                continue;
+            };
             let source = key_binding
                 .meta()
                 .map(KeybindSource::from_meta)
@@ -696,7 +699,7 @@ impl KeymapEditor {
                 })
                 .unwrap_or(KeybindContextString::Global);
 
-            let action_name = key_binding.action().name();
+            let action_name = action.name();
             unmapped_action_names.remove(&action_name);
 
             let action_arguments = key_binding
@@ -1814,7 +1817,7 @@ impl Render for KeymapEditor {
                                     let action = div()
                                         .id(("keymap action", index))
                                         .child({
-                                            if action_name != gpui::NoAction.name() {
+                                            if !action_name.is_empty() {
                                                 binding
                                                     .action()
                                                     .humanized_name
