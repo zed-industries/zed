@@ -3385,7 +3385,6 @@ dependencies = [
  "reqwest 0.11.27",
  "reqwest_client",
  "rpc",
- "rustc-demangle",
  "scrypt",
  "sea-orm",
  "semantic_version",
@@ -20197,7 +20196,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.207.0"
+version = "0.208.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20418,21 +20417,6 @@ dependencies = [
 name = "zed_proto"
 version = "0.2.2"
 dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_ruff"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_snippets"
-version = "0.0.6"
-dependencies = [
- "serde_json",
  "zed_extension_api 0.1.0",
 ]
 
