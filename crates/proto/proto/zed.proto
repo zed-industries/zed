@@ -9,6 +9,7 @@ import "channel.proto";
 import "core.proto";
 import "debugger.proto";
 import "git.proto";
+import "image.proto";
 import "lsp.proto";
 import "notification.proto";
 import "task.proto";
@@ -416,7 +417,12 @@ message Envelope {
         StashDrop stash_drop = 378;
         StashApply stash_apply = 379;
 
-        GitRenameBranch git_rename_branch = 380; // current max
+        GitRenameBranch git_rename_branch = 380;
+
+        // Image-related messages
+        OpenImageByPath open_image_by_path = 381;
+        OpenImageResponse open_image_response = 382;
+        CreateImageForPeer create_image_for_peer = 383; // current max
     }
 
     reserved 87 to 88;
