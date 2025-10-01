@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent};
-use smallvec::SmallVec;
 
 use crate::{Disclosure, prelude::*};
 
