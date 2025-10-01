@@ -1081,7 +1081,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        mut new_index: ExtensionIndex,
+        new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
@@ -1269,7 +1269,7 @@ impl ExtensionStore {
         self.proxy.register_grammars(grammars_to_add);
         let languages_to_add = new_index
             .languages
-            .iter_mut()
+            .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
         for (language_name, language) in languages_to_add {
@@ -1518,6 +1518,10 @@ impl ExtensionStore {
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
+
+        if SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()) {
+            return Ok(());
+        }
 
         // TODO: distinguish dev extensions more explicitly, by the absence
         // of a checksum file that we'll create when downloading normal extensions.
