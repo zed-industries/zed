@@ -1143,6 +1143,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
             panel.confirm_edit(window, cx).unwrap()
         });
         confirm.await.unwrap();
+        cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -3037,6 +3038,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         panel.confirm_edit(window, cx).unwrap()
     });
     confirm.await.unwrap();
+    cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
