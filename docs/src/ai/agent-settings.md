@@ -134,7 +134,7 @@ Use the `agent_font_size` setting to change the font size of rendered agent resp
 }
 ```
 
-> (Preview Version Note): Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
+> Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
 
 ### Auto-run Commands
 
@@ -148,8 +148,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Single-file Review
 
@@ -166,8 +164,6 @@ The default value is `false`.
 
 When set to false, these controls are only available in the multibuffer review tab.
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Sound Notification
 
 Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
@@ -180,8 +176,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Message Editor Size
 
@@ -209,8 +203,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Edit Card
 
