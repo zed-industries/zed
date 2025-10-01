@@ -1,3 +1,4 @@
+use windows::core::Interface;
 use anyhow::{Context, Result};
 use util::ResultExt;
 use windows::Win32::{
@@ -122,9 +123,8 @@ fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
 fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe {
-            dxgi_factory
-                .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
-        }?;
+            dxgi_factory.EnumAdapters(adapter_index)?.cast()?
+        };
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {
             let gpu_name = String::from_utf16_lossy(&desc.Description)
                 .trim_matches(char::from(0))
