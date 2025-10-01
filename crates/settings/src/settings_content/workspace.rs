@@ -212,7 +212,19 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
     /// Contained between the left and right docks
@@ -226,7 +238,19 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
-#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
     /// Match platform conventions by default, so "on" on macOS and "off" everywhere else
@@ -249,7 +273,18 @@ impl CloseWindowWhenNoItems {
 }
 
 #[derive(
-    Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
@@ -333,7 +368,19 @@ pub struct CenteredLayoutSettings {
     pub right_padding: Option<f32>,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OnLastWindowClosed {
     /// Match platform conventions by default, so don't quit on macOS, and quit on other platforms

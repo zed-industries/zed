@@ -9,7 +9,10 @@ use gpui::{
     point, px, size, uniform_list,
 };
 use project::WorktreeId;
-use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
+use settings::{
+    BottomDockLayout, CloseWindowWhenNoItems, CursorShape, OnLastWindowClosed,
+    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
+};
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
@@ -158,7 +161,229 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore On Startup",
+                    description: "Whether to restore previous session when opening Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_startup,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_startup
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore File State",
+                    description: "Whether to restore previous file state when reopening",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_file_reopen
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Close on File Delete",
+                    description: "Whether to automatically close files that have been deleted",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.close_on_file_delete
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "When Closing With No Tabs",
+                    description: "What to do when using 'close active item' with no tabs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.workspace.when_closing_with_no_tabs
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.when_closing_with_no_tabs
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "On Last Window Closed",
+                    description: "What to do when the last window is closed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.on_last_window_closed,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.on_last_window_closed
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Path Prompts",
+                    description: "Whether to use system dialogs for Open and Save As",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.workspace.use_system_path_prompts
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_path_prompts
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Prompts",
+                    description: "Whether to use system prompts for confirmations",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_prompts
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Scoped Settings"),
+                // todo!("Implement another setting item type that just shows an edit in settings.json")
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Preview Channel",
+                //     description: "Which settings should be activated only in Preview build of Zed",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content.workspace.use_system_prompts
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Settings Profiles",
+                //     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content.workspace.use_system_prompts
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
                 SettingsPageItem::SectionHeader("Privacy"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Telemetry Diagnostics",
+                    description: "Send debug info like crash reports.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(telemetry) = &settings_content.telemetry {
+                                &telemetry.diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .telemetry
+                                .get_or_insert_default()
+                                .diagnostics
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Telemetry Metrics",
+                    description: "Send anonymized usage data like what languages you're using Zed with.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(telemetry) = &settings_content.telemetry {
+                                &telemetry.metrics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.telemetry.get_or_insert_default().metrics
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Appearance & Behavior",
+            expanded: true,
+            items: vec![
+                SettingsPageItem::SectionHeader("Theme"),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Theme Mode",
+                //     description: "How to select the theme",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.as_ref().mode,
+                //         pick_mut: |settings_content| &mut settings_content.theme.mode,
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Cursor"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Cursor shape for the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.cursor_shape,
+                        pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Window"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Title Bar",
+                    description: "Whether to show the title bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Layout"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Zoomed Padding",
+                    description: "Whether to show padding for zoomed panels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                }),
+                // todo!("Implement SettingItem to render these padding settings as it needs to be almost like a float counter.")
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Centered Layout Left Padding",
+                //     description: "Left padding for cenetered layout",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content.workspace.bottom_dock_layout
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Centered Layout Right Padding",
+                //     description: "Right padding for cenetered layout",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content.workspace.bottom_dock_layout
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Bottom Dock Layout",
+                    description: "Layout mode of the bottom dock",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.bottom_dock_layout
+                        },
+                    }),
+                    metadata: None,
+                }),
             ],
         },
         SettingsPage {
@@ -192,22 +417,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.disable_ai,
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
-                    }),
-                    metadata: None,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Appearance & Behavior",
-            expanded: true,
-            items: vec![
-                SettingsPageItem::SectionHeader("Cursor"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Cursor Shape",
-                    description: "Cursor shape for the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.cursor_shape,
-                        pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
                     }),
                     metadata: None,
                 }),
@@ -294,6 +503,18 @@ fn init_renderers(cx: &mut App) {
             render_toggle_button(*settings_field, file, cx)
         })
         .add_renderer::<CursorShape>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<RestoreOnStartupBehavior>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<BottomDockLayout>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<OnLastWindowClosed>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<CloseWindowWhenNoItems>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         });
 }

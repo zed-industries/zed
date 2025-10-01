@@ -313,7 +313,7 @@ pub struct AudioSettingsContent {
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -323,6 +323,15 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+}
+
+impl Default for TelemetrySettingsContent {
+    fn default() -> Self {
+        Self {
+            diagnostics: Some(true),
+            metrics: Some(true),
+        }
+    }
 }
 
 #[skip_serializing_none]
