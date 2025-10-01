@@ -3266,7 +3266,11 @@ impl EditorElement {
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
-            let non_relative_number = row_info.buffer_row? + 1;
+            let non_relative_number = if !use_relative_for_wrapped_lines && row_info.wrapped {
+                return None;
+            } else {
+                row_info.buffer_row? + 1
+            };
             let number = relative_rows
                 .get(&display_row)
                 .unwrap_or(&non_relative_number);
