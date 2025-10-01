@@ -909,7 +909,8 @@ impl LanguageServer {
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(&InitializedParams {})?;
+            self.notify::<notification::Initialized>(InitializedParams {})
+                .await?;
             Ok(Arc::new(self))
         })
     }
@@ -959,7 +960,7 @@ impl LanguageServer {
                 }
 
                 response_handlers.lock().take();
-                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, ()).ok();
                 outbound_tx.close();
                 output_done.recv().await;
                 server.lock().take().map(|mut child| child.kill());
@@ -1278,7 +1279,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
-                        &CancelParams {
+                        CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1339,13 +1340,15 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
-        Self::notify_internal::<T>(&self.outbound_tx, params)
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Task<Result<()>> {
+        let outbound = self.outbound_tx.clone();
+        self.executor
+            .spawn(async move { Self::notify_internal::<T>(&outbound, params) })
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
-        params: &T::Params,
+        params: T::Params,
     ) -> Result<()> {
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
@@ -1388,7 +1391,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).detach();
         }
     }
 
@@ -1422,7 +1425,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).detach();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
@@ -1454,7 +1457,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
+            self.notify::<DidChangeWorkspaceFolders>(params).detach();
         }
     }
 
@@ -1472,17 +1475,17 @@ impl LanguageServer {
         version: i32,
         initial_text: String,
     ) {
-        self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+        self.notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
         })
-        .ok();
+        .detach();
     }
 
     pub fn unregister_buffer(&self, uri: Uri) {
-        self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
+        self.notify::<notification::DidCloseTextDocument>(DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
-        .ok();
+        .detach();
     }
 }
 
@@ -1695,7 +1698,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1871,7 +1874,7 @@ mod tests {
             .await
             .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
