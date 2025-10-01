@@ -7,15 +7,14 @@ pub const SETTINGS_PATTERNS: MigrationPatterns =
     &[(FORMATTER_PATTERN, migrate_code_action_formatters)];
 
 const FORMATTER_PATTERN: &str = r#"
-    (document
         (object
             (pair
-                key: (string (string_content) @formatter)
+                key: (string (string_content) @formatter) (#eq? @formatter "formatter")
                 value: [
                     (array
                         (object
                             (pair
-                                key: (string (string_content) @code-actions-key)
+                                key: (string (string_content) @code-actions-key) (#eq? @code-actions-key "code_actions")
                                 value: (object
                                     ((pair) @code-action ","?)*
                                 )
@@ -24,7 +23,7 @@ const FORMATTER_PATTERN: &str = r#"
                     ) @formatter-array
                     (object
                         (pair
-                            key: (string (string_content) @code-actions-key)
+                            key: (string (string_content) @code-actions-key) (#eq? @code-actions-key "code_actions")
                             value: (object
                                 ((pair) @code-action ","?)*
                             )
@@ -33,9 +32,6 @@ const FORMATTER_PATTERN: &str = r#"
                 ]
             )
         )
-    )
-    (#eq? @formatter "formatter")
-    (#eq? @code-actions-key "code_actions")
 "#;
 
 pub fn migrate_code_action_formatters(
@@ -45,7 +41,6 @@ pub fn migrate_code_action_formatters(
 ) -> Option<(Range<usize>, String)> {
     let code_actions_obj_ix = query.capture_index_for_name("code-actions-obj")?;
     let code_actions_obj_node = mat.nodes_for_capture_index(code_actions_obj_ix).next()?;
-    let code_actions_obj_range = code_actions_obj_node.byte_range();
 
     let mut code_actions = vec![];
 
