@@ -1437,6 +1437,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_table_without_headings() {
+        let parsed = parse(
+            "<table>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..240,
+                    row(vec![]),
+                    vec![
+                        row(vec![text("1", 0..240), text("Chris", 0..240)]),
+                        row(vec![text("2", 0..240), text("Dennis", 0..240)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_without_body() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..150,
+                    row(vec![text("Id", 0..150), text("Name", 0..150)]),
+                    vec![],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_html_heading_tags() {
         let parsed = parse("<h1>Heading</h1><h2>Heading</h2><h3>Heading</h3><h4>Heading</h4><h5>Heading</h5><h6>Heading</h6>").await;
 
