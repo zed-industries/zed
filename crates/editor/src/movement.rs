@@ -1018,22 +1018,22 @@ mod tests {
                 [
                     Inlay::edit_prediction(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        buffer_snapshot.anchor_before(offset),
                         "test",
                     ),
                     Inlay::edit_prediction(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        buffer_snapshot.anchor_after(offset),
                         "test",
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        buffer_snapshot.anchor_before(offset),
                         "test",
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        buffer_snapshot.anchor_after(offset),
                         "test",
                     ),
                 ]

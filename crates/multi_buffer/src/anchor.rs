@@ -16,6 +16,13 @@ pub struct Anchor {
 }
 
 impl Anchor {
+    pub fn with_diff_base_anchor(self, diff_base_anchor: text::Anchor) -> Self {
+        Self {
+            diff_base_anchor: Some(diff_base_anchor),
+            ..self
+        }
+    }
+
     pub fn in_buffer(
         excerpt_id: ExcerptId,
         buffer_id: BufferId,
