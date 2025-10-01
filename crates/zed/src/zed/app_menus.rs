@@ -1,10 +1,12 @@
 use collab_ui::collab_panel;
-use gpui::{Menu, MenuItem, OsAction};
+use gpui::{App, Menu, MenuItem, OsAction};
+use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::ToggleFocus as ToggleDebugPanel;
+use zed_actions::{ToggleFocus as ToggleDebugPanel, dev};
 
-pub fn app_menus() -> Vec<Menu> {
+pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
+    let include_dev_items = ReleaseChannel::global(cx) == ReleaseChannel::Dev;
 
     vec![
         Menu {
@@ -186,6 +188,12 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),
+                include_dev_items
+                    .then(|| MenuItem::action("GPUI Inspector", dev::ToggleInspector))
+                    .expect("Show only in Dev build"),
+                include_dev_items
+                    .then(|| MenuItem::separator())
+                    .expect("Show only in Dev build"),
             ],
         },
         Menu {
