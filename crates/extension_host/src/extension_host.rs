@@ -73,10 +73,11 @@ const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// The current extension [`SchemaVersion`] supported by Zed.
 const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 
-/// Extensions that should no longer be loaded.
+/// Extensions that should no longer be loaded or downloaded.
 ///
-/// The snippets extension is no longer needed because it has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty"];
+/// These snippets should no longer be downloaded or loaded, because their
+/// functionality has been integrated into the core editor.
+const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
@@ -1081,10 +1082,14 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        new_index: ExtensionIndex,
+        mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
+
+        new_index
+            .extensions
+            .retain(|extension_id, _| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
 
         // Determine which extensions need to be loaded and unloaded, based
         // on the changes to the manifest and the extensions that we know have been
@@ -1124,9 +1129,6 @@ impl ExtensionStore {
             }
             self.modified_extensions.clear();
         }
-
-        extensions_to_load
-            .retain(|extension_id| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
             return Task::ready(());
