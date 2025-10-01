@@ -363,10 +363,17 @@ mod test {
             assert_eq!(program, expected);
         }
 
-        // On Windows, should use system shell
+        // On Windows, should use system shell (case-insensitive check)
         #[cfg(target_os = "windows")]
         {
-            assert!(program.contains("powershell") || program.contains("cmd"));
+            let program_lower = program.to_lowercase();
+            assert!(
+                program_lower.contains("powershell")
+                || program_lower.contains("pwsh")
+                || program_lower.contains("cmd"),
+                "Expected Windows shell, got: {}",
+                program
+            );
         }
     }
 }
