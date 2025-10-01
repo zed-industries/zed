@@ -11874,14 +11874,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
             Formatter::LanguageServer { name: None },
-            Formatter::CodeActions(
-                [
-                    ("code-action-1".into(), true),
-                    ("code-action-2".into(), true),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            Formatter::CodeAction("code-action-1".into()),
+            Formatter::CodeAction("code-action-2".into()),
         ])))
     });
 

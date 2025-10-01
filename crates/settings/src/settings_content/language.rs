@@ -778,8 +778,8 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Option<Arc<[String]>>,
     },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    /// Files should be formatted using a code action executed by language servers.
+    CodeAction(String),
 }
 
 /// The settings for indent guides.
