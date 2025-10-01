@@ -41,6 +41,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use task::ShellKind;
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
@@ -1580,30 +1581,16 @@ impl AcpThreadView {
         };
         let project = workspace.read(cx).project().clone();
         let cwd = project.read(cx).first_project_directory(cx);
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
+            task.shell = task::Shell::WithArguments { program: task.command.take().expect("login command should be set"), args: std::mem::take(&mut task.args), title_override: None };
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
             task.use_new_terminal = true;
             task.allow_concurrent_runs = true;
             task.hide = task::HideStrategy::Always;
-            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&task, window, cx)
