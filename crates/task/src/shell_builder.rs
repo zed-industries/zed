@@ -369,8 +369,8 @@ mod test {
             let program_lower = program.to_lowercase();
             assert!(
                 program_lower.contains("powershell")
-                || program_lower.contains("pwsh")
-                || program_lower.contains("cmd"),
+                    || program_lower.contains("pwsh")
+                    || program_lower.contains("cmd"),
                 "Expected Windows shell, got: {}",
                 program
             );
