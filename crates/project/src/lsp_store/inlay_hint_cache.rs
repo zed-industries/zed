@@ -12,6 +12,7 @@ use crate::{InlayHint, InlayId};
 pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
 
+#[derive(Debug)]
 pub struct RowChunkCachedHints {
     pub hints: CacheInlayHints,
     pub cached: bool,
