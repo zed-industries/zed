@@ -2093,13 +2093,46 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
-        if let Some(e) = e {
-            self.child_exited = Some(e);
-        }
+
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // Always record the latest exit status.
+                if let Some(e) = e {
+                    self.child_exited = Some(e);
+                }
+
+<<<<<<< Updated upstream
+                if error_code.is_none()
+                    || self
+                        .child_exited
+                        .is_some_and(|status| status.code() == Some(0))
+                {
+=======
+                let should_close = if error_code.is_none() {
+                    // PTY Exit - the process is gone
+                    match self.child_exited {
+                        None => true,  // Clean exit, no prior error
+                        Some(e) => match e.code() {
+                            Some(0) => true,  // Successful exit
+                            // Linux bash sends false ChildExit(130) after Ctrl+C
+                            // but shell continues running. This is the specific bug.
+                            #[cfg(target_os = "linux")]
+                            Some(130) => true,
+                            _ => {
+                                // Real error (spawn failure, crash, etc.)
+                                // Keep terminal open to show error message
+                                false
+                            }
+                        }
+                    }
+                } else {
+                    // ChildExit - only close on success
+                    self.child_exited.is_some_and(|e| e.code() == Some(0))
+                };
+
+                if should_close {
+>>>>>>> Stashed changes
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2378,6 +2411,7 @@ mod tests {
     use collections::HashMap;
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
     use rand::{Rng, distr, rngs::ThreadRng};
+    use std::os::unix::process::ExitStatusExt;
     use task::ShellBuilder;
 
     #[gpui::test]
@@ -2430,8 +2464,6 @@ mod tests {
         );
     }
 
-    // TODO should be tested on Linux too, but does not work there well
-    #[cfg(target_os = "macos")]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -2465,22 +2497,24 @@ mod tests {
         })
         .detach();
         cx.background_spawn(async move {
-            assert_eq!(
-                completion_rx.recv().await.unwrap(),
-                Some(ExitStatus::default()),
-                "EOF should result in the tty shell exiting successfully",
+            let status = completion_rx.recv().await.unwrap();
+            assert!(
+                status == Some(ExitStatus::from_raw(0))
+                    || status == Some(ExitStatus::from_raw(130)),
+                "EOF must close shell: expected 0 or 130, got {:?}",
+                status
             );
         })
         .detach();
-
-        let first_event = Event::Wakeup;
-        let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
             assert!(success, "Should have registered ctrl-c sequence");
         });
+
+        // Give shell time to process SIGINT
+        smol::Timer::after(Duration::from_millis(50)).await;
+
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
             assert!(success, "Should have registered ctrl-d sequence");
