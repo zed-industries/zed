@@ -3385,7 +3385,6 @@ dependencies = [
  "reqwest 0.11.27",
  "reqwest_client",
  "rpc",
- "rustc-demangle",
  "scrypt",
  "sea-orm",
  "semantic_version",
