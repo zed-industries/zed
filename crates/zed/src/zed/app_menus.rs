@@ -189,7 +189,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),
                 include_dev_items
-                    .then(|| MenuItem::action("GPUI Inspector", dev::ToggleInspector))
+                    .then(|| MenuItem::action("Toggle GPUI Inspector", dev::ToggleInspector))
                     .expect("Show only in Dev build"),
                 include_dev_items
                     .then(|| MenuItem::separator())
