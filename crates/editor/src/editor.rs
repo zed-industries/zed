@@ -22400,7 +22400,14 @@ fn wrap_with_prefix(
                     continue;
                 }
                 if !preserve_existing_whitespace {
-                    token = " ";
+                    // Keep a single whitespace grapheme as-is
+                    if let Some(first) =
+                        unicode_segmentation::UnicodeSegmentation::graphemes(token, true).next()
+                    {
+                        token = first;
+                    } else {
+                        token = " ";
+                    }
                     grapheme_len = 1;
                 }
                 let current_prefix_len = if is_first_line {
@@ -22501,6 +22508,17 @@ fn test_wrap_with_prefix() {
             false,
         ),
         "这是什\n么 钢\n笔"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            String::new(),
+            format!("foo{}bar", '\u{2009}'), // thin space
+            80,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        format!("foo{}bar", '\u{2009}')
     );
 }
 
