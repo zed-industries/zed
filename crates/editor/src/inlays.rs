@@ -50,7 +50,7 @@ impl Inlay {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn mock_hint(id: u32, position: Anchor, text: impl Into<Rope>) -> Self {
+    pub fn mock_hint(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
         Self {
             id: InlayId::Hint(id),
             position,
@@ -58,7 +58,7 @@ impl Inlay {
         }
     }
 
-    pub fn color(id: u32, position: Anchor, color: Rgba) -> Self {
+    pub fn color(id: usize, position: Anchor, color: Rgba) -> Self {
         Self {
             id: InlayId::Color(id),
             position,
@@ -66,7 +66,7 @@ impl Inlay {
         }
     }
 
-    pub fn edit_prediction<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
+    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::EditPrediction(id),
             position,
@@ -74,7 +74,7 @@ impl Inlay {
         }
     }
 
-    pub fn debugger<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
+    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,

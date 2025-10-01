@@ -403,15 +403,15 @@ pub enum PrepareRenameResponse {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
-    EditPrediction(u32),
-    DebuggerValue(u32),
+    EditPrediction(usize),
+    DebuggerValue(usize),
     // LSP
-    Hint(u32),
-    Color(u32),
+    Hint(usize),
+    Color(usize),
 }
 
 impl InlayId {
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> usize {
         match self {
             Self::EditPrediction(id) => *id,
             Self::DebuggerValue(id) => *id,

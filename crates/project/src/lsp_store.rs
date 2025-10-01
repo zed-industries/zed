@@ -111,7 +111,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{self, AtomicU32},
+        atomic::{self, AtomicUsize},
     },
     time::{Duration, Instant},
 };
@@ -3484,7 +3484,7 @@ pub struct BufferLspData {
     document_colors: DocumentColorData,
     code_lens: CodeLensData,
     pub inlay_hints: BufferInlayHints,
-    next_hint_id: Arc<AtomicU32>,
+    next_hint_id: Arc<AtomicUsize>,
     lsp_requests: HashMap<TypeId, HashMap<LspRequestId, Task<()>>>,
     chunk_lsp_requests: HashMap<TypeId, HashMap<BufferChunk, LspRequestId>>,
 }
@@ -3498,7 +3498,7 @@ impl BufferLspData {
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
             chunk_lsp_requests: HashMap::default(),
-            next_hint_id: Arc::new(AtomicU32::new(0)),
+            next_hint_id: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -9631,7 +9631,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::ResolveInlayHint>,
         mut cx: AsyncApp,
     ) -> Result<proto::ResolveInlayHintResponse> {
-        let hint_id = InlayId::Hint(envelope.payload.hint_id as u32);
+        let hint_id = InlayId::Hint(envelope.payload.hint_id as usize);
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let resolved_hint = lsp_store
             .update(&mut cx, |lsp_store, cx| {
