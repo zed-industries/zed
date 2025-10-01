@@ -726,7 +726,7 @@ impl RulesLibrary {
                             editor.set_show_gutter(false, cx);
                             editor.set_show_wrap_guides(false, cx);
                             editor.set_show_indent_guides(false, cx);
-                            editor.set_use_modal_editing(false);
+                            editor.set_use_modal_editing(true);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
