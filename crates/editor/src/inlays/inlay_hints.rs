@@ -1,6 +1,5 @@
 use std::{
     ops::{ControlFlow, Range},
-    sync::Arc,
     time::Duration,
 };
 
@@ -8,7 +7,7 @@ use collections::{HashMap, HashSet};
 use gpui::{App, Task};
 use itertools::Itertools as _;
 use language::{
-    BufferRow, Language,
+    BufferRow,
     language_settings::{InlayHintKind, InlayHintSettings, language_settings},
 };
 use lsp::LanguageServerId;
@@ -192,23 +191,9 @@ pub enum InlayHintRefreshReason {
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
-    BufferEdited(HashSet<Arc<Language>>),
+    BufferEdited,
     RefreshRequested(LanguageServerId),
     ExcerptsRemoved(Vec<ExcerptId>),
-}
-
-impl InlayHintRefreshReason {
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::ModifiersChanged(_) => "modifiers changed",
-            Self::Toggle(_) => "toggle",
-            Self::SettingsChange(_) => "settings change",
-            Self::NewLinesShown => "new lines shown",
-            Self::BufferEdited(_) => "buffer edited",
-            Self::RefreshRequested(_) => "refresh requested",
-            Self::ExcerptsRemoved(_) => "excerpts removed",
-        }
-    }
 }
 
 impl Editor {
@@ -259,9 +244,12 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode.is_full() || self.semantics_provider.is_none() {
+        if !self.mode.is_full() || self.inlay_hints.is_none() {
             return;
         }
+        let Some(semantics_provider) = self.semantics_provider.clone() else {
+            return;
+        };
 
         let invalidate_cache = {
             let visible_inlay_hints = self.visible_inlay_hints(cx);
@@ -269,20 +257,12 @@ impl Editor {
                 return;
             };
 
-            let reason_description = reason.description();
-            let ignore_debounce = matches!(
-                reason,
-                InlayHintRefreshReason::SettingsChange(_)
-                    | InlayHintRefreshReason::Toggle(_)
-                    | InlayHintRefreshReason::ExcerptsRemoved(_)
-                    | InlayHintRefreshReason::ModifiersChanged(_)
-            );
-            let (invalidate_cache, required_languages) = match reason {
+            let invalidate_cache = match reason {
                 InlayHintRefreshReason::ModifiersChanged(enabled) => {
                     match inlay_hints.modifiers_override(enabled) {
                         Some(enabled) => {
                             if enabled {
-                                (InvalidationStrategy::RefreshRequested, None)
+                                InvalidationStrategy::RefreshRequested
                             } else {
                                 self.splice_inlays(
                                     &visible_inlay_hints
@@ -301,7 +281,7 @@ impl Editor {
                 InlayHintRefreshReason::Toggle(enabled) => {
                     if inlay_hints.toggle(enabled) {
                         if enabled {
-                            (InvalidationStrategy::RefreshRequested, None)
+                            InvalidationStrategy::RefreshRequested
                         } else {
                             self.splice_inlays(
                                 &visible_inlay_hints
@@ -327,7 +307,7 @@ impl Editor {
                             return;
                         }
                         ControlFlow::Break(None) => return,
-                        ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
+                        ControlFlow::Continue(()) => InvalidationStrategy::RefreshRequested,
                     }
                 }
                 InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
@@ -336,21 +316,35 @@ impl Editor {
                     });
                     return;
                 }
-                InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
-                InlayHintRefreshReason::BufferEdited(buffer_languages) => {
-                    (InvalidationStrategy::BufferEdited, Some(buffer_languages))
-                }
+                InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
+                InlayHintRefreshReason::BufferEdited => InvalidationStrategy::BufferEdited,
                 InlayHintRefreshReason::RefreshRequested(_) => {
-                    (InvalidationStrategy::RefreshRequested, None)
+                    InvalidationStrategy::RefreshRequested
                 }
             };
             invalidate_cache
         };
 
-        let Some(semantics_provider) = self.semantics_provider.clone() else {
-            return;
+        let ignore_debounce = matches!(
+            reason,
+            InlayHintRefreshReason::SettingsChange(_)
+                | InlayHintRefreshReason::Toggle(_)
+                | InlayHintRefreshReason::ExcerptsRemoved(_)
+                | InlayHintRefreshReason::ModifiersChanged(_)
+        );
+        let debounce = if ignore_debounce {
+            None
+        } else {
+            self.inlay_hints.as_ref().and_then(|inlay_hints| {
+                if invalidate_cache.should_invalidate() {
+                    inlay_hints.invalidate_debounce
+                } else {
+                    inlay_hints.append_debounce
+                }
+            })
         };
-        for (excerpt_id, (buffer, buffer_version, range)) in self.visible_excerpts(None, cx) {
+
+        for (excerpt_id, (buffer, buffer_version, range)) in self.visible_excerpts(cx) {
             let Some(inlay_hints) = self.inlay_hints.as_mut() else {
                 return;
             };
@@ -362,6 +356,7 @@ impl Editor {
 
             let Some(new_hints) = semantics_provider.inlay_hints(
                 invalidate_cache.should_invalidate(),
+                debounce,
                 buffer,
                 buffer_anchor_range.clone(),
                 cx,
@@ -370,8 +365,6 @@ impl Editor {
             };
             let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
             // TODO kb check if the range is covered already by the fetched chunks, for non-invalidate cases
-            // TODO kb where to use `required_languages` + all the timeouts? In the `SemanticsProvider` trait's method??
-            //
             // TODO kb we can have new allowed hint kids applied, with old spliced away and duplicates in the new inlay hints
             // TODO kb also, avoid splices that remove and re-add same inlays
             let a = &inlay_hints.inlay_chunks_received;
@@ -1933,7 +1926,7 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| editor.visible_excerpts(None, cx))
+            .update(cx, |editor, _window, cx| editor.visible_excerpts(cx))
             .unwrap();
         assert_eq!(
             ranges.len(),
