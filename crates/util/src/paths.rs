@@ -101,7 +101,9 @@ impl<T: AsRef<Path>> PathExt for T {
     /// Converts a local path to one that can be used inside of WSL.
     /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf> {
-        let mut new_path = PathBuf::new();
+        // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
+        // todo: ideally rework them..?
+        let mut new_path = std::ffi::OsString::new();
         for component in self.as_ref().components() {
             match component {
                 std::path::Component::Prefix(prefix) => {
@@ -111,11 +113,20 @@ impl<T: AsRef<Path>> PathExt for T {
                     new_path.push(format!("/mnt/{}", drive_letter));
                 }
                 std::path::Component::RootDir => {}
-                _ => new_path.push(component),
+                std::path::Component::CurDir => {
+                    new_path.push("/.");
+                }
+                std::path::Component::ParentDir => {
+                    new_path.push("/..");
+                }
+                std::path::Component::Normal(os_str) => {
+                    new_path.push("/");
+                    new_path.push(os_str);
+                }
             }
         }
 
-        Some(new_path)
+        Some(new_path.into())
     }
 }
 
