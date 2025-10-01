@@ -149,8 +149,6 @@ The default value is `false`.
 }
 ```
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Single-file Review
 
 Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
@@ -166,8 +164,6 @@ The default value is `false`.
 
 When set to false, these controls are only available in the multibuffer review tab.
 
-> This setting is available via the Agent Panel's settings UI.
-
 ### Sound Notification
 
 Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
@@ -180,8 +176,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Message Editor Size
 
@@ -209,8 +203,6 @@ The default value is `false`.
   }
 }
 ```
-
-> This setting is available via the Agent Panel's settings UI.
 
 ### Edit Card
 
