@@ -42,7 +42,7 @@ use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, ReadGlobal, Render, ResizeEdge, Size, Stateful, Subscription,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
     SystemWindowTabController, Task, Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId,
     WindowOptions, actions, canvas, point, relative, size, transparent_black,
 };
@@ -77,7 +77,7 @@ use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::Conne
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, SettingsLocation, update_settings_file, SettingsStore};
+use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -107,7 +107,8 @@ use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
@@ -501,6 +502,7 @@ pub fn init_settings(cx: &mut App) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
+    StatusBarSettings::register(cx);
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
@@ -1743,11 +1745,7 @@ impl Workspace {
     }
 
     pub fn status_bar_visible(&self, cx: &App) -> bool {
-        let store = SettingsStore::global(cx);
-        store.raw_user_settings()
-            .and_then(|content| content.content.editor.status_bar.as_ref())
-            .and_then(|sb| sb.show)
-            .unwrap_or(true)
+        StatusBarSettings::get_global(cx).show
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -10775,11 +10773,10 @@ mod tests {
         });
 
         // Test with status bar hidden
-        cx.update(|cx| {
-            SettingsStore::test_set_user_settings(
-                cx,
-                r#"{"status_bar": {"show": false}}"#,
-            );
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(false);
+            });
         });
 
         workspace.read_with(cx, |workspace, cx| {
@@ -10788,11 +10785,10 @@ mod tests {
         });
 
         // Test with status bar shown explicitly
-        cx.update(|cx| {
-            SettingsStore::test_set_user_settings(
-                cx,
-                r#"{"status_bar": {"show": true}}"#,
-            );
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(true);
+            });
         });
 
         workspace.read_with(cx, |workspace, cx| {
