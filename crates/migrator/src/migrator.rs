@@ -1545,4 +1545,155 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn test_flatten_code_action_formatters_array_with_format_on_save_and_multiple_languages() {
+        assert_migrate_settings(
+            &r#"{
+                "formatter": {
+                    "code_actions": {
+                        "default-1": true,
+                        "default-2": true,
+                        "default-3": true,
+                        "default-4": true,
+                    }
+                },
+                "format_on_save": [
+                  {
+                      "code_actions": {
+                          "included-1": true,
+                          "included-2": true,
+                          "excluded": false,
+                      }
+                  },
+                  {
+                      "language_server": "ruff"
+                  },
+                  {
+                      "code_actions": {
+                          "excluded": false,
+                          "excluded-2": false,
+                      }
+                  }
+                  // some comment
+                  ,
+                  {
+                      "code_actions": {
+                          "excluded": false,
+                          "included-3": true,
+                          "included-4": true,
+                      }
+                  },
+                ],
+                "languages": {
+                    "Rust": {
+                        "format_on_save": "prettier",
+                        "formatter": [
+                          {
+                              "code_actions": {
+                                  "included-1": true,
+                                  "included-2": true,
+                                  "excluded": false,
+                              }
+                          },
+                          {
+                              "language_server": "ruff"
+                          },
+                          {
+                              "code_actions": {
+                                  "excluded": false,
+                                  "excluded-2": false,
+                              }
+                          }
+                          // some comment
+                          ,
+                          {
+                              "code_actions": {
+                                  "excluded": false,
+                                  "included-3": true,
+                                  "included-4": true,
+                              }
+                          },
+                        ]
+                    },
+                    "Python": {
+                        "format_on_save": {
+                            "code_actions": {
+                                "on-save-1": true,
+                                "on-save-2": true,
+                            }
+                        },
+                        "formatter": [
+                          {
+                              "language_server": "ruff"
+                          },
+                          {
+                              "code_actions": {
+                                  "excluded": false,
+                                  "excluded-2": false,
+                              }
+                          }
+                          // some comment
+                          ,
+                          {
+                              "code_actions": {
+                                  "excluded": false,
+                                  "included-3": true,
+                                  "included-4": true,
+                              }
+                          },
+                        ]
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [
+                      { "code_action": "default-1" },
+                      { "code_action": "default-2" },
+                      { "code_action": "default-3" },
+                      { "code_action": "default-4" }
+                    ],
+                    "format_on_save": [
+                      { "code_action": "included-1" },
+                      { "code_action": "included-2" },
+                      {
+                          "language_server": "ruff"
+                      },
+                      { "code_action": "included-3" },
+                      { "code_action": "included-4" },
+                    ],
+                    "languages": {
+                        "Rust": {
+                            "format_on_save": "prettier",
+                            "formatter": [
+                              { "code_action": "included-1" },
+                              { "code_action": "included-2" },
+                              {
+                                  "language_server": "ruff"
+                              },
+                              { "code_action": "included-3" },
+                              { "code_action": "included-4" },
+                            ]
+                        },
+                        "Python": {
+                            "format_on_save": [
+                              { "code_action": "on-save-1" },
+                              { "code_action": "on-save-2" }
+                            ],
+                            "formatter": [
+                              {
+                                  "language_server": "ruff"
+                              },
+                              { "code_action": "included-3" },
+                              { "code_action": "included-4" },
+                            ]
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
 }

@@ -9,7 +9,7 @@ pub const SETTINGS_PATTERNS: MigrationPatterns =
 const FORMATTER_PATTERN: &str = r#"
         (object
             (pair
-                key: (string (string_content) @formatter) (#eq? @formatter "formatter")
+                key: (string (string_content) @formatter) (#any-of? @formatter "formatter" "format_on_save")
                 value: [
                     (array
                         (object
