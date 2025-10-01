@@ -165,7 +165,7 @@ impl Editor {
         }
 
         let visible_buffers = self
-            .visible_excerpts(None, cx)
+            .visible_excerpts(cx)
             .into_values()
             .map(|(buffer, ..)| buffer)
             .filter(|editor_buffer| {

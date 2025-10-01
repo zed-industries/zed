@@ -5104,7 +5104,6 @@ impl Editor {
 
     pub fn visible_excerpts(
         &self,
-        restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut Context<Editor>,
     ) -> HashMap<ExcerptId, (Entity<Buffer>, clock::Global, Range<usize>)> {
         let Some(project) = self.project() else {
@@ -5123,9 +5122,8 @@ impl Editor {
                 + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
             Bias::Left,
         );
-        let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
         multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_range)
+            .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
@@ -5135,23 +5133,17 @@ impl Editor {
                     .read(cx)
                     .entry_for_id(buffer_file.project_entry_id()?)?;
                 if worktree_entry.is_ignored {
-                    return None;
+                    None
+                } else {
+                    Some((
+                        excerpt_id,
+                        (
+                            multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                            buffer.version().clone(),
+                            excerpt_visible_range,
+                        ),
+                    ))
                 }
-
-                let language = buffer.language()?;
-                if let Some(restrict_to_languages) = restrict_to_languages
-                    && !restrict_to_languages.contains(language)
-                {
-                    return None;
-                }
-                Some((
-                    excerpt_id,
-                    (
-                        multi_buffer.buffer(buffer.remote_id()).unwrap(),
-                        buffer.version().clone(),
-                        excerpt_visible_range,
-                    ),
-                ))
             })
             .collect()
     }
@@ -20628,10 +20620,7 @@ impl Editor {
                                 .collect::<HashSet<_>>()
                         });
                         if !languages_affected.is_empty() {
-                            self.refresh_inlay_hints(
-                                InlayHintRefreshReason::BufferEdited(languages_affected),
-                                cx,
-                            );
+                            self.refresh_inlay_hints(InlayHintRefreshReason::BufferEdited, cx);
                         }
                     }
                 }
@@ -22459,6 +22448,7 @@ pub trait SemanticsProvider {
     fn inlay_hints(
         &self,
         _invalidate_cache: bool,
+        _debounce: Option<Duration>,
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
         _cx: &mut App,
@@ -22964,12 +22954,13 @@ impl SemanticsProvider for Entity<Project> {
     fn inlay_hints(
         &self,
         invalidate_cache: bool,
+        debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(invalidate_cache, buffer, range, cx)
+            lsp_store.inlay_hints(invalidate_cache, debounce, buffer, range, cx)
         }))
     }
 
