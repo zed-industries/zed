@@ -746,7 +746,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size + px(1.0));
@@ -762,7 +762,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size - px(1.0));
@@ -791,7 +791,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
@@ -808,7 +808,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size - px(1.0));

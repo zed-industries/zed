@@ -1577,8 +1577,8 @@ fn up_down_buffer_rows(
         SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {
             let x = map.x_for_display_point(point, text_layout_details);
-            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x.0));
-            (select_nth_wrapped_row, x.0)
+            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x.into()));
+            (select_nth_wrapped_row, x.into())
         }
     };
 

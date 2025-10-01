@@ -2570,7 +2570,7 @@ impl From<Percentage> for Radians {
     JsonSchema,
 )]
 #[repr(transparent)]
-pub struct Pixels(pub f32);
+pub struct Pixels(pub(crate) f32);
 
 impl Div for Pixels {
     type Output = f32;

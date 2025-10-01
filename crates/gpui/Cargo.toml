@@ -89,6 +89,7 @@ collections.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
 etagere = "0.2"
+fixed.workspace = true
 futures.workspace = true
 gpui_macros.workspace = true
 http_client.workspace = true

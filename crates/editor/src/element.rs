@@ -3894,12 +3894,7 @@ impl EditorElement {
                             })
                             .take(1),
                     )
-                    .child(
-                        h_flex()
-                            .size(Pixels(12.0))
-                            .justify_center()
-                            .children(indicator),
-                    )
+                    .child(h_flex().size(px(12.0)).justify_center().children(indicator))
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -5878,7 +5873,7 @@ impl EditorElement {
                             hunk_bounds,
                             corner_radii,
                             flattened_unstaged_background_color,
-                            Edges::all(Pixels(1.0)),
+                            Edges::all(px(1.0)),
                             flattened_background_color,
                             BorderStyle::Solid,
                         ));
@@ -9940,7 +9935,7 @@ impl ScrollbarLayout {
             max: Pixels,
         }
         let (x_range, height_limit) = if let Some(column) = column {
-            let column_width = px(((self.hitbox.size.width - Self::BORDER_WIDTH).0 / 3.0).floor());
+            let column_width = ((self.hitbox.size.width - Self::BORDER_WIDTH) / 3.0).floor();
             let start = Self::BORDER_WIDTH + (column as f32 * column_width);
             let end = start + column_width;
             (

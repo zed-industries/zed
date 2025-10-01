@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use ui::{Pixels, px};
+use ui::Pixels;
 
 #[derive(Debug)]
 pub enum ScrollDirection {
@@ -54,15 +54,15 @@ impl ScrollAmount {
 
     pub fn pixels(&self, line_height: Pixels, height: Pixels) -> Pixels {
         match self {
-            ScrollAmount::Line(x) => px(line_height.0 * x),
-            ScrollAmount::Page(x) => px(height.0 * x),
+            ScrollAmount::Line(x) => line_height * *x,
+            ScrollAmount::Page(x) => height * *x,
             // This function seems to only be leveraged by the popover that is
             // displayed by the editor when, for example, viewing a function's
             // documentation. Right now that only supports vertical scrolling,
             // so I'm leaving this at 0.0 for now to try and make it clear that
             // this should not have an impact on that?
-            ScrollAmount::Column(_) => px(0.0),
-            ScrollAmount::PageWidth(_) => px(0.0),
+            ScrollAmount::Column(_) => Pixels::ZERO,
+            ScrollAmount::PageWidth(_) => Pixels::ZERO,
         }
     }
 
