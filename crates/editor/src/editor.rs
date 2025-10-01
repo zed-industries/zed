@@ -122,7 +122,7 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
@@ -404,7 +404,7 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
 pub trait DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
@@ -413,7 +413,7 @@ pub trait DiagnosticRenderer {
 
     fn render_hover(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
         cx: &mut App,
@@ -3211,22 +3211,27 @@ impl Editor {
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 self.serialize_selections = cx.background_spawn(async move {
-                            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                            let db_selections = selections
-                                .iter()
-                                .map(|selection| {
-                                    (
-                                        selection.start.to_offset(&snapshot),
-                                        selection.end.to_offset(&snapshot),
-                                    )
-                                })
-                                .collect();
+                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                    let db_selections = selections
+                        .iter()
+                        .map(|selection| {
+                            (
+                                selection.start.to_offset(&snapshot),
+                                selection.end.to_offset(&snapshot),
+                            )
+                        })
+                        .collect();
 
-                            DB.save_editor_selections(editor_id, workspace_id, db_selections)
-                                .await
-                                .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
-                                .log_err();
-                        });
+                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "persisting editor selections for editor {editor_id}, \
+                                workspace {workspace_id:?}"
+                            )
+                        })
+                        .log_err();
+                });
             }
         }
 
@@ -6871,17 +6876,7 @@ impl Editor {
                                 continue;
                             }
 
-                            let range = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: start,
-                                diff_base_anchor: None,
-                            }..Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: end,
-                                diff_base_anchor: None,
-                            };
+                            let range = Anchor::range_in_buffer(excerpt_id, buffer_id, start..end);
                             if highlight.kind == lsp::DocumentHighlightKind::WRITE {
                                 write_ranges.push(range);
                             } else {
@@ -12886,7 +12881,7 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| (movement::right(map, head), SelectionGoal::None));
-        })
+        });
     }
 
     pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -15873,7 +15868,7 @@ impl Editor {
             let snapshot = multi_buffer.snapshot(cx);
             if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt)
                 && let Some(buffer) = multi_buffer.buffer(buffer_id)
-                && let Some(excerpt_range) = snapshot.buffer_range_for_excerpt(excerpt)
+                && let Some(excerpt_range) = snapshot.context_range_for_excerpt(excerpt)
             {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 let excerpt_end_row = Point::from_anchor(&excerpt_range.end, &buffer_snapshot).row;
@@ -15970,11 +15965,11 @@ impl Editor {
             active_group_id = Some(active_group.group_id);
         }
 
-        fn filtered(
+        fn filtered<'a>(
             snapshot: EditorSnapshot,
             severity: GoToDiagnosticSeverityFilter,
-            diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
-        ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
+            diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, usize>>,
+        ) -> impl Iterator<Item = DiagnosticEntryRef<'a, usize>> {
             diagnostics
                 .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
@@ -15998,7 +15993,7 @@ impl Editor {
                 .filter(|entry| entry.range.start >= selection.start),
         );
 
-        let mut found: Option<DiagnosticEntry<usize>> = None;
+        let mut found: Option<DiagnosticEntryRef<usize>> = None;
         if direction == Direction::Prev {
             'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
             {
@@ -17521,7 +17516,7 @@ impl Editor {
     fn activate_diagnostics(
         &mut self,
         buffer_id: BufferId,
-        diagnostic: DiagnosticEntry<usize>,
+        diagnostic: DiagnosticEntryRef<'_, usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -17710,7 +17705,7 @@ impl Editor {
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::from(diagnostic_entry.diagnostic.message)
+                                SharedString::new(&*diagnostic_entry.diagnostic.message)
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -22400,7 +22395,14 @@ fn wrap_with_prefix(
                     continue;
                 }
                 if !preserve_existing_whitespace {
-                    token = " ";
+                    // Keep a single whitespace grapheme as-is
+                    if let Some(first) =
+                        unicode_segmentation::UnicodeSegmentation::graphemes(token, true).next()
+                    {
+                        token = first;
+                    } else {
+                        token = " ";
+                    }
                     grapheme_len = 1;
                 }
                 let current_prefix_len = if is_first_line {
@@ -22501,6 +22503,17 @@ fn test_wrap_with_prefix() {
             false,
         ),
         "这是什\n么 钢\n笔"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            String::new(),
+            format!("foo{}bar", '\u{2009}'), // thin space
+            80,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        format!("foo{}bar", '\u{2009}')
     );
 }
 
@@ -24448,8 +24461,8 @@ fn all_edits_insertions_or_deletions(
 struct MissingEditPredictionKeybindingTooltip;
 
 impl Render for MissingEditPredictionKeybindingTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::tooltip_container(cx, |container, cx| {
             container
                 .flex_shrink_0()
                 .max_w_80()

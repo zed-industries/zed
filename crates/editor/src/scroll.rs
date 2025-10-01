@@ -244,9 +244,7 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map
-            .buffer_snapshot
-            .anchor_at(scroll_top_buffer_point, Bias::Right);
+        let top_anchor = map.buffer_snapshot.anchor_after(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
@@ -767,7 +765,7 @@ impl Editor {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .anchor_at(Point::new(top_row, 0), Bias::Left);
+                .anchor_before(Point::new(top_row, 0));
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,
