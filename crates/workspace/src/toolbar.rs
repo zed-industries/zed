@@ -1,13 +1,11 @@
 use crate::ItemHandle;
 use convex::ConvexClient;
-use convex::Value;
 use gpui::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
     Window,
 };
 use gpui_tokio::Tokio;
 use repo_name::RepoName;
-use std::env;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
@@ -204,33 +202,6 @@ impl Toolbar {
         cx.notify();
     }
 
-    async fn update_current_file(
-        file_path: String,
-        function_name: String,
-        class_name: String,
-        repo_name: String,
-    ) -> anyhow::Result<()> {
-        let url = env::var("CONVEX_URL")?;
-        let convex_user = env::var("CONVEX_USER")?;
-        let mut client = ConvexClient::new(&url).await?;
-
-        let result = client
-            .mutation(
-                "activity:update",
-                maplit::btreemap! {
-                    String::from("name") => Value::from(convex_user),
-                    String::from("file_name") => Value::from(file_path),
-                    String::from("function_name") => Value::from(function_name),
-                    String::from("class_name") => Value::from(class_name),
-                    String::from("repo_name") => Value::from(repo_name),
-                },
-            )
-            .await?;
-        println!("{result:#?}");
-
-        Ok(())
-    }
-
     pub fn set_active_item(
         &mut self,
         item: Option<&dyn ItemHandle>,
@@ -263,17 +234,6 @@ impl Toolbar {
             class_name = String::from(segments[1].text.clone());
         }
 
-        Tokio::spawn(cx, async move {
-            let _ = Toolbar::update_current_file(
-                absolute_file_name,
-                function_name,
-                class_name,
-                repo_name,
-            )
-            .await;
-        })
-        .detach();
-
         for (toolbar_item, current_location) in self.items.iter_mut() {
             let new_location = toolbar_item.set_active_pane_item(item, window, cx);
             if new_location != *current_location {
@@ -281,6 +241,19 @@ impl Toolbar {
                 cx.notify();
             }
         }
+
+        let client = cx.global::<ConvexClient>().clone();
+        Tokio::spawn(cx, async move {
+            let _ = client
+                .update_current_file(
+                    absolute_file_name.clone(),
+                    function_name,
+                    class_name,
+                    repo_name,
+                )
+                .await;
+        })
+        .detach();
     }
 
     pub fn focus_changed(&mut self, focused: bool, window: &mut Window, cx: &mut Context<Self>) {

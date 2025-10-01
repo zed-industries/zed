@@ -384,9 +384,6 @@ pub fn main() {
         zed_actions::init();
         repo_name::init(cx);
 
-        let url = env::var("CONVEX_URL").unwrap_or("".to_string());
-        convex::init(&url, cx);
-
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
@@ -530,6 +527,8 @@ pub fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
+        let url = env::var("CONVEX_URL").unwrap_or("".to_string());
+        convex::init(url, cx);
         auto_update::init(client.http_client(), cx);
         dap_adapters::init(cx);
         auto_update_ui::init(cx);

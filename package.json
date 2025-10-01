@@ -1,0 +1,27 @@
+{
+  "name": "zed-convex",
+  "version": "1.0.0",
+  "description": "[![Zed](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/zed-industries/zed/main/assets/badge/v0.json)](https://zed.dev) [![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JoshuaKeegan3/zed-convex.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/JoshuaKeegan3/zed-convex/issues"
+  },
+  "homepage": "https://github.com/JoshuaKeegan3/zed-convex#readme",
+  "dependencies": {
+    "convex": "^1.27.3"
+  }
+}

@@ -36,6 +36,7 @@ export const update = mutation({
     repo_name: v.string(),
   },
   handler: async (ctx, args) => {
+    console.log("message from the server")
     const doc = await ctx.db
       .query("activity")
       .filter((q) => q.eq(q.field("name"), args.name));

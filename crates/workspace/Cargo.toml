@@ -26,6 +26,7 @@ test-support = [
 ]
 
 [dependencies]
+tokio = "*"
 gpui_tokio.workspace = true
 convex.workspace = true
 maplit.workspace = true

@@ -60,13 +60,22 @@ pub use base_client::{FunctionResult, QueryResults, SubscriberId};
 mod sync;
 
 use gpui::App;
+use gpui_tokio::Tokio;
+use log;
 
 #[doc(hidden)]
-pub fn init(deployment_url: &str, cx: &mut App) {
-    let deployment_url = deployment_url.to_string();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    match runtime.block_on(ConvexClient::new(&deployment_url)) {
-        Ok(client) => cx.set_global(client),
-        Err(err) => tracing::error!("failed to construct convex client: {err}"),
-    }
+pub fn init(deployment_url: String, cx: &mut App) {
+    let task = Tokio::spawn_result(cx, async move { ConvexClient::new(&deployment_url).await });
+    cx.spawn(async move |cx| {
+        match task.await {
+            Ok(client) => {
+                cx.update(|cx| cx.set_global(client))?;
+            },
+            Err(err) => {
+                log::error!("failed to create convex client: {:?}", err);
+            },
+        }
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }

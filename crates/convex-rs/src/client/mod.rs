@@ -1,4 +1,6 @@
 use gpui::Global;
+use maplit;
+use std::env;
 use std::{collections::BTreeMap, convert::Infallible, sync::Arc};
 
 use convex_sync_types::{AuthenticationToken, UdfPath, UserIdentityAttributes};
@@ -106,6 +108,34 @@ impl ConvexClient {
     /// ```
     pub async fn new(deployment_url: &str) -> anyhow::Result<Self> {
         ConvexClient::new_from_builder(ConvexClientBuilder::new(deployment_url)).await
+    }
+
+    #[doc(hidden)]
+    pub async fn update_current_file(
+        &self,
+        file_path: String,
+        function_name: String,
+        class_name: String,
+        repo_name: String,
+    ) -> anyhow::Result<()> {
+        println!("updating current file");
+        let convex_user = env::var("CONVEX_USER")?;
+
+        let result = self
+            .mutation(
+                "activity:update",
+                maplit::btreemap! {
+                    String::from("name") => Value::from(convex_user),
+                    String::from("file_name") => Value::from(file_path),
+                    String::from("function_name") => Value::from(function_name),
+                    String::from("class_name") => Value::from(class_name),
+                    String::from("repo_name") => Value::from(repo_name),
+                },
+            )
+            .await?;
+        println!("{result:#?}");
+
+        Ok(())
     }
 
     #[doc(hidden)]
@@ -236,7 +266,7 @@ impl ConvexClient {
     /// # Ok(())
     /// # }
     pub async fn mutation(
-        &mut self,
+        &self,
         name: &str,
         args: BTreeMap<String, Value>,
     ) -> anyhow::Result<FunctionResult> {
