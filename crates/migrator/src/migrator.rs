@@ -164,6 +164,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_07_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_07_08,
         ),
+        (
+            migrations::m_2025_10_01::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_10_01,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -277,6 +281,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_07_08,
     migrations::m_2025_07_08::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_10_01,
+    migrations::m_2025_10_01::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -1260,6 +1268,29 @@ mod tests {
         }
     }
 }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_flatten_code_action_formatters() {
+        assert_migrate_settings(
+            r#"{
+                "formatter": [
+                    {
+                        "code_actions": {
+                            "included": true,
+                            "excluded": false,
+                        }
+                    }
+                ]
+            }"#,
+            Some(
+                r#"{
+                "formatter": [
+                    { "code_action": "included" }
+                ]
+            }"#,
             ),
         );
     }
