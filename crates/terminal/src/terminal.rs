@@ -2217,6 +2217,10 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
     use std::time::Duration;
 
     use super::*;
@@ -2231,7 +2235,6 @@ mod tests {
     use collections::HashMap;
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
     use rand::{Rng, distr, rngs::ThreadRng};
-    use std::os::unix::process::ExitStatusExt;
     use task::ShellBuilder;
 
     #[gpui::test]
@@ -2329,7 +2332,7 @@ mod tests {
             assert!(success, "Should have registered ctrl-d sequence");
         });
 
-        let mut all_events = vec![first_event];
+        let mut all_events = vec![Event::Wakeup];
         while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
             all_events.push(new_event.clone());
             if new_event == Event::CloseTerminal {
