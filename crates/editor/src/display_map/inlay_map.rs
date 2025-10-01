@@ -683,7 +683,7 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
-        next_inlay_id: &mut u32,
+        next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
