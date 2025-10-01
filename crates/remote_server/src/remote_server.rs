@@ -31,7 +31,15 @@ pub enum Commands {
         #[arg(long)]
         identifier: String,
     },
-    P2p,
+    /// Listen to incoming Iroh P2P-connection from Zed frontend
+    P2p {
+        /// Use a persistent node key pair
+        #[arg(long)]
+        persist: bool,
+        /// Write and read the node keys at the given location
+        #[arg(long)]
+        persist_at: Option<PathBuf>,
+    },
     Version,
 }
 
@@ -67,7 +75,10 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
                 }
             })
             .context("running proxy on the remote server"),
-        Commands::P2p => execute_p2p().context("running p2p on the remote server"),
+        Commands::P2p {
+            persist,
+            persist_at,
+        } => execute_p2p(persist, persist_at).context("running p2p on the remote server"),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
