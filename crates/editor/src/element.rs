@@ -3168,13 +3168,15 @@ impl EditorElement {
         let head_idx = relative_to.minus(start);
         let mut delta = 1;
         let mut i = head_idx + 1;
+        let should_count_line = |row_info: &RowInfo| {
+            if use_display_offset {
+                row_info.buffer_row.is_some()
+            } else {
+                row_info.buffer_row.is_some() && !row_info.wrapped
+            }
+        };
         while i < buffer_rows.len() as u32 {
-            if buffer_rows[i as usize].buffer_row.is_some() {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            } else if use_display_offset && buffer_rows[i as usize].wrapped {
+            if should_count_line(&buffer_rows[i as usize]) {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -3190,12 +3192,7 @@ impl EditorElement {
 
         while i > 0 {
             i -= 1;
-            if buffer_rows[i as usize].buffer_row.is_some() {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
-            } else if use_display_offset && buffer_rows[i as usize].wrapped {
+            if should_count_line(&buffer_rows[i as usize]) {
                 if rows.contains(&DisplayRow(i + start.0)) {
                     relative_rows.insert(DisplayRow(i + start.0), delta);
                 }
@@ -3258,12 +3255,10 @@ impl EditorElement {
         let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
             let display_row = DisplayRow(rows.start.0 + ix as u32);
             line_number.clear();
-            let number = if let Some(relative_number) = relative_rows.get(&display_row) {
-                *relative_number
-            } else {
-                row_info.buffer_row? + 1
-            };
-
+            let non_relative_number = row_info.buffer_row? + 1;
+            let number = relative_rows
+                .get(&display_row)
+                .unwrap_or(&non_relative_number);
             write!(&mut line_number, "{number}").unwrap();
             if row_info
                 .diff_status
