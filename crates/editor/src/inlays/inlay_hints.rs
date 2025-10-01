@@ -2419,9 +2419,18 @@ pub mod tests {
         editor
             .update(cx, |editor, _, cx| {
                 assert_eq!(
-                    vec!["main hint #0".to_string(), "other hint #0".to_string()],
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                    ],
                     sorted_cached_hint_labels(editor, cx),
-                    "Cache should update for both excerpts despite hints display was disabled"
+                    "Cache should update for both excerpts despite hints display was disabled; cache should not include hints out of ranges (request one and row chunk one)"
                 );
                 let visible_hints = visible_hint_labels(editor, cx);
                 assert!(
@@ -2442,9 +2451,14 @@ pub mod tests {
         editor
             .update(cx, |editor, _, cx| {
                 assert_eq!(
-                    vec!["main hint #0".to_string()],
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                    ],
                     cached_hint_labels(editor, cx),
-                    "For the removed excerpt, should clean corresponding cached hints"
+                    "For the removed excerpt, should clean corresponding cached hints as its buffer was dropped"
                 );
                 assert!(
                 visible_hint_labels(editor, cx).is_empty(),
@@ -2469,16 +2483,20 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["main hint #0".to_string()];
                 assert_eq!(
-                    expected_hints,
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                    ],
                     cached_hint_labels(editor, cx),
                     "Hint display settings change should not change the cache"
                 );
                 assert_eq!(
-                    expected_hints,
+                    vec!["main hint #0".to_string(),],
                     visible_hint_labels(editor, cx),
-                    "Settings change should make cached hints visible"
+                    "Settings change should make cached hints visible, but only the visible ones, from the remaining excerpt"
                 );
             })
             .unwrap();
