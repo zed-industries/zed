@@ -437,6 +437,9 @@ impl Editor {
                                                                 || !was_fetched
                                                         })
                                                         .flatten()
+                                                        .filter(|(_, new_hint)| inlay_hints
+                                                            .allowed_hint_kinds
+                                                            .contains(&new_hint.kind))
                                                         .dedup()
                                                 },
                                             )
@@ -2305,9 +2308,9 @@ pub mod tests {
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                ..FakeLspAdapter::default()
             },
         );
 
@@ -2420,10 +2423,11 @@ pub mod tests {
                     sorted_cached_hint_labels(editor, cx),
                     "Cache should update for both excerpts despite hints display was disabled"
                 );
+                let visible_hints = visible_hint_labels(editor, cx);
                 assert!(
-                visible_hint_labels(editor, cx).is_empty(),
-                "All hints are disabled and should not be shown despite being present in the cache"
-            );
+                    visible_hints.is_empty(),
+                    "All hints are disabled and should not be shown despite being present in the cache, but got: {visible_hints:?}"
+                );
             })
             .unwrap();
 

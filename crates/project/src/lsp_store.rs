@@ -6674,7 +6674,9 @@ impl LspStore {
         range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<HashMap<LanguageServerId, Vec<InlayHint>>>> {
-        let request = InlayHints { range };
+        let request = InlayHints {
+            range: range.clone(),
+        };
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(HashMap::default()));
@@ -6731,7 +6733,20 @@ impl LspStore {
         } else {
             let inlay_hints_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, request, cx);
-            cx.background_spawn(async move { Ok(inlay_hints_task.await.into_iter().collect()) })
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            cx.background_spawn(async move {
+                Ok(inlay_hints_task
+                    .await
+                    .into_iter()
+                    .map(|(server_id, mut new_hints)| {
+                        new_hints.retain(|hint| {
+                            hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
+                                && hint.position.cmp(&range.end, &buffer_snapshot).is_le()
+                        });
+                        (server_id, new_hints)
+                    })
+                    .collect())
+            })
         }
     }
 
