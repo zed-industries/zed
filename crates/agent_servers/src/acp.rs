@@ -1,7 +1,7 @@
 use acp_thread::AgentConnection;
 use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
+use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::AsyncBufReadExt as _;
@@ -380,7 +380,7 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if err.code != ErrorCode::INTERNAL_ERROR.code {
+                    if err.code != acp::ErrorCode::INTERNAL_ERROR.code {
                         anyhow::bail!(err)
                     }
 
