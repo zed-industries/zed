@@ -4,7 +4,7 @@ use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
 
 /// An outline of all the symbols contained in a buffer.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Outline<T> {
     pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,

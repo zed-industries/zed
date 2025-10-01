@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::ops::Range;
 use std::{
     cmp::{self, Reverse},
@@ -226,7 +225,6 @@ impl PickerDelegate for OutlineViewDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
-        let selected_index;
         let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let cursor_offset = editor.selections.newest::<usize>(cx).head();
@@ -247,7 +245,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 })
                 .collect();
 
-            selected_index = self
+            let selected_index = self
                 .outline
                 .items
                 .iter()
@@ -255,53 +253,72 @@ impl PickerDelegate for OutlineViewDelegate {
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
                     let distance_to_closest_endpoint =
-                        get_distance_to_closest_endpoint(&range, &cursor_offset);
-                    let depth = get_outline_item_depth(item, &range, &cursor_offset);
+                        get_distance_to_closest_endpoint(&range, cursor_offset);
+                    let depth = Some(item.depth);
                     (ix, depth, distance_to_closest_endpoint)
                 })
                 .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
                 .map(|(ix, _, _)| ix)
                 .unwrap_or(0);
-        } else {
-            self.matches = smol::block_on(
-                self.outline
-                    .search(&query, cx.background_executor().clone()),
-            );
-            selected_index = self
-                .matches
-                .iter()
-                .enumerate()
-                .max_by(|(_, match_1), (_, match_2)| {
-                    let ordering = OrderedFloat(match_1.score).cmp(&OrderedFloat(match_2.score));
-                    if ordering != Ordering::Equal {
-                        return ordering;
-                    }
 
-                    let outline_item_1 = &self.outline.items[match_1.candidate_id];
-                    let range_1 = outline_item_1.range.to_offset(&buffer);
-                    let depth_1 = get_outline_item_depth(outline_item_1, &range_1, &cursor_offset);
-                    let outline_item_2 = &self.outline.items[match_2.candidate_id];
-                    let range_2 = outline_item_2.range.to_offset(&buffer);
-                    let depth_2 = get_outline_item_depth(outline_item_2, &range_2, &cursor_offset);
-                    let ordering = depth_1.cmp(&depth_2);
-                    if ordering != Ordering::Equal {
-                        return ordering;
-                    }
-
-                    let distance_to_closest_endpoint_1 =
-                        get_distance_to_closest_endpoint(&range_1, &cursor_offset);
-                    let distance_to_closest_endpoint_2 =
-                        get_distance_to_closest_endpoint(&range_2, &cursor_offset);
-                    distance_to_closest_endpoint_1
-                        .cmp(&distance_to_closest_endpoint_2)
-                        .reverse()
-                })
-                .map(|(ix, _)| ix)
-                .unwrap_or(0);
+            self.last_query = query;
+            self.set_selected_index(selected_index, false, cx);
+            return Task::ready(());
         }
-        self.last_query = query;
-        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
-        Task::ready(())
+
+        let outline = self.outline.clone();
+        let executor = cx.background_executor().clone();
+
+        cx.spawn(async move |outline_view, cx| {
+            let matches = outline.search(&query, executor).await;
+
+            outline_view
+                .update(cx, |picker, cx| {
+                    let delegate = &mut picker.delegate;
+                    delegate.matches = matches;
+
+                    let selected_index = delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, match_1), (_, match_2)| {
+                            OrderedFloat(match_1.score)
+                                .cmp(&OrderedFloat(match_2.score))
+                                .then_with(|| {
+                                    let outline_item_1 =
+                                        &delegate.outline.items[match_1.candidate_id];
+                                    let range_1 = outline_item_1.range.to_offset(&buffer);
+                                    let depth_1 = get_outline_item_depth(
+                                        outline_item_1,
+                                        &range_1,
+                                        cursor_offset,
+                                    );
+                                    let outline_item_2 =
+                                        &delegate.outline.items[match_2.candidate_id];
+                                    let range_2 = outline_item_2.range.to_offset(&buffer);
+                                    let depth_2 = get_outline_item_depth(
+                                        outline_item_2,
+                                        &range_2,
+                                        cursor_offset,
+                                    );
+                                    depth_1.cmp(&depth_2).then_with(|| {
+                                        get_distance_to_closest_endpoint(&range_1, cursor_offset)
+                                            .cmp(&get_distance_to_closest_endpoint(
+                                                &range_2,
+                                                cursor_offset,
+                                            ))
+                                            .reverse()
+                                    })
+                                })
+                        })
+                        .map(|(ix, _)| ix)
+                        .unwrap_or(0);
+
+                    delegate.last_query = query;
+                    delegate.set_selected_index(selected_index, true, cx);
+                })
+                .ok();
+        })
     }
 
     fn confirm(
@@ -367,19 +384,19 @@ impl PickerDelegate for OutlineViewDelegate {
 fn get_outline_item_depth(
     item: &OutlineItem<Anchor>,
     range: &Range<usize>,
-    cursor_offset: &usize,
+    cursor_offset: usize,
 ) -> Option<usize> {
-    if range.contains(cursor_offset) {
+    if range.contains(&cursor_offset) {
         Some(item.depth)
     } else {
         None
     }
 }
 
-fn get_distance_to_closest_endpoint(range: &Range<usize>, cursor_offset: &usize) -> isize {
+fn get_distance_to_closest_endpoint(range: &Range<usize>, cursor_offset: usize) -> isize {
     cmp::min(
-        (range.start as isize - *cursor_offset as isize).abs(),
-        (range.end as isize - *cursor_offset as isize).abs(),
+        (range.start as isize - cursor_offset as isize).abs(),
+        (range.end as isize - cursor_offset as isize).abs(),
     )
 }
 
@@ -422,6 +439,7 @@ pub fn render_item<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor::actions;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -558,6 +576,74 @@ mod tests {
         assert_single_caret_at_row(&editor, expected_first_highlighted_row, cx);
     }
 
+    #[gpui::test]
+    async fn test_outline_view_highlights_option_closest_to_cursor_when_queried(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                                       // display line 0
+                    struct A {         // display line 1
+                        field_1: i32,  // display line 2
+                    }                  // display line 3
+                                       // display line 4
+                    struct B {         // display line 5
+                        field_1: i32,  // display line 6
+                    }                  // display line 7
+                                       // display line 8
+                    struct C;          // display line 9
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let outline_view = open_outline_view(&workspace, cx);
+        set_query("f".into(), &outline_view, cx).await;
+        assert_eq!(query(&outline_view, cx), "f");
+        assert_eq!(
+            outline_names(&outline_view, cx),
+            vec!["struct A", "field_1", "struct B", "field_1"],
+            "struct C should be filtered out"
+        );
+        assert_eq!(cursor_offset(&editor, cx), 0);
+        // cursor is at top of editor
+        assert_eq!(highlighted_display_rows(&editor, cx), vec![2]);
+
+        move_cursor_down_by_lines(6, &editor, cx);
+        // on line 6 now
+        set_query("f".into(), &outline_view, cx).await;
+        assert_eq!(highlighted_display_rows(&editor, cx), vec![6]);
+    }
+
     fn open_outline_view(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
@@ -578,6 +664,19 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> String {
         outline_view.update(cx, |outline_view, cx| outline_view.query(cx))
+    }
+
+    async fn set_query(
+        query: String,
+        outline_view: &Entity<Picker<OutlineViewDelegate>>,
+        cx: &mut VisualTestContext,
+    ) {
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view.set_query(query.clone(), window, cx);
+                outline_view.delegate.update_matches(query, window, cx)
+            })
+            .await
     }
 
     fn outline_names(
@@ -602,6 +701,18 @@ mod tests {
                 .into_keys()
                 .map(|r| r.0)
                 .collect()
+        })
+    }
+
+    fn cursor_offset(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> usize {
+        editor.update(cx, |editor, cx| {
+            editor.selections.newest::<usize>(cx).head()
+        })
+    }
+
+    fn move_cursor_down_by_lines(lines: u32, editor: &Entity<Editor>, cx: &mut VisualTestContext) {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_down_by_lines(&actions::MoveDownByLines { lines }, window, cx);
         })
     }
 
