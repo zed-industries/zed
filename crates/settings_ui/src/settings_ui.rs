@@ -719,6 +719,7 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].clone();
+        self.navbar_entry = 0;
         self.build_ui(cx);
     }
 
