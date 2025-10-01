@@ -46,6 +46,9 @@ pub const GOOGLE_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId:
 pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Google AI");
 
+pub const ZAI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zai");
+pub const ZAI_PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Z.ai");
+
 pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
 pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("OpenAI");
