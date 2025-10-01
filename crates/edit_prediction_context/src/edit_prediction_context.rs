@@ -1,6 +1,7 @@
 mod declaration;
 mod declaration_scoring;
 mod excerpt;
+mod imports;
 mod outline;
 mod reference;
 mod syntax_index;
