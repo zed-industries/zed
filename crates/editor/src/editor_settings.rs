@@ -199,7 +199,7 @@ impl Settings for EditorSettings {
         let minimap = editor.minimap.unwrap();
         let gutter = editor.gutter.unwrap();
         let axes = scrollbar.axes.unwrap();
-        let status_bar = editor.status_bar.unwrap();
+        let status_bar = content.status_bar.clone().unwrap();
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
@@ -213,7 +213,7 @@ impl Settings for EditorSettings {
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
             status_bar: StatusBar {
-                show: status_bar.show.unwrap_or(true),
+                show: status_bar.show.unwrap(),
                 active_language_button: status_bar.active_language_button.unwrap(),
                 cursor_position_button: status_bar.cursor_position_button.unwrap(),
             },
