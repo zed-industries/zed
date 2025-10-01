@@ -388,7 +388,6 @@ impl std::fmt::Display for Output {
                 )?,
             }
         }
-        writeln!(f)?;
         Ok(())
     }
 }
