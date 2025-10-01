@@ -1162,6 +1162,7 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
+    pub(crate) imports_config: Option<ImportsConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -1314,6 +1315,14 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
+pub struct ImportsConfig {
+    pub query: Query,
+    pub import_statement_ix: u32,
+    pub import_prefix_ix: u32,
+    pub prefixed_contents_ix: u32,
+    pub import_ix: u32,
+}
+
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
@@ -1346,6 +1355,7 @@ impl Language {
                     runnable_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     debug_variables_config: None,
+                    imports_config: None,
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1426,6 +1436,12 @@ impl Language {
             self = self
                 .with_debug_variables_query(query.as_ref())
                 .context("Error loading debug variables query")?;
+        }
+
+        if let Some(query) = queries.imports {
+            self = self
+                .with_imports_query(query.as_ref())
+                .context("Error loading imports query")?;
         }
         Ok(self)
     }
@@ -1593,6 +1609,42 @@ impl Language {
             objects_by_capture_ix,
         });
         Ok(self)
+    }
+
+    pub fn with_imports_query(mut self, source: &str) -> Result<Self> {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+
+        let import_statement_ix = query.capture_index_for_name("import_statement").unwrap();
+        let import_prefix_ix = query.capture_index_for_name("import_prefix");
+        let prefixed_contents_ix = query.capture_index_for_name("prefixed_contents");
+        let import_ix = query.capture_index_for_name("import");
+
+        let mut import_statement_ix = 0;
+        let mut import_prefix_ix = 0;
+        let mut prefixed_contents_ix = 0;
+        let mut import_ix = 0;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "imports",
+            &[],
+            &mut [
+                // todo! make some optional
+                Capture::Required("import_statement", &mut import_statement_ix),
+                Capture::Required("import_prefix", &mut import_prefix_ix),
+                Capture::Required("prefixed_contents", &mut prefixed_contents_ix),
+                Capture::Required("import", &mut import_ix),
+            ],
+        ) {
+            self.grammar_mut()?.imports_config = Some(ImportsConfig {
+                query,
+                import_statement_ix,
+                import_prefix_ix,
+                prefixed_contents_ix,
+                import_ix,
+            });
+        }
+        return Ok(self);
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
@@ -2148,6 +2200,10 @@ impl Grammar {
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
+    }
+
+    pub fn imports_config(&self) -> Option<&ImportsConfig> {
+        self.imports_config.as_ref()
     }
 }
 

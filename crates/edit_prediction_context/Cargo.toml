@@ -19,6 +19,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 hashbrown.workspace = true
+indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
