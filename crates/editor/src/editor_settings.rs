@@ -25,7 +25,6 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: u64,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: u64,
-    pub status_bar: StatusBar,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -65,22 +64,6 @@ pub struct Jupyter {
     ///
     /// Default: true
     pub enabled: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StatusBar {
-    /// Whether to show the status bar.
-    ///
-    /// Default: true
-    pub show: bool,
-    /// Whether to display the active language button in the status bar.
-    ///
-    /// Default: true
-    pub active_language_button: bool,
-    /// Whether to show the cursor position button in the status bar.
-    ///
-    /// Default: true
-    pub cursor_position_button: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -199,7 +182,6 @@ impl Settings for EditorSettings {
         let minimap = editor.minimap.unwrap();
         let gutter = editor.gutter.unwrap();
         let axes = scrollbar.axes.unwrap();
-        let status_bar = content.status_bar.clone().unwrap();
         let toolbar = editor.toolbar.unwrap();
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
@@ -212,11 +194,6 @@ impl Settings for EditorSettings {
             lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
-            status_bar: StatusBar {
-                show: status_bar.show.unwrap(),
-                active_language_button: status_bar.active_language_button.unwrap(),
-                cursor_position_button: status_bar.cursor_position_button.unwrap(),
-            },
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
