@@ -1004,10 +1004,10 @@ impl ExternalAgentServer for LocalCodex {
                 .await
                 .unwrap_or_default();
 
-            let (mut command, login) = if let Some(mut custom_command) = custom_command {
+            let mut command = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
                 custom_command.env = Some(env);
-                (custom_command, None)
+                custom_command
             } else {
                 let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
                 fs.create_dir(&dir).await?;
@@ -1058,7 +1058,7 @@ impl ExternalAgentServer for LocalCodex {
                     // Decompress and extract the tar.gz into the version directory.
                     let reader = futures::io::BufReader::new(response.body_mut());
                     let decoder = async_compression::futures::bufread::GzipDecoder::new(reader);
-                    let mut archive = async_tar::Archive::new(decoder);
+                    let archive = async_tar::Archive::new(decoder);
                     archive
                         .unpack(&version_dir)
                         .await
@@ -1083,11 +1083,11 @@ impl ExternalAgentServer for LocalCodex {
                     env: None,
                 };
                 cmd.env = Some(env);
-                (cmd, None)
+                cmd
             };
 
             command.env.get_or_insert_default().extend(extra_env);
-            Ok((command, root_dir.to_string_lossy().into_owned(), login))
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
         })
     }
 

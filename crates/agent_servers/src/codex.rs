@@ -1,4 +1,3 @@
-use agent_client_protocol as acp;
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
