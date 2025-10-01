@@ -1380,7 +1380,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     cx.executor().run_until_parked();
     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
-    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
 
     let mut new_watched_paths = fs.watched_paths();
     new_watched_paths.retain(|path| {
