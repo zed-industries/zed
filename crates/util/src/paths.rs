@@ -103,6 +103,7 @@ impl<T: AsRef<Path>> PathExt for T {
     fn local_to_wsl(&self) -> Option<PathBuf> {
         // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
         // todo: ideally rework them..?
+
         let mut new_path = std::ffi::OsString::new();
         for component in self.as_ref().components() {
             match component {
