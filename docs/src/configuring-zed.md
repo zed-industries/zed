@@ -1502,6 +1502,14 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 },
 ```
 
+There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
+
+```json
+"status_bar": {
+  "experimental.show": false
+}
+```
+
 ## LSP
 
 - Description: Configuration for language servers.
