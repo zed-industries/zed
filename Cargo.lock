@@ -20433,13 +20433,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_ruff"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [

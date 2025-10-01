@@ -212,7 +212,6 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/test-extension",
 
