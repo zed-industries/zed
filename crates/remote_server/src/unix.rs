@@ -811,7 +811,7 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Res
         let (s, mut r) = mpsc::unbounded::<Im>();
 
         gpui_tokio::Tokio::spawn(cx, async move {
-            let iroh = match IrohZedListener::accept(persist_at.as_ref(), s).await {
+            let iroh = match IrohZedListener::accept(s, persist_at.as_ref()).await {
                 Ok(iroh) => iroh,
                 Err(error) => {
                     log::error!("failed to start iroh {error:?}");
@@ -943,7 +943,7 @@ impl IrohZedListener {
         }
     }
 
-    async fn accept(persist_at: Option<&PathBuf>, tx: mpsc::UnboundedSender<Im>) -> Result<Self> {
+    async fn accept(tx: mpsc::UnboundedSender<Im>, persist_at: Option<&PathBuf>) -> Result<Self> {
         let iroh_zed_node = IrohZedNode::create(persist_at).await;
         let endpoint = Endpoint::builder()
             .secret_key(iroh_zed_node.secret().clone())
