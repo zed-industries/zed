@@ -4393,6 +4393,7 @@ mod tests {
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
+                    | "action::Sequence"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}
                     _ => {
@@ -4454,6 +4455,7 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
+                "action",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]
