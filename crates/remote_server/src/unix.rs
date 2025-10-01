@@ -797,7 +797,7 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Res
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
-        log::debug!("Persist to: [{:?}]", persist_at);
+        log::debug!("Persist at: [{:?}]", persist_at);
 
         client::init_settings(cx);
 
