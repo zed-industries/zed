@@ -882,6 +882,7 @@
     "context": "Prompt",
     "use_key_equivalents": true,
     "bindings": {
+      "space": "menu::Confirm",
       "left": "menu::SelectPrevious",
       "right": "menu::SelectNext",
       "h": "menu::SelectPrevious",

@@ -5,40 +5,22 @@ use smallvec::SmallVec;
 
 use crate::{Disclosure, prelude::*};
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
-pub enum TreeViewItemSpacing {
-    #[default]
-    Dense,
-    Sparse,
-}
-
 #[derive(IntoElement, RegisterComponent)]
 pub struct TreeViewItem {
     id: ElementId,
     group_name: Option<SharedString>,
-    disabled: bool,
-    selected: bool,
-    spacing: TreeViewItemSpacing,
     label: SharedString,
-    indent_level: usize,
-    /// A slot for content that appears before the children, like an icon or avatar.
-    start_slot: Option<AnyElement>,
-    /// A slot for content that appears after the children, usually on the other side of the header.
-    /// This might be a button, a disclosure arrow, a face pile, etc.
-    end_slot: Option<AnyElement>,
-    /// A slot for content that appears on hover after the children
-    /// It will obscure the `end_slot` when visible.
-    end_hover_slot: Option<AnyElement>,
     toggle: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-    on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
-    children: SmallVec<[AnyElement; 2]>,
+    selected: bool,
+    disabled: bool,
     default_expanded: bool,
     root_item: bool,
     focused: Option<bool>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl TreeViewItem {
@@ -46,34 +28,23 @@ impl TreeViewItem {
         Self {
             id: id.into(),
             group_name: None,
-            disabled: false,
-            selected: false,
-            spacing: TreeViewItemSpacing::Dense,
             label: label.into(),
-            indent_level: 0,
-            start_slot: None,
-            end_slot: None,
-            end_hover_slot: None,
             toggle: false,
-            on_click: None,
-            on_secondary_mouse_down: None,
-            on_toggle: None,
-            on_hover: None,
-            tooltip: None,
-            children: SmallVec::new(),
+            selected: false,
+            disabled: false,
             default_expanded: false,
             root_item: false,
             focused: None,
+            tooltip: None,
+            on_click: None,
+            on_hover: None,
+            on_toggle: None,
+            on_secondary_mouse_down: None,
         }
     }
 
     pub fn group_name(mut self, group_name: impl Into<SharedString>) -> Self {
         self.group_name = Some(group_name.into());
-        self
-    }
-
-    pub fn spacing(mut self, spacing: TreeViewItemSpacing) -> Self {
-        self.spacing = spacing;
         self
     }
 
@@ -103,18 +74,13 @@ impl TreeViewItem {
         self
     }
 
-    pub fn indent_level(mut self, indent_level: usize) -> Self {
-        self.indent_level = indent_level;
-        self
-    }
-
     pub fn toggle(mut self, toggle: bool) -> Self {
-        self.toggle = toggle.into();
+        self.toggle = toggle;
         self
     }
 
     pub fn default_expanded(mut self, default_expanded: bool) -> Self {
-        self.default_expanded = default_expanded.into();
+        self.default_expanded = default_expanded;
         self
     }
 
@@ -126,23 +92,8 @@ impl TreeViewItem {
         self
     }
 
-    pub fn start_slot<E: IntoElement>(mut self, start_slot: impl Into<Option<E>>) -> Self {
-        self.start_slot = start_slot.into().map(IntoElement::into_any_element);
-        self
-    }
-
-    pub fn end_slot<E: IntoElement>(mut self, end_slot: impl Into<Option<E>>) -> Self {
-        self.end_slot = end_slot.into().map(IntoElement::into_any_element);
-        self
-    }
-
-    pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
-        self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
-        self
-    }
-
     pub fn root_item(mut self, root_item: bool) -> Self {
-        self.root_item = root_item.into();
+        self.root_item = root_item;
         self
     }
 
@@ -163,12 +114,6 @@ impl Toggleable for TreeViewItem {
     fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
-    }
-}
-
-impl ParentElement for TreeViewItem {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
     }
 }
 
@@ -240,7 +185,7 @@ impl RenderOnce for TreeViewItem {
                                     })
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
-                                        Label::new(label.clone())
+                                        Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
                                     ),
                             )
@@ -256,39 +201,7 @@ impl RenderOnce for TreeViewItem {
                             (on_mouse_down)(event, window, cx)
                         })
                     })
-                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)), // .child(
-                                                                                     //     h_flex()
-                                                                                     //         .flex_grow()
-                                                                                     //         .flex_shrink_0()
-                                                                                     //         .flex_basis(relative(0.25))
-                                                                                     //         .gap(DynamicSpacing::Base06.rems(cx))
-                                                                                     //         .overflow_hidden()
-                                                                                     //         .children(self.start_slot)
-                                                                                     //         .children(self.children),
-                                                                                     // ),
-                                                                                     // .when_some(self.end_slot, |this, end_slot| {
-                                                                                     //     this.justify_between().child(
-                                                                                     //         h_flex()
-                                                                                     //             .flex_shrink()
-                                                                                     //             .overflow_hidden()
-                                                                                     //             .when(self.end_hover_slot.is_some(), |this| {
-                                                                                     //                 this.visible()
-                                                                                     //                     .group_hover("list_item", |this| this.invisible())
-                                                                                     //             })
-                                                                                     //             .child(end_slot),
-                                                                                     //     )
-                                                                                     // })
-                                                                                     // .when_some(self.end_hover_slot, |this, end_hover_slot| {
-                                                                                     //     this.child(
-                                                                                     //         h_flex()
-                                                                                     //             .h_full()
-                                                                                     //             .absolute()
-                                                                                     //             .right(DynamicSpacing::Base06.rems(cx))
-                                                                                     //             .top_0()
-                                                                                     //             .visible_on_hover("list_item")
-                                                                                     //             .child(end_hover_slot),
-                                                                                     //     )
-                                                                                     // }),
+                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
             )
     }
 }
@@ -319,21 +232,21 @@ impl Component for TreeViewItem {
                             .root_item(true)
                             .toggle_state(true),
                     )
-                    .child(TreeViewItem::new("index-2", "Tree Item #2").indent_level(1))
-                    .child(TreeViewItem::new("index-3", "Tree Item #3").indent_level(1))
+                    .child(TreeViewItem::new("index-2", "Tree Item #2"))
+                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
                     .child(TreeViewItem::new("index-4", "Tree Item Root #2").root_item(true))
-                    .child(TreeViewItem::new("index-5", "Tree Item #5").indent_level(1))
-                    .child(TreeViewItem::new("index-6", "Tree Item #6").indent_level(1))
-                    .child(TreeViewItem::new("index-7", "Tree Item #7").indent_level(1))
-                    .child(TreeViewItem::new("index-8", "Tree Item #8").indent_level(1))
+                    .child(TreeViewItem::new("index-5", "Tree Item #5"))
+                    .child(TreeViewItem::new("index-6", "Tree Item #6"))
+                    .child(TreeViewItem::new("index-7", "Tree Item #7"))
+                    .child(TreeViewItem::new("index-8", "Tree Item #8"))
                     .child(TreeViewItem::new("index-9", "Tree Item Root #3").root_item(true))
-                    .child(TreeViewItem::new("index-10", "Tree Item #10").indent_level(1))
-                    .child(TreeViewItem::new("index-11", "Tree Item #11").indent_level(1))
-                    .child(TreeViewItem::new("index-12", "Tree Item #12").indent_level(1))
-                    .child(TreeViewItem::new("index-13", "Tree Item #13").indent_level(1))
+                    .child(TreeViewItem::new("index-10", "Tree Item #10"))
+                    .child(TreeViewItem::new("index-11", "Tree Item #11"))
+                    .child(TreeViewItem::new("index-12", "Tree Item #12"))
+                    .child(TreeViewItem::new("index-13", "Tree Item #13"))
                     .child(TreeViewItem::new("index-14", "Tree Item Root #4").root_item(true))
-                    .child(TreeViewItem::new("index-15", "Tree Item #15").indent_level(1))
-                    .child(TreeViewItem::new("index-16", "Tree Item #16").indent_level(1))
+                    .child(TreeViewItem::new("index-15", "Tree Item #15"))
+                    .child(TreeViewItem::new("index-16", "Tree Item #16"))
                     .into_any_element(),
             )])
             .into_any_element(),
