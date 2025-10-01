@@ -12,9 +12,9 @@ pub struct TreeViewItem {
     toggle: bool,
     selected: bool,
     disabled: bool,
+    focused: bool,
     default_expanded: bool,
     root_item: bool,
-    focused: Option<bool>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
@@ -31,9 +31,9 @@ impl TreeViewItem {
             toggle: false,
             selected: false,
             disabled: false,
+            focused: false,
             default_expanded: false,
             root_item: false,
-            focused: None,
             tooltip: None,
             on_click: None,
             on_hover: None,
@@ -97,7 +97,7 @@ impl TreeViewItem {
     }
 
     pub fn focused(mut self, focused: bool) -> Self {
-        self.focused = Some(focused);
+        self.focused = focused;
         self
     }
 }
@@ -120,6 +120,8 @@ impl RenderOnce for TreeViewItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected_bg = cx.theme().colors().element_active.opacity(0.2);
         let selected_border = cx.theme().colors().border.opacity(0.6);
+        let focused_border = cx.theme().colors().border_focused;
+        let transparent_border = cx.theme().colors().border_transparent;
 
         let indentation_line = h_flex().size_7().flex_none().justify_center().child(
             div()
@@ -132,11 +134,10 @@ impl RenderOnce for TreeViewItem {
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
-            .rounded_md()
             .child(
                 h_flex()
-                    .id("inner_list_item")
-                    .group("list_item")
+                    .id("inner_tree_view_item")
+                    .group("tree_view_item")
                     .size_full()
                     .relative()
                     .map(|this| {
@@ -144,22 +145,29 @@ impl RenderOnce for TreeViewItem {
                         if self.root_item {
                             this.px_1()
                                 .mb_1()
-                                .gap_2()
+                                .gap_2p5()
                                 .rounded_sm()
                                 .border_1()
                                 .map(|this| {
-                                    if self.selected {
+                                    if self.focused && self.selected {
+                                        this.border_color(focused_border).bg(selected_bg)
+                                    } else if self.focused {
+                                        this.border_color(focused_border)
+                                    } else if self.selected {
                                         this.border_color(selected_border).bg(selected_bg)
                                     } else {
-                                        this.border_color(cx.theme().colors().border_transparent)
+                                        this.border_color(transparent_border)
                                     }
                                 })
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Disclosure::new("toggle", true).when_some(
-                                        self.on_toggle.clone(),
-                                        |disclosure, on_toggle| disclosure.on_toggle(on_toggle),
-                                    ),
+                                    Disclosure::new("toggle", self.toggle)
+                                        .when_some(
+                                            self.on_toggle.clone(),
+                                            |disclosure, on_toggle| disclosure.on_toggle(on_toggle),
+                                        )
+                                        .opened_icon(IconName::ChevronDown)
+                                        .closed_icon(IconName::ChevronRight),
                                 )
                                 .child(
                                     Label::new(label)
@@ -170,16 +178,18 @@ impl RenderOnce for TreeViewItem {
                                 h_flex()
                                     .w_full()
                                     .flex_grow()
-                                    .px_0p5()
+                                    .px_1()
                                     .rounded_sm()
                                     .border_1()
                                     .map(|this| {
-                                        if self.selected {
+                                        if self.focused && self.selected {
+                                            this.border_color(focused_border).bg(selected_bg)
+                                        } else if self.focused {
+                                            this.border_color(focused_border)
+                                        } else if self.selected {
                                             this.border_color(selected_border).bg(selected_bg)
                                         } else {
-                                            this.border_color(
-                                                cx.theme().colors().border_transparent,
-                                            )
+                                            this.border_color(transparent_border)
                                         }
                                     })
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
@@ -217,37 +227,66 @@ impl Component for TreeViewItem {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let container = || {
+            v_flex()
+                .p_2()
+                .w_64()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+        };
+
         Some(
-            example_group(vec![single_example(
-                "Basic Tree View",
-                v_flex()
-                    .p_2()
-                    .w_64()
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().panel_background)
-                    .child(
-                        TreeViewItem::new("index-1", "Tree Item Root #1")
-                            .root_item(true)
-                            .toggle_state(true),
-                    )
-                    .child(TreeViewItem::new("index-2", "Tree Item #2"))
-                    .child(TreeViewItem::new("index-3", "Tree Item #3"))
-                    .child(TreeViewItem::new("index-4", "Tree Item Root #2").root_item(true))
-                    .child(TreeViewItem::new("index-5", "Tree Item #5"))
-                    .child(TreeViewItem::new("index-6", "Tree Item #6"))
-                    .child(TreeViewItem::new("index-7", "Tree Item #7"))
-                    .child(TreeViewItem::new("index-8", "Tree Item #8"))
-                    .child(TreeViewItem::new("index-9", "Tree Item Root #3").root_item(true))
-                    .child(TreeViewItem::new("index-10", "Tree Item #10"))
-                    .child(TreeViewItem::new("index-11", "Tree Item #11"))
-                    .child(TreeViewItem::new("index-12", "Tree Item #12"))
-                    .child(TreeViewItem::new("index-13", "Tree Item #13"))
-                    .child(TreeViewItem::new("index-14", "Tree Item Root #4").root_item(true))
-                    .child(TreeViewItem::new("index-15", "Tree Item #15"))
-                    .child(TreeViewItem::new("index-16", "Tree Item #16"))
-                    .into_any_element(),
-            )])
+            example_group(vec![
+                single_example(
+                    "Basic Tree View",
+                    container()
+                        .child(
+                            TreeViewItem::new("index-1", "Tree Item Root #1")
+                                .root_item(true)
+                                .toggle_state(true),
+                        )
+                        .child(TreeViewItem::new("index-2", "Tree Item #2"))
+                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                        .child(TreeViewItem::new("index-4", "Tree Item Root #2").root_item(true))
+                        .child(TreeViewItem::new("index-5", "Tree Item #5"))
+                        .child(TreeViewItem::new("index-6", "Tree Item #6"))
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Active Child",
+                    container()
+                        .child(TreeViewItem::new("index-1", "Tree Item Root #1").root_item(true))
+                        .child(TreeViewItem::new("index-2", "Tree Item #2").toggle_state(true))
+                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Focused Parent",
+                    container()
+                        .child(
+                            TreeViewItem::new("index-1", "Tree Item Root #1")
+                                .root_item(true)
+                                .focused(true)
+                                .toggle_state(true),
+                        )
+                        .child(TreeViewItem::new("index-2", "Tree Item #2"))
+                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Focused Child",
+                    container()
+                        .child(
+                            TreeViewItem::new("index-1", "Tree Item Root #1")
+                                .root_item(true)
+                                .toggle_state(true),
+                        )
+                        .child(TreeViewItem::new("index-2", "Tree Item #2").focused(true))
+                        .child(TreeViewItem::new("index-3", "Tree Item #3"))
+                        .into_any_element(),
+                ),
+            ])
             .into_any_element(),
         )
     }
