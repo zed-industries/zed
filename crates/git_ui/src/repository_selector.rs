@@ -38,7 +38,7 @@ impl RepositorySelector {
         let repository_entries = git_store.update(cx, |git_store, _cx| {
             let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 
-            repos.sort_by(|a, b| a.read(_cx).display_name().cmp(&b.read(_cx).display_name()));
+            repos.sort_by_key(|a| a.read(_cx).display_name());
 
             repos
         });
@@ -189,8 +189,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
             this.update_in(cx, |this, window, cx| {
                 let mut sorted_repositories = filtered_repositories;
-                sorted_repositories
-                    .sort_by(|a, b| a.read(cx).display_name().cmp(&b.read(cx).display_name()));
+                sorted_repositories.sort_by_key(|a| a.read(cx).display_name());
                 this.delegate.filtered_repositories = sorted_repositories;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
