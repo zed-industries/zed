@@ -1865,8 +1865,6 @@ impl AgentPanel {
                     })
                     .unwrap_or_default();
 
-
-
                 move |window, cx| {
                     telemetry::event!("New Thread Clicked");
 

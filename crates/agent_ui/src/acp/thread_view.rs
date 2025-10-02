@@ -5676,8 +5676,6 @@ pub(crate) mod tests {
 
     use super::*;
 
-    use agent_client_protocol as acp;
-
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
         init_test(cx);
