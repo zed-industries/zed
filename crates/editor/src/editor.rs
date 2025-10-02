@@ -14261,7 +14261,7 @@ impl Editor {
                     let mut row = range.start.row();
                     let positions =
                         if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            px(start)..px(end)
+                            Pixels::from(start)..Pixels::from(end)
                         } else {
                             let start_x =
                                 display_map.x_for_display_point(range.start, &text_layout_details);

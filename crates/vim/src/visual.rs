@@ -359,8 +359,8 @@ impl Vim {
 
             if !preserve_goal {
                 goal = SelectionGoal::HorizontalRange {
-                    start: f32::from(positions.start),
-                    end: f32::from(positions.end),
+                    start: f64::from(positions.start),
+                    end: f64::from(positions.end),
                 };
             }
 

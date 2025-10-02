@@ -17,6 +17,7 @@ use editor::{
         BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata, CustomBlockId, FoldId,
         RenderBlock, ToDisplayPoint,
     },
+    scroll::ScrollOffset,
 };
 use editor::{FoldPlaceholder, display_map::CreaseId};
 use fs::Fs;
@@ -108,7 +109,7 @@ pub enum InsertDraggedFiles {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ScrollPosition {
-    offset_before_cursor: gpui::Point<f32>,
+    offset_before_cursor: gpui::Point<ScrollOffset>,
     cursor: Anchor,
 }
 

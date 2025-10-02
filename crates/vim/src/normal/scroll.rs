@@ -121,9 +121,9 @@ fn scroll_editor(
     let amount = match (amount.is_full_page(), editor.visible_line_count()) {
         (true, Some(visible_line_count)) => {
             if amount.direction().is_upwards() {
-                ScrollAmount::Line(amount.lines(visible_line_count) + 1.0)
+                ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
             } else {
-                ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
+                ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
             }
         }
         _ => amount,
