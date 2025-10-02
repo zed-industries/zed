@@ -867,7 +867,7 @@ impl AcpThreadView {
         update_settings_file(fs, cx, move |s, _| {
             s.agent
                 .get_or_insert_default()
-                .set_profile(id_for_settings.0.clone());
+                .set_profile(id_for_settings.0);
         });
 
         telemetry::event!(
