@@ -183,6 +183,29 @@ impl AgentServerStore {
                     .unwrap_or(true),
             }),
         );
+        self.external_agents
+            .extend(new_settings.custom.iter().map(|(name, settings)| {
+                (
+                    ExternalAgentServerName(name.clone()),
+                    Box::new(LocalCustomAgent {
+                        command: settings.command.clone(),
+                        project_environment: project_environment.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            }));
+
+        self.external_agents.insert(
+            CODEX_NAME.into(),
+            Box::new(LocalCodex {
+                fs: fs.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .codex
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+            }),
+        );
+
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
@@ -195,38 +218,6 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
-        self.external_agents.insert(
-            CODEX_NAME.into(),
-            Box::new(LocalCodex {
-                fs: fs.clone(),
-                project_environment: project_environment.clone(),
-                custom_command: new_settings
-                    .codex
-                    .clone()
-                    .and_then(|settings| settings.custom_command()),
-            }),
-        );
-        self.external_agents.insert(
-            CODEX_NAME.into(),
-            Box::new(LocalCodex {
-                fs: fs.clone(),
-                project_environment: project_environment.clone(),
-                custom_command: new_settings
-                    .codex
-                    .clone()
-                    .and_then(|settings| settings.custom_command()),
-            }),
-        );
-        self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
-                (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
-                        project_environment: project_environment.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            }));
 
         *old_settings = Some(new_settings.clone());
 
