@@ -76,7 +76,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     settings::parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
                 let mut new_value = old_value.clone();
-                callback(&mut new_value);
+                callback(&mut new_value)?;
                 if new_value != old_value {
                     let mut current = current_text.clone();
                     let mut edits = vec![];
@@ -134,8 +134,7 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 
 enum MigrationType<'a> {
     TreeSitter(MigrationPatterns, &'a Query),
-    #[allow(unused)]
-    Json(fn(&mut serde_json::Value)),
+    Json(fn(&mut serde_json::Value) -> Result<()>),
 }
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
@@ -200,6 +199,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_10_01::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_01,
         ),
+        MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
     ];
     run_migrations(text, migrations)
 }
@@ -360,7 +360,7 @@ mod tests {
         output: Option<&str>,
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
-        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+        assert_migrated_correctly(migrated, output);
     }
 
     #[test]
@@ -1486,7 +1486,7 @@ mod tests {
                         "default-3": true,
                         "default-4": true,
                     }
-                }
+                },
                 "languages": {
                     "Rust": {
                         "formatter": [
@@ -1549,7 +1549,7 @@ mod tests {
                       { "code_action": "default-2" },
                       { "code_action": "default-3" },
                       { "code_action": "default-4" }
-                    ]
+                    ],
                     "languages": {
                         "Rust": {
                             "formatter": [
@@ -1580,7 +1580,11 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_array_with_format_on_save_and_multiple_languages() {
-        assert_migrate_settings(
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2025_10_01::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_10_01,
+            )],
             &r#"{
                 "formatter": {
                     "code_actions": {
@@ -1726,6 +1730,165 @@ mod tests {
                 }"#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_basic() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                  "format_on_save": "prettier"
+              }"#
+            .unindent(),
+            Some(
+                &r#"{
+                      "formatter": "prettier",
+                      "format_on_save": "on"
+                  }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_array() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": ["prettier", {"language_server": "eslint"}]
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [
+                        "prettier",
+                        {
+                            "language_server": "eslint"
+                        }
+                    ],
+                    "format_on_save": "on"
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_on_off_unchanged() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "on"
+            }"#
+            .unindent(),
+            None,
+        );
+
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "off"
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_in_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "languages": {
+                    "Rust": {
+                        "format_on_save": "rust-analyzer"
+                    },
+                    "Python": {
+                        "format_on_save": ["ruff", "black"]
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "languages": {
+                        "Rust": {
+                            "formatter": "rust-analyzer",
+                            "format_on_save": "on"
+                        },
+                        "Python": {
+                            "formatter": [
+                                "ruff",
+                                "black"
+                            ],
+                            "format_on_save": "on"
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_formatter_migration_mixed_global_and_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "format_on_save": "prettier",
+                "languages": {
+                    "Rust": {
+                        "format_on_save": "rust-analyzer"
+                    },
+                    "Python": {
+                        "format_on_save": "on"
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": "prettier",
+                    "format_on_save": "on",
+                    "languages": {
+                        "Rust": {
+                            "formatter": "rust-analyzer",
+                            "format_on_save": "on"
+                        },
+                        "Python": {
+                            "format_on_save": "on"
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_format_on_save_no_migration_when_no_format_on_save() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_02::remove_formatters_on_save,
+            )],
+            &r#"{
+                "formatter": ["prettier"]
+            }"#
+            .unindent(),
+            None,
         );
     }
 }
