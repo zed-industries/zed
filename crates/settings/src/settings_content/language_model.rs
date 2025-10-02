@@ -13,6 +13,7 @@ pub struct AllLanguageModelSettingsContent {
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub glm: Option<GlmSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -161,6 +162,22 @@ pub struct DeepseekSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DeepseekAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+}
+
+#[skip_serializing_none]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct GlmSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<GlmAvailableModel>>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct GlmAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: u64,

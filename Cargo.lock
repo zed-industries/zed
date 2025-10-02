@@ -6906,6 +6906,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "glm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars 1.0.1",
+ "serde",
+ "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8705,6 +8718,7 @@ dependencies = [
  "editor",
  "fs",
  "futures 0.3.31",
+ "glm",
  "google_ai",
  "gpui",
  "gpui_tokio",

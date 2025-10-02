@@ -19,6 +19,7 @@ exclude = [
     'https://claude.ai/download',
     'https://www.perplexity.ai',
     'https://platform.deepseek.com',
+    'https://bigmodel.cn',
     'https://console.anthropic.com',
     'https://platform.openai.com',
     'https://linux.die.net/man/1/sed',

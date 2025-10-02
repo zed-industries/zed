@@ -21,6 +21,7 @@ Zed offers an extensive list of "use your own key" LLM providers
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
+- [Glm](#glm)
 - [LM Studio](#lmstudio)
 - [Mistral](#mistral)
 - [Ollama](#ollama)
@@ -248,6 +249,42 @@ Here is an example of a custom Google AI model you could add to your Zed `settin
       ]
     }
   }
+}
+```
+
+Custom models will be listed in the model dropdown in the Agent Panel.
+
+### Glm {#glm}
+
+You can use GLM models with the Zed agent by choosing it via the model dropdown in the Agent Panel.
+
+1. Go to the GLM bigmodel site and [create an API key](https://bigmodel.cn/usercenter/proj-mgmt/apikeys).
+2. Open the settings view (`agent: open settings`) and go to the GLM section
+3. Enter your GLM API key and press enter.
+
+The GLM API key will be saved in your keychain.
+
+Zed will also use the `GLM_API_KEY` environment variable if it's defined.
+
+#### Custom Models {#glm-custom-models}
+
+The Zed agent comes pre-configured to use the latest version for common models (GLM-4.6, GLM-4.5).
+If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+   "language_models": {
+      "google": {
+         "available_models": [
+            {
+               "name": "glm-4.5-x",
+               "display_name": "GLM-4.5-x",
+               "max_tokens": 128000,
+               "max_output_tokens": 96000
+            }
+         ]
+      }
+   }
 }
 ```
 
