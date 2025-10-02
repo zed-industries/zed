@@ -1,5 +1,6 @@
 use gpui::{
-    FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, px,
+    DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
+    UnderlineStyle, px,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};
@@ -15,6 +16,7 @@ pub enum ParsedMarkdownElement {
     /// A paragraph of text and other inline elements.
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
+    Image(Image),
 }
 
 impl ParsedMarkdownElement {
@@ -30,6 +32,7 @@ impl ParsedMarkdownElement {
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
+            Self::Image(image) => image.source_range.clone(),
         })
     }
 
@@ -290,6 +293,8 @@ pub struct Image {
     pub link: Link,
     pub source_range: Range<usize>,
     pub alt_text: Option<SharedString>,
+    pub width: Option<DefiniteLength>,
+    pub height: Option<DefiniteLength>,
 }
 
 impl Image {
@@ -303,10 +308,20 @@ impl Image {
             source_range,
             link,
             alt_text: None,
+            width: None,
+            height: None,
         })
     }
 
     pub fn set_alt_text(&mut self, alt_text: SharedString) {
         self.alt_text = Some(alt_text);
+    }
+
+    pub fn set_width(&mut self, width: DefiniteLength) {
+        self.width = Some(width);
+    }
+
+    pub fn set_height(&mut self, height: DefiniteLength) {
+        self.height = Some(height);
     }
 }

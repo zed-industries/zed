@@ -497,8 +497,8 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(20);
 
-        let initial_chars = (0..rng.gen_range(0..=100))
-            .map(|_| rng.gen_range(b'a'..=b'z') as char)
+        let initial_chars = (0..rng.random_range(0..=100))
+            .map(|_| rng.random_range(b'a'..=b'z') as char)
             .collect::<Vec<_>>();
         log::info!("initial chars: {:?}", initial_chars);
 
@@ -517,11 +517,11 @@ mod tests {
                     break;
                 }
 
-                let end = rng.gen_range(last_edit_end..=expected_chars.len());
-                let start = rng.gen_range(last_edit_end..=end);
+                let end = rng.random_range(last_edit_end..=expected_chars.len());
+                let start = rng.random_range(last_edit_end..=end);
                 let old_len = end - start;
 
-                let mut new_len = rng.gen_range(0..=3);
+                let mut new_len = rng.random_range(0..=3);
                 if start == end && new_len == 0 {
                     new_len += 1;
                 }
@@ -529,7 +529,7 @@ mod tests {
                 last_edit_end = start + new_len + 1;
 
                 let new_chars = (0..new_len)
-                    .map(|_| rng.gen_range(b'A'..=b'Z') as char)
+                    .map(|_| rng.random_range(b'A'..=b'Z') as char)
                     .collect::<Vec<_>>();
                 log::info!(
                     "  editing {:?}: {:?}",

@@ -15,6 +15,7 @@
 
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Key bindings](./key-bindings.md)
   - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
@@ -47,6 +48,7 @@
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [External Agents](./ai/external-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Text Threads](./ai/text-threads.md)
@@ -56,9 +58,9 @@
   - [LLM Providers](./ai/llm-providers.md)
   - [Agent Settings](./ai/agent-settings.md)
 - [Subscription](./ai/subscription.md)
+  - [Models](./ai/models.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
-  - [Models](./ai/models.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 
@@ -156,5 +158,6 @@
   - [FreeBSD](./development/freebsd.md)
   - [Local Collaboration](./development/local-collaboration.md)
   - [Using Debuggers](./development/debuggers.md)
+  - [Glossary](./development/glossary.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

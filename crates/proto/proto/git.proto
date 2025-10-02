@@ -95,6 +95,7 @@ message CommitSummary {
     string sha = 1;
     string subject = 2;
     int64 commit_timestamp = 3;
+    string author_name = 4;
 }
 
 message GitBranches {
@@ -122,6 +123,7 @@ message UpdateRepository {
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
     optional string merge_message = 12;
+    repeated StashEntry stash_entries = 13;
 }
 
 message RemoveRepository {
@@ -179,6 +181,13 @@ message GitChangeBranch {
     reserved 2;
     uint64 repository_id = 3;
     string branch_name = 4;
+}
+
+message GitRenameBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    string branch = 3;
+    string new_name = 4;
 }
 
 message GitDiff {
@@ -283,6 +292,14 @@ message StatusEntry {
     GitFileStatus status = 3;
 }
 
+message StashEntry {
+    bytes oid = 1;
+    string message = 2;
+    optional string branch = 3;
+    uint64 index = 4;
+    int64 timestamp = 5;
+}
+
 message Stage {
     uint64 project_id = 1;
     reserved 2;
@@ -306,6 +323,19 @@ message Stash {
 message StashPop {
     uint64 project_id = 1;
     uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
+}
+
+message StashApply {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
+}
+
+message StashDrop {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
 }
 
 message Commit {

@@ -131,7 +131,7 @@
                             <i class="fa fa-bars"></i>
                         </label>
 
-                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change Theme" aria-label="Change Theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                             <i class="fa fa-paint-brush"></i>
                         </button>
                         <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
@@ -139,8 +139,12 @@
                             <li role="none"><button role="menuitem" class="theme" id="dark">Dark</button></li>
                         </ul>
 
+                        <button id="copy-markdown-toggle" class="icon-button" type="button" title="Copy Page as Markdown" aria-label="Copy page as markdown">
+                            <i class="fa fa-copy"></i>
+                        </button>
+
                         {{#if search_enabled}}
-                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
                             <i class="fa fa-search"></i>
                         </button>
                         {{/if}}

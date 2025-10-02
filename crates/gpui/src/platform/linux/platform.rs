@@ -25,8 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -144,6 +144,10 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.keyboard_layout()
     }
 
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(crate::DummyKeyboardMapper)
+    }
+
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
@@ -200,6 +204,10 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/usr/bin/env")
             .arg("bash")
             .arg("-c")
@@ -399,11 +407,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = std::process::Command::new("xdg-open")
+                let _ = smol::process::Command::new("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
-                    .log_err();
+                    .log_err()?
+                    .status()
+                    .await
+                    .log_err()?;
+                Some(())
             })
             .detach();
     }
@@ -587,10 +599,14 @@ pub(super) fn open_uri_internal(
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
-                    match command.spawn() {
-                        Ok(_) => return,
+                    let program = format!("{:?}", command.get_program());
+                    match smol::process::Command::from(command).spawn() {
+                        Ok(mut cmd) => {
+                            cmd.status().await.log_err();
+                            return;
+                        }
                         Err(e) => {
-                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                            log::error!("Failed to open with {}: {}", program, e)
                         }
                     }
                 }
@@ -844,6 +860,7 @@ impl crate::Keystroke {
             Keysym::Down => "down".to_owned(),
             Keysym::Home => "home".to_owned(),
             Keysym::End => "end".to_owned(),
+            Keysym::Insert => "insert".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();

@@ -1,5 +1,4 @@
 mod acp;
-mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -8,7 +7,6 @@ mod buffer_codegen;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
-mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -16,44 +14,39 @@ mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
-mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
-mod thread_history;
-mod tool_compatibility;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
-use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
+use agent::ThreadId;
+use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Entity, actions};
+use gpui::{Action, App, Entity, SharedString, actions};
 use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
+use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 
-pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
-use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub use ui::preview::{all_agent_previews, get_agent_preview};
 use zed_actions;
 
 actions!(
@@ -71,8 +64,10 @@ actions!(
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Cycles through available session modes.
+        CycleModeSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.
@@ -113,6 +108,12 @@ actions!(
         RejectAll,
         /// Keeps all suggestions or changes.
         KeepAll,
+        /// Allow this operation only this time.
+        AllowOnce,
+        /// Allow this operation and remember the choice.
+        AllowAlways,
+        /// Reject this operation only this time.
+        RejectOnce,
         /// Follows the agent's suggestions.
         Follow,
         /// Resets the trial upsell notification.
@@ -159,25 +160,53 @@ pub struct NewNativeAgentThreadFromSummary {
     from_session_id: agent_client_protocol::SessionId,
 }
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+// TODO unify this with AgentType
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
+    Codex,
     NativeAgent,
+    Custom {
+        name: SharedString,
+        command: AgentServerCommand,
+    },
+}
+
+fn placeholder_command() -> AgentServerCommand {
+    AgentServerCommand {
+        path: "/placeholder".into(),
+        args: vec![],
+        env: None,
+    }
 }
 
 impl ExternalAgent {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
         history: Entity<agent2::HistoryStore>,
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
-            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
-            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::Gemini => Rc::new(agent_servers::Gemini),
+            Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            Self::Codex => Rc::new(agent_servers::Codex),
+            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::Custom { name, command: _ } => {
+                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+            }
         }
     }
 }
@@ -201,14 +230,12 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
     InlineAssistant,
 }
 
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
@@ -231,7 +258,6 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    SlashCommandSettings::register(cx);
 
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
@@ -241,7 +267,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     assistant_slash_command::init(cx);
-    agent::init(cx);
+    agent::init(fs.clone(), cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     TextThreadEditor::init(cx);
@@ -318,8 +344,7 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            filter
-                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+            filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
 }
@@ -388,8 +413,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry
-        .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
@@ -409,21 +432,4 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
-
-    update_slash_commands_from_settings(cx);
-    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
-        .detach();
-}
-
-fn update_slash_commands_from_settings(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-    let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.cargo_workspace.enabled {
-        slash_command_registry
-            .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
-    } else {
-        slash_command_registry
-            .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
 }

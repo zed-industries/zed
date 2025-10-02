@@ -1,17 +1,17 @@
+use crate::{AgentServer, AgentServerDelegate};
+use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
+use agent_client_protocol as acp;
+use futures::{FutureExt, StreamExt, channel::mpsc, select};
+use gpui::{AppContext, Entity, TestAppContext};
+use indoc::indoc;
+#[cfg(test)]
+use project::agent_server_store::BuiltinAgentServerSettings;
+use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
-
-use crate::AgentServer;
-use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
-use agent_client_protocol as acp;
-
-use futures::{FutureExt, StreamExt, channel::mpsc, select};
-use gpui::{AppContext, Entity, TestAppContext};
-use indoc::indoc;
-use project::{FakeFs, Project};
 use util::path;
 
 pub async fn test_basic<T, F>(server: F, cx: &mut TestAppContext)
@@ -83,6 +83,7 @@ where
                     acp::ContentBlock::Text(acp::TextContent {
                         text: "Read the file ".into(),
                         annotations: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::ResourceLink(acp::ResourceLink {
                         uri: "foo.rs".into(),
@@ -92,10 +93,12 @@ where
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     acp::ContentBlock::Text(acp::TextContent {
                         text: " and tell me what the content of the println! is".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 ],
                 cx,
@@ -449,7 +452,6 @@ pub use common_e2e_tests;
 // Helpers
 
 pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
-    #[cfg(test)]
     use settings::Settings;
 
     env_logger::try_init().ok();
@@ -468,17 +470,27 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client, cx);
         agent_settings::init(cx);
-        crate::settings::init(cx);
+        AllAgentServersSettings::register(cx);
 
         #[cfg(test)]
-        crate::AllAgentServersSettings::override_global(
-            crate::AllAgentServersSettings {
-                claude: Some(crate::AgentServerSettings {
-                    command: crate::claude::tests::local_command(),
+        AllAgentServersSettings::override_global(
+            AllAgentServersSettings {
+                claude: Some(BuiltinAgentServerSettings {
+                    path: Some("claude-code-acp".into()),
+                    args: None,
+                    env: None,
+                    ignore_system_version: None,
+                    default_mode: None,
                 }),
-                gemini: Some(crate::AgentServerSettings {
-                    command: crate::gemini::tests::local_command(),
+                gemini: Some(crate::gemini::tests::local_command().into()),
+                codex: Some(BuiltinAgentServerSettings {
+                    path: Some("codex-acp".into()),
+                    args: None,
+                    env: None,
+                    ignore_system_version: None,
+                    default_mode: None,
                 }),
+                custom: collections::HashMap::default(),
             },
             cx,
         );
@@ -495,8 +507,11 @@ pub async fn new_test_thread(
     current_dir: impl AsRef<Path>,
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
-    let connection = cx
-        .update(|cx| server.connect(current_dir.as_ref(), &project, cx))
+    let store = project.read_with(cx, |project, _| project.agent_server_store().clone());
+    let delegate = AgentServerDelegate::new(store, project.clone(), None, None);
+
+    let (connection, _) = cx
+        .update(|cx| server.connect(Some(current_dir.as_ref()), delegate, cx))
         .await
         .unwrap();
 

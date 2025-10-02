@@ -18,6 +18,7 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = DetailedSummaryState;
@@ -201,9 +202,6 @@ impl DbThread {
     }
 }
 
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
     #[serde(rename = "json")]
@@ -266,8 +264,19 @@ impl ThreadsDatabase {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
-        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
+        let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             let threads_dir = paths::data_dir().join("threads");
             std::fs::create_dir_all(&threads_dir)?;
@@ -413,7 +422,7 @@ mod tests {
     use agent::MessageSegment;
     use agent::context::LoadedContext;
     use client::Client;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::AppContext;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
@@ -421,7 +430,7 @@ mod tests {
     use project::Project;
     use settings::SettingsStore;
 
-    fn init_test(cx: &mut TestAppContext) {
+    fn init_test(fs: Arc<dyn Fs>, cx: &mut TestAppContext) {
         env_logger::try_init().ok();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -432,7 +441,7 @@ mod tests {
             let http_client = FakeHttpClient::with_404_response();
             let clock = Arc::new(clock::FakeSystemClock::new());
             let client = Client::new(clock, http_client, cx);
-            agent::init(cx);
+            agent::init(fs, cx);
             agent_settings::init(cx);
             language_model::init(client, cx);
         });
@@ -440,8 +449,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_retrieving_old_thread(cx: &mut TestAppContext) {
-        init_test(cx);
         let fs = FakeFs::new(cx.executor());
+        init_test(fs.clone(), cx);
         let project = Project::test(fs, [], cx).await;
 
         // Save a thread using the old agent.

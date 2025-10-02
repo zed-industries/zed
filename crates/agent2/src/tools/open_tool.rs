@@ -37,15 +37,19 @@ impl AgentTool for OpenTool {
     type Input = OpenToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "open".into()
+    fn name() -> &'static str {
+        "open"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Execute
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             format!("Open `{}`", MarkdownEscaped(&input.path_or_url)).into()
         } else {
@@ -61,7 +65,7 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
-        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())), cx);
+        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone()), cx), cx);
         cx.background_spawn(async move {
             authorize.await?;
 
@@ -100,7 +104,7 @@ mod tests {
     async fn test_to_absolute_path(cx: &mut TestAppContext) {
         init_test(cx);
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
-        let temp_path = temp_dir.path().to_string_lossy().to_string();
+        let temp_path = temp_dir.path().to_string_lossy().into_owned();
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(

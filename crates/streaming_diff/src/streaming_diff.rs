@@ -945,7 +945,7 @@ mod tests {
         let mut new_len = 0;
 
         while new_len < new.len() {
-            let mut chunk_len = rng.gen_range(1..=new.len() - new_len);
+            let mut chunk_len = rng.random_range(1..=new.len() - new_len);
             while !new.is_char_boundary(new_len + chunk_len) {
                 chunk_len += 1;
             }
@@ -1034,14 +1034,14 @@ mod tests {
 
     fn randomly_edit(text: &str, rng: &mut impl Rng) -> String {
         let mut result = String::from(text);
-        let edit_count = rng.gen_range(1..=5);
+        let edit_count = rng.random_range(1..=5);
 
         fn random_char_range(text: &str, rng: &mut impl Rng) -> (usize, usize) {
-            let mut start = rng.gen_range(0..=text.len());
+            let mut start = rng.random_range(0..=text.len());
             while !text.is_char_boundary(start) {
                 start -= 1;
             }
-            let mut end = rng.gen_range(start..=text.len());
+            let mut end = rng.random_range(start..=text.len());
             while !text.is_char_boundary(end) {
                 end += 1;
             }
@@ -1049,11 +1049,11 @@ mod tests {
         }
 
         for _ in 0..edit_count {
-            match rng.gen_range(0..3) {
+            match rng.random_range(0..3) {
                 0 => {
                     // Insert
                     let (pos, _) = random_char_range(&result, rng);
-                    let insert_len = rng.gen_range(1..=5);
+                    let insert_len = rng.random_range(1..=5);
                     let insert_text: String = random_text(rng, insert_len);
                     result.insert_str(pos, &insert_text);
                 }

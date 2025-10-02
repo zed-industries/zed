@@ -12,13 +12,16 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::command::{new_smol_command, new_std_command};
+use util::command::new_smol_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+use std::mem::MaybeUninit;
 
 use async_tar::Archive;
 use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
@@ -44,7 +47,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use git::{
-    repository::RepoPath,
+    repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -131,9 +134,9 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
-    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
+    -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
@@ -261,14 +264,15 @@ impl FileHandle for std::fs::File {
         };
 
         let fd = self.as_fd();
-        let mut path_buf: [libc::c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+        let mut path_buf = MaybeUninit::<[u8; libc::PATH_MAX as usize]>::uninit();
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
         if result == -1 {
             anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        // SAFETY: `fcntl` will initialize the path buffer.
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr().cast()) };
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -296,15 +300,16 @@ impl FileHandle for std::fs::File {
         };
 
         let fd = self.as_fd();
-        let mut kif: libc::kinfo_file = unsafe { std::mem::zeroed() };
+        let mut kif = MaybeUninit::<libc::kinfo_file>::uninit();
         kif.kf_structsize = libc::KINFO_FILE_SIZE;
 
-        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, &mut kif) };
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_KINFO, kif.as_mut_ptr()) };
         if result == -1 {
             anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { CStr::from_ptr(kif.kf_path.as_ptr()) };
+        // SAFETY: `fcntl` will initialize the kif.
+        let c_str = unsafe { CStr::from_ptr(kif.assume_init().kf_path.as_ptr()) };
         let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
@@ -338,7 +343,19 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            smol::fs::windows::symlink_dir(target, path).await?
+            let status = smol::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .args([path, target.as_path()])
+                .status()
+                .await?;
+
+            if !status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to create junction from {:?} to {:?}",
+                    path,
+                    target
+                ));
+            }
         } else {
             smol::fs::windows::symlink_file(target, path).await?
         }
@@ -495,7 +512,8 @@ impl Fs for RealFs {
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = path.canonicalize()?;
+        let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -522,7 +540,8 @@ impl Fs for RealFs {
 
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = path.canonicalize()?;
+        let path = SanitizedPath::new(&path);
         let path_string = path.to_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -675,7 +694,7 @@ impl Fs for RealFs {
 
         Ok(Some(Metadata {
             inode,
-            mtime: MTime(metadata.modified().unwrap()),
+            mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
             len: metadata.len(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),
@@ -783,7 +802,7 @@ impl Fs for RealFs {
             {
                 target = parent.join(target);
                 if let Ok(canonical) = self.canonicalize(&target).await {
-                    target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                    target = SanitizedPath::new(&canonical).as_path().to_path_buf();
                 }
             }
             watcher.add(&target).ok();
@@ -817,11 +836,16 @@ impl Fs for RealFs {
         )?))
     }
 
-    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
-        let config = new_std_command("git")
+    async fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        fallback_branch_name: String,
+    ) -> Result<()> {
+        let config = new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
-            .output()?;
+            .output()
+            .await?;
 
         let branch_name;
 
@@ -831,11 +855,12 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_std_command("git")
+        new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
-            .output()?;
+            .output()
+            .await?;
 
         Ok(())
     }
@@ -897,10 +922,6 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
-
-    fn home_dir(&self) -> Option<PathBuf> {
-        Some(paths::home_dir().clone())
-    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -935,7 +956,6 @@ struct FakeFsState {
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
-    home_dir: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1220,7 +1240,6 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
-                home_dir: None,
             })),
         });
 
@@ -1596,13 +1615,13 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
         })
         .unwrap();
@@ -1611,7 +1630,7 @@ impl FakeFs {
     pub fn set_head_for_repo(
         &self,
         dot_git: &Path,
-        head_state: &[(RepoPath, String)],
+        head_state: &[(&str, String)],
         sha: impl Into<String>,
     ) {
         self.with_git_state(dot_git, true, |state| {
@@ -1619,50 +1638,22 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
         .unwrap();
     }
 
-    pub fn set_git_content_for_repo(
-        &self,
-        dot_git: &Path,
-        head_state: &[(RepoPath, String, Option<String>)],
-    ) {
+    pub fn set_head_and_index_for_repo(&self, dot_git: &Path, contents_by_path: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.head_contents.clear();
             state.head_contents.extend(
-                head_state
+                contents_by_path
                     .iter()
-                    .map(|(path, head_content, _)| (path.clone(), head_content.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.clone())),
             );
-            state.index_contents.clear();
-            state.index_contents.extend(head_state.iter().map(
-                |(path, head_content, index_content)| {
-                    (
-                        path.clone(),
-                        index_content.as_ref().unwrap_or(head_content).clone(),
-                    )
-                },
-            ));
-        })
-        .unwrap();
-    }
-
-    pub fn set_head_and_index_for_repo(
-        &self,
-        dot_git: &Path,
-        contents_by_path: &[(RepoPath, String)],
-    ) {
-        self.with_git_state(dot_git, true, |state| {
-            state.head_contents.clear();
-            state.index_contents.clear();
-            state.head_contents.extend(contents_by_path.iter().cloned());
-            state
-                .index_contents
-                .extend(contents_by_path.iter().cloned());
+            state.index_contents = state.head_contents.clone();
         })
         .unwrap();
     }
@@ -1677,7 +1668,7 @@ impl FakeFs {
 
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
-    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
+    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {
         let workdir_path = dot_git.parent().unwrap();
         let workdir_contents = self.files_with_contents(workdir_path);
         self.with_git_state(dot_git, true, |state| {
@@ -1685,10 +1676,12 @@ impl FakeFs {
             state.head_contents.clear();
             state.unmerged_paths.clear();
             for (path, content) in workdir_contents {
-                let repo_path: RepoPath = path.strip_prefix(&workdir_path).unwrap().into();
+                use util::{paths::PathStyle, rel_path::RelPath};
+
+                let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
                 let status = statuses
                     .iter()
-                    .find_map(|(p, status)| (**p == *repo_path.0).then_some(status));
+                    .find_map(|(p, status)| (*p == repo_path.as_unix_str()).then_some(status));
                 let mut content = String::from_utf8_lossy(&content).to_string();
 
                 let mut index_content = None;
@@ -1882,10 +1875,6 @@ impl FakeFs {
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
-    }
-
-    pub fn set_home_dir(&self, home_dir: PathBuf) {
-        self.state.lock().home_dir = Some(home_dir);
     }
 }
 
@@ -2456,12 +2445,12 @@ impl Fs for FakeFs {
         .log_err()
     }
 
-    fn git_init(
+    async fn git_init(
         &self,
         abs_work_directory_path: &Path,
         _fallback_branch_name: String,
     ) -> Result<()> {
-        smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+        self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
     async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
@@ -2479,10 +2468,6 @@ impl Fs for FakeFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
-    }
-
-    fn home_dir(&self) -> Option<PathBuf> {
-        self.state.lock().home_dir.clone()
     }
 }
 
@@ -2657,8 +2642,8 @@ fn atomic_replace<P: AsRef<Path>>(
 
     unsafe {
         ReplaceFileW(
-            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().into_owned()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().into_owned()),
             None,
             REPLACE_FILE_FLAGS::default(),
             None,

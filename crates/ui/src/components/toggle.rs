@@ -581,11 +581,12 @@ impl RenderOnce for Switch {
 ///
 /// ```
 /// use ui::prelude::*;
+/// use ui::{SwitchField, ToggleState};
 ///
-/// SwitchField::new(
+/// let switch_field = SwitchField::new(
 ///     "feature-toggle",
 ///     "Enable feature",
-///     "This feature adds new functionality to the app.",
+///     Some("This feature adds new functionality to the app.".into()),
 ///     ToggleState::Unselected,
 ///     |state, window, cx| {
 ///         // Logic here

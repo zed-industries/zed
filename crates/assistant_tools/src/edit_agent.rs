@@ -26,13 +26,13 @@ use language_model::{
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
+use std::{cmp, iter, mem, ops::Range, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -42,7 +42,7 @@ impl Template for CreateFilePromptTemplate {
 
 #[derive(Serialize)]
 struct EditFileXmlPromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -52,7 +52,7 @@ impl Template for EditFileXmlPromptTemplate {
 
 #[derive(Serialize)]
 struct EditFileDiffFencedPromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -115,7 +115,7 @@ impl EditAgent {
         let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
             let prompt = CreateFilePromptTemplate {
                 path,
                 edit_description,
@@ -229,7 +229,7 @@ impl EditAgent {
         let edit_format = self.edit_format;
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
             let prompt = match edit_format {
                 EditFormat::XmlTags => EditFileXmlPromptTemplate {
                     path,
@@ -1315,17 +1315,17 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_indents(mut rng: StdRng) {
-        let len = rng.gen_range(1..=100);
+        let len = rng.random_range(1..=100);
         let new_text = util::RandomCharIter::new(&mut rng)
             .with_simple_text()
             .take(len)
             .collect::<String>();
         let new_text = new_text
             .split('\n')
-            .map(|line| format!("{}{}", " ".repeat(rng.gen_range(0..=8)), line))
+            .map(|line| format!("{}{}", " ".repeat(rng.random_range(0..=8)), line))
             .collect::<Vec<_>>()
             .join("\n");
-        let delta = IndentDelta::Spaces(rng.gen_range(-4..=4));
+        let delta = IndentDelta::Spaces(rng.random_range(-4i8..=4i8) as isize);
 
         let chunks = to_random_chunks(&mut rng, &new_text);
         let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
@@ -1357,7 +1357,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());

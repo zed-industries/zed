@@ -14,12 +14,14 @@ use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
+/// The status bar item that displays diagnostic counts.
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
-    active_editor: Option<WeakEntity<Editor>>,
     workspace: WeakEntity<Workspace>,
     current_diagnostic: Option<Diagnostic>,
+    active_editor: Option<WeakEntity<Editor>>,
     _observe_active_editor: Option<Subscription>,
+
     diagnostics_update: Task<()>,
     diagnostic_summary_update: Task<()>,
 }
@@ -32,49 +34,38 @@ impl Render for DiagnosticIndicator {
         }
 
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_flex().map(|this| {
-                this.child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Default),
-                )
-            }),
-            (0, warning_count) => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
-            (error_count, 0) => h_flex()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::XCircle)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
+            (0, 0) => h_flex().child(
+                Icon::new(IconName::Check)
+                    .size(IconSize::Small)
+                    .color(Color::Default),
+            ),
             (error_count, warning_count) => h_flex()
                 .gap_1()
-                .child(
-                    Icon::new(IconName::XCircle)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .child(Label::new(error_count.to_string()).size(LabelSize::Small))
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
+                .when(error_count > 0, |this| {
+                    this.child(
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                    .child(Label::new(error_count.to_string()).size(LabelSize::Small))
+                })
+                .when(warning_count > 0, |this| {
+                    this.child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .child(Label::new(warning_count.to_string()).size(LabelSize::Small))
+                }),
         };
 
         let status = if let Some(diagnostic) = &self.current_diagnostic {
-            let message = diagnostic.message.split('\n').next().unwrap().to_string();
+            let message = diagnostic
+                .message
+                .split_once('\n')
+                .map_or(&*diagnostic.message, |(first, _)| first);
             Some(
-                Button::new("diagnostic_message", message)
+                Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
                     .tooltip(|window, cx| {
                         Tooltip::for_action(
@@ -84,10 +75,9 @@ impl Render for DiagnosticIndicator {
                             cx,
                         )
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_to_next_diagnostic(window, cx);
-                    }))
-                    .into_any_element(),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.go_to_next_diagnostic(window, cx)),
+                    ),
             )
         } else {
             None
@@ -188,7 +178,8 @@ impl DiagnosticIndicator {
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
-        if new_diagnostic != self.current_diagnostic {
+        if new_diagnostic != self.current_diagnostic.as_ref() {
+            let new_diagnostic = new_diagnostic.cloned();
             self.diagnostics_update =
                 cx.spawn_in(window, async move |diagnostics_indicator, cx| {
                     cx.background_executor()

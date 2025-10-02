@@ -414,13 +414,19 @@ impl workspace::SerializableItem for WelcomePage {
 }
 
 mod persistence {
-    use db::{define_connection, query, sqlez_macros::sql};
+    use db::{
+        query,
+        sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+        sqlez_macros::sql,
+    };
     use workspace::WorkspaceDb;
 
-    define_connection! {
-        pub static ref WELCOME_PAGES: WelcomePagesDb<WorkspaceDb> =
-            &[
-                sql!(
+    pub struct WelcomePagesDb(ThreadSafeConnection);
+
+    impl Domain for WelcomePagesDb {
+        const NAME: &str = stringify!(WelcomePagesDb);
+
+        const MIGRATIONS: &[&str] = (&[sql!(
                     CREATE TABLE welcome_pages (
                         workspace_id INTEGER,
                         item_id INTEGER UNIQUE,
@@ -430,9 +436,10 @@ mod persistence {
                         FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                         ON DELETE CASCADE
                     ) STRICT;
-                ),
-            ];
+        )]);
     }
+
+    db::static_connection!(WELCOME_PAGES, WelcomePagesDb, [WorkspaceDb]);
 
     impl WelcomePagesDb {
         query! {

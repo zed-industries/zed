@@ -21,15 +21,19 @@ impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "thinking".into()
+    fn name() -> &'static str {
+        "thinking"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Think
     }
 
-    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         "Thinking".into()
     }
 

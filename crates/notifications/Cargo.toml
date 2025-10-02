@@ -24,7 +24,6 @@ test-support = [
 anyhow.workspace = true
 channel.workspace = true
 client.workspace = true
-collections.workspace = true
 component.workspace = true
 db.workspace = true
 gpui.workspace = true

@@ -14,18 +14,22 @@ use language::{
     DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
 };
 use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionResponse, CompletionSource, Project, ProjectPath};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, Project,
+    ProjectPath,
+};
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::LazyLock;
 use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
+use util::rel_path::RelPath;
 use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
-const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
+const ZED_INSPECTOR_STYLE_JSON: &str = util_macros::path!("/zed-inspector-style.json");
 
 pub(crate) struct DivInspector {
     state: State,
@@ -463,7 +467,7 @@ impl DivInspector {
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: Path::new("").into(),
+            path: RelPath::empty().into(),
         })?;
 
         let buffer = project
@@ -664,6 +668,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
+            display_options: CompletionDisplayOptions::default(),
             is_incomplete: false,
         }]))
     }

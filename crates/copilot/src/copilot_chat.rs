@@ -10,6 +10,7 @@ use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
+use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
@@ -62,12 +63,6 @@ impl CopilotChatConfiguration {
     }
 }
 
-// Copilot's base model; defined by Microsoft in premium requests table
-// This will be moved to the front of the Copilot model list, and will be used for
-// 'fast' requests (e.g. title generation)
-// https://docs.github.com/en/copilot/managing-copilot/monitoring-usage-and-entitlements/about-premium-requests
-const DEFAULT_MODEL_ID: &str = "gpt-4.1";
-
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -101,14 +96,29 @@ where
     Ok(models)
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Model {
+    billing: ModelBilling,
     capabilities: ModelCapabilities,
     id: String,
     name: String,
     policy: Option<ModelPolicy>,
     vendor: ModelVendor,
+    is_chat_default: bool,
+    // The model with this value true is selected by VSCode copilot if a premium request limit is
+    // reached. Zed does not currently implement this behaviour
+    is_chat_fallback: bool,
     model_picker_enabled: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+struct ModelBilling {
+    is_premium: bool,
+    multiplier: f64,
+    // List of plans a model is restricted to
+    // Field is not present if a model is available for all plans
+    #[serde(default)]
+    restricted_to: Option<Vec<String>>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -117,6 +127,10 @@ struct ModelCapabilities {
     #[serde(default)]
     limits: ModelLimits,
     supports: ModelSupportedFeatures,
+    #[serde(rename = "type")]
+    model_type: String,
+    #[serde(default)]
+    tokenizer: Option<String>,
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -153,6 +167,11 @@ pub enum ModelVendor {
     OpenAI,
     Google,
     Anthropic,
+    #[serde(rename = "xAI")]
+    XAI,
+    /// Unknown vendor that we don't explicitly support yet
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
@@ -200,6 +219,10 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         self.capabilities.supports.parallel_tool_calls
+    }
+
+    pub fn tokenizer(&self) -> Option<&str> {
+        self.capabilities.tokenizer.as_deref()
     }
 }
 
@@ -602,6 +625,7 @@ async fn get_models(
         .into_iter()
         .filter(|model| {
             model.model_picker_enabled
+                && model.capabilities.model_type.as_str() == "chat"
                 && model
                     .policy
                     .as_ref()
@@ -610,9 +634,7 @@ async fn get_models(
         .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
         .collect();
 
-    if let Some(default_model_position) =
-        models.iter().position(|model| model.id == DEFAULT_MODEL_ID)
-    {
+    if let Some(default_model_position) = models.iter().position(|model| model.is_chat_default) {
         let default_model = models.remove(default_model_position);
         models.insert(0, default_model);
     }
@@ -630,7 +652,9 @@ async fn request_models(
         .uri(models_url.as_ref())
         .header("Authorization", format!("Bearer {}", api_token))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Editor-Version", "vscode/1.103.2")
+        .header("x-github-api-version", "2025-05-01");
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -718,7 +742,7 @@ async fn stream_completion(
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(completion_url.as_ref())
         .header(
@@ -731,12 +755,10 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator);
-
-    if is_vision_request {
-        request_builder =
-            request_builder.header("Copilot-Vision-Request", is_vision_request.to_string());
-    }
+        .header("X-Initiator", request_initiator)
+        .when(is_vision_request, |builder| {
+            builder.header("Copilot-Vision-Request", is_vision_request.to_string())
+        });
 
     let is_streaming = request.stream;
 
@@ -801,6 +823,10 @@ mod tests {
         let json = r#"{
               "data": [
                 {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 0
+                  },
                   "capabilities": {
                     "family": "gpt-4",
                     "limits": {
@@ -814,6 +840,8 @@ mod tests {
                     "type": "chat"
                   },
                   "id": "gpt-4",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
                   "model_picker_enabled": false,
                   "name": "GPT 4",
                   "object": "model",
@@ -825,6 +853,16 @@ mod tests {
                     "some-unknown-field": 123
                 },
                 {
+                  "billing": {
+                    "is_premium": true,
+                    "multiplier": 1,
+                    "restricted_to": [
+                      "pro",
+                      "pro_plus",
+                      "business",
+                      "enterprise"
+                    ]
+                  },
                   "capabilities": {
                     "family": "claude-3.7-sonnet",
                     "limits": {
@@ -848,6 +886,8 @@ mod tests {
                     "type": "chat"
                   },
                   "id": "claude-3.7-sonnet",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
                   "model_picker_enabled": true,
                   "name": "Claude 3.7 Sonnet",
                   "object": "model",
@@ -868,5 +908,46 @@ mod tests {
         assert_eq!(schema.data.len(), 2);
         assert_eq!(schema.data[0].id, "gpt-4");
         assert_eq!(schema.data[1].id, "claude-3.7-sonnet");
+    }
+
+    #[test]
+    fn test_unknown_vendor_resilience() {
+        let json = r#"{
+              "data": [
+                {
+                  "billing": {
+                    "is_premium": false,
+                    "multiplier": 1
+                  },
+                  "capabilities": {
+                    "family": "future-model",
+                    "limits": {
+                      "max_context_window_tokens": 128000,
+                      "max_output_tokens": 8192,
+                      "max_prompt_tokens": 120000
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "type": "chat"
+                  },
+                  "id": "future-model-v1",
+                  "is_chat_default": false,
+                  "is_chat_fallback": false,
+                  "model_picker_enabled": true,
+                  "name": "Future Model v1",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "SomeNewVendor",
+                  "version": "v1.0"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "future-model-v1");
+        assert_eq!(schema.data[0].vendor, ModelVendor::Unknown);
     }
 }

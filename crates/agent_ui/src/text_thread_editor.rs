@@ -3,7 +3,7 @@ use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -25,8 +25,8 @@ use gpui::{
     Action, Animation, AnimationExt, AnyElement, AnyView, App, ClipboardEntry, ClipboardItem,
     Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, InteractiveElement,
     IntoElement, ParentElement, Pixels, Render, RenderImage, SharedString, Size,
-    StatefulInteractiveElement, Styled, Subscription, Task, Transformation, WeakEntity, actions,
-    div, img, percentage, point, prelude::*, pulsating_between, size,
+    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, actions, div, img, point,
+    prelude::*, pulsating_between, size,
 };
 use language::{
     BufferSnapshot, LspAdapterDelegate, ToOffset,
@@ -41,7 +41,10 @@ use project::{Project, Worktree};
 use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore,
+    update_settings_file,
+};
 use std::{
     any::TypeId,
     cmp,
@@ -53,8 +56,8 @@ use std::{
 };
 use text::SelectionGoal;
 use ui::{
-    ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
-    prelude::*,
+    ButtonLike, CommonAnimationExt, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle,
+    TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, maybe};
 use workspace::{
@@ -190,7 +193,6 @@ pub struct TextThreadEditor {
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     _subscriptions: Vec<Subscription>,
     last_error: Option<AssistError>,
-    show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
     // dragged_file_worktrees is used to keep references to worktrees that were added
@@ -289,18 +291,22 @@ impl TextThreadEditor {
             invoked_slash_command_creases: HashMap::default(),
             _subscriptions,
             last_error: None,
-            show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AgentSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let provider = model.provider_id().0.to_string();
+                            let model = model.id().0.to_string();
+                            settings.agent.get_or_insert_default().set_model(
+                                LanguageModelSelection {
+                                    provider: LanguageModelProviderSetting(provider),
+                                    model,
+                                },
+                            )
+                        });
                     },
                     window,
                     cx,
@@ -363,24 +369,12 @@ impl TextThreadEditor {
         if self.sending_disabled(cx) {
             return;
         }
+        telemetry::event!("Agent Message Sent", agent = "zed-text");
         self.send_to_model(window, cx);
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-        if provider
-            .as_ref()
-            .is_some_and(|provider| provider.must_accept_terms(cx))
-        {
-            self.show_accept_terms = true;
-            cx.notify();
-            return;
-        }
-
         self.last_error = None;
-
         if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
             let new_selection = {
                 let cursor = user_message
@@ -491,7 +485,7 @@ impl TextThreadEditor {
             return;
         }
 
-        let selections = self.editor.read(cx).selections.disjoint_anchors();
+        let selections = self.editor.read(cx).selections.disjoint_anchors_arc();
         let mut commands_by_range = HashMap::default();
         let workspace = self.workspace.clone();
         self.context.update(cx, |context, cx| {
@@ -1075,15 +1069,7 @@ impl TextThreadEditor {
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::XSmall)
                                             .color(Color::Info)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            )
+                                            .with_rotate_animation(2)
                                             .into_any_element(),
                                     );
                                     note = Some(Self::esc_kbd(cx).into_any_element());
@@ -1445,10 +1431,14 @@ impl TextThreadEditor {
             else {
                 continue;
             };
-            let worktree_root_name = worktree.read(cx).root_name().to_string();
-            let mut full_path = PathBuf::from(worktree_root_name.clone());
-            full_path.push(&project_path.path);
-            file_slash_command_args.push(full_path.to_string_lossy().to_string());
+            let path_style = worktree.read(cx).path_style();
+            let full_path = worktree
+                .read(cx)
+                .root_name()
+                .join(&project_path.path)
+                .display(path_style)
+                .into_owned();
+            file_slash_command_args.push(full_path);
         }
 
         let cmd_name = FileSlashCommand.name();
@@ -1845,7 +1835,7 @@ impl TextThreadEditor {
 
     fn split(&mut self, _: &Split, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
-            let selections = self.editor.read(cx).selections.disjoint_anchors();
+            let selections = self.editor.read(cx).selections.disjoint_anchors_arc();
             for selection in selections.as_ref() {
                 let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 let range = selection
@@ -1869,6 +1859,53 @@ impl TextThreadEditor {
     pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
         self.context
             .update(cx, |context, cx| context.summarize(true, cx));
+    }
+
+    fn render_remaining_tokens(&self, cx: &App) -> Option<impl IntoElement + use<>> {
+        let (token_count_color, token_count, max_token_count, tooltip) =
+            match token_state(&self.context, cx)? {
+                TokenState::NoTokensLeft {
+                    max_token_count,
+                    token_count,
+                } => (
+                    Color::Error,
+                    token_count,
+                    max_token_count,
+                    Some("Token Limit Reached"),
+                ),
+                TokenState::HasMoreTokens {
+                    max_token_count,
+                    token_count,
+                    over_warn_threshold,
+                } => {
+                    let (color, tooltip) = if over_warn_threshold {
+                        (Color::Warning, Some("Token Limit is Close to Exhaustion"))
+                    } else {
+                        (Color::Muted, None)
+                    };
+                    (color, token_count, max_token_count, tooltip)
+                }
+            };
+
+        Some(
+            h_flex()
+                .id("token-count")
+                .gap_0p5()
+                .child(
+                    Label::new(humanize_token_count(token_count))
+                        .size(LabelSize::Small)
+                        .color(token_count_color),
+                )
+                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                .child(
+                    Label::new(humanize_token_count(max_token_count))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .when_some(tooltip, |element, tooltip| {
+                    element.tooltip(Tooltip::text(tooltip))
+                }),
+        )
     }
 
     fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1930,7 +1967,6 @@ impl TextThreadEditor {
             ConfigurationError::NoProvider
             | ConfigurationError::ModelNotFound
             | ConfigurationError::ProviderNotAuthenticated(_) => true,
-            ConfigurationError::ProviderPendingTermsAcceptance(_) => self.show_accept_terms,
         }
     }
 
@@ -2435,9 +2471,14 @@ impl Render for TextThreadEditor {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
-                            .child(self.render_language_model_selector(window, cx))
-                            .child(self.render_send_button(window, cx)),
+                            .gap_2p5()
+                            .children(self.render_remaining_tokens(cx))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(self.render_language_model_selector(window, cx))
+                                    .child(self.render_send_button(window, cx)),
+                            ),
                     ),
             )
     }
@@ -2725,58 +2766,6 @@ impl FollowableItem for TextThreadEditor {
     }
 }
 
-pub fn render_remaining_tokens(
-    context_editor: &Entity<TextThreadEditor>,
-    cx: &App,
-) -> Option<impl IntoElement + use<>> {
-    let context = &context_editor.read(cx).context;
-
-    let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?
-    {
-        TokenState::NoTokensLeft {
-            max_token_count,
-            token_count,
-        } => (
-            Color::Error,
-            token_count,
-            max_token_count,
-            Some("Token Limit Reached"),
-        ),
-        TokenState::HasMoreTokens {
-            max_token_count,
-            token_count,
-            over_warn_threshold,
-        } => {
-            let (color, tooltip) = if over_warn_threshold {
-                (Color::Warning, Some("Token Limit is Close to Exhaustion"))
-            } else {
-                (Color::Muted, None)
-            };
-            (color, token_count, max_token_count, tooltip)
-        }
-    };
-
-    Some(
-        h_flex()
-            .id("token-count")
-            .gap_0p5()
-            .child(
-                Label::new(humanize_token_count(token_count))
-                    .size(LabelSize::Small)
-                    .color(token_count_color),
-            )
-            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-            .child(
-                Label::new(humanize_token_count(max_token_count))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .when_some(tooltip, |element, tooltip| {
-                element.tooltip(Tooltip::text(tooltip))
-            }),
-    )
-}
-
 enum PendingSlashCommand {}
 
 fn invoked_slash_command_fold_placeholder(
@@ -2805,11 +2794,7 @@ fn invoked_slash_command_fold_placeholder(
                 .child(Label::new(format!("/{}", command.name)))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
-                        parent.child(Icon::new(IconName::ArrowCircle).with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(4)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ))
+                        parent.child(Icon::new(IconName::ArrowCircle).with_rotate_animation(4))
                     }
                     InvokedSlashCommandStatus::Error(message) => parent.child(
                         Label::new(format!("error: {message}"))

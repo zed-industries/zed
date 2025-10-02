@@ -264,13 +264,9 @@ pub(crate) fn render_ai_setup_page(
                     );
 
                     let fs = <dyn Fs>::global(cx);
-                    update_settings_file::<DisableAiSettings>(
-                        fs,
-                        cx,
-                        move |ai_settings: &mut Option<bool>, _| {
-                            *ai_settings = Some(enabled);
-                        },
-                    );
+                    update_settings_file(fs, cx, move |settings, _| {
+                        settings.disable_ai = Some(enabled.into());
+                    });
                 },
             )
             .tab_index({
@@ -283,17 +279,13 @@ pub(crate) fn render_ai_setup_page(
             v_flex()
                 .mt_2()
                 .gap_6()
-                .child({
-                    let mut ai_upsell_card =
-                        AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx);
-
-                    ai_upsell_card.tab_index = Some({
-                        tab_index += 1;
-                        tab_index - 1
-                    });
-
-                    ai_upsell_card
-                })
+                .child(
+                    AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx)
+                        .tab_index(Some({
+                            tab_index += 1;
+                            tab_index - 1
+                        })),
+                )
                 .child(render_llm_provider_section(
                     &mut tab_index,
                     workspace,
@@ -409,10 +401,10 @@ impl AiPrivacyTooltip {
 }
 
 impl Render for AiPrivacyTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const DESCRIPTION: &str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
-        tooltip_container(window, cx, move |this, _, _| {
+        tooltip_container(cx, move |this, _| {
             this.child(
                 h_flex()
                     .gap_1()

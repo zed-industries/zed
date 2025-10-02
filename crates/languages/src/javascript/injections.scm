@@ -12,6 +12,21 @@
 )
 
 (call_expression
+  function: (member_expression
+    object: (identifier) @_obj (#eq? @_obj "styled")
+    property: (property_identifier))
+  arguments: (template_string (string_fragment) @injection.content
+                              (#set! injection.language "css"))
+)
+
+(call_expression
+  function: (call_expression
+    function: (identifier) @_name (#eq? @_name "styled"))
+  arguments: (template_string (string_fragment) @injection.content
+                              (#set! injection.language "css"))
+)
+
+(call_expression
   function: (identifier) @_name (#eq? @_name "html")
   arguments: (template_string) @injection.content
                               (#set! injection.language "html")
@@ -57,4 +72,10 @@
   function: (identifier) @_name (#match? @_name "^g(raph)?ql$")
   arguments: (arguments (template_string (string_fragment) @injection.content
                               (#set! injection.language "graphql")))
+)
+
+(call_expression
+  function: (identifier) @_name(#match? @_name "^iso$")
+  arguments: (arguments (template_string (string_fragment) @injection.content
+                              (#set! injection.language "isograph")))
 )

@@ -162,6 +162,19 @@ impl<T> Receiver<T> {
             pending_waker_id: None,
         }
     }
+
+    /// Creates a new [`Receiver`] holding an initial value that will never change.
+    pub fn constant(value: T) -> Self {
+        let state = Arc::new(RwLock::new(State {
+            value,
+            wakers: BTreeMap::new(),
+            next_waker_id: WakerId::default(),
+            version: 0,
+            closed: false,
+        }));
+
+        Self { state, version: 0 }
+    }
 }
 
 impl<T: Clone> Receiver<T> {

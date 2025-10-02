@@ -38,23 +38,29 @@ pub trait AgentConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
 
-    fn prompt_capabilities(&self) -> acp::PromptCapabilities;
-
     fn resume(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
+        _cx: &App,
     ) -> Option<Rc<dyn AgentSessionResume>> {
         None
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
-    fn session_editor(
+    fn truncate(
         &self,
         _session_id: &acp::SessionId,
-        _cx: &mut App,
-    ) -> Option<Rc<dyn AgentSessionEditor>> {
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionTruncate>> {
+        None
+    }
+
+    fn set_title(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionSetTitle>> {
         None
     }
 
@@ -62,11 +68,19 @@ pub trait AgentConnection {
     ///
     /// If the agent does not support model selection, returns [None].
     /// This allows sharing the selector in UI components.
-    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
+    fn model_selector(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
         None
     }
 
     fn telemetry(&self) -> Option<Rc<dyn AgentTelemetry>> {
+        None
+    }
+
+    fn session_modes(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionModes>> {
         None
     }
 
@@ -79,12 +93,16 @@ impl dyn AgentConnection {
     }
 }
 
-pub trait AgentSessionEditor {
-    fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+pub trait AgentSessionTruncate {
+    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentSessionResume {
     fn run(&self, cx: &mut App) -> Task<Result<acp::PromptResponse>>;
+}
+
+pub trait AgentSessionSetTitle {
+    fn run(&self, title: SharedString, cx: &mut App) -> Task<Result<()>>;
 }
 
 pub trait AgentTelemetry {
@@ -98,6 +116,14 @@ pub trait AgentTelemetry {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<serde_json::Value>>;
+}
+
+pub trait AgentSessionModes {
+    fn current_mode(&self) -> acp::SessionModeId;
+
+    fn all_modes(&self) -> Vec<acp::SessionMode>;
+
+    fn set_mode(&self, mode: acp::SessionModeId, cx: &mut App) -> Task<Result<()>>;
 }
 
 #[derive(Debug)]
@@ -151,59 +177,46 @@ pub trait AgentModelSelector: 'static {
     /// If the session doesn't exist or the model is invalid, it returns an error.
     ///
     /// # Parameters
-    /// - `session_id`: The ID of the session (thread) to apply the model to.
     /// - `model`: The model to select (should be one from [list_models]).
     /// - `cx`: The GPUI app context.
     ///
     /// # Returns
     /// A task resolving to `Ok(())` on success or an error.
-    fn select_model(
-        &self,
-        session_id: acp::SessionId,
-        model_id: AgentModelId,
-        cx: &mut App,
-    ) -> Task<Result<()>>;
+    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>>;
 
     /// Retrieves the currently selected model for a specific session (thread).
     ///
     /// # Parameters
-    /// - `session_id`: The ID of the session (thread) to query.
     /// - `cx`: The GPUI app context.
     ///
     /// # Returns
     /// A task resolving to the selected model (always set) or an error (e.g., session not found).
-    fn selected_model(
-        &self,
-        session_id: &acp::SessionId,
-        cx: &mut App,
-    ) -> Task<Result<AgentModelInfo>>;
+    fn selected_model(&self, cx: &mut App) -> Task<Result<AgentModelInfo>>;
 
     /// Whenever the model list is updated the receiver will be notified.
-    fn watch(&self, cx: &mut App) -> watch::Receiver<()>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AgentModelId(pub SharedString);
-
-impl std::ops::Deref for AgentModelId {
-    type Target = SharedString;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl fmt::Display for AgentModelId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+    /// Optional for agents that don't update their model list.
+    fn watch(&self, _cx: &mut App) -> Option<watch::Receiver<()>> {
+        None
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentModelInfo {
-    pub id: AgentModelId,
+    pub id: acp::ModelId,
     pub name: SharedString,
+    pub description: Option<SharedString>,
     pub icon: Option<IconName>,
+}
+
+impl From<acp::ModelInfo> for AgentModelInfo {
+    fn from(info: acp::ModelInfo) -> Self {
+        Self {
+            id: info.model_id,
+            name: info.name.into(),
+            description: info.description.map(|desc| desc.into()),
+            icon: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -317,13 +330,20 @@ mod test_support {
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             let session_id = acp::SessionId(self.sessions.lock().len().to_string().into());
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread = cx.new(|_cx| {
+            let thread = cx.new(|cx| {
                 AcpThread::new(
                     "Test",
                     self.clone(),
                     project,
                     action_log,
                     session_id.clone(),
+                    watch::Receiver::constant(acp::PromptCapabilities {
+                        image: true,
+                        audio: true,
+                        embedded_context: true,
+                        meta: None,
+                    }),
+                    cx,
                 )
             });
             self.sessions.lock().insert(
@@ -334,14 +354,6 @@ mod test_support {
                 },
             );
             Task::ready(Ok(thread))
-        }
-
-        fn prompt_capabilities(&self) -> acp::PromptCapabilities {
-            acp::PromptCapabilities {
-                image: true,
-                audio: true,
-                embedded_context: true,
-            }
         }
 
         fn authenticate(
@@ -369,7 +381,10 @@ mod test_support {
                 response_tx.replace(tx);
                 cx.spawn(async move |_| {
                     let stop_reason = rx.await?;
-                    Ok(acp::PromptResponse { stop_reason })
+                    Ok(acp::PromptResponse {
+                        stop_reason,
+                        meta: None,
+                    })
                 })
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
@@ -385,14 +400,16 @@ mod test_support {
                     };
                     let task = cx.spawn(async move |cx| {
                         if let Some((tool_call, options)) = permission_request {
-                            let permission = thread.update(cx, |thread, cx| {
-                                thread.request_tool_call_authorization(
-                                    tool_call.clone().into(),
-                                    options.clone(),
-                                    cx,
-                                )
-                            })?;
-                            permission?.await?;
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(
+                                        tool_call.clone().into(),
+                                        options.clone(),
+                                        false,
+                                        cx,
+                                    )
+                                })??
+                                .await;
                         }
                         thread.update(cx, |thread, cx| {
                             thread.handle_session_update(update.clone(), cx).unwrap();
@@ -406,6 +423,7 @@ mod test_support {
                     try_join_all(tasks).await?;
                     Ok(acp::PromptResponse {
                         stop_reason: acp::StopReason::EndTurn,
+                        meta: None,
                     })
                 })
             }
@@ -424,11 +442,11 @@ mod test_support {
             }
         }
 
-        fn session_editor(
+        fn truncate(
             &self,
             _session_id: &agent_client_protocol::SessionId,
-            _cx: &mut App,
-        ) -> Option<Rc<dyn AgentSessionEditor>> {
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))
         }
 
@@ -439,8 +457,8 @@ mod test_support {
 
     struct StubAgentSessionEditor;
 
-    impl AgentSessionEditor for StubAgentSessionEditor {
-        fn truncate(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+    impl AgentSessionTruncate for StubAgentSessionEditor {
+        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

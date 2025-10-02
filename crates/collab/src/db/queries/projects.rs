@@ -33,6 +33,7 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
+        windows_paths: bool,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -69,6 +70,7 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
+                windows_paths: ActiveValue::set(windows_paths),
             }
             .insert(&*tx)
             .await?;
@@ -694,6 +696,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                worktree_id: ActiveValue::set(server.worktree_id.map(|id| id as i64)),
                 capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
@@ -704,6 +707,7 @@ impl Database {
                 .update_columns([
                     language_server::Column::Name,
                     language_server::Column::Capabilities,
+                    language_server::Column::WorktreeId,
                 ])
                 .to_owned(),
             )
@@ -993,6 +997,7 @@ impl Database {
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
+                        stash_entries: Vec::new(),
                     });
                 }
             }
@@ -1043,6 +1048,12 @@ impl Database {
             .all(tx)
             .await?;
 
+        let path_style = if project.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let project = Project {
             id: project.id,
             role,
@@ -1065,11 +1076,12 @@ impl Database {
                     server: proto::LanguageServer {
                         id: language_server.id as u64,
                         name: language_server.name,
-                        worktree_id: None,
+                        worktree_id: language_server.worktree_id.map(|id| id as u64),
                     },
                     capabilities: language_server.capabilities,
                 })
                 .collect(),
+            path_style,
         };
         Ok((project, replica_id as ReplicaId))
     }

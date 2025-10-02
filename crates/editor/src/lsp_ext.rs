@@ -35,7 +35,7 @@ where
     let project = editor.project.clone()?;
     editor
         .selections
-        .disjoint_anchors()
+        .disjoint_anchors_arc()
         .iter()
         .filter_map(|selection| Some((selection.head(), selection.head().buffer_id?)))
         .unique_by(|(_, buffer_id)| *buffer_id)

@@ -42,7 +42,7 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let root_path = SanitizedPath::from(path);
+        let root_path = SanitizedPath::new_arc(path);
 
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
@@ -70,7 +70,7 @@ impl Watcher for FsWatcher {
                             .paths
                             .iter()
                             .filter_map(|event_path| {
-                                let event_path = SanitizedPath::from(event_path);
+                                let event_path = SanitizedPath::new(event_path);
                                 event_path.starts_with(&root_path).then(|| PathEvent {
                                     path: event_path.as_path().to_path_buf(),
                                     kind,

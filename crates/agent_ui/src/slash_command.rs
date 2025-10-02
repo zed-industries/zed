@@ -7,7 +7,10 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, ToPoint};
 use parking_lot::Mutex;
-use project::{CompletionIntent, CompletionSource, lsp_store::CompletionDocumentation};
+use project::{
+    CompletionDisplayOptions, CompletionIntent, CompletionSource,
+    lsp_store::CompletionDocumentation,
+};
 use rope::Point;
 use std::{
     ops::Range,
@@ -133,6 +136,7 @@ impl SlashCommandCompletionProvider {
 
                 vec![project::CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: false,
                 }]
             })
@@ -237,6 +241,7 @@ impl SlashCommandCompletionProvider {
 
                 Ok(vec![project::CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     // TODO: Could have slash commands indicate whether their completions are incomplete.
                     is_incomplete: true,
                 }])
@@ -244,6 +249,7 @@ impl SlashCommandCompletionProvider {
         } else {
             Task::ready(Ok(vec![project::CompletionResponse {
                 completions: Vec::new(),
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: true,
             }]))
         }
@@ -305,6 +311,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         else {
             return Task::ready(Ok(vec![project::CompletionResponse {
                 completions: Vec::new(),
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }]));
         };

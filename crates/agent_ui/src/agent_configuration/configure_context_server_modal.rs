@@ -1,16 +1,14 @@
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    Animation, AnimationExt as _, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, percentage, prelude::*,
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -24,7 +22,9 @@ use project::{
 };
 use settings::{Settings as _, update_settings_file};
 use theme::ThemeSettings;
-use ui::{KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*};
+use ui::{
+    CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip, prelude::*,
+};
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
@@ -251,6 +251,7 @@ pub struct ConfigureContextServerModal {
     workspace: WeakEntity<Workspace>,
     source: ConfigurationSource,
     state: State,
+    original_server_id: Option<ContextServerId>,
 }
 
 impl ConfigureContextServerModal {
@@ -348,6 +349,11 @@ impl ConfigureContextServerModal {
                     context_server_store,
                     workspace: workspace_handle,
                     state: State::Idle,
+                    original_server_id: match &target {
+                        ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::New => None,
+                    },
                     source: ConfigurationSource::from_target(
                         target,
                         language_registry,
@@ -415,8 +421,17 @@ impl ConfigureContextServerModal {
             // When we write the settings to the file, the context server will be restarted.
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
-                update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                    project_settings.context_servers.insert(id.0, settings);
+                let original_server_id = self.original_server_id.clone();
+                update_settings_file(fs.clone(), cx, move |current, _| {
+                    if let Some(original_id) = original_server_id {
+                        if original_id != id {
+                            current.project.context_servers.remove(&original_id.0);
+                        }
+                    }
+                    current
+                        .project
+                        .context_servers
+                        .insert(id.0, settings.into());
                 });
             });
         } else if let Some(existing_server) = existing_server {
@@ -638,11 +653,7 @@ impl ConfigureContextServerModal {
                 Icon::new(IconName::ArrowCircle)
                     .size(IconSize::XSmall)
                     .color(Color::Info)
-                    .with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(2)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    )
+                    .with_rotate_animation(2)
                     .into_any_element(),
             )
             .child(

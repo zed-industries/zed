@@ -2,14 +2,11 @@ use edit_prediction::EditPredictionProvider;
 use gpui::{Entity, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use project::Project;
 use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction,
-    editor_tests::{init_test, update_test_language_settings},
-    test::editor_test_context::EditorTestContext,
+    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -263,51 +260,13 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
                 EditPrediction::Edit { .. } => {
                     // This is expected for non-Zed providers
                 }
-                EditPrediction::Move { .. } => {
+                EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => {
                     panic!(
                         "Non-Zed providers should not show Move predictions (jump functionality)"
                     );
                 }
             }
         }
-    });
-}
-
-#[gpui::test]
-async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    update_test_language_settings(cx, |settings| {
-        settings.defaults.edit_predictions_disabled_in = Some(vec!["string".to_string()]);
-    });
-
-    let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionProvider::default());
-    assign_editor_completion_provider(provider.clone(), &mut cx);
-
-    let language = languages::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-    // Test disabled inside of string
-    cx.set_state("const x = \"hello ˇworld\";");
-    propose_edits(&provider, vec![(17..17, "beautiful ")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
-    cx.editor(|editor, _, _| {
-        assert!(
-            editor.active_edit_prediction.is_none(),
-            "Edit predictions should be disabled in string scopes when configured in edit_predictions_disabled_in"
-        );
-    });
-
-    // Test enabled outside of string
-    cx.set_state("const x = \"hello world\"; ˇ");
-    propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
-    cx.editor(|editor, _, _| {
-        assert!(
-            editor.active_edit_prediction.is_some(),
-            "Edit predictions should work outside of disabled scopes"
-        );
     });
 }
 
@@ -339,7 +298,7 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let EditPrediction::Move { target, .. } = &completion_state.completion {
+        if let EditPrediction::MoveWithin { target, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");
@@ -366,7 +325,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -397,7 +356,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -458,7 +417,6 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
@@ -532,7 +490,6 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

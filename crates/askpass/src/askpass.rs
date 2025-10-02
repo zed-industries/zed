@@ -1,3 +1,9 @@
+mod encrypted_password;
+
+pub use encrypted_password::{EncryptedPassword, ProcessExt};
+
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 use std::{ffi::OsStr, time::Duration};
 
 use anyhow::{Context as _, Result};
@@ -10,6 +16,8 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 use util::ResultExt as _;
 
+use crate::encrypted_password::decrypt;
+
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
     CancelledByUser,
@@ -17,16 +25,19 @@ pub enum AskPassResult {
 }
 
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<String>)>,
+    tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
     _task: Task<()>,
 }
 
 impl AskPassDelegate {
     pub fn new(
         cx: &mut AsyncApp,
-        password_prompt: impl Fn(String, oneshot::Sender<String>, &mut AsyncApp) + Send + Sync + 'static,
+        password_prompt: impl Fn(String, oneshot::Sender<EncryptedPassword>, &mut AsyncApp)
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
+        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<_>)>();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
             while let Some((prompt, channel)) = rx.next().await {
                 password_prompt(prompt, channel, cx);
@@ -35,7 +46,7 @@ impl AskPassDelegate {
         Self { tx, _task: task }
     }
 
-    pub async fn ask_password(&mut self, prompt: String) -> Result<String> {
+    pub async fn ask_password(&mut self, prompt: String) -> Result<EncryptedPassword> {
         let (tx, rx) = oneshot::channel();
         self.tx.send((prompt, tx)).await?;
         Ok(rx.await?)
@@ -48,7 +59,7 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
-    secret: std::sync::Arc<parking_lot::Mutex<String>>,
+    secret: std::sync::Arc<OnceLock<EncryptedPassword>>,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -68,17 +79,14 @@ impl AskPassSession {
         use util::fs::make_file_executable;
 
         #[cfg(target_os = "windows")]
-        let secret = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+        let secret = std::sync::Arc::new(OnceLock::new());
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = UnixListener::bind(&askpass_socket).context("creating askpass socket")?;
-        #[cfg(not(target_os = "windows"))]
-        let zed_path = util::get_shell_safe_zed_path()?;
-        #[cfg(target_os = "windows")]
-        let zed_path = std::env::current_exe()
-            .context("finding current executable path for use in askpass")?;
+        let zed_cli_path =
+            util::get_shell_safe_zed_cli_path().context("getting zed-cli path for askpass")?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -104,10 +112,12 @@ impl AskPassSession {
                     .context("getting askpass password")
                     .log_err()
                 {
-                    stream.write_all(password.as_bytes()).await.log_err();
                     #[cfg(target_os = "windows")]
                     {
-                        *askpass_secret.lock() = password;
+                        askpass_secret.get_or_init(|| password.clone());
+                    }
+                    if let Ok(decrypted) = decrypt(password) {
+                        stream.write_all(decrypted.as_bytes()).await.log_err();
                     }
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
@@ -124,7 +134,7 @@ impl AskPassSession {
         });
 
         // Create an askpass script that communicates back to this process.
-        let askpass_script = generate_askpass_script(&zed_path, &askpass_socket);
+        let askpass_script = generate_askpass_script(&zed_cli_path, &askpass_socket);
         fs::write(&askpass_script_path, askpass_script)
             .await
             .with_context(|| format!("creating askpass script at {askpass_script_path:?}"))?;
@@ -188,8 +198,8 @@ impl AskPassSession {
 
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
-    pub fn get_password(&self) -> String {
-        self.secret.lock().clone()
+    pub fn get_password(&self) -> Option<EncryptedPassword> {
+        self.secret.get().cloned()
     }
 }
 
@@ -241,10 +251,10 @@ pub fn main(socket: &str) {
 
 #[inline]
 #[cfg(not(target_os = "windows"))]
-fn generate_askpass_script(zed_path: &str, askpass_socket: &std::path::Path) -> String {
+fn generate_askpass_script(zed_cli_path: &str, askpass_socket: &std::path::Path) -> String {
     format!(
-        "{shebang}\n{print_args} | {zed_exe} --askpass={askpass_socket} 2> /dev/null \n",
-        zed_exe = zed_path,
+        "{shebang}\n{print_args} | {zed_cli} --askpass={askpass_socket} 2> /dev/null \n",
+        zed_cli = zed_cli_path,
         askpass_socket = askpass_socket.display(),
         print_args = "printf '%s\\0' \"$@\"",
         shebang = "#!/bin/sh",
@@ -253,13 +263,13 @@ fn generate_askpass_script(zed_path: &str, askpass_socket: &std::path::Path) -> 
 
 #[inline]
 #[cfg(target_os = "windows")]
-fn generate_askpass_script(zed_path: &std::path::Path, askpass_socket: &std::path::Path) -> String {
+fn generate_askpass_script(zed_cli_path: &str, askpass_socket: &std::path::Path) -> String {
     format!(
         r#"
         $ErrorActionPreference = 'Stop';
-        ($args -join [char]0) | & "{zed_exe}" --askpass={askpass_socket} 2> $null
+        ($args -join [char]0) | & "{zed_cli}" --askpass={askpass_socket} 2> $null
         "#,
-        zed_exe = zed_path.display(),
+        zed_cli = zed_cli_path,
         askpass_socket = askpass_socket.display(),
     )
 }

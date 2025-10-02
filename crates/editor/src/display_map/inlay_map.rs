@@ -8,10 +8,10 @@ use multi_buffer::{
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
-use text::{Patch, Rope};
+use text::{ChunkBitmaps, Patch, Rope};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
@@ -41,12 +41,17 @@ enum Transform {
 pub struct Inlay {
     pub id: InlayId,
     pub position: Anchor,
-    pub text: text::Rope,
-    color: Option<Hsla>,
+    pub content: InlayContent,
+}
+
+#[derive(Debug, Clone)]
+pub enum InlayContent {
+    Text(text::Rope),
+    Color(Hsla),
 }
 
 impl Inlay {
-    pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
+    pub fn hint(id: u32, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
         if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
             text.push(" ");
@@ -57,58 +62,64 @@ impl Inlay {
         Self {
             id: InlayId::Hint(id),
             position,
-            text,
-            color: None,
+            content: InlayContent::Text(text),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn mock_hint(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
+    pub fn mock_hint(id: u32, position: Anchor, text: impl Into<Rope>) -> Self {
         Self {
             id: InlayId::Hint(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
         }
     }
 
-    pub fn color(id: usize, position: Anchor, color: Rgba) -> Self {
+    pub fn color(id: u32, position: Anchor, color: Rgba) -> Self {
         Self {
             id: InlayId::Color(id),
             position,
-            text: Rope::from("◼"),
-            color: Some(Hsla::from(color)),
+            content: InlayContent::Color(color.into()),
         }
     }
 
-    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn edit_prediction<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::EditPrediction(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
         }
     }
 
-    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn debugger<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
+        }
+    }
+
+    pub fn text(&self) -> &Rope {
+        static COLOR_TEXT: OnceLock<Rope> = OnceLock::new();
+        match &self.content {
+            InlayContent::Text(text) => text,
+            InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from("◼")),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn get_color(&self) -> Option<Hsla> {
-        self.color
+        match self.content {
+            InlayContent::Color(color) => Some(color),
+            _ => None,
+        }
     }
 }
 
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self, _: &()) -> Self::Summary {
+    fn summary(&self, _: ()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
                 input: *summary,
@@ -116,7 +127,7 @@ impl sum_tree::Item for Transform {
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: TextSummary::default(),
-                output: inlay.text.summary(),
+                output: inlay.text().summary(),
             },
         }
     }
@@ -128,14 +139,12 @@ struct TransformSummary {
     output: TextSummary,
 }
 
-impl sum_tree::Summary for TransformSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for TransformSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, _: &()) {
+    fn add_summary(&mut self, other: &Self) {
         self.input += &other.input;
         self.output += &other.output;
     }
@@ -175,11 +184,11 @@ impl SubAssign for InlayOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayOffset {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.output.len;
     }
 }
@@ -204,49 +213,50 @@ impl Sub for InlayPoint {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InlayPoint {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += &summary.output.lines;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += &summary.input.len;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         *self += &summary.input.lines;
     }
 }
 
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
-    transforms: Cursor<'a, Transform, Dimensions<InlayPoint, Point>>,
+    transforms: Cursor<'a, 'static, Transform, Dimensions<InlayPoint, Point>>,
     buffer_rows: MultiBufferRows<'a>,
     inlay_row: u32,
     max_buffer_row: MultiBufferRow,
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, Transform, Dimensions<InlayOffset, usize>>,
+    transforms: Cursor<'a, 'static, Transform, Dimensions<InlayOffset, usize>>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    inlay_chunks: Option<text::Chunks<'a>>,
-    inlay_chunk: Option<&'a str>,
+    inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
+    /// text, char bitmap, tabs bitmap
+    inlay_chunk: Option<ChunkBitmaps<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_styles: HighlightStyles,
@@ -316,11 +326,25 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
 
+                let (chars, tabs) = if split_index == 128 {
+                    let output = (chunk.chars, chunk.tabs);
+                    chunk.chars = 0;
+                    chunk.tabs = 0;
+                    output
+                } else {
+                    let mask = (1 << split_index) - 1;
+                    let output = (chunk.chars & mask, chunk.tabs & mask);
+                    chunk.chars = chunk.chars >> split_index;
+                    chunk.tabs = chunk.tabs >> split_index;
+                    output
+                };
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
                 InlayChunk {
                     chunk: Chunk {
                         text: prefix,
+                        chars,
+                        tabs,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -341,7 +365,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mut renderer = None;
                 let mut highlight_style = match inlay.id {
                     InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
-                        if inlay.text.chars().all(|c| c.is_whitespace()) {
+                        if inlay.text().chars().all(|c| c.is_whitespace()) {
                             s.whitespace
                         } else {
                             s.insertion
@@ -350,7 +374,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                     InlayId::Color(_) => {
-                        if let Some(color) = inlay.color {
+                        if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {
                                 id: ChunkRendererId::Inlay(inlay.id),
                                 render: Arc::new(move |cx| {
@@ -385,9 +409,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
-                        highlight_style
-                            .get_or_insert_with(Default::default)
-                            .highlight(*style);
+                        highlight_style = highlight_style
+                            .map(|highlight| highlight.highlight(*style))
+                            .or_else(|| Some(*style));
                     }
                 } else {
                     next_inlay_highlight_endpoint = usize::MAX;
@@ -397,9 +421,14 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end().0)
                         - self.transforms.start().0;
-                    inlay.text.chunks_in_range(start.0..end.0)
+                    let chunks = inlay.text().chunks_in_range(start.0..end.0);
+                    text::ChunkWithBitmaps(chunks)
                 });
-                let inlay_chunk = self
+                let ChunkBitmaps {
+                    text: inlay_chunk,
+                    chars,
+                    tabs,
+                } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
 
@@ -421,6 +450,20 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
                 *inlay_chunk = remainder;
+
+                let (chars, tabs) = if split_index == 128 {
+                    let output = (*chars, *tabs);
+                    *chars = 0;
+                    *tabs = 0;
+                    output
+                } else {
+                    let mask = (1 << split_index as u32) - 1;
+                    let output = (*chars & mask, *tabs & mask);
+                    *chars = *chars >> split_index;
+                    *tabs = *tabs >> split_index;
+                    output
+                };
+
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
                 }
@@ -430,6 +473,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 InlayChunk {
                     chunk: Chunk {
                         text: chunk,
+                        chars,
+                        tabs,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()
@@ -506,7 +551,7 @@ impl InlayMap {
         let version = 0;
         let snapshot = InlaySnapshot {
             buffer: buffer.clone(),
-            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), &()),
+            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), ()),
             version,
         };
 
@@ -553,10 +598,10 @@ impl InlayMap {
             let mut new_transforms = SumTree::default();
             let mut cursor = snapshot
                 .transforms
-                .cursor::<Dimensions<usize, InlayOffset>>(&());
+                .cursor::<Dimensions<usize, InlayOffset>>(());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
-                new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), &());
+                new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), ());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item()
                     && cursor.end().0 == buffer_edit.old.start
                 {
@@ -606,7 +651,7 @@ impl InlayMap {
                         buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
                     );
 
-                    new_transforms.push(Transform::Inlay(inlay.clone()), &());
+                    new_transforms.push(Transform::Inlay(inlay.clone()), ());
                 }
 
                 // Apply the rest of the edit.
@@ -638,9 +683,9 @@ impl InlayMap {
                 }
             }
 
-            new_transforms.append(cursor.suffix(), &());
+            new_transforms.append(cursor.suffix(), ());
             if new_transforms.is_empty() {
-                new_transforms.push(Transform::Isomorphic(Default::default()), &());
+                new_transforms.push(Transform::Isomorphic(Default::default()), ());
             }
 
             drop(cursor);
@@ -672,7 +717,7 @@ impl InlayMap {
 
         for inlay_to_insert in to_insert {
             // Avoid inserting empty inlays.
-            if inlay_to_insert.text.is_empty() {
+            if inlay_to_insert.text().is_empty() {
                 continue;
             }
 
@@ -710,7 +755,7 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
-        next_inlay_id: &mut usize,
+        next_inlay_id: &mut u32,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
@@ -719,14 +764,18 @@ impl InlayMap {
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
-        for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.r#gen() {
+        for i in 0..rng.random_range(1..=5) {
+            if self.inlays.is_empty() || rng.random() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
-                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
-                let len = if rng.gen_bool(0.01) {
+                let bias = if rng.random() {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
+                let len = if rng.random_bool(0.01) {
                     0
                 } else {
-                    rng.gen_range(1..=5)
+                    rng.random_range(1..=5)
                 };
                 let text = util::RandomCharIter::new(&mut *rng)
                     .filter(|ch| *ch != '\r')
@@ -772,7 +821,7 @@ impl InlaySnapshot {
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
         let mut cursor = self
             .transforms
-            .cursor::<Dimensions<InlayOffset, InlayPoint, usize>>(&());
+            .cursor::<Dimensions<InlayOffset, InlayPoint, usize>>(());
         cursor.seek(&offset, Bias::Right);
         let overshoot = offset.0 - cursor.start().0.0;
         match cursor.item() {
@@ -784,7 +833,7 @@ impl InlaySnapshot {
                 InlayPoint(cursor.start().1.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.text.offset_to_point(overshoot);
+                let overshoot = inlay.text().offset_to_point(overshoot);
                 InlayPoint(cursor.start().1.0 + overshoot)
             }
             None => self.max_point(),
@@ -802,7 +851,7 @@ impl InlaySnapshot {
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let mut cursor = self
             .transforms
-            .cursor::<Dimensions<InlayPoint, InlayOffset, Point>>(&());
+            .cursor::<Dimensions<InlayPoint, InlayOffset, Point>>(());
         cursor.seek(&point, Bias::Right);
         let overshoot = point.0 - cursor.start().0.0;
         match cursor.item() {
@@ -814,14 +863,14 @@ impl InlaySnapshot {
                 InlayOffset(cursor.start().1.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.text.point_to_offset(overshoot);
+                let overshoot = inlay.text().point_to_offset(overshoot);
                 InlayOffset(cursor.start().1.0 + overshoot)
             }
             None => self.len(),
         }
     }
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
-        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         cursor.seek(&point, Bias::Right);
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -833,9 +882,7 @@ impl InlaySnapshot {
         }
     }
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<InlayOffset, usize>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
         cursor.seek(&offset, Bias::Right);
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -848,9 +895,7 @@ impl InlaySnapshot {
     }
 
     pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<usize, InlayOffset>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<usize, InlayOffset>>(());
         cursor.seek(&offset, Bias::Left);
         loop {
             match cursor.item() {
@@ -883,7 +928,7 @@ impl InlaySnapshot {
         }
     }
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(());
         cursor.seek(&point, Bias::Left);
         loop {
             match cursor.item() {
@@ -917,7 +962,7 @@ impl InlaySnapshot {
     }
 
     pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         cursor.seek(&point, Bias::Left);
         loop {
             match cursor.item() {
@@ -1014,9 +1059,7 @@ impl InlaySnapshot {
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<InlayOffset, usize>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
         cursor.seek(&range.start, Bias::Right);
 
         let overshoot = range.start.0 - cursor.start().0.0;
@@ -1032,7 +1075,7 @@ impl InlaySnapshot {
             Some(Transform::Inlay(inlay)) => {
                 let suffix_start = overshoot;
                 let suffix_end = cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0;
-                summary = inlay.text.cursor(suffix_start).summary(suffix_end);
+                summary = inlay.text().cursor(suffix_start).summary(suffix_end);
                 cursor.next();
             }
             None => {}
@@ -1054,7 +1097,7 @@ impl InlaySnapshot {
                 }
                 Some(Transform::Inlay(inlay)) => {
                     let prefix_end = overshoot;
-                    summary += inlay.text.cursor(0).summary::<TextSummary>(prefix_end);
+                    summary += inlay.text().cursor(0).summary::<TextSummary>(prefix_end);
                 }
                 None => {}
             }
@@ -1064,7 +1107,7 @@ impl InlaySnapshot {
     }
 
     pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
-        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(());
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left);
 
@@ -1106,9 +1149,7 @@ impl InlaySnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self
-            .transforms
-            .cursor::<Dimensions<InlayOffset, usize>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayOffset, usize>>(());
         cursor.seek(&range.start, Bias::Right);
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
@@ -1172,11 +1213,11 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
                 *transform += summary.take().unwrap();
             }
         },
-        &(),
+        (),
     );
 
     if let Some(summary) = summary {
-        sum_tree.push(Transform::Isomorphic(summary), &());
+        sum_tree.push(Transform::Isomorphic(summary), ());
     }
 }
 
@@ -1220,6 +1261,7 @@ mod tests {
     use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
+    use util::RandomCharIter;
     use util::post_inc;
 
     #[test]
@@ -1238,7 +1280,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             "a",
             "Should not pad label if not requested"
@@ -1258,7 +1300,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should pad label for every side requested"
@@ -1278,7 +1320,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should not change already padded label"
@@ -1298,7 +1340,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should not change already padded label"
@@ -1321,7 +1363,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " 🎨 ",
             "Should pad single emoji correctly"
@@ -1665,8 +1707,8 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let len = rng.gen_range(0..30);
-        let buffer = if rng.r#gen() {
+        let len = rng.random_range(0..30);
+        let buffer = if rng.random() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
@@ -1683,7 +1725,7 @@ mod tests {
 
             let mut prev_inlay_text = inlay_snapshot.text();
             let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=50 => {
                     let (snapshot, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
                     log::info!("mutated text: {:?}", snapshot.text());
@@ -1691,7 +1733,7 @@ mod tests {
                 }
                 _ => buffer.update(cx, |buffer, cx| {
                     let subscription = buffer.subscribe();
-                    let edit_count = rng.gen_range(1..=5);
+                    let edit_count = rng.random_range(1..=5);
                     buffer.randomly_mutate(&mut rng, edit_count, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
@@ -1719,7 +1761,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
-                expected_text.replace(*offset..*offset, &inlay.text.to_string());
+                expected_text.replace(*offset..*offset, &inlay.text().to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -1740,7 +1782,7 @@ mod tests {
             }
 
             let mut text_highlights = TextHighlights::default();
-            let text_highlight_count = rng.gen_range(0_usize..10);
+            let text_highlight_count = rng.random_range(0_usize..10);
             let mut text_highlight_ranges = (0..text_highlight_count)
                 .map(|_| buffer_snapshot.random_byte_range(0, &mut rng))
                 .collect::<Vec<_>>();
@@ -1762,17 +1804,17 @@ mod tests {
 
             let mut inlay_highlights = InlayHighlights::default();
             if !inlays.is_empty() {
-                let inlay_highlight_count = rng.gen_range(0..inlays.len());
+                let inlay_highlight_count = rng.random_range(0..inlays.len());
                 let mut inlay_indices = BTreeSet::default();
                 while inlay_indices.len() < inlay_highlight_count {
-                    inlay_indices.insert(rng.gen_range(0..inlays.len()));
+                    inlay_indices.insert(rng.random_range(0..inlays.len()));
                 }
                 let new_highlights = TreeMap::from_ordered_entries(
                     inlay_indices
                         .into_iter()
                         .filter_map(|i| {
                             let (_, inlay) = &inlays[i];
-                            let inlay_text_len = inlay.text.len();
+                            let inlay_text_len = inlay.text().len();
                             match inlay_text_len {
                                 0 => None,
                                 1 => Some(InlayHighlight {
@@ -1781,9 +1823,9 @@ mod tests {
                                     range: 0..1,
                                 }),
                                 n => {
-                                    let inlay_text = inlay.text.to_string();
-                                    let mut highlight_end = rng.gen_range(1..n);
-                                    let mut highlight_start = rng.gen_range(0..highlight_end);
+                                    let inlay_text = inlay.text().to_string();
+                                    let mut highlight_end = rng.random_range(1..n);
+                                    let mut highlight_start = rng.random_range(0..highlight_end);
                                     while !inlay_text.is_char_boundary(highlight_end) {
                                         highlight_end += 1;
                                     }
@@ -1805,9 +1847,9 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let mut end = rng.gen_range(0..=inlay_snapshot.len().0);
+                let mut end = rng.random_range(0..=inlay_snapshot.len().0);
                 end = expected_text.clip_offset(end, Bias::Right);
-                let mut start = rng.gen_range(0..=end);
+                let mut start = rng.random_range(0..=end);
                 start = expected_text.clip_offset(start, Bias::Right);
 
                 let range = InlayOffset(start)..InlayOffset(end);
@@ -1962,6 +2004,102 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 100)]
+    fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
+        init_test(cx);
+
+        // Generate random buffer using existing test infrastructure
+        let text_len = rng.random_range(0..10000);
+        let buffer = if rng.random() {
+            let text = RandomCharIter::new(&mut rng)
+                .take(text_len)
+                .collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, _) = InlayMap::new(buffer_snapshot.clone());
+
+        // Perform random mutations to add inlays
+        let mut next_inlay_id = 0;
+        let mutation_count = rng.random_range(1..10);
+        for _ in 0..mutation_count {
+            inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+        }
+
+        let (snapshot, _) = inlay_map.sync(buffer_snapshot, vec![]);
+
+        // Get all chunks and verify their bitmaps
+        let chunks = snapshot.chunks(
+            InlayOffset(0)..InlayOffset(snapshot.len().0),
+            false,
+            Highlights::default(),
+        );
+
+        for chunk in chunks.into_iter().map(|inlay_chunk| inlay_chunk.chunk) {
+            let chunk_text = chunk.text;
+            let chars_bitmap = chunk.chars;
+            let tabs_bitmap = chunk.tabs;
+
+            // Check empty chunks have empty bitmaps
+            if chunk_text.is_empty() {
+                assert_eq!(
+                    chars_bitmap, 0,
+                    "Empty chunk should have empty chars bitmap"
+                );
+                assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+                continue;
+            }
+
+            // Verify that chunk text doesn't exceed 128 bytes
+            assert!(
+                chunk_text.len() <= 128,
+                "Chunk text length {} exceeds 128 bytes",
+                chunk_text.len()
+            );
+
+            // Verify chars bitmap
+            let char_indices = chunk_text
+                .char_indices()
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+
+            for byte_idx in 0..chunk_text.len() {
+                let should_have_bit = char_indices.contains(&byte_idx);
+                let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != should_have_bit {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Char indices: {:?}", char_indices);
+                    eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+                    assert_eq!(
+                        has_bit, should_have_bit,
+                        "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, should_have_bit, has_bit
+                    );
+                }
+            }
+
+            // Verify tabs bitmap
+            for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+                let is_tab = byte == b'\t';
+                let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != is_tab {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                    assert_eq!(
+                        has_bit, is_tab,
+                        "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, byte as char, is_tab, has_bit
+                    );
+                }
+            }
+        }
+    }
+
     fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -2011,8 +2149,7 @@ mod tests {
         let inlay = Inlay {
             id: InlayId::Hint(0),
             position,
-            text: text::Rope::from(inlay_text),
-            color: None,
+            content: InlayContent::Text(text::Rope::from(inlay_text)),
         };
 
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
@@ -2126,8 +2263,7 @@ mod tests {
             let inlay = Inlay {
                 id: InlayId::Hint(0),
                 position,
-                text: text::Rope::from(test_case.inlay_text),
-                color: None,
+                content: InlayContent::Text(text::Rope::from(test_case.inlay_text)),
             };
 
             let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);

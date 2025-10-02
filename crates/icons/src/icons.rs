@@ -34,6 +34,7 @@ pub enum IconName {
     ArrowRightLeft,
     ArrowUp,
     ArrowUpRight,
+    Attach,
     AudioOff,
     AudioOn,
     Backspace,
@@ -145,6 +146,7 @@ pub enum IconName {
     Library,
     LineHeight,
     ListCollapse,
+    ListFilter,
     ListTodo,
     ListTree,
     ListX,
@@ -163,7 +165,9 @@ pub enum IconName {
     Option,
     PageDown,
     PageUp,
+    Paperclip,
     Pencil,
+    PencilUnavailable,
     Person,
     Pin,
     PlayOutlined,
@@ -213,6 +217,7 @@ pub enum IconName {
     Tab,
     Terminal,
     TerminalAlt,
+    TerminalGhost,
     TextSnippet,
     TextThread,
     Thread,
@@ -259,6 +264,7 @@ pub enum IconName {
     ZedPredictError,
     ZedPredictUp,
     ZedXCopilot,
+    Linux,
 }
 
 impl IconName {

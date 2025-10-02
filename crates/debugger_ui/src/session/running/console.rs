@@ -12,10 +12,10 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
+use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -83,7 +83,7 @@ impl Console {
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_placeholder_text("Evaluate an expression", window, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -575,7 +575,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return false;
         }
 
-        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        let classifier = snapshot
+            .char_classifier_at(position)
+            .scope_context(Some(CharScopeContext::Completion));
         if trigger_in_words && classifier.is_word(char) {
             return true;
         }
@@ -685,6 +687,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -797,6 +800,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })

@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
 use std::process;
 use std::sync::{LazyLock, OnceLock};
-use util::paths::PathExt;
 
 static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-macos.json").expect("Failed to load MacOS keymap")
@@ -17,6 +16,10 @@ static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
 
 static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
+});
+
+static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
@@ -216,6 +219,7 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
     let keymap = match os {
         "macos" => &KEYMAP_MACOS,
         "linux" | "freebsd" => &KEYMAP_LINUX,
+        "windows" => &KEYMAP_WINDOWS,
         _ => unreachable!("Not a valid OS: {}", os),
     };
 
@@ -340,7 +344,7 @@ fn handle_postprocessing() -> Result<()> {
     let mut queue = Vec::with_capacity(64);
     queue.push(root_dir.clone());
     while let Some(dir) = queue.pop() {
-        for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
+        for entry in std::fs::read_dir(&dir).context("failed to read docs dir")? {
             let Ok(entry) = entry else {
                 continue;
             };
@@ -469,7 +473,7 @@ fn generate_big_table_of_actions() -> String {
         output.push_str(action.name);
         output.push_str("</code><br>\n");
         if !action.deprecated_aliases.is_empty() {
-            output.push_str("Deprecated Aliases:");
+            output.push_str("Deprecated Alias(es): ");
             for alias in action.deprecated_aliases.iter() {
                 output.push_str("<code>");
                 output.push_str(alias);

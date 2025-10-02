@@ -3,6 +3,7 @@ mod models;
 use anyhow::{Context, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+use aws_sdk_bedrockruntime::types::InferenceConfiguration;
 pub use aws_sdk_bedrockruntime::types::{
     AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
     ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
@@ -17,7 +18,8 @@ pub use bedrock::types::{
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
     ImageBlock as BedrockImageBlock, Message as BedrockMessage,
     ReasoningContentBlock as BedrockThinkingBlock, ReasoningTextBlock as BedrockThinkingTextBlock,
-    ResponseStream as BedrockResponseStream, ToolResultBlock as BedrockToolResultBlock,
+    ResponseStream as BedrockResponseStream, SystemContentBlock as BedrockSystemContentBlock,
+    ToolResultBlock as BedrockToolResultBlock,
     ToolResultContentBlock as BedrockToolResultContentBlock,
     ToolResultStatus as BedrockToolResultStatus, ToolUseBlock as BedrockToolUseBlock,
 };
@@ -56,6 +58,20 @@ pub async fn stream_completion(
 
     if request.tools.as_ref().is_some_and(|t| !t.tools.is_empty()) {
         response = response.set_tool_config(request.tools);
+    }
+
+    let inference_config = InferenceConfiguration::builder()
+        .max_tokens(request.max_tokens as i32)
+        .set_temperature(request.temperature)
+        .set_top_p(request.top_p)
+        .build();
+
+    response = response.inference_config(inference_config);
+
+    if let Some(system) = request.system {
+        if !system.is_empty() {
+            response = response.system(BedrockSystemContentBlock::Text(system));
+        }
     }
 
     let output = response

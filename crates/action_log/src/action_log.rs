@@ -8,10 +8,7 @@ use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
-use util::{
-    RangeExt, ResultExt as _,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::{RangeExt, ResultExt as _};
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -62,7 +59,13 @@ impl ActionLog {
                 let file_path = buffer
                     .read(cx)
                     .file()
-                    .map(|file| RemotePathBuf::new(file.full_path(cx), PathStyle::Posix).to_proto())
+                    .map(|file| {
+                        let mut path = file.full_path(cx).to_string_lossy().into_owned();
+                        if file.path_style(cx).is_windows() {
+                            path = path.replace('\\', "/");
+                        }
+                        path
+                    })
                     .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
 
                 let mut result = String::new();
@@ -2218,7 +2221,7 @@ mod tests {
         action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
 
         for _ in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..25 => {
                     action_log.update(cx, |log, cx| {
                         let range = buffer.read(cx).random_byte_range(0, &mut rng);
@@ -2237,7 +2240,7 @@ mod tests {
                         .unwrap();
                 }
                 _ => {
-                    let is_agent_edit = rng.gen_bool(0.5);
+                    let is_agent_edit = rng.random_bool(0.5);
                     if is_agent_edit {
                         log::info!("agent edit");
                     } else {
@@ -2252,7 +2255,7 @@ mod tests {
                 }
             }
 
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 quiesce(&action_log, &buffer, cx);
             }
         }
@@ -2301,7 +2304,7 @@ mod tests {
         .await;
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
+            &[("file.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
             "0000000",
         );
         cx.run_until_parked();
@@ -2384,7 +2387,7 @@ mod tests {
         // - Ignores the last line edit (j stays as j)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nG\nh\ni\nj".into())],
+            &[("file.txt", "A\nb\nc\nf\nG\nh\ni\nj".into())],
             "0000001",
         );
         cx.run_until_parked();
@@ -2415,10 +2418,7 @@ mod tests {
         // Make another commit that accepts the NEW line but with different content
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
-            )],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into())],
             "0000002",
         );
         cx.run_until_parked();
@@ -2444,7 +2444,7 @@ mod tests {
         // Final commit that accepts all remaining edits
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
             "0000003",
         );
         cx.run_until_parked();

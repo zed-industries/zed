@@ -8,7 +8,7 @@ Report issues to: [https://github.com/grndctrl/zed-gdscript/issues](https://gith
 
 ## Setup
 
-1. Download and install [Godot for MacOS](https://godotengine.org/download/macos/).
+1. Download and install [Godot for macOS](https://godotengine.org/download/macos/).
 2. Unzip the Godot.app and drag it into your /Applications folder.
 3. Open Godot.app and open your project (an example project is fine)
 4. In Godot, Editor Menu -> Editor Settings; scroll down the left sidebar to `Text Editor -> External`
