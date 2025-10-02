@@ -34,7 +34,7 @@ pub struct Imports {
     pub symbols: HashMap<Identifier, Vec<Namespace>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Namespace(pub Vec<Rc<str>>);
 
 impl Imports {
@@ -47,19 +47,6 @@ impl Imports {
             .matches(0..snapshot.len(), &snapshot.text, |grammar| {
                 grammar.imports_config().map(|imports| &imports.query)
             });
-
-        #[derive(Debug)]
-        struct NamespaceAppend {
-            path: Range<usize>,
-            suffix: Range<usize>,
-            singleton_suffix: bool,
-        }
-
-        impl NamespaceAppend {
-            fn range(&self) -> Range<usize> {
-                self.path.start..self.suffix.end
-            }
-        }
 
         let mut import_range: Option<Range<usize>> = None;
         let mut namespace_appends: Vec<NamespaceAppend> = Vec::new();
@@ -99,27 +86,6 @@ impl Imports {
                 }
             }
 
-            let name_text = name_range
-                .clone()
-                .map(|range| snapshot.text_for_range(range).collect::<String>());
-            let path_text = path_range
-                .clone()
-                .map(|range| snapshot.text_for_range(range).collect::<String>());
-            let list_text = list_range
-                .clone()
-                .map(|range| snapshot.text_for_range(range).collect::<String>());
-
-            println!("MATCH");
-            if let Some(path_text) = &path_text {
-                println!("Path: {}", path_text);
-            }
-            if let Some(name_text) = &name_text {
-                println!("Name: {}", name_text);
-            }
-            if let Some(list_text) = &list_text {
-                println!("List: {}", list_text);
-            }
-
             if let Some(path_range) = path_range {
                 if let Some(name_range) = name_range {
                     if list_range.is_some() {
@@ -129,13 +95,11 @@ impl Imports {
                     namespace_appends.push(NamespaceAppend {
                         path: path_range,
                         suffix: name_range,
-                        singleton_suffix: true,
                     });
                 } else if let Some(list_range) = list_range {
                     namespace_appends.push(NamespaceAppend {
                         path: path_range,
                         suffix: list_range.clone(),
-                        singleton_suffix: false,
                     });
                 }
             } else if let Some(name_range) = name_range {
@@ -149,182 +113,230 @@ impl Imports {
             return Err(anyhow!("No imports"));
         };
 
-        dbg!(&namespace_appends);
-        dbg!(&symbols);
-
-        #[derive(Debug)]
-        struct Node {
-            path: Range<usize>,
-            suffix: Range<usize>,
-            suffix_children: Vec<Node>,
-            parent_is_path: bool,
-        }
-
-        impl Node {
-            fn range(&self) -> Range<usize> {
-                self.path.start..self.suffix.end
-            }
-        }
-
-        let mut appends_iter = namespace_appends.into_iter();
-
-        // todo! take Vec<Node>?
-        fn add_to_node(node: &mut Node, append: &NamespaceAppend) -> bool {
-            let parent_is_path = append.path.contains_inclusive(&node.range());
-            if parent_is_path || node.suffix.contains_inclusive(&append.range()) {
-                for node in &mut node.suffix_children {
-                    if add_to_node(node, &append) {
-                        return true;
-                    }
-                }
-                node.suffix_children.push(Node {
-                    path: append.path.clone(),
-                    suffix: append.suffix.clone(),
-                    suffix_children: Vec::new(),
-                    parent_is_path,
-                });
-                true
-            } else {
-                false
-            }
-        }
-
-        let mut nodes = vec![];
-
-        if let Some(initial_append) = appends_iter.next() {
-            nodes.push(Node {
-                path: initial_append.path,
-                suffix: initial_append.suffix,
-                suffix_children: Vec::new(),
-                parent_is_path: false,
-            });
-            'outer: for append in appends_iter {
-                for node in &mut nodes {
-                    if add_to_node(node, &append) {
-                        continue 'outer;
-                    }
-                }
+        let mut nodes = Vec::new();
+        for append in namespace_appends {
+            if !append.add_to_nodes(&mut nodes) {
                 nodes.push(Node {
                     path: append.path.clone(),
+                    path_children: Vec::new(),
                     suffix: append.suffix.clone(),
                     suffix_children: Vec::new(),
-                    parent_is_path: false,
                 });
             }
-            dbg!(&nodes);
+        }
+
+        for symbol in symbols {
+            if !add_symbol_to_nodes(&mut nodes, &symbol) {
+                // todo!
+                log::error!("bug: parent for symbol not found");
+            }
         }
 
         let mut import_symbols = HashMap::default();
-
-        fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Rc<str> {
-            snapshot
-                .text_for_range(range.clone())
-                .collect::<Cow<str>>()
-                .into()
-        }
-
-        fn add_children_to_namespace(
-            node: &Node,
-            namespace: &mut Namespace,
-            symbols: &Vec<Range<usize>>,
-            import_symbols: &mut HashMap<Identifier, Vec<Namespace>>,
-            snapshot: &BufferSnapshot,
-        ) {
-            let child_symbols = if !node.suffix_children.is_empty() {
-                vec![]
-            } else {
-                symbols
-                    .iter()
-                    .filter(|symbol| node.suffix.contains_inclusive(&symbol))
-                    .collect()
-            };
-
-            let mut pop_count = 0;
-            if !node.parent_is_path {
-                let text = range_text(snapshot, &node.path);
-                namespace.0.push(text);
-                pop_count += 1;
-            }
-
-            if child_symbols.is_empty() && node.parent_is_path {
-                let text = range_text(snapshot, &node.suffix);
-                namespace.0.push(text);
-                pop_count += 1;
-            }
-
-            for child in &node.suffix_children {
-                add_children_to_namespace(&child, namespace, symbols, import_symbols, snapshot);
-            }
-
-            if node.suffix_children.is_empty() {
-                for symbol in &child_symbols {
-                    let symbol_text = range_text(&snapshot, &symbol);
-                    import_symbols
-                        .entry(Identifier {
-                            // todo!
-                            language_id: LanguageId::new(),
-                            name: symbol_text.as_ref().into(),
-                        })
-                        .or_default()
-                        .push(namespace.clone());
-                }
-                if child_symbols.is_empty() {
-                    if node.parent_is_path {
-                        import_symbols
-                            .entry(Identifier {
-                                // todo!
-                                language_id: LanguageId::new(),
-                                name: dbg!(namespace.0.last().unwrap().as_ref().into()),
-                            })
-                            .or_default()
-                            .push(Namespace(namespace.0[..namespace.0.len() - 1].to_vec()));
-                    } else {
-                        import_symbols
-                            .entry(Identifier {
-                                // todo!
-                                language_id: LanguageId::new(),
-                                name: dbg!(range_text(snapshot, &node.suffix).as_ref().into()),
-                            })
-                            .or_default()
-                            .push(namespace.clone());
-                    }
-                }
-            }
-
-            for _ in 0..pop_count {
-                namespace.0.pop();
-            }
-        }
-
-        for node in nodes {
-            let mut namespace = Namespace(vec![]);
-
-            namespace.0.push(range_text(snapshot, &node.path));
-            if node
-                .suffix_children
-                .first()
-                .is_none_or(|child| child.parent_is_path)
-            {
-                namespace.0.push(range_text(snapshot, &node.suffix));
-            }
-
-            for child in node.suffix_children {
-                add_children_to_namespace(
-                    &child,
-                    &mut namespace,
-                    &symbols,
-                    &mut import_symbols,
-                    snapshot,
-                );
-            }
-
-            namespace.0.pop();
+        for node in &nodes {
+            let mut namespace = Namespace::default();
+            node.add_to_symbols(&mut namespace, &mut import_symbols, snapshot);
         }
 
         Ok(Imports {
             range: import_range,
             symbols: import_symbols,
         })
+    }
+}
+
+#[derive(Default, Debug)]
+struct Node {
+    path: Range<usize>,
+    path_children: Vec<Node>,
+    suffix: Range<usize>,
+    suffix_children: Vec<Node>,
+}
+
+impl Node {
+    fn range(&self) -> Range<usize> {
+        self.path.start..self.suffix.end
+    }
+
+    #[allow(dead_code)]
+    fn debug<'a>(&'a self, snapshot: &'a BufferSnapshot) -> NodeDebug<'a> {
+        NodeDebug {
+            node: self,
+            snapshot,
+        }
+    }
+
+    fn add_to_symbols(
+        &self,
+        namespace: &mut Namespace,
+        symbols: &mut HashMap<Identifier, Vec<Namespace>>,
+        snapshot: &BufferSnapshot,
+    ) {
+        let mut pop_count = 0;
+
+        if self.path_children.is_empty() {
+            if !self.path.is_empty() {
+                namespace.0.push(Self::range_text(snapshot, &self.path));
+                pop_count += 1;
+            }
+        } else {
+            for child in &self.path_children {
+                pop_count += child.add_path_to_namespace(namespace, snapshot);
+            }
+        };
+
+        if self.suffix_children.is_empty() {
+            // todo! language id
+            symbols
+                .entry(Identifier {
+                    language_id: LanguageId::new(),
+                    name: Self::range_text(snapshot, &self.suffix).as_ref().into(),
+                })
+                .or_default()
+                .push(namespace.clone());
+        } else {
+            for child in &self.suffix_children {
+                child.add_to_symbols(namespace, symbols, snapshot);
+            }
+        }
+
+        namespace.0.drain(namespace.0.len() - pop_count..);
+    }
+
+    fn add_path_to_namespace(&self, namespace: &mut Namespace, snapshot: &BufferSnapshot) -> usize {
+        let mut pop_count = 0;
+        if self.path_children.is_empty() {
+            if !self.path.is_empty() {
+                namespace.0.push(Self::range_text(snapshot, &self.path));
+                pop_count += 1;
+            }
+        } else {
+            for child in &self.path_children {
+                pop_count += child.add_path_to_namespace(namespace, snapshot);
+            }
+        }
+        if self.suffix_children.is_empty() {
+            namespace.0.push(Self::range_text(snapshot, &self.suffix));
+            pop_count += 1;
+        } else {
+            for child in &self.suffix_children {
+                pop_count += child.add_path_to_namespace(namespace, snapshot);
+            }
+        }
+        pop_count
+    }
+
+    fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Rc<str> {
+        snapshot
+            .text_for_range(range.clone())
+            .collect::<Cow<str>>()
+            .into()
+    }
+}
+
+#[derive(Debug)]
+struct NamespaceAppend {
+    path: Range<usize>,
+    suffix: Range<usize>,
+}
+
+impl NamespaceAppend {
+    fn range(&self) -> Range<usize> {
+        self.path.start..self.suffix.end
+    }
+
+    fn add_to_nodes(&self, nodes: &mut Vec<Node>) -> bool {
+        for node in nodes {
+            if self.path.contains_inclusive(&node.range()) {
+                // TODO: Consider whether this should recurse?
+                let mut new_parent = Node {
+                    path: self.path.clone(),
+                    path_children: Vec::new(),
+                    suffix: self.suffix.clone(),
+                    suffix_children: Vec::new(),
+                };
+                std::mem::swap(node, &mut new_parent);
+                let old_node = new_parent;
+                node.path_children.push(old_node);
+                return true;
+            } else if node.suffix.contains_inclusive(&self.range()) {
+                if self.add_to_nodes(&mut node.suffix_children) {
+                    return true;
+                }
+                node.suffix_children.push(Node {
+                    path: self.path.clone(),
+                    path_children: Vec::new(),
+                    suffix: self.suffix.clone(),
+                    suffix_children: Vec::new(),
+                });
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn add_symbol_to_nodes(nodes: &mut Vec<Node>, symbol: &Range<usize>) -> bool {
+    for node in nodes {
+        if node.suffix.contains_inclusive(symbol) {
+            if add_symbol_to_nodes(&mut node.suffix_children, symbol) {
+                return true;
+            }
+            node.suffix_children.push(Node {
+                path: 0..0,
+                path_children: vec![],
+                suffix: symbol.clone(),
+                suffix_children: vec![],
+            });
+            return true;
+        }
+    }
+    false
+}
+
+struct NodeDebug<'a> {
+    node: &'a Node,
+    snapshot: &'a BufferSnapshot,
+}
+
+impl std::fmt::Debug for NodeDebug<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Node")
+            .field("path_range", &self.node.path)
+            .field(
+                "path_text",
+                &self
+                    .snapshot
+                    .text_for_range(self.node.path.clone())
+                    .collect::<String>(),
+            )
+            .field(
+                "path_children",
+                &self
+                    .node
+                    .path_children
+                    .iter()
+                    .map(|child| child.debug(&self.snapshot))
+                    .collect::<Vec<Self>>(),
+            )
+            .field("suffix_range", &self.node.suffix)
+            .field(
+                "suffix_text",
+                &self
+                    .snapshot
+                    .text_for_range(self.node.suffix.clone())
+                    .collect::<String>(),
+            )
+            .field(
+                "suffix_children",
+                &self
+                    .node
+                    .suffix_children
+                    .iter()
+                    .map(|child| child.debug(&self.snapshot))
+                    .collect::<Vec<Self>>(),
+            )
+            .finish()
     }
 }
 
@@ -365,8 +377,7 @@ mod test {
                     "std::collections::HashSet",
                 ],
             ),
-            // todo!
-            // ("use std::{a::b::HashMap};", vec!["std::a::b::HashMap"]),
+            ("use std::{a::b::HashMap};", vec!["std::a::b::HashMap"]),
             (
                 "use {std::any::TypeId, std::collections::{HashMap, HashSet}};",
                 vec![
@@ -417,13 +428,6 @@ mod test {
                             .collect::<Vec<_>>()
                     })
                 })
-                /*
-                .flat_map(|(identifier, namespaces)| {
-                    namespaces
-                        .iter()
-                        .map(|namespace| to_rust_qualified_identifier(namespace, identifier))
-                })
-                */
                 .collect::<Vec<_>>();
             let mut expected_symbols = expected
                 .iter()
