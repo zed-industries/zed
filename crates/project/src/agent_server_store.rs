@@ -231,6 +231,7 @@ impl AgentServerStore {
                     names: self
                         .external_agents
                         .keys()
+                        .filter(|name| name.0 != CODEX_NAME)
                         .map(|name| name.to_string())
                         .collect(),
                 })
