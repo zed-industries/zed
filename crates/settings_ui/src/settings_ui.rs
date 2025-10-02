@@ -1,5 +1,6 @@
 //! # settings_ui
 mod components;
+use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
@@ -11,7 +12,7 @@ use gpui::{
 use project::WorktreeId;
 use settings::{
     BottomDockLayout, CloseWindowWhenNoItems, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
+    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsLocation, SettingsStore,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -3305,6 +3306,61 @@ impl Render for SettingsWindow {
                     .child(self.render_files(window, cx))
                     .child(self.render_page(window, cx)),
             )
+    }
+}
+
+fn update_settings_file<T: Send + 'static>(
+    file: SettingsUiFile,
+    field: SettingField<T>,
+    value: T,
+    cx: &mut App,
+) -> Result<()> {
+    match file {
+        SettingsUiFile::Local((worktree_id, rel_path)) => {
+            fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+                workspace::AppState::global(cx)
+                    .upgrade()
+                    .map(|app_state| {
+                        app_state
+                            .workspace_store
+                            .read(cx)
+                            .workspaces()
+                            .iter()
+                            .filter_map(|workspace| {
+                                Some(workspace.read(cx).ok()?.project().clone())
+                            })
+                    })
+                    .into_iter()
+                    .flatten()
+            }
+            let project = all_projects(cx).find(|project| {
+                project.read_with(cx, |project, cx| {
+                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
+                })
+            });
+            let Some(project) = project else {
+                anyhow::bail!(
+                    "Could not find worktree containing settings file: {}",
+                    &rel_path.display(PathStyle::local())
+                );
+            };
+            project.update(cx, |project, cx| {
+                project.update_local_settings_file(worktree_id, rel_path, cx, move |settings| {
+                    *(field.pick_mut)(settings) = Some(value);
+                });
+            });
+            return Ok(());
+        }
+        SettingsUiFile::User => Ok(
+            /* todo! error? */
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    *(field.pick_mut)(settings) = Some(value);
+                },
+            ),
+        ),
+        SettingsUiFile::Server(_) => unimplemented!(),
     }
 }
 

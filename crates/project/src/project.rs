@@ -73,8 +73,8 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
-    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
-    Task, WeakEntity, Window,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
+    ReadGlobal as _, SharedString, Task, WeakEntity, Window,
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
@@ -5291,6 +5291,51 @@ impl Project {
 
     pub fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree_store.read(cx).path_style()
+    }
+
+    pub fn contains_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: &RelPath,
+        cx: &App,
+    ) -> bool {
+        self.worktree_for_id(worktree_id, cx)
+            .map_or(false, |worktree| {
+                worktree.read(cx).entry_for_path(rel_path).is_some()
+            })
+    }
+
+    pub fn update_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: Arc<RelPath>,
+        cx: &mut App,
+        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent),
+    ) {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            // todo! error?
+            return;
+        };
+        cx.spawn(async move |cx| {
+            let file = worktree
+                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .await
+                .context("Failed to load settings file")?;
+
+            let new_text = cx.read_global::<SettingsStore, _>(|store, _| {
+                store.new_text_for_update(file.text, update)
+            })?;
+            worktree
+                .update(cx, |worktree, cx| {
+                    let line_ending = text::LineEnding::detect(&new_text);
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                })?
+                .await
+                .context("Failed to write settings file")?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 }
 
