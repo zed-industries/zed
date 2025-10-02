@@ -3644,8 +3644,14 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(paths.into_iter().map(Into::into).collect())
-                .await;
+            self.process_events(
+                paths
+                    .into_iter()
+                    .filter(|e| e.kind.is_some())
+                    .map(Into::into)
+                    .collect(),
+            )
+            .await;
         }
         if let Some(abs_path) = containing_git_repository {
             self.process_events(vec![abs_path]).await;
@@ -3690,7 +3696,11 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().map(Into::into).collect()).await;
+                    // TODO kb breaks other things
+                    self.process_events(paths.into_iter().filter(|e| {
+                        dbg!(&e);
+                        e.kind.is_some()
+                    }).map(Into::into).collect()).await;
                 }
 
                 paths = global_gitignore_events.next().fuse() => {

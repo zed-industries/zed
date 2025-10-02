@@ -8872,14 +8872,20 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     git_commit("Initial commit", &repo);
 
     let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let repo_events = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
 
     project.update(cx, |project, cx| {
-        let repository_update_events = project_events.clone();
+        let repo_events = repo_events.clone();
         cx.subscribe(project.git_store(), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
-                repository_update_events.lock().push(e.clone());
+                repo_events.lock().push(e.clone());
             }
+        })
+        .detach();
+        let project_events = project_events.clone();
+        cx.subscribe_self(move |_, e, _| {
+            project_events.lock().push(e.clone());
         })
         .detach();
     });
@@ -8912,7 +8918,8 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let initial_events = project_events.lock().clone();
+    let initial_events = repo_events.lock().clone();
+    // dbg!(project_events.lock().as_slice());
     assert_eq!(
         initial_events,
         vec![
@@ -8967,10 +8974,11 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     });
 
     assert_eq!(
-        project_events.lock().as_slice(),
+        repo_events.lock().as_slice(),
         initial_events,
         "No further repo events should happen, as only ignored dirs' contents was changed",
     );
+    dbg!(project_events.lock().as_slice());
 }
 
 #[gpui::test]

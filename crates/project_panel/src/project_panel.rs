@@ -496,10 +496,8 @@ impl ProjectPanel {
             })
             .detach();
 
-            cx.subscribe_in(
-                &git_store,
-                window,
-                |this, _, event, window, cx| match event {
+            cx.subscribe_in(&git_store, window, |this, _, event, window, cx| {
+                match dbg!(event) {
                     GitStoreEvent::RepositoryUpdated(_, _, _)
                     | GitStoreEvent::RepositoryAdded(_)
                     | GitStoreEvent::RepositoryRemoved(_) => {
@@ -507,14 +505,14 @@ impl ProjectPanel {
                         cx.notify();
                     }
                     _ => {}
-                },
-            )
+                }
+            })
             .detach();
 
             cx.subscribe_in(
                 &project,
                 window,
-                |this, project, event, window, cx| match event {
+                |this, project, event, window, cx| match dbg!(event) {
                     project::Event::ActiveEntryChanged(Some(entry_id)) => {
                         if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
                             this.reveal_entry(project.clone(), *entry_id, true, window, cx)
@@ -567,6 +565,7 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
+                    // TODO kb can exclude doing this, if only files are updated (not added/removed and not directories)
                     project::Event::WorktreeUpdatedEntries(_, _)
                     | project::Event::WorktreeAdded(_)
                     | project::Event::WorktreeOrderChanged => {
@@ -3183,6 +3182,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!("$$$$$$$$$$$$$$$$$$$$$$update_visible_entries");
         let now = Instant::now();
         let settings = ProjectPanelSettings::get_global(cx);
         let auto_collapse_dirs = settings.auto_fold_dirs;

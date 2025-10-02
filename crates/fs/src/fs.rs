@@ -749,11 +749,15 @@ impl Fs for RealFs {
                         events
                             .into_iter()
                             .map(|event| {
+                                dbg!(&event);
                                 let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
                                     Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED) {
+                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
+                                // TODO kb is this correct? What about other platforms?
+                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
+                                {
                                     Some(PathEventKind::Changed)
                                 } else {
                                     None
@@ -1261,7 +1265,7 @@ impl FakeFs {
             async move {
                 while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, None)]);
+                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
                     } else {
                         panic!("Failed to lock file system state, this execution would have caused a test hang");
                     }
@@ -1308,7 +1312,7 @@ impl FakeFs {
                 Ok(())
             })
             .unwrap();
-        state.emit_event([(path.to_path_buf(), None)]);
+        state.emit_event([(path.to_path_buf(), Some(PathEventKind::Changed))]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1331,7 +1335,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Changed))]);
     }
 
     fn write_file_internal(
@@ -1522,7 +1526,7 @@ impl FakeFs {
 
             drop(repo_state);
             if emit_git_event {
-                state.emit_event([(dot_git, None)]);
+                state.emit_event([(dot_git, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -1573,7 +1577,7 @@ impl FakeFs {
 
             if emit_git_event {
                 drop(repo_state);
-                state.emit_event([(canonical_path, None)]);
+                state.emit_event([(canonical_path, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -2053,7 +2057,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Changed))]);
 
         Ok(())
     }
