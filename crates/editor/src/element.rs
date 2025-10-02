@@ -7004,11 +7004,12 @@ impl EditorElement {
                             {
                                 let position =
                                     editor.scroll_position(cx).apply_along(minimap_axis, |p| {
-                                        p + ScrollPixelOffset::from(
+                                        (p + ScrollPixelOffset::from(
                                             (new_position - old_position) / pixels_per_line,
-                                        )
+                                        ))
                                         .max(0.)
                                     });
+
                                 editor.set_scroll_position(position, window, cx);
                             }
                             cx.stop_propagation();
