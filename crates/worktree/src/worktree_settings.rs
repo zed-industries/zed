@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use gpui::App;
 use settings::{Settings, SettingsContent};
 use util::{
     ResultExt,
@@ -35,7 +34,7 @@ impl WorktreeSettings {
 }
 
 impl Settings for WorktreeSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let worktree = content.project.worktree.clone();
         let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();

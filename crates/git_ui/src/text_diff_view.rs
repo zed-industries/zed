@@ -454,7 +454,7 @@ mod tests {
     use gpui::{TestAppContext, VisualContext};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use unindent::unindent;
     use util::{path, test::marked_text_ranges};
 
@@ -466,7 +466,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             editor::init_settings(cx);
-            theme::ThemeSettings::register(cx)
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 

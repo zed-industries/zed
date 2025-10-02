@@ -34,16 +34,8 @@ fn get_theme_family_themes(theme_name: &str) -> Option<(&'static str, &'static s
 }
 
 fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
-    let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
+    let theme_selection = ThemeSettings::get_global(cx).theme.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
-    let theme_selection = theme_selection.unwrap_or_else(|| ThemeSelection::Dynamic {
-        mode: match *system_appearance {
-            Appearance::Light => ThemeMode::Light,
-            Appearance::Dark => ThemeMode::Dark,
-        },
-        light: ThemeName("One Light".into()),
-        dark: ThemeName("One Dark".into()),
-    });
 
     let theme_mode = theme_selection
         .mode()
@@ -111,7 +103,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             ThemeMode::Dark => Appearance::Dark,
             ThemeMode::System => *system_appearance,
         };
-        let current_theme_name = SharedString::new(theme_selection.theme(appearance));
+        let current_theme_name: SharedString = theme_selection.name(appearance).0.into();
 
         let theme_names = match appearance {
             Appearance::Light => LIGHT_THEMES,

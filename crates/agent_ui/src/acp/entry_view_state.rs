@@ -414,7 +414,6 @@ mod tests {
     use project::Project;
     use serde_json::json;
     use settings::{Settings as _, SettingsStore};
-    use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
 
@@ -544,7 +543,7 @@ mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
         });
