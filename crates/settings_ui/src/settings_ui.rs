@@ -4,9 +4,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
-    point, px, size, uniform_list,
+    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
+    ScrollHandle, Stateful, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -1405,11 +1405,20 @@ impl SettingsWindow {
             })
     }
 
-    fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        v_flex().gap_4().children(
-            self.page_items()
-                .map(|item| item.render(self.current_file.clone(), window, cx)),
-        )
+    fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+        v_flex()
+            .id("settings-ui-page")
+            .gap_4()
+            .children(
+                self.page_items()
+                    .map(|item| item.render(self.current_file.clone(), window, cx)),
+            )
+            .overflow_y_scroll()
+            .track_scroll(
+                window
+                    .use_state(cx, |_, _| ScrollHandle::default())
+                    .read(cx),
+            )
     }
 
     fn current_page_index(&self) -> usize {
