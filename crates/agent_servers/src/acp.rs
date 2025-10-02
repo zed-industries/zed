@@ -48,10 +48,6 @@ pub struct AcpSession {
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
 }
 
-fn is_auth_required(err: &acp::Error) -> bool {
-    err.code == ErrorCode::AUTH_REQUIRED.code
-}
-
 pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
@@ -255,7 +251,7 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest { mcp_servers, cwd, meta: None })
                 .await
                 .map_err(|err| {
-                    if is_auth_required(&err) {
+                    if err.code == ErrorCode::AUTH_REQUIRED.code {
                         let mut error = AuthRequired::new();
 
                         if err.message != ErrorCode::AUTH_REQUIRED.message {
@@ -384,7 +380,7 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if is_auth_required(&err) {
+                    if err.code == ErrorCode::AUTH_REQUIRED.code {
                         return Err(anyhow!(acp::Error::auth_required()));
                     }
 
