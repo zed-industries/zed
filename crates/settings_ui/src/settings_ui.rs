@@ -140,7 +140,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General Page",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -308,7 +308,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
@@ -636,7 +636,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Project",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -656,7 +656,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "AI",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -679,7 +679,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "Project",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -699,7 +699,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: true,
+            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
