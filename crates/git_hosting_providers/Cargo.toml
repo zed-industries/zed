@@ -19,7 +19,6 @@ git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 regex.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

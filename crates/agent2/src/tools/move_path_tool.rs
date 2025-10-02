@@ -8,14 +8,11 @@ use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 use util::markdown::MarkdownInlineCode;
 
-/// Moves or rename a file or directory in the project, and returns confirmation
-/// that the move succeeded.
+/// Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.
 ///
-/// If the source and destination directories are the same, but the filename is
-/// different, this performs a rename. Otherwise, it performs a move.
+/// If the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.
 ///
-/// This tool should be used when it's desirable to move or rename a file or
-/// directory without changing its contents at all.
+/// This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
     /// The source path of the file or directory to move/rename.
@@ -55,15 +52,19 @@ impl AgentTool for MovePathTool {
     type Input = MovePathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "move_path".into()
+    fn name() -> &'static str {
+        "move_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Move
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
@@ -97,7 +98,7 @@ impl AgentTool for MovePathTool {
                 .and_then(|project_path| project.entry_for_path(&project_path, cx))
             {
                 Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => project.rename_entry(entity.id, project_path.path, cx),
+                    Some(project_path) => project.rename_entry(entity.id, project_path, cx),
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path

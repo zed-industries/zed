@@ -15,10 +15,6 @@ test-support = []
 path = "src/reqwest_client.rs"
 doctest = true
 
-[[example]]
-name = "client"
-path = "examples/client.rs"
-
 [dependencies]
 anyhow.workspace = true
 bytes.workspace = true
@@ -26,7 +22,6 @@ futures.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
 serde.workspace = true
-smol.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 regex.workspace = true

@@ -104,7 +104,7 @@ Prepared new Zed versions locally. You will need to push the branches and open a
       ${prev_minor_branch_name} \\
       ${bump_main_branch_name}
 
-    echo -e "Release Notes:\n\n-N/A" | gh pr create \\
+    echo -e "Release Notes:\n\n- N/A" | gh pr create \\
       --title "Bump Zed to v${major}.${next_minor}" \\
       --body-file "-" \\
       --base main \\

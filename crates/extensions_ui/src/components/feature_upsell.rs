@@ -61,7 +61,6 @@ impl RenderOnce for FeatureUpsell {
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .on_click({
-                                let docs_url = docs_url.clone();
                                 move |_event, _window, cx| {
                                     telemetry::event!(
                                         "Documentation Viewed",

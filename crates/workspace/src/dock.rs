@@ -9,8 +9,6 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
@@ -171,7 +169,7 @@ where
     }
 
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.read(cx).focus_handle(cx).clone()
+        self.read(cx).focus_handle(cx)
     }
 
     fn activation_priority(&self, cx: &App) -> u32 {
@@ -210,12 +208,31 @@ impl Focusable for Dock {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DockPosition {
     Left,
     Bottom,
     Right,
+}
+
+impl From<settings::DockPosition> for DockPosition {
+    fn from(value: settings::DockPosition) -> Self {
+        match value {
+            settings::DockPosition::Left => Self::Left,
+            settings::DockPosition::Bottom => Self::Bottom,
+            settings::DockPosition::Right => Self::Right,
+        }
+    }
+}
+
+impl Into<settings::DockPosition> for DockPosition {
+    fn into(self) -> settings::DockPosition {
+        match self {
+            Self::Left => settings::DockPosition::Left,
+            Self::Bottom => settings::DockPosition::Bottom,
+            Self::Right => settings::DockPosition::Right,
+        }
+    }
 }
 
 impl DockPosition {
@@ -340,7 +357,7 @@ impl Dock {
     pub fn panel<T: Panel>(&self) -> Option<Entity<T>> {
         self.panel_entries
             .iter()
-            .find_map(|entry| entry.panel.to_any().clone().downcast().ok())
+            .find_map(|entry| entry.panel.to_any().downcast().ok())
     }
 
     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
@@ -460,7 +477,7 @@ impl Dock {
                     };
 
                     let was_visible = this.is_open()
-                        && this.visible_panel().map_or(false, |active_panel| {
+                        && this.visible_panel().is_some_and(|active_panel| {
                             active_panel.panel_id() == Entity::entity_id(&panel)
                         });
 
@@ -523,7 +540,7 @@ impl Dock {
                     PanelEvent::Close => {
                         if this
                             .visible_panel()
-                            .map_or(false, |p| p.panel_id() == Entity::entity_id(panel))
+                            .is_some_and(|p| p.panel_id() == Entity::entity_id(panel))
                         {
                             this.set_open(false, window, cx);
                         }
@@ -915,6 +932,11 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
+                                        telemetry::event!(
+                                            "Panel Button Clicked",
+                                            name = name,
+                                            toggle_state = !is_open
+                                        );
                                         window.focus(&focus_handle);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }

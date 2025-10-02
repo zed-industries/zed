@@ -255,20 +255,23 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::mpsc};
+    use std::sync::mpsc;
 
-    use crate::{Project, project_settings::ProjectSettings};
+    use crate::Project;
 
     use super::*;
     use fs::FakeFs;
-    use git::status::{UnmergedStatus, UnmergedStatusCode};
+    use git::{
+        repository::repo_path,
+        status::{UnmergedStatus, UnmergedStatusCode},
+    };
     use gpui::{BackgroundExecutor, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use serde_json::json;
     use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ToOffset as _};
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use worktree::WorktreeSettings;
 
     #[test]
@@ -344,8 +347,8 @@ mod tests {
         assert_eq!(conflicts_in_range.len(), 1);
 
         // Test with a range that doesn't include any conflicts
-        let range = buffer.anchor_after(first_conflict_end.to_offset(&buffer) + 1)
-            ..buffer.anchor_before(second_conflict_start.to_offset(&buffer) - 1);
+        let range = buffer.anchor_after(first_conflict_end.to_next_offset(&buffer))
+            ..buffer.anchor_before(second_conflict_start.to_previous_offset(&buffer));
         let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
         assert_eq!(conflicts_in_range.len(), 0);
     }
@@ -369,7 +372,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -400,7 +403,7 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -484,7 +487,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
         let initial_text = "
@@ -543,7 +546,7 @@ mod tests {
 
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,
@@ -585,7 +588,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
 
@@ -621,7 +624,7 @@ mod tests {
         cx.run_until_parked();
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                rel_path("a.txt").into(),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,
@@ -647,20 +650,20 @@ mod tests {
 
         // Simulate the conflict being removed by e.g. staging the file.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.unmerged_paths.remove(Path::new("a.txt"))
+            state.unmerged_paths.remove(&repo_path("a.txt"))
         })
         .unwrap();
 
         cx.run_until_parked();
         conflict_set.update(cx, |conflict_set, _| {
-            assert_eq!(conflict_set.has_conflict, false);
+            assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
 
         // Simulate the conflict being re-added.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

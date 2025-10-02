@@ -206,16 +206,16 @@ impl ThemePreviewTile {
                 sidebar_width,
                 skeleton_height.clone(),
             ))
-            .child(Self::render_pane(seed, theme, skeleton_height.clone()))
+            .child(Self::render_pane(seed, theme, skeleton_height))
     }
 
     fn render_borderless(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
-        return Self::render_editor(
+        Self::render_editor(
             seed,
             theme,
             Self::SIDEBAR_WIDTH_DEFAULT,
             Self::SKELETON_HEIGHT_DEFAULT,
-        );
+        )
     }
 
     fn render_border(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
@@ -246,7 +246,7 @@ impl ThemePreviewTile {
     ) -> impl IntoElement {
         let sidebar_width = relative(0.20);
 
-        return div()
+        div()
             .size_full()
             .p(Self::ROOT_PADDING)
             .rounded(Self::ROOT_RADIUS)
@@ -260,7 +260,7 @@ impl ThemePreviewTile {
                     .overflow_hidden()
                     .child(div().size_full().child(Self::render_editor(
                         seed,
-                        theme.clone(),
+                        theme,
                         sidebar_width,
                         Self::SKELETON_HEIGHT_DEFAULT,
                     )))
@@ -278,7 +278,7 @@ impl ThemePreviewTile {
                             )),
                     ),
             )
-            .into_any_element();
+            .into_any_element()
     }
 }
 
@@ -329,9 +329,9 @@ impl Component for ThemePreviewTile {
 
         let themes_to_preview = vec![
             one_dark.clone().ok(),
-            one_light.clone().ok(),
-            gruvbox_dark.clone().ok(),
-            gruvbox_light.clone().ok(),
+            one_light.ok(),
+            gruvbox_dark.ok(),
+            gruvbox_light.ok(),
         ]
         .into_iter()
         .flatten()
@@ -348,7 +348,7 @@ impl Component for ThemePreviewTile {
                             div()
                                 .w(px(240.))
                                 .h(px(180.))
-                                .child(ThemePreviewTile::new(one_dark.clone(), 0.42))
+                                .child(ThemePreviewTile::new(one_dark, 0.42))
                                 .into_any_element(),
                         )])]
                     } else {
@@ -362,13 +362,12 @@ impl Component for ThemePreviewTile {
                             .gap_4()
                             .children(
                                 themes_to_preview
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(_, theme)| {
+                                    .into_iter()
+                                    .map(|theme| {
                                         div()
                                             .w(px(200.))
                                             .h(px(140.))
-                                            .child(ThemePreviewTile::new(theme.clone(), 0.42))
+                                            .child(ThemePreviewTile::new(theme, 0.42))
                                     })
                                     .collect::<Vec<_>>(),
                             )

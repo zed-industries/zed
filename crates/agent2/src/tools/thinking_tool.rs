@@ -11,8 +11,7 @@ use crate::{AgentTool, ToolCallEventStream};
 /// Use this tool when you need to work through complex problems, develop strategies, or outline approaches before taking action.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThinkingToolInput {
-    /// Content to think about. This should be a description of what to think about or
-    /// a problem to solve.
+    /// Content to think about. This should be a description of what to think about or a problem to solve.
     content: String,
 }
 
@@ -22,15 +21,19 @@ impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "thinking".into()
+    fn name() -> &'static str {
+        "thinking"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Think
     }
 
-    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         "Thinking".into()
     }
 

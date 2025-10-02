@@ -6,7 +6,7 @@ Deno support is available through the [Deno extension](https://github.com/zed-ex
 
 ## Deno Configuration
 
-To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable deno by adding the following to your settings.json:
+To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable deno by adding the following to your `settings.json`:
 
 ```json
 {
@@ -54,8 +54,37 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
 See [Configuring supported languages](../configuring-languages.md) in the Zed documentation for more information.
 
 <!--
-TBD: Deno Typescript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
+TBD: Deno TypeScript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
 -->
+
+## Configuration completion
+
+To get completions for `deno.json` or `package.json` you can add the following to your `settings.json`: (More info here https://zed.dev/docs/languages/json)
+
+```json
+"lsp": {
+    "json-language-server": {
+      "settings": {
+        "json": {
+          "schemas": [
+            {
+              "fileMatch": [
+                "deno.json"
+              ],
+              "url": "https://raw.githubusercontent.com/denoland/deno/refs/heads/main/cli/schemas/config-file.v1.json"
+            },
+            {
+              "fileMatch": [
+                "package.json"
+              ],
+              "url": "http://json.schemastore.org/package"
+            }
+          ]
+        }
+      }
+    }
+  }
+```
 
 ## DAP support
 
@@ -85,7 +114,7 @@ To run deno tasks like tests from the ui, add this to `.zed/tasks.json`
 [
   {
     "label": "deno test",
-    "command": "deno test -A --filter '/^$ZED_CUSTOM_DENO_TEST_NAME$/' $ZED_FILE",
+    "command": "deno test -A --filter '/^$ZED_CUSTOM_DENO_TEST_NAME$/' '$ZED_FILE'",
     "tags": ["js-test"]
   }
 ]

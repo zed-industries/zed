@@ -1,0 +1,36 @@
+name: Good First Issue Notifier
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  handle-good-first-issue:
+    if: github.event.label.name == 'good first issue' && github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Prepare Discord message
+        id: prepare-message
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+        run: |
+          MESSAGE="[${ISSUE_TITLE} (#${ISSUE_NUMBER})](<${ISSUE_URL}>)"
+
+          {
+            echo "message<<EOF"
+            echo "$MESSAGE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Discord Webhook Action
+        uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_GOOD_FIRST_ISSUE }}
+          content: ${{ steps.prepare-message.outputs.message }}

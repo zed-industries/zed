@@ -177,7 +177,7 @@ impl ToolbarItemView for MigrationBanner {
             }));
         }
 
-        return ToolbarItemLocation::Hidden;
+        ToolbarItemLocation::Hidden
     }
 }
 

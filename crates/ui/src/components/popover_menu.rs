@@ -93,16 +93,16 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         self.0
             .borrow()
             .as_ref()
-            .map_or(false, |state| state.menu.borrow().as_ref().is_some())
+            .is_some_and(|state| state.menu.borrow().as_ref().is_some())
     }
 
     pub fn is_focused(&self, window: &Window, cx: &App) -> bool {
-        self.0.borrow().as_ref().map_or(false, |state| {
+        self.0.borrow().as_ref().is_some_and(|state| {
             state
                 .menu
                 .borrow()
                 .as_ref()
-                .map_or(false, |model| model.focus_handle(cx).is_focused(window))
+                .is_some_and(|model| model.focus_handle(cx).is_focused(window))
         })
     }
 

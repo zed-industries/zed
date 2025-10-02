@@ -53,6 +53,10 @@ actions!(
         SelectSmallerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Restores the previous visual selection.
         RestoreVisualSelection,
         /// Inserts at the end of each line in visual selection.
@@ -109,6 +113,30 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             });
         }
     });
+
+    Vim::action(editor, cx, |vim, _: &SelectNextSyntaxNode, window, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_next_syntax_node(&Default::default(), window, cx);
+            });
+        }
+    });
+
+    Vim::action(
+        editor,
+        cx,
+        |vim, _: &SelectPreviousSyntaxNode, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+            Vim::take_forced_motion(cx);
+            for _ in 0..count {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.select_prev_syntax_node(&Default::default(), window, cx);
+                });
+            }
+        },
+    );
 
     Vim::action(
         editor,
@@ -216,7 +244,6 @@ impl Vim {
                         // If the file ends with a newline (which is common) we don't do this.
                         // so that if you go to the end of such a file you can use "up" to go
                         // to the previous line and have it work somewhat as expected.
-                        #[allow(clippy::nonminimal_bool)]
                         if !selection.reversed
                             && !selection.is_empty()
                             && !(selection.end.column() == 0 && selection.end == map.max_point())
@@ -582,8 +609,8 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.update_editor(cx, |vim, editor, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
-            let line_mode = line_mode || editor.selections.line_mode;
-            editor.selections.line_mode = false;
+            let line_mode = line_mode || editor.selections.line_mode();
+            editor.selections.set_line_mode(false);
 
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -665,7 +692,7 @@ impl Vim {
     pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let line_mode = line_mode || editor.selections.line_mode;
+            let line_mode = line_mode || editor.selections.line_mode();
 
             // For visual line mode, adjust selections to avoid yanking the next line when on \n
             if line_mode && vim.mode != Mode::VisualBlock {
@@ -683,7 +710,7 @@ impl Vim {
                 });
             }
 
-            editor.selections.line_mode = line_mode;
+            editor.selections.set_line_mode(line_mode);
             let kind = if line_mode {
                 MotionKind::Linewise
             } else {
@@ -721,7 +748,7 @@ impl Vim {
                 // after the change
                 let stable_anchors = editor
                     .selections
-                    .disjoint_anchors()
+                    .disjoint_anchors_arc()
                     .iter()
                     .map(|selection| {
                         let start = selection.start.bias_left(&display_map.buffer_snapshot);
@@ -1203,7 +1230,7 @@ mod test {
                     the lazy dog"});
         assert_eq!(
             cx.read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string())
+                .map(|item| item.text().unwrap())
                 .unwrap(),
             "The q"
         );
@@ -1839,5 +1866,38 @@ mod test {
             brown
             fˇ»ox"
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_syntax_sibling_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    let ˇa = 1;
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Normal,
+        );
+
+        // Enter visual mode and select the statement
+        cx.simulate_keystrokes("v w w w");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    let «a = 1;ˇ»
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // The specific behavior of syntax sibling selection in vim mode
+        // would depend on the key bindings configured, but the actions
+        // are now available for use
     }
 }

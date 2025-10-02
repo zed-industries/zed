@@ -155,7 +155,7 @@ impl RenderOnce for Specimen {
             .text_size(px(font_size * scale))
             .line_height(relative(line_height))
             .p(px(10.0))
-            .child(self.string.clone())
+            .child(self.string)
     }
 }
 

@@ -13,7 +13,7 @@ use gpui::{
 use language::LanguageRegistry;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{WithScrollbar, prelude::*};
 use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
@@ -115,8 +115,7 @@ impl MarkdownPreviewView {
                         pane.activate_item(existing_follow_view_idx, true, true, window, cx);
                     });
                 } else {
-                    let view =
-                        Self::create_following_markdown_view(workspace, editor.clone(), window, cx);
+                    let view = Self::create_following_markdown_view(workspace, editor, window, cx);
                     workspace.active_pane().update(cx, |pane, cx| {
                         pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
                     });
@@ -482,7 +481,7 @@ impl Item for MarkdownPreviewView {
 }
 
 impl Render for MarkdownPreviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let buffer_line_height = ThemeSettings::get_global(cx).buffer_line_height;
 
@@ -599,5 +598,6 @@ impl Render for MarkdownPreviewView {
                     .size_full(),
                 )
             }))
+            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
     }
 }

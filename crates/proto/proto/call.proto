@@ -173,6 +173,7 @@ message ShareProject {
     repeated WorktreeMetadata worktrees = 2;
     reserved 3;
     bool is_ssh_project = 4;
+    optional bool windows_paths = 5;
 }
 
 message ShareProjectResponse {
@@ -202,6 +203,7 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     repeated string language_server_capabilities = 8;
     ChannelRole role = 6;
+    bool windows_paths = 9;
     reserved 7;
 }
 

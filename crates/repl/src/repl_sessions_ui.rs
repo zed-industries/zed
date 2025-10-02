@@ -129,7 +129,6 @@ pub fn init(cx: &mut App) {
 
                 editor
                     .register_action({
-                        let editor_handle = editor_handle.clone();
                         move |_: &RunInPlace, window, cx| {
                             if !JupyterSettings::enabled(cx) {
                                 return;

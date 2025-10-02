@@ -25,6 +25,7 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
+use semver::Version;
 use serde_json::json;
 use settings::Settings;
 use settings::SettingsStore;
@@ -40,6 +41,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
+use util::rel_path::RelPath;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -81,10 +83,7 @@ pub fn init(
     };
     copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
-    let copilot = cx.new({
-        let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
-    });
+    let copilot = cx.new(move |cx| Copilot::start(new_server_id, fs, node_runtime, cx));
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |copilot, cx| {
         copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
@@ -129,7 +128,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::Authorized),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -200,7 +199,7 @@ impl Status {
 }
 
 struct RegisteredBuffer {
-    uri: lsp::Url,
+    uri: lsp::Uri,
     language_id: String,
     snapshot: BufferSnapshot,
     snapshot_version: i32,
@@ -487,6 +486,8 @@ impl Copilot {
         let start_language_server = async {
             let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
+            ensure_node_version_for_copilot(&node_path).await?;
+
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
                 path: node_path,
@@ -581,12 +582,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::Authorized => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -730,7 +731,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::Authorized) {
                 return;
             }
 
@@ -966,8 +967,7 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
             .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+            .map_or(RelPath::empty().into(), |file| file.path().clone());
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
@@ -978,7 +978,7 @@ impl Copilot {
                         tab_size: tab_size.into(),
                         indent_size: 1,
                         insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
+                        relative_path: relative_path.to_proto(),
                         position: point_to_lsp(position),
                         version: version.try_into().unwrap(),
                     },
@@ -1012,8 +1012,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::Authorized => Status::Authorized,
+                    SignInStatus::Unauthorized => Status::Unauthorized,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
@@ -1098,7 +1098,7 @@ impl Copilot {
                 _ => {
                     filter.hide_action_types(&signed_in_actions);
                     filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(no_auth_actions.iter());
+                    filter.show_action_types(&no_auth_actions);
                 }
             }
         }
@@ -1111,9 +1111,9 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Uri, ()> {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx))
+        lsp::Uri::from_file_path(file.abs_path(cx))
     } else {
         format!("buffer://{}", buffer.entity_id())
             .parse()
@@ -1164,6 +1164,44 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
+async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()> {
+    const MIN_COPILOT_NODE_VERSION: Version = Version::new(20, 8, 0);
+
+    log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
+
+    let output = util::command::new_smol_command(node_path)
+        .arg("--version")
+        .output()
+        .await
+        .with_context(|| format!("checking Node.js version at {:?}", node_path))?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "failed to run node --version for Copilot. stdout: {}, stderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let version = Version::parse(version_str.trim().trim_start_matches('v'))
+        .with_context(|| format!("parsing Node.js version from '{}'", version_str.trim()))?;
+
+    if version < MIN_COPILOT_NODE_VERSION {
+        anyhow::bail!(
+            "GitHub Copilot language server requires Node.js {MIN_COPILOT_NODE_VERSION} or later, but found {version}. \
+            Please update your Node.js version or configure a different Node.js path in settings."
+        );
+    }
+
+    log::info!(
+        "Node.js version {} meets Copilot requirements (>= {})",
+        version,
+        MIN_COPILOT_NODE_VERSION
+    );
+    Ok(())
+}
+
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
@@ -1197,14 +1235,14 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::path;
+    use util::{path, paths::PathStyle, rel_path::rel_path};
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
         let (copilot, mut lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new(|cx| Buffer::local("Hello", cx));
-        let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())
+        let buffer_1_uri: lsp::Uri = format!("buffer://{}", buffer_1.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_1, cx));
@@ -1222,7 +1260,7 @@ mod tests {
         );
 
         let buffer_2 = cx.new(|cx| Buffer::local("Goodbye", cx));
-        let buffer_2_uri: lsp::Url = format!("buffer://{}", buffer_2.entity_id().as_u64())
+        let buffer_2_uri: lsp::Uri = format!("buffer://{}", buffer_2.entity_id().as_u64())
             .parse()
             .unwrap();
         copilot.update(cx, |copilot, cx| copilot.register_buffer(&buffer_2, cx));
@@ -1261,7 +1299,7 @@ mod tests {
             buffer.file_updated(
                 Arc::new(File {
                     abs_path: path!("/root/child/buffer-1").into(),
-                    path: Path::new("child/buffer-1").into(),
+                    path: rel_path("child/buffer-1").into(),
                 }),
                 cx,
             )
@@ -1273,7 +1311,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path(path!("/root/child/buffer-1")).unwrap();
+        let buffer_1_uri = lsp::Uri::from_file_path(path!("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,
@@ -1358,7 +1396,7 @@ mod tests {
 
     struct File {
         abs_path: PathBuf,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
     }
 
     impl language::File for File {
@@ -1372,15 +1410,19 @@ mod tests {
             }
         }
 
-        fn path(&self) -> &Arc<Path> {
+        fn path(&self) -> &Arc<RelPath> {
             &self.path
+        }
+
+        fn path_style(&self, _: &App) -> PathStyle {
+            PathStyle::local()
         }
 
         fn full_path(&self, _: &App) -> PathBuf {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
             unimplemented!()
         }
 

@@ -9,7 +9,10 @@ use crate::{
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
 use action_log::ActionLog;
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
+use agent_settings::{
+    AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_DETAILED_PROMPT,
+    SUMMARIZE_THREAD_PROMPT,
+};
 use anyhow::{Result, anyhow};
 use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -107,7 +110,7 @@ impl std::fmt::Display for PromptId {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-pub struct MessageId(pub(crate) usize);
+pub struct MessageId(pub usize);
 
 impl MessageId {
     fn post_inc(&mut self) -> Self {
@@ -178,7 +181,7 @@ impl Message {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_message_content(&self) -> String {
         let mut result = String::new();
 
         if !self.loaded_context.text.is_empty() {
@@ -231,7 +234,6 @@ impl MessageSegment {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
-    pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -384,7 +386,6 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     exceeded_window_error: Option<ExceededWindowError>,
     tool_use_limit_reached: bool,
-    feedback: Option<ThreadFeedback>,
     retry_state: Option<RetryState>,
     message_feedback: HashMap<MessageId, ThreadFeedback>,
     last_received_chunk_at: Option<Instant>,
@@ -484,14 +485,13 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             exceeded_window_error: None,
             tool_use_limit_reached: false,
-            feedback: None,
             retry_state: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
             last_received_chunk_at: None,
             request_callback: None,
             remaining_turns: u32::MAX,
-            configured_model: configured_model.clone(),
+            configured_model,
             profile: AgentProfile::new(profile_id, tools),
         }
     }
@@ -529,7 +529,7 @@ impl Thread {
                 .and_then(|model| {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
-                        model: model.model.clone().into(),
+                        model: model.model.into(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -609,7 +609,6 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             tool_use_limit_reached: serialized.tool_use_limit_reached,
-            feedback: None,
             message_feedback: HashMap::default(),
             last_error_context: None,
             last_received_chunk_at: None,
@@ -1643,17 +1642,15 @@ impl Thread {
         };
 
         self.tool_use
-            .request_tool_use(tool_message_id, tool_use, tool_use_metadata.clone(), cx);
+            .request_tool_use(tool_message_id, tool_use, tool_use_metadata, cx);
 
-        let pending_tool_use = self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
+        self.tool_use.insert_tool_output(
+            tool_use_id,
             tool_name,
             tool_output,
             self.configured_model.as_ref(),
             self.completion_mode,
-        );
-
-        pending_tool_use
+        )
     }
 
     pub fn stream_completion(
@@ -2427,12 +2424,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
-
         let request = self.to_summarize_request(
             &model,
             CompletionIntent::ThreadContextSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_DETAILED_PROMPT.into(),
             cx,
         );
 
@@ -2788,10 +2783,6 @@ impl Thread {
         cx.emit(ThreadEvent::CancelEditing);
     }
 
-    pub fn feedback(&self) -> Option<ThreadFeedback> {
-        self.feedback
-    }
-
     pub fn message_feedback(&self, message_id: MessageId) -> Option<ThreadFeedback> {
         self.message_feedback.get(&message_id).copied()
     }
@@ -2824,7 +2815,7 @@ impl Thread {
 
         let message_content = self
             .message(message_id)
-            .map(|msg| msg.to_string())
+            .map(|msg| msg.to_message_content())
             .unwrap_or_default();
 
         cx.background_spawn(async move {
@@ -2853,52 +2844,6 @@ impl Thread {
         })
     }
 
-    pub fn report_feedback(
-        &mut self,
-        feedback: ThreadFeedback,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let last_assistant_message_id = self
-            .messages
-            .iter()
-            .rev()
-            .find(|msg| msg.role == Role::Assistant)
-            .map(|msg| msg.id);
-
-        if let Some(message_id) = last_assistant_message_id {
-            self.report_message_feedback(message_id, feedback, cx)
-        } else {
-            let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-            let serialized_thread = self.serialize(cx);
-            let thread_id = self.id().clone();
-            let client = self.project.read(cx).client();
-            self.feedback = Some(feedback);
-            cx.notify();
-
-            cx.background_spawn(async move {
-                let final_project_snapshot = final_project_snapshot.await;
-                let serialized_thread = serialized_thread.await?;
-                let thread_data = serde_json::to_value(serialized_thread)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
-
-                let rating = match feedback {
-                    ThreadFeedback::Positive => "positive",
-                    ThreadFeedback::Negative => "negative",
-                };
-                telemetry::event!(
-                    "Assistant Thread Rated",
-                    rating,
-                    thread_id,
-                    thread_data,
-                    final_project_snapshot
-                );
-                client.telemetry().flush_events().await;
-
-                Ok(())
-            })
-        }
-    }
-
     /// Create a snapshot of the current project state including git information and unsaved buffers.
     fn project_snapshot(
         project: Entity<Project>,
@@ -2911,27 +2856,11 @@ impl Thread {
             .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, _| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
-
-            let mut unsaved_buffers = Vec::new();
-            cx.update(|app_cx| {
-                let buffer_store = project.read(app_cx).buffer_store();
-                for buffer_handle in buffer_store.read(app_cx).buffers() {
-                    let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty()
-                        && let Some(file) = buffer.file()
-                    {
-                        let path = file.path().to_string_lossy().to_string();
-                        unsaved_buffers.push(path);
-                    }
-                }
-            })
-            .ok();
 
             Arc::new(ProjectSnapshot {
                 worktree_snapshots,
-                unsaved_buffer_paths: unsaved_buffers,
                 timestamp: Utc::now(),
             })
         })
@@ -2946,7 +2875,7 @@ impl Thread {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().to_string();
+                let path = worktree.abs_path().to_string_lossy().into_owned();
                 let snapshot = worktree.snapshot();
                 (path, snapshot)
             });
@@ -3242,7 +3171,7 @@ impl Thread {
             self.configured_model.as_ref(),
             self.completion_mode,
         );
-        self.tool_finished(tool_use_id.clone(), None, true, window, cx);
+        self.tool_finished(tool_use_id, None, true, window, cx);
     }
 }
 
@@ -3326,9 +3255,10 @@ mod tests {
 
     // Test-specific constants
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
-    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings};
     use assistant_tool::ToolRegistry;
     use assistant_tools;
+    use fs::Fs;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
@@ -3343,7 +3273,7 @@ mod tests {
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
     use theme::ThemeSettings;
@@ -3352,9 +3282,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_message_with_context(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3429,9 +3360,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_only_include_new_contexts(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({
                 "file1.rs": "fn function1() {}\n",
@@ -3585,9 +3517,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_message_without_files(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3664,9 +3597,10 @@ fn main() {{
     #[gpui::test]
     #[ignore] // turn this test on when project_notifications tool is re-enabled
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3792,9 +3726,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3814,9 +3749,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_serializing_thread_profile(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3857,9 +3793,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_temperature_setting(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3874,7 +3811,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3894,7 +3831,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3934,7 +3871,7 @@ fn main() {{
                 AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
-                        model: Some(model.id().0.clone()),
+                        model: Some(model.id().0),
                         temperature: Some(0.66),
                     }],
                     ..AgentSettings::get_global(cx).clone()
@@ -3951,9 +3888,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -4036,9 +3973,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary_error_set_manually(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -4058,9 +3995,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -4212,9 +4149,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_on_overloaded_error(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4290,9 +4227,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_on_internal_server_error(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4372,9 +4309,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_exponential_backoff_on_retries(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4492,9 +4429,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_max_retries_exceeded(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4583,9 +4520,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_message_removed_on_retry(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4756,9 +4693,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_successful_completion_clears_retry_state(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4922,9 +4859,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_rate_limit_retry_single_attempt(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -5107,9 +5044,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_ui_only_messages_not_sent_to_model(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
 
         // Insert a regular user message
@@ -5207,9 +5144,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_no_retry_without_burn_mode(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Ensure we're in Normal mode (not Burn mode)
@@ -5280,9 +5217,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_canceled_on_stop(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -5388,7 +5325,8 @@ fn main() {{
         cx.run_until_parked();
     }
 
-    fn init_test_settings(cx: &mut TestAppContext) {
+    fn init_test_settings(cx: &mut TestAppContext) -> Arc<dyn Fs> {
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -5396,7 +5334,7 @@ fn main() {{
             Project::init_settings(cx);
             AgentSettings::register(cx);
             prompt_store::init(cx);
-            thread_store::init(cx);
+            thread_store::init(fs.clone(), cx);
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
@@ -5410,16 +5348,17 @@ fn main() {{
             ));
             assistant_tools::init(http_client, cx);
         });
+        fs
     }
 
     // Helper to create a test project with test files
     async fn create_test_project(
+        fs: &Arc<dyn Fs>,
         cx: &mut TestAppContext,
         files: serde_json::Value,
     ) -> Entity<Project> {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), files).await;
-        Project::test(fs, [path!("/test").as_ref()], cx).await
+        fs.as_fake().insert_tree(path!("/test"), files).await;
+        Project::test(fs.clone(), [path!("/test").as_ref()], cx).await
     }
 
     async fn setup_test_environment(

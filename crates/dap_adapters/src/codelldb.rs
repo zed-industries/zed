@@ -332,7 +332,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
             .or(self.path_to_codelldb.get().cloned());
 
         if command.is_none() {
@@ -372,7 +372,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 }
             };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
+            let path = adapter_dir.join("codelldb").to_string_lossy().into_owned();
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };
@@ -385,7 +385,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     && let Some(source_languages) = config.get("sourceLanguages").filter(|value| {
                         value
                             .as_array()
-                            .map_or(false, |array| array.iter().all(Value::is_string))
+                            .is_some_and(|array| array.iter().all(Value::is_string))
                     })
                 {
                     let ret = vec![

@@ -238,7 +238,7 @@ impl TerminalInlineAssistant {
                 let latest_output = terminal.last_n_non_empty_lines(DEFAULT_CONTEXT_LINES);
                 let working_directory = terminal
                     .working_directory()
-                    .map(|path| path.to_string_lossy().to_string());
+                    .map(|path| path.to_string_lossy().into_owned());
                 (latest_output, working_directory)
             })
             .ok()
@@ -432,7 +432,7 @@ impl TerminalInlineAssist {
             terminal: terminal.downgrade(),
             prompt_editor: Some(prompt_editor.clone()),
             codegen: codegen.clone(),
-            workspace: workspace.clone(),
+            workspace,
             context_store,
             prompt_store,
             _subscriptions: vec![

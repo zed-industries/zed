@@ -1,6 +1,6 @@
 use crate::{
     CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER, START_OF_FILE_MARKER,
-    tokens_for_bytes,
+    guess_token_count,
 };
 use language::{BufferSnapshot, Point};
 use std::{fmt::Write, ops::Range};
@@ -22,7 +22,7 @@ pub fn excerpt_for_cursor_position(
     let mut remaining_edit_tokens = editable_region_token_limit;
 
     while let Some(parent) = snapshot.syntax_ancestor(scope_range.clone()) {
-        let parent_tokens = tokens_for_bytes(parent.byte_range().len());
+        let parent_tokens = guess_token_count(parent.byte_range().len());
         let parent_point_range = Point::new(
             parent.start_position().row as u32,
             parent.start_position().column as u32,
@@ -90,7 +90,7 @@ fn expand_range(
     range: Range<Point>,
     mut remaining_tokens: usize,
 ) -> Range<Point> {
-    let mut expanded_range = range.clone();
+    let mut expanded_range = range;
     expanded_range.start.column = 0;
     expanded_range.end.column = snapshot.line_len(expanded_range.end.row);
     loop {
@@ -99,7 +99,7 @@ fn expand_range(
         if remaining_tokens > 0 && expanded_range.start.row > 0 {
             expanded_range.start.row -= 1;
             let line_tokens =
-                tokens_for_bytes(snapshot.line_len(expanded_range.start.row) as usize);
+                guess_token_count(snapshot.line_len(expanded_range.start.row) as usize);
             remaining_tokens = remaining_tokens.saturating_sub(line_tokens);
             expanded = true;
         }
@@ -107,7 +107,7 @@ fn expand_range(
         if remaining_tokens > 0 && expanded_range.end.row < snapshot.max_point().row {
             expanded_range.end.row += 1;
             expanded_range.end.column = snapshot.line_len(expanded_range.end.row);
-            let line_tokens = tokens_for_bytes(expanded_range.end.column as usize);
+            let line_tokens = guess_token_count(expanded_range.end.column as usize);
             remaining_tokens = remaining_tokens.saturating_sub(line_tokens);
             expanded = true;
         }
@@ -149,7 +149,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 let mut numbers = Vec::new();
                 for _ in 0..5 {
-                    numbers.push(rng.gen_range(1..101));
+                    numbers.push(rng.random_range(1..101));
                 }
                 numbers
             }
@@ -208,7 +208,7 @@ mod tests {
             <|editable_region_end|>
                 let mut numbers = Vec::new();
                 for _ in 0..5 {
-                    numbers.push(rng.gen_range(1..101));
+                    numbers.push(rng.random_range(1..101));
             ```"#}
         );
     }

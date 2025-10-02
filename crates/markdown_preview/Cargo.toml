@@ -19,19 +19,21 @@ anyhow.workspace = true
 async-recursion.workspace = true
 collections.workspace = true
 editor.workspace = true
+fs.workspace = true
 gpui.workspace = true
+html5ever.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
+markup5ever_rcdom.workspace = true
 pretty_assertions.workspace = true
 pulldown-cmark.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
-fs.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

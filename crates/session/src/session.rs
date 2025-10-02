@@ -43,7 +43,7 @@ impl Session {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    // #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
             session_id: Uuid::new_v4().to_string(),

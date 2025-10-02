@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use gpui::{App, FontFeatures, FontWeight};
-use project::project_settings::{InlineBlameSettings, ProjectSettings};
-use settings::{EditableSettingControl, Settings};
+use project::project_settings::ProjectSettings;
+use settings::{EditableSettingControl, Settings, SettingsContent};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
     CheckboxWithLabel, ContextMenu, DropdownMenu, SettingsContainer, SettingsGroup, prelude::*,
@@ -58,7 +58,6 @@ struct BufferFontFamilyControl;
 
 impl EditableSettingControl for BufferFontFamilyControl {
     type Value = SharedString;
-    type Settings = ThemeSettings;
 
     fn name(&self) -> SharedString {
         "Buffer Font Family".into()
@@ -69,12 +68,8 @@ impl EditableSettingControl for BufferFontFamilyControl {
         settings.buffer_font.family.clone()
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        settings.buffer_font_family = Some(FontFamilyName(value.into()));
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings.theme.buffer_font_family = Some(FontFamilyName(value.into()));
     }
 }
 
@@ -87,7 +82,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(Icon::new(IconName::Font))
             .child(DropdownMenu::new(
                 "buffer-font-family",
-                value.clone(),
+                value,
                 ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
@@ -117,7 +112,6 @@ struct BufferFontSizeControl;
 
 impl EditableSettingControl for BufferFontSizeControl {
     type Value = Pixels;
-    type Settings = ThemeSettings;
 
     fn name(&self) -> SharedString {
         "Buffer Font Size".into()
@@ -127,12 +121,8 @@ impl EditableSettingControl for BufferFontSizeControl {
         ThemeSettings::get_global(cx).buffer_font_size(cx)
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        settings.buffer_font_size = Some(value.into());
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings.theme.buffer_font_size = Some(value.into());
     }
 }
 
@@ -152,7 +142,6 @@ struct BufferFontWeightControl;
 
 impl EditableSettingControl for BufferFontWeightControl {
     type Value = FontWeight;
-    type Settings = ThemeSettings;
 
     fn name(&self) -> SharedString {
         "Buffer Font Weight".into()
@@ -163,12 +152,8 @@ impl EditableSettingControl for BufferFontWeightControl {
         settings.buffer_font.weight
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        settings.buffer_font_weight = Some(value.0);
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings.theme.buffer_font_weight = Some(value.0);
     }
 }
 
@@ -205,7 +190,6 @@ struct BufferFontLigaturesControl;
 
 impl EditableSettingControl for BufferFontLigaturesControl {
     type Value = bool;
-    type Settings = ThemeSettings;
 
     fn name(&self) -> SharedString {
         "Buffer Font Ligatures".into()
@@ -220,14 +204,11 @@ impl EditableSettingControl for BufferFontLigaturesControl {
             .unwrap_or(true)
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
         let value = if value { 1 } else { 0 };
 
         let mut features = settings
+            .theme
             .buffer_font_features
             .as_ref()
             .map(|features| features.tag_value_list().to_vec())
@@ -239,7 +220,7 @@ impl EditableSettingControl for BufferFontLigaturesControl {
             features.push(("calt".into(), value));
         }
 
-        settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+        settings.theme.buffer_font_features = Some(FontFeatures(Arc::new(features)));
     }
 }
 
@@ -269,7 +250,6 @@ struct InlineGitBlameControl;
 
 impl EditableSettingControl for InlineGitBlameControl {
     type Value = bool;
-    type Settings = ProjectSettings;
 
     fn name(&self) -> SharedString {
         "Inline Git Blame".into()
@@ -277,22 +257,16 @@ impl EditableSettingControl for InlineGitBlameControl {
 
     fn read(cx: &App) -> Self::Value {
         let settings = ProjectSettings::get_global(cx);
-        settings.git.inline_blame_enabled()
+        settings.git.inline_blame.enabled
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        if let Some(inline_blame) = settings.git.inline_blame.as_mut() {
-            inline_blame.enabled = value;
-        } else {
-            settings.git.inline_blame = Some(InlineBlameSettings {
-                enabled: false,
-                ..Default::default()
-            });
-        }
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings
+            .git
+            .get_or_insert_default()
+            .inline_blame
+            .get_or_insert_default()
+            .enabled = Some(value)
     }
 }
 
@@ -322,7 +296,6 @@ struct LineNumbersControl;
 
 impl EditableSettingControl for LineNumbersControl {
     type Value = bool;
-    type Settings = EditorSettings;
 
     fn name(&self) -> SharedString {
         "Line Numbers".into()
@@ -333,19 +306,8 @@ impl EditableSettingControl for LineNumbersControl {
         settings.gutter.line_numbers
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        if let Some(gutter) = settings.gutter.as_mut() {
-            gutter.line_numbers = Some(value);
-        } else {
-            settings.gutter = Some(crate::editor_settings::GutterContent {
-                line_numbers: Some(value),
-                ..Default::default()
-            });
-        }
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings.editor.gutter.get_or_insert_default().line_numbers = Some(value);
     }
 }
 
@@ -375,7 +337,6 @@ struct RelativeLineNumbersControl;
 
 impl EditableSettingControl for RelativeLineNumbersControl {
     type Value = bool;
-    type Settings = EditorSettings;
 
     fn name(&self) -> SharedString {
         "Relative Line Numbers".into()
@@ -386,12 +347,8 @@ impl EditableSettingControl for RelativeLineNumbersControl {
         settings.relative_line_numbers
     }
 
-    fn apply(
-        settings: &mut <Self::Settings as Settings>::FileContent,
-        value: Self::Value,
-        _cx: &App,
-    ) {
-        settings.relative_line_numbers = Some(value);
+    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
+        settings.editor.relative_line_numbers = Some(value);
     }
 }
 

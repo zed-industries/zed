@@ -186,7 +186,7 @@ impl ApplicationMenu {
                     .trigger(
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
-                            menu_name.clone(),
+                            menu_name,
                         )
                         .style(ButtonStyle::Subtle)
                         .label_size(LabelSize::Small),

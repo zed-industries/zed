@@ -9,21 +9,21 @@ use anyhow::Context as _;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
-    Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
-    TextStyleRefinement, Window, div, px,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
+    Window, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset, ToPoint};
+use multi_buffer::{ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
-use ui::{Scrollbar, ScrollbarState, prelude::*, theme_is_transparent};
+use ui::{Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
 use workspace::{OpenOptions, OpenVisible, Workspace};
@@ -174,11 +174,9 @@ pub fn hover_at_inlay(
 
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
@@ -186,7 +184,6 @@ pub fn hover_at_inlay(
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
@@ -374,7 +371,7 @@ fn show_hover(
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
                 let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic,
+                    diagnostic: local_diagnostic.diagnostic.to_owned(),
                     range: snapshot
                         .buffer_snapshot
                         .anchor_before(local_diagnostic.range.start)
@@ -389,7 +386,6 @@ fn show_hover(
                     local_diagnostic,
                     markdown,
                     border_color,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     background_color,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -430,7 +426,7 @@ fn show_hover(
             };
 
             let hovers_response = if let Some(hover_request) = hover_request {
-                hover_request.await
+                hover_request.await.unwrap_or_default()
             } else {
                 Vec::new()
             };
@@ -450,18 +446,15 @@ fn show_hover(
                 let scroll_handle = ScrollHandle::new();
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
@@ -484,13 +477,8 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        match snapshot.syntax_ancestor(anchor..anchor)?.1 {
-                            MultiOrSingleBufferOffsetRange::Multi(range) => Some(
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_after(range.end),
-                            ),
-                            MultiOrSingleBufferOffsetRange::Single(_) => None,
-                        }
+                        let range = snapshot.syntax_ancestor(anchor..anchor)?.1;
+                        Some(snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
@@ -502,18 +490,15 @@ fn show_hover(
                 hover_highlights.push(range.clone());
                 let subscription = this
                     .update(cx, |_, cx| {
-                        if let Some(parsed_content) = &parsed_content {
-                            Some(cx.observe(parsed_content, |_, _, cx| cx.notify()))
-                        } else {
-                            None
-                        }
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
                     })
                     .ok()
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     parsed_content,
-                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
@@ -603,18 +588,15 @@ async fn parse_blocks(
         })
         .join("\n\n");
 
-    let rendered_block = cx
-        .new_window_entity(|_window, cx| {
-            Markdown::new(
-                combined_text.into(),
-                language_registry.cloned(),
-                language.map(|language| language.name()),
-                cx,
-            )
-        })
-        .ok();
-
-    rendered_block
+    cx.new_window_entity(|_window, cx| {
+        Markdown::new(
+            combined_text.into(),
+            language_registry.cloned(),
+            language.map(|language| language.name()),
+            cx,
+        )
+    })
+    .ok()
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -626,7 +608,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -675,7 +657,7 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     let mut base_text_style = window.text_style();
     base_text_style.refine(&TextStyleRefinement {
-        font_family: Some(ui_font_family.clone()),
+        font_family: Some(ui_font_family),
         font_fallbacks: ui_font_fallbacks,
         color: Some(cx.theme().colors().editor_foreground),
         ..Default::default()
@@ -855,7 +837,6 @@ pub struct InfoPopover {
     pub symbol_range: RangeInEditor,
     pub parsed_content: Option<Entity<Markdown>>,
     pub scroll_handle: ScrollHandle,
-    pub scrollbar_state: ScrollbarState,
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Option<Anchor>,
     _subscription: Option<Subscription>,
@@ -900,12 +881,17 @@ impl InfoPopover {
                                 .on_url_click(open_markdown_url),
                         ),
                 )
-                .child(self.render_vertical_scrollbar(cx))
+                .custom_scrollbars(
+                    Scrollbars::for_settings::<EditorSettings>()
+                        .tracked_scroll_handle(self.scroll_handle.clone()),
+                    window,
+                    cx,
+                )
             })
             .into_any_element()
     }
 
-    pub fn scroll(&self, amount: &ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn scroll(&self, amount: ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             window.line_height(),
@@ -913,39 +899,6 @@ impl InfoPopover {
         ) / 2.0;
         cx.notify();
         self.scroll_handle.set_offset(current);
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("info-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
@@ -958,7 +911,6 @@ pub struct DiagnosticPopover {
     pub anchor: Anchor,
     _subscription: Subscription,
     pub scroll_handle: ScrollHandle,
-    pub scrollbar_state: ScrollbarState,
 }
 
 impl DiagnosticPopover {
@@ -1022,42 +974,14 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
-                    .child(self.render_vertical_scrollbar(cx)),
+                    .custom_scrollbars(
+                        Scrollbars::for_settings::<EditorSettings>()
+                            .tracked_scroll_handle(self.scroll_handle.clone()),
+                        window,
+                        cx,
+                    ),
             )
             .into_any_element()
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("diagnostic-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
@@ -1075,8 +999,8 @@ mod tests {
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
-    use language::language_settings::InlayHintSettings;
     use markdown::parser::MarkdownEvent;
+    use settings::InlayHintSettingsContent;
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
@@ -1622,15 +1546,15 @@ mod tests {
     #[gpui::test]
     async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1861,7 +1785,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len()..": ".len() + new_type_label.len(),
                 }),
                 "Popover range should match the new type label part"
@@ -1916,7 +1840,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len() + new_type_label.len() + "<".len()
                         ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
                 }),

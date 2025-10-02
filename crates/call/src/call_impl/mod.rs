@@ -147,7 +147,7 @@ impl ActiveCall {
             let mut incoming_call = this.incoming_call.0.borrow_mut();
             if incoming_call
                 .as_ref()
-                .map_or(false, |call| call.room_id == envelope.payload.room_id)
+                .is_some_and(|call| call.room_id == envelope.payload.room_id)
             {
                 incoming_call.take();
             }

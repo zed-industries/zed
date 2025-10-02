@@ -1,9 +1,9 @@
 use anyhow::Result;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
-    ThemeColorsContent, ThemeContent, ThemeStyleContent,
+    ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };
 
 use crate::ThemeMetadata;
@@ -56,7 +56,7 @@ impl VsCodeThemeConverter {
             name: self.theme_metadata.name,
             appearance,
             style: ThemeStyleContent {
-                window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
+                window_background_appearance: Some(WindowBackgroundContent::Opaque),
                 accents: Vec::new(), //TODO can we read this from the theme?
                 colors: theme_colors,
                 status: status_colors,
@@ -158,7 +158,7 @@ impl VsCodeThemeConverter {
                 .tab
                 .active_background
                 .clone()
-                .or(vscode_tab_inactive_background.clone()),
+                .or(vscode_tab_inactive_background),
             search_match_background: vscode_colors.editor.find_match_background.clone(),
             panel_background: vscode_colors.panel.background.clone(),
             pane_group_border: vscode_colors.editor_group.border.clone(),
@@ -171,22 +171,20 @@ impl VsCodeThemeConverter {
                 .scrollbar_slider
                 .active_background
                 .clone(),
-            scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
+            scrollbar_thumb_border: vscode_scrollbar_slider_background,
             scrollbar_track_background: vscode_editor_background.clone(),
             scrollbar_track_border: vscode_colors.editor_overview_ruler.border.clone(),
             minimap_thumb_background: vscode_colors.minimap_slider.background.clone(),
             minimap_thumb_hover_background: vscode_colors.minimap_slider.hover_background.clone(),
             minimap_thumb_active_background: vscode_colors.minimap_slider.active_background.clone(),
-            editor_foreground: vscode_editor_foreground
-                .clone()
-                .or(vscode_token_colors_foreground.clone()),
+            editor_foreground: vscode_editor_foreground.or(vscode_token_colors_foreground),
             editor_background: vscode_editor_background.clone(),
-            editor_gutter_background: vscode_editor_background.clone(),
+            editor_gutter_background: vscode_editor_background,
             editor_active_line_background: vscode_colors.editor.line_highlight_background.clone(),
             editor_line_number: vscode_colors.editor_line_number.foreground.clone(),
             editor_active_line_number: vscode_colors.editor.foreground.clone(),
             editor_wrap_guide: vscode_panel_border.clone(),
-            editor_active_wrap_guide: vscode_panel_border.clone(),
+            editor_active_wrap_guide: vscode_panel_border,
             editor_document_highlight_bracket_background: vscode_colors
                 .editor_bracket_match
                 .background
@@ -214,7 +212,7 @@ impl VsCodeThemeConverter {
     }
 
     fn convert_syntax_theme(&self) -> Result<IndexMap<String, HighlightStyleContent>> {
-        let mut highlight_styles = IndexMap::new();
+        let mut highlight_styles = IndexMap::default();
 
         for syntax_token in ZedSyntaxToken::iter() {
             let override_match = self

@@ -11,12 +11,12 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -243,14 +243,14 @@ impl FocusId {
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         window
             .focused(cx)
-            .map_or(false, |focused| self.contains(focused.id, window))
+            .is_some_and(|focused| self.contains(focused.id, window))
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, window: &Window, cx: &App) -> bool {
         let focused = window.focused(cx);
-        focused.map_or(false, |focused| focused.id.contains(*self, window))
+        focused.is_some_and(|focused| focused.id.contains(*self, window))
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
@@ -504,7 +504,7 @@ impl HitboxId {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
@@ -580,12 +580,12 @@ pub enum HitboxBehavior {
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
     /// bubble-phase handler for every mouse event type:
     ///
-    /// ```
+    /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
     ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// This has effects beyond event handling - any use of hitbox checking, such as hover
@@ -604,12 +604,12 @@ pub enum HitboxBehavior {
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
     /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
     ///
-    /// ```
-    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    /// ```ignore
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
     ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
@@ -634,7 +634,7 @@ impl TooltipId {
         window
             .tooltip_bounds
             .as_ref()
-            .map_or(false, |tooltip_bounds| {
+            .is_some_and(|tooltip_bounds| {
                 tooltip_bounds.id == *self
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
@@ -684,7 +684,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_handles: TabHandles,
+    pub(crate) tab_stops: TabStopMap,
 }
 
 #[derive(Clone, Default)]
@@ -733,7 +733,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
-            tab_handles: TabHandles::default(),
+            tab_stops: TabStopMap::default(),
         }
     }
 
@@ -749,7 +749,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
-        self.tab_handles.clear();
+        self.tab_stops.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -939,11 +939,15 @@ impl Window {
             show,
             kind,
             is_movable,
+            is_resizable,
+            is_minimizable,
             display_id,
             window_background,
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+            tabbing_identifier,
         } = options;
 
         let bounds = window_bounds
@@ -956,12 +960,23 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                is_resizable,
+                is_minimizable,
                 focus,
                 show,
                 display_id,
                 window_min_size,
+                #[cfg(target_os = "macos")]
+                tabbing_identifier,
             },
         )?;
+
+        let tab_bar_visible = platform_window.tab_bar_visible();
+        SystemWindowTabController::init_visible(cx, tab_bar_visible);
+        if let Some(tabs) = platform_window.tabbed_windows() {
+            SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+        }
+
         let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -991,9 +1006,13 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
+            let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
+                let _ = cx.update(|cx| {
+                    SystemWindowTabController::remove_tab(cx, window_id);
+                });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -1082,7 +1101,11 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
+
+                        window.bounds_changed(cx);
                         window.refresh();
+
+                        SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
                     .log_err();
             }
@@ -1121,6 +1144,57 @@ impl Window {
                     })
                     .log_err()
                     .unwrap_or(None)
+            })
+        });
+        platform_window.on_move_tab_to_new_window({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::move_tab_to_new_window(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_next_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_next_tab(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_previous_tab(cx, handle.window_id())
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_toggle_tab_bar({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let tab_bar_visible = window.platform_window.tab_bar_visible();
+                        SystemWindowTabController::set_visible(cx, tab_bar_visible);
+                    })
+                    .log_err();
             })
         });
 
@@ -1341,7 +1415,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -1352,7 +1426,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -1835,7 +1909,7 @@ impl Window {
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
-    /// the contents of the new [Scene], use [present].
+    /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
@@ -2211,7 +2285,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: self.next_frame.tab_handles.handles.len(),
+            tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2241,11 +2315,9 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        self.next_frame.tab_handles.handles.extend(
-            self.rendered_frame.tab_handles.handles
-                [range.start.tab_handle_index..range.end.tab_handle_index]
-                .iter()
-                .cloned(),
+        self.next_frame.tab_stops.replay(
+            &self.rendered_frame.tab_stops.insertion_history
+                [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
         self.text_system
@@ -2377,7 +2449,7 @@ impl Window {
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
-    /// element offset and prepaint again. See [`List`] for an example. This method should only be
+    /// element offset and prepaint again. See [`crate::List`] for an example. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
@@ -2402,9 +2474,9 @@ impl Window {
         result
     }
 
-    /// When you call this method during [`prepaint`], containing elements will attempt to
+    /// When you call this method during [`Element::prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
-    /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
+    /// [`Element::prepaint`] again with a new set of bounds. See [`crate::List`] for an example of an element
     /// that supports this method being called on the elements it contains. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
@@ -2412,8 +2484,8 @@ impl Window {
         self.requested_autoscroll = Some(bounds);
     }
 
-    /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
-    /// described in [`request_autoscroll`].
+    /// This method can be called from a containing element such as [`crate::List`] to support the autoscroll behavior
+    /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
         self.requested_autoscroll.take()
@@ -2453,7 +2525,7 @@ impl Window {
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
         let (task, _) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never()
+        task.now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -2660,6 +2732,19 @@ impl Window {
         }
     }
 
+    /// Executes the given closure within the context of a tab group.
+    #[inline]
+    pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if let Some(index) = index {
+            self.next_frame.tab_stops.begin_group(index);
+            let result = f(self);
+            self.next_frame.tab_stops.end_group();
+            result
+        } else {
+            f(self)
+        }
+    }
+
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
@@ -2741,7 +2826,7 @@ impl Window {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     ///
@@ -2870,9 +2955,10 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+
         let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
+            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
         };
         let params = RenderGlyphParams {
             font_id,
@@ -3044,7 +3130,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
+            .get_or_insert_with(&params.into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -3731,7 +3817,7 @@ impl Window {
                 self.dispatch_keystroke_observers(
                     event,
                     Some(binding.action),
-                    match_result.context_stack.clone(),
+                    match_result.context_stack,
                     cx,
                 );
                 self.pending_input_changed(cx);
@@ -4022,9 +4108,7 @@ impl Window {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    window
-                        .platform_window
-                        .update_ime_position(bounds.scale(window.scale_factor()));
+                    window.platform_window.update_ime_position(bounds);
                 }
                 window.platform_window.set_input_handler(input_handler);
             }
@@ -4275,9 +4359,52 @@ impl Window {
     }
 
     /// Perform titlebar double-click action.
-    /// This is MacOS specific.
+    /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
         self.platform_window.titlebar_double_click();
+    }
+
+    /// Gets the window's title at the platform level.
+    /// This is macOS specific.
+    pub fn window_title(&self) -> String {
+        self.platform_window.get_title()
+    }
+
+    /// Returns a list of all tabbed windows and their titles.
+    /// This is macOS specific.
+    pub fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
+        self.platform_window.tabbed_windows()
+    }
+
+    /// Returns the tab bar visibility.
+    /// This is macOS specific.
+    pub fn tab_bar_visible(&self) -> bool {
+        self.platform_window.tab_bar_visible()
+    }
+
+    /// Merges all open windows into a single tabbed window.
+    /// This is macOS specific.
+    pub fn merge_all_windows(&self) {
+        self.platform_window.merge_all_windows()
+    }
+
+    /// Moves the tab to a new containing window.
+    /// This is macOS specific.
+    pub fn move_tab_to_new_window(&self) {
+        self.platform_window.move_tab_to_new_window()
+    }
+
+    /// Shows or hides the window tab overview.
+    /// This is macOS specific.
+    pub fn toggle_window_tab_overview(&self) {
+        self.platform_window.toggle_window_tab_overview()
+    }
+
+    /// Sets the tabbing identifier for the window.
+    /// This is macOS specific.
+    pub fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
+        self.platform_window
+            .set_tabbing_identifier(tabbing_identifier)
     }
 
     /// Toggles the inspector mode on this window.
@@ -4442,7 +4569,7 @@ impl Window {
                         if let Some((_, inspector_id)) =
                             self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
                         {
-                            inspector.set_active_element_id(inspector_id.clone(), self);
+                            inspector.set_active_element_id(inspector_id, self);
                         }
                     }
                 });
@@ -4466,7 +4593,14 @@ impl Window {
                 }
             }
         }
-        return None;
+        None
+    }
+
+    /// For testing: set the current modifier keys state.
+    /// This does not generate any events.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
     }
 }
 
@@ -4583,7 +4717,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        cx.read_window(self, |root_view, _cx| root_view.clone())
+        cx.read_window(self, |root_view, _cx| root_view)
     }
 
     /// Check if this window is 'active'.
@@ -4697,7 +4831,7 @@ impl HasDisplayHandle for Window {
     }
 }
 
-/// An identifier for an [`Element`](crate::Element).
+/// An identifier for an [`Element`].
 ///
 /// Can be constructed with a string, a number, or both, as well
 /// as other internal representations.
@@ -4838,9 +4972,9 @@ impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     }
 }
 
-impl From<core::panic::Location<'static>> for ElementId {
-    fn from(value: core::panic::Location<'static>) -> Self {
-        Self::CodeLocation(value)
+impl From<&'static core::panic::Location<'static>> for ElementId {
+    fn from(location: &'static core::panic::Location<'static>) -> Self {
+        ElementId::CodeLocation(*location)
     }
 }
 

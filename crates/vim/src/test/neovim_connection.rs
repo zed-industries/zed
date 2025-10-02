@@ -59,7 +59,13 @@ pub struct NeovimConnection {
 }
 
 impl NeovimConnection {
-    pub async fn new(test_case_id: String) -> Self {
+    pub async fn new(mut test_case_id: String) -> Self {
+        // When running under perf, don't create duplicate files.
+        if cfg!(perf_enabled) {
+            if test_case_id.ends_with(perf::consts::SUF_NORMAL) {
+                test_case_id.truncate(test_case_id.len() - perf::consts::SUF_NORMAL.len());
+            }
+        }
         #[cfg(feature = "neovim")]
         let handler = NvimHandler {};
         #[cfg(feature = "neovim")]
@@ -299,10 +305,10 @@ impl NeovimConnection {
         if let Some(NeovimData::Get { .. }) = self.data.front() {
             self.data.pop_front();
         };
-        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front() {
-            if name == register {
-                return value;
-            }
+        if let Some(NeovimData::ReadRegister { name, value }) = self.data.pop_front()
+            && name == register
+        {
+            return value;
         }
 
         panic!("operation does not match recorded script. re-record with --features=neovim")
@@ -443,7 +449,7 @@ impl NeovimConnection {
             }
             Mode::Insert | Mode::Normal | Mode::Replace => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
-            Mode::HelixNormal => unreachable!(),
+            Mode::HelixNormal | Mode::HelixSelect => unreachable!(),
         }
 
         let ranges = encode_ranges(&text, &selections);
@@ -453,7 +459,7 @@ impl NeovimConnection {
         };
 
         if self.data.back() != Some(&state) {
-            self.data.push_back(state.clone());
+            self.data.push_back(state);
         }
 
         (mode, ranges)
@@ -590,7 +596,7 @@ fn parse_state(marked_text: &str) -> (String, Vec<Range<Point>>) {
 #[cfg(feature = "neovim")]
 fn encode_ranges(text: &str, point_ranges: &Vec<Range<Point>>) -> String {
     let byte_ranges = point_ranges
-        .into_iter()
+        .iter()
         .map(|range| {
             let mut byte_range = 0..0;
             let mut ix = 0;

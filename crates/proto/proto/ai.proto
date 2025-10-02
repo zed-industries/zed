@@ -2,6 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
+import "task.proto";
 
 message Context {
     repeated ContextOperation operations = 1;
@@ -163,4 +164,36 @@ enum LanguageModelRole {
     LanguageModelAssistant = 1;
     LanguageModelSystem = 2;
     reserved 3;
+}
+
+message GetAgentServerCommand {
+    uint64 project_id = 1;
+    string name = 2;
+    optional string root_dir = 3;
+}
+
+message AgentServerCommand {
+    string path = 1;
+    repeated string args = 2;
+    map<string, string> env = 3;
+    string root_dir = 4;
+
+    optional SpawnInTerminal login = 5;
+}
+
+message ExternalAgentsUpdated {
+    uint64 project_id = 1;
+    repeated string names = 2;
+}
+
+message ExternalAgentLoadingStatusUpdated {
+    uint64 project_id = 1;
+    string name = 2;
+    string status = 3;
+}
+
+message NewExternalAgentVersionAvailable {
+    uint64 project_id = 1;
+    string name = 2;
+    string version = 3;
 }

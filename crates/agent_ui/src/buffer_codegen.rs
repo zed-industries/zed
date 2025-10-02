@@ -1129,7 +1129,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -1139,7 +1139,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1196,7 +1196,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1208,7 +1208,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1265,7 +1265,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -1277,7 +1277,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1334,7 +1334,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
         let new_text = concat!(
             "func main() {\n",
             "\tx := 0\n",
@@ -1391,7 +1391,7 @@ mod tests {
             )
         });
 
-        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
+        let chunks_tx = simulate_response_stream(&codegen, cx);
         chunks_tx
             .unbounded_send("let mut x = 0;\nx += 1;".to_string())
             .unwrap();
@@ -1473,7 +1473,7 @@ mod tests {
     }
 
     fn simulate_response_stream(
-        codegen: Entity<CodegenAlternative>,
+        codegen: &Entity<CodegenAlternative>,
         cx: &mut TestAppContext,
     ) -> mpsc::UnboundedSender<String> {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();

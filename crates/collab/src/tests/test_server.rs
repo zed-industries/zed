@@ -26,7 +26,7 @@ use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use rpc::{
     RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
@@ -370,8 +370,8 @@ impl TestServer {
         let client = TestClient {
             app_state,
             username: name.to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
+            channel_store: cx.read(ChannelStore::global),
+            notification_store: cx.read(NotificationStore::global),
             state: Default::default(),
         };
         client.wait_for_current_user(cx).await;
@@ -599,12 +599,10 @@ impl TestServer {
                 prediction_api_key: None,
                 prediction_model: None,
                 zed_client_checksum_seed: None,
-                slack_panics_webhook: None,
                 auto_join_channel_id: None,
                 migrations_path: None,
                 seed_path: None,
                 supermaven_admin_api_key: None,
-                user_backfiller_github_access_token: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,
@@ -765,11 +763,11 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Entity<SshRemoteClient>,
+        ssh: Entity<RemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Entity<Project>, WorktreeId) {
         let project = cx.update(|cx| {
-            Project::ssh(
+            Project::remote(
                 ssh,
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
@@ -897,7 +895,7 @@ impl TestClient {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
         let entity = window.root(cx).unwrap();
-        let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
+        let cx = VisualTestContext::from_window(*window.deref(), cx).into_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (entity, cx)
     }

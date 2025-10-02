@@ -22,7 +22,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             let anchors = editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|s| s.head())
                 .collect::<Vec<_>>();
@@ -120,7 +120,6 @@ impl Vim {
                 });
             })
         });
-        return;
     }
 
     fn open_path_mark(

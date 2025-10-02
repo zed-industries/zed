@@ -63,12 +63,13 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
                 .await?;
             command.command = extension.path_from_extension(&command.command);
 
-            log::info!("loaded command for context server {id}: {command:?}");
+            log::debug!("loaded command for context server {id}: {command:?}");
 
             Ok(ContextServerCommand {
                 path: command.command,
                 args: command.args,
                 env: Some(command.env.into_iter().collect()),
+                timeout: None,
             })
         })
     }

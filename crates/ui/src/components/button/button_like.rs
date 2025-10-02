@@ -217,7 +217,7 @@ impl ButtonStyle {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
-                filled_background.fade_out(0.92);
+                filled_background.fade_out(0.5);
 
                 ButtonLikeStyles {
                     background: filled_background,
@@ -582,13 +582,9 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(
-                match self.style {
-                    ButtonStyle::Outlined => true,
-                    _ => false,
-                },
-                |this| this.border_1(),
-            )
+            .when(matches!(self.style, ButtonStyle::Outlined), |this| {
+                this.border_1()
+            })
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_sm(),
                 ButtonLikeRounding::Left => this.rounded_l_sm(),
@@ -600,7 +596,7 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
-                ButtonSize::None => this,
+                ButtonSize::None => this.px_px(),
             })
             .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)

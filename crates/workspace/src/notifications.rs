@@ -1012,7 +1012,6 @@ where
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
-                    let message = message.clone();
                     move |cx| {
                         cx.new({
                             let message = message.clone();
@@ -1078,8 +1077,13 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|window, cx| {
+                    let mut display = format!("{err}");
+                    if !display.ends_with('\n') {
+                        display.push('.');
+                        display.push(' ')
+                    }
                     let detail =
-                        f(err, window, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                        f(err, window, cx).unwrap_or_else(|| format!("{display}Please try again."));
                     window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();

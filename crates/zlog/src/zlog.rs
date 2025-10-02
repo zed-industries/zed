@@ -10,12 +10,9 @@ pub use sink::{flush, init_output_file, init_output_stderr, init_output_stdout};
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
-    match try_init() {
-        Err(err) => {
-            log::error!("{err}");
-            eprintln!("{err}");
-        }
-        Ok(()) => {}
+    if let Err(err) = try_init() {
+        log::error!("{err}");
+        eprintln!("{err}");
     }
 }
 
@@ -184,25 +181,27 @@ macro_rules! time {
 #[macro_export]
 macro_rules! scoped {
     ($parent:expr => $name:expr) => {{
-        let parent = $parent;
-        let name = $name;
-        let mut scope = parent.scope;
-        let mut index = 1; // always have crate/module name
-        while index < scope.len() && !scope[index].is_empty() {
-            index += 1;
-        }
-        if index >= scope.len() {
-            #[cfg(debug_assertions)]
-            {
-                unreachable!("Scope overflow trying to add scope... ignoring scope");
-            }
-        }
-        scope[index] = name;
-        $crate::Logger { scope }
+        $crate::scoped_logger($parent, $name)
     }};
     ($name:expr) => {
         $crate::scoped!($crate::default_logger!() => $name)
     };
+}
+
+pub const fn scoped_logger(parent: Logger, name: &'static str) -> Logger {
+    let mut scope = parent.scope;
+    let mut index = 1; // always have crate/module name
+    while index < scope.len() && !scope[index].is_empty() {
+        index += 1;
+    }
+    if index >= scope.len() {
+        #[cfg(debug_assertions)]
+        {
+            panic!("Scope overflow trying to add scope... ignoring scope");
+        }
+    }
+    scope[index] = name;
+    Logger { scope }
 }
 
 #[macro_export]
@@ -240,7 +239,7 @@ pub mod private {
         let Some((crate_name, _)) = module_path.split_at_checked(index) else {
             return module_path;
         };
-        return crate_name;
+        crate_name
     }
 
     pub const fn scope_new(scopes: &[&'static str]) -> Scope {
@@ -262,13 +261,13 @@ pub mod private {
     }
 
     pub fn scope_to_alloc(scope: &Scope) -> ScopeAlloc {
-        return scope.map(|s| s.to_string());
+        scope.map(|s| s.to_string())
     }
 }
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
-const SCOPE_STRING_SEP_STR: &'static str = ".";
+const SCOPE_STRING_SEP_STR: &str = ".";
 const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,18 +318,18 @@ impl Drop for Timer {
 impl Timer {
     #[must_use = "Timer will stop when dropped, the result of this function should be saved in a variable prefixed with `_` if it should stop when dropped"]
     pub fn new(logger: Logger, name: &'static str) -> Self {
-        return Self {
+        Self {
             logger,
             name,
             start_time: std::time::Instant::now(),
             warn_if_longer_than: None,
             done: false,
-        };
+        }
     }
 
     pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
-        return self;
+        self
     }
 
     pub fn end(mut self) {

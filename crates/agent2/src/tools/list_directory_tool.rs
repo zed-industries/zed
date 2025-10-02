@@ -2,22 +2,20 @@ use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
-use project::{Project, WorktreeSettings};
+use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-/// Lists files and directories in a given path. Prefer the `grep` or
-/// `find_path` tools when searching the codebase.
+/// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -53,15 +51,19 @@ impl AgentTool for ListDirectoryTool {
     type Input = ListDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "list_directory".into()
+    fn name() -> &'static str {
+        "list_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let path = MarkdownInlineCode(&input.path);
             format!("List the {path} directory's contents").into()
@@ -84,13 +86,13 @@ impl AgentTool for ListDirectoryTool {
                 .read(cx)
                 .worktrees(cx)
                 .filter_map(|worktree| {
-                    worktree.read(cx).root_entry().and_then(|entry| {
-                        if entry.is_dir() {
-                            entry.path.to_str()
-                        } else {
-                            None
-                        }
-                    })
+                    let worktree = worktree.read(cx);
+                    let root_entry = worktree.root_entry()?;
+                    if root_entry.is_dir() {
+                        Some(root_entry.path.display(worktree.path_style()))
+                    } else {
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -141,7 +143,7 @@ impl AgentTool for ListDirectoryTool {
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
-        let worktree_root_name = worktree.read(cx).root_name().to_string();
+        let worktree_root_name = worktree.read(cx).root_name();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
@@ -163,25 +165,17 @@ impl AgentTool for ListDirectoryTool {
                 continue;
             }
 
-            if self
-                .project
-                .read(cx)
-                .find_project_path(&entry.path, cx)
-                .map(|project_path| {
-                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-
-                    worktree_settings.is_path_excluded(&project_path.path)
-                        || worktree_settings.is_path_private(&project_path.path)
-                })
-                .unwrap_or(false)
+            let project_path: ProjectPath = (worktree_snapshot.id(), entry.path.clone()).into();
+            if worktree_settings.is_path_excluded(&project_path.path)
+                || worktree_settings.is_path_private(&project_path.path)
             {
                 continue;
             }
 
-            let full_path = Path::new(&worktree_root_name)
+            let full_path = worktree_root_name
                 .join(&entry.path)
-                .display()
-                .to_string();
+                .display(worktree_snapshot.path_style())
+                .into_owned();
             if entry.is_dir() {
                 folders.push(full_path);
             } else {
@@ -212,7 +206,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use project::{FakeFs, Project, WorktreeSettings};
+    use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -419,17 +413,20 @@ mod tests {
         // Configure settings explicitly
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec![
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = Some(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                         "**/.hidden_subdir".to_string(),
                     ]);
-                    settings.private_files = Some(vec![
-                        "**/.mysecrets".to_string(),
-                        "**/*.privatekey".to_string(),
-                        "**/*.mysensitive".to_string(),
-                    ]);
+                    settings.project.worktree.private_files = Some(
+                        vec![
+                            "**/.mysecrets".to_string(),
+                            "**/*.privatekey".to_string(),
+                            "**/*.mysensitive".to_string(),
+                        ]
+                        .into(),
+                    );
                 });
             });
         });
@@ -563,10 +560,11 @@ mod tests {
         // Set global settings
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions =
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
-                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/.env".to_string()].into());
                 });
             });
         });

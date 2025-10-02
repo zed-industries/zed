@@ -7,7 +7,7 @@ mod manifest_store;
 mod path_trie;
 mod server_tree;
 
-use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, path::Path, sync::Arc};
+use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, sync::Arc};
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Subscription};
@@ -15,6 +15,7 @@ use language::{ManifestDelegate, ManifestName, ManifestQuery};
 pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
+use util::rel_path::RelPath;
 use worktree::{Event as WorktreeEvent, Snapshot, Worktree};
 
 use crate::{
@@ -43,12 +44,9 @@ impl WorktreeRoots {
                 match event {
                     WorktreeEvent::UpdatedEntries(changes) => {
                         for (path, _, kind) in changes.iter() {
-                            match kind {
-                                worktree::PathChange::Removed => {
-                                    let path = TriePath::from(path.as_ref());
-                                    this.roots.remove(&path);
-                                }
-                                _ => {}
+                            if kind == &worktree::PathChange::Removed {
+                                let path = TriePath::from(path.as_ref());
+                                this.roots.remove(&path);
                             }
                         }
                     }
@@ -80,7 +78,7 @@ impl ManifestTree {
             _subscriptions: [
                 cx.subscribe(&worktree_store, Self::on_worktree_store_event),
                 cx.observe_global::<SettingsStore>(|this, cx| {
-                    for (_, roots) in &mut this.root_points {
+                    for roots in this.root_points.values_mut() {
                         roots.update(cx, |worktree_roots, _| {
                             worktree_roots.roots = RootPathTrie::new();
                         })
@@ -187,7 +185,7 @@ impl ManifestTree {
             .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
             .unwrap_or_else(|| ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("")),
+                path: RelPath::empty().into(),
             })
     }
 
@@ -197,11 +195,8 @@ impl ManifestTree {
         evt: &WorktreeStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match evt {
-            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.root_points.remove(worktree_id);
-            }
-            _ => {}
+        if let WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) = evt {
+            self.root_points.remove(worktree_id);
         }
     }
 }
@@ -217,11 +212,9 @@ impl ManifestQueryDelegate {
 }
 
 impl ManifestDelegate for ManifestQueryDelegate {
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        self.worktree.entry_for_path(path).map_or(false, |entry| {
-            is_dir.map_or(true, |is_required_to_be_dir| {
-                is_required_to_be_dir == entry.is_dir()
-            })
+    fn exists(&self, path: &RelPath, is_dir: Option<bool>) -> bool {
+        self.worktree.entry_for_path(path).is_some_and(|entry| {
+            is_dir.is_none_or(|is_required_to_be_dir| is_required_to_be_dir == entry.is_dir())
         })
     }
 

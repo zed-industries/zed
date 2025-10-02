@@ -98,7 +98,7 @@ impl SearchOption {
     pub fn label(&self) -> &'static str {
         match self {
             SearchOption::WholeWord => "Match Whole Words",
-            SearchOption::CaseSensitive => "Match Case Sensitively",
+            SearchOption::CaseSensitive => "Match Case Sensitivity",
             SearchOption::IncludeIgnored => "Also search files ignored by configuration",
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",
@@ -116,8 +116,8 @@ impl SearchOption {
         }
     }
 
-    pub fn to_toggle_action(&self) -> &'static dyn Action {
-        match *self {
+    pub fn to_toggle_action(self) -> &'static dyn Action {
+        match self {
             SearchOption::WholeWord => &ToggleWholeWord,
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,

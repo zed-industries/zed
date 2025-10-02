@@ -46,3 +46,6 @@ workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zlog.workspace = true
+
+[dev-dependencies]
+db = {workspace = true, features = ["test-support"]}

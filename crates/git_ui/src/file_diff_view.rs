@@ -123,7 +123,7 @@ impl FileDiffView {
             old_buffer,
             new_buffer,
             _recalculate_diff_task: cx.spawn(async move |this, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
@@ -241,7 +241,7 @@ impl Item for FileDiffView {
             buffer
                 .read(cx)
                 .file()
-                .map(|file| file.full_path(cx).compact().to_string_lossy().to_string())
+                .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
                 .unwrap_or_else(|| "untitled".into())
         };
         let old_path = path(&self.old_buffer);

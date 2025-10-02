@@ -30,3 +30,8 @@ To sign out of Zed, you can use either of these methods:
 Your Zed account's email address is the address provided by GitHub OAuth. If you have a public email address then it will be used, otherwise your primary GitHub email address will be used. Changes to your email address on GitHub can be synced to your Zed account by [signing in to zed.dev](https://zed.dev/sign_in).
 
 Stripe is used for billing, and will use your Zed account's email address when starting a subscription. Changes to your Zed account email address do not currently update the email address used in Stripe. See [Updating Billing Information](./ai/billing.md#updating-billing-info) for how to change this email address.
+
+## Hiding Sign In button from the interface
+
+In case the Sign In feature is not used, it's possible to hide that from the interface by using `show_sign_in` settings property.
+Refer to [Visual Customization page](./visual-customization.md) for more details.

@@ -1,27 +1,22 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-/// Copies a file or directory in the project, and returns confirmation that the
-/// copy succeeded.
+/// Copies a file or directory in the project, and returns confirmation that the copy succeeded.
+/// Directory contents will be copied recursively.
 ///
-/// Directory contents will be copied recursively (like `cp -r`).
-///
-/// This tool should be used when it's desirable to create a copy of a file or
-/// directory without modifying the original. It's much more efficient than
-/// doing this by separately reading and then writing the file or directory's
-/// contents, so this tool should be preferred over that approach whenever
-/// copying is the goal.
+/// This tool should be used when it's desirable to create a copy of a file or directory without modifying the original.
+/// It's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
     /// The source path of the file or directory to copy.
-    /// If a directory is specified, its contents will be copied recursively (like `cp -r`).
+    /// If a directory is specified, its contents will be copied recursively.
     ///
     /// <example>
     /// If the project has the following files:
@@ -33,12 +28,10 @@ pub struct CopyPathToolInput {
     /// You can copy the first file by providing a source_path of "directory1/a/something.txt"
     /// </example>
     pub source_path: String,
-
     /// The destination path where the file or directory should be copied to.
     ///
     /// <example>
-    /// To copy "directory1/a/something.txt" to "directory2/b/copy.txt",
-    /// provide a destination_path of "directory2/b/copy.txt"
+    /// To copy "directory1/a/something.txt" to "directory2/b/copy.txt", provide a destination_path of "directory2/b/copy.txt"
     /// </example>
     pub destination_path: String,
 }
@@ -57,15 +50,19 @@ impl AgentTool for CopyPathTool {
     type Input = CopyPathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "copy_path".into()
+    fn name() -> &'static str {
+        "copy_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Move
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> ui::SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> ui::SharedString {
         if let Ok(input) = input {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);
@@ -87,9 +84,7 @@ impl AgentTool for CopyPathTool {
                 .and_then(|project_path| project.entry_for_path(&project_path, cx))
             {
                 Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => {
-                        project.copy_entry(entity.id, None, project_path.path, cx)
-                    }
+                    Some(project_path) => project.copy_entry(entity.id, project_path, cx),
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path

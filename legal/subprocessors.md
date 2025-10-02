@@ -22,4 +22,5 @@ This page provides information about the Subprocessors Zed has engaged to provid
 | Exa Labs            | AI Services              | United States |
 | Google              | AI Services              | United States |
 | OpenAI              | AI Services              | United States |
+
 **DATE: May 6th, 2025**

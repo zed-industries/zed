@@ -98,7 +98,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            scroll_editor(editor, move_cursor, &amount, window, cx)
+            scroll_editor(editor, move_cursor, amount, window, cx)
         });
     }
 }
@@ -106,7 +106,7 @@ impl Vim {
 fn scroll_editor(
     editor: &mut Editor,
     preserve_cursor_position: bool,
-    amount: &ScrollAmount,
+    amount: ScrollAmount,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -126,7 +126,7 @@ fn scroll_editor(
                 ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
             }
         }
-        _ => amount.clone(),
+        _ => amount,
     };
 
     editor.scroll_screen(&amount, window, cx);
@@ -271,7 +271,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{EditorSettings, ScrollBeyondLastLine};
+    use editor::ScrollBeyondLastLine;
     use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
     use language::Point;
@@ -427,9 +427,7 @@ mod test {
         // First test without vertical scroll margin
         cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.vertical_scroll_margin = Some(0.0)
-            });
+            store.update_user_settings(cx, |s| s.editor.vertical_scroll_margin = Some(0.0));
         });
 
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
@@ -455,9 +453,7 @@ mod test {
 
         cx.neovim.set_option(&format!("scrolloff={}", 3)).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.vertical_scroll_margin = Some(3.0)
-            });
+            store.update_user_settings(cx, |s| s.editor.vertical_scroll_margin = Some(3.0));
         });
 
         // scroll down: ctrl-f
@@ -485,9 +481,8 @@ mod test {
         cx.set_shared_state(&content).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
-                // s.vertical_scroll_margin = Some(0.);
+            store.update_user_settings(cx, |s| {
+                s.editor.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
             });
         });
 

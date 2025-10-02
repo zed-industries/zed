@@ -446,7 +446,7 @@ impl Element for TextElement {
         let (display_text, text_color) = if content.is_empty() {
             (input.placeholder.clone(), hsla(0., 0., 0., 0.2))
         } else {
-            (content.clone(), style.color)
+            (content, style.color)
         };
 
         let run = TextRun {
@@ -474,7 +474,7 @@ impl Element for TextElement {
                 },
                 TextRun {
                     len: display_text.len() - marked_range.end,
-                    ..run.clone()
+                    ..run
                 },
             ]
             .into_iter()

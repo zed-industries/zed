@@ -118,7 +118,7 @@ impl SlashCommand for DeltaSlashCommand {
             }
 
             anyhow::ensure!(changes_detected, "no new changes detected");
-            Ok(output.to_event_stream())
+            Ok(output.into_event_stream())
         })
     }
 }

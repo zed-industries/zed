@@ -14,7 +14,7 @@ body:
         ### Description
         <!--  Describe with sufficient detail to reproduce from a clean Zed install.
           - Any code must be sufficient to reproduce (include context!)
-          - Code must as text, not just as a screenshot.
+          - Include code as text, not just as a screenshot.
           - Issues with insufficient detail may be summarily closed.
         -->
 

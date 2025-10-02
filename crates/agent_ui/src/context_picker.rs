@@ -6,7 +6,7 @@ pub(crate) mod symbol_context_picker;
 pub(crate) mod thread_context_picker;
 
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
@@ -23,9 +23,8 @@ use gpui::{
 };
 use language::Buffer;
 use multi_buffer::MultiBufferRow;
-use paths::contexts_dir;
-use project::{Entry, ProjectPath};
-use prompt_store::{PromptStore, UserPromptId};
+use project::ProjectPath;
+use prompt_store::PromptStore;
 use rules_context_picker::{RulesContextEntry, RulesContextPicker};
 use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{
@@ -34,10 +33,10 @@ use thread_context_picker::{
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
-use uuid::Uuid;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::AgentPanel;
 use agent::{
     ThreadId,
     context::RULES_ICON,
@@ -231,12 +230,19 @@ impl ContextPicker {
         let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
+            let Some(workspace) = self.workspace.upgrade() else {
+                return menu;
+            };
+            let path_style = workspace.read(cx).path_style(cx);
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
                 .into_iter()
                 .enumerate()
-                .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
+                .map(|(ix, entry)| {
+                    self.recent_menu_item(context_picker.clone(), ix, entry, path_style)
+                })
+                .collect::<Vec<_>>();
 
             let entries = self
                 .workspace
@@ -385,12 +391,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
@@ -399,6 +404,7 @@ impl ContextPicker {
         context_picker: Entity<ContextPicker>,
         ix: usize,
         entry: RecentEntry,
+        path_style: PathStyle,
     ) -> ContextMenuItem {
         match entry {
             RecentEntry::File {
@@ -417,6 +423,7 @@ impl ContextPicker {
                             &path,
                             &path_prefix,
                             false,
+                            path_style,
                             context_store.clone(),
                             cx,
                         )
@@ -590,7 +597,7 @@ impl Render for ContextPicker {
 pub(crate) enum RecentEntry {
     File {
         project_path: ProjectPath,
-        path_prefix: Arc<str>,
+        path_prefix: Arc<RelPath>,
     },
     Thread(ThreadContextEntry),
 }
@@ -610,9 +617,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .map_or(false, |editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -667,7 +672,7 @@ pub(crate) fn recent_context_picker_entries(
     text_thread_store: Option<WeakEntity<TextThreadStore>>,
     workspace: Entity<Workspace>,
     exclude_paths: &HashSet<PathBuf>,
-    exclude_threads: &HashSet<ThreadId>,
+    _exclude_threads: &HashSet<ThreadId>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
@@ -680,7 +685,7 @@ pub(crate) fn recent_context_picker_entries(
             .filter(|(_, abs_path)| {
                 abs_path
                     .as_ref()
-                    .map_or(true, |path| !exclude_paths.contains(path.as_path()))
+                    .is_none_or(|path| !exclude_paths.contains(path.as_path()))
             })
             .take(4)
             .filter_map(|(project_path, _)| {
@@ -693,19 +698,13 @@ pub(crate) fn recent_context_picker_entries(
             }),
     );
 
-    let active_thread_id = workspace
-        .panel::<AgentPanel>(cx)
-        .and_then(|panel| Some(panel.read(cx).active_thread(cx)?.read(cx).id()));
-
     if let Some((thread_store, text_thread_store)) = thread_store
         .and_then(|store| store.upgrade())
         .zip(text_thread_store.and_then(|store| store.upgrade()))
     {
         let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
             .filter(|(_, thread)| match thread {
-                ThreadContextEntry::Thread { id, .. } => {
-                    Some(id) != active_thread_id && !exclude_threads.contains(id)
-                }
+                ThreadContextEntry::Thread { .. } => false,
                 ThreadContextEntry::Context { .. } => true,
             })
             .collect::<Vec<_>>();
@@ -821,13 +820,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(
@@ -882,15 +876,7 @@ fn fold_toggle(
     }
 }
 
-pub enum MentionLink {
-    File(ProjectPath, Entry),
-    Symbol(ProjectPath, String),
-    Selection(ProjectPath, Range<usize>),
-    Fetch(String),
-    Thread(ThreadId),
-    TextThread(Arc<Path>),
-    Rule(UserPromptId),
-}
+pub struct MentionLink;
 
 impl MentionLink {
     const FILE: &str = "@file";
@@ -901,17 +887,6 @@ impl MentionLink {
     const RULE: &str = "@rule";
 
     const TEXT_THREAD_URL_PREFIX: &str = "text-thread://";
-
-    const SEPARATOR: &str = ":";
-
-    pub fn is_valid(url: &str) -> bool {
-        url.starts_with(Self::FILE)
-            || url.starts_with(Self::SYMBOL)
-            || url.starts_with(Self::FETCH)
-            || url.starts_with(Self::SELECTION)
-            || url.starts_with(Self::THREAD)
-            || url.starts_with(Self::RULE)
-    }
 
     pub fn for_file(file_name: &str, full_path: &str) -> String {
         format!("[@{}]({}:{})", file_name, Self::FILE, full_path)
@@ -965,75 +940,5 @@ impl MentionLink {
 
     pub fn for_rule(rule: &RulesContextEntry) -> String {
         format!("[@{}]({}:{})", rule.title, Self::RULE, rule.prompt_id.0)
-    }
-
-    pub fn try_parse(link: &str, workspace: &Entity<Workspace>, cx: &App) -> Option<Self> {
-        fn extract_project_path_from_link(
-            path: &str,
-            workspace: &Entity<Workspace>,
-            cx: &App,
-        ) -> Option<ProjectPath> {
-            let path = PathBuf::from(path);
-            let worktree_name = path.iter().next()?;
-            let path: PathBuf = path.iter().skip(1).collect();
-            let worktree_id = workspace
-                .read(cx)
-                .visible_worktrees(cx)
-                .find(|worktree| worktree.read(cx).root_name() == worktree_name)
-                .map(|worktree| worktree.read(cx).id())?;
-            Some(ProjectPath {
-                worktree_id,
-                path: path.into(),
-            })
-        }
-
-        let (prefix, argument) = link.split_once(Self::SEPARATOR)?;
-        match prefix {
-            Self::FILE => {
-                let project_path = extract_project_path_from_link(argument, workspace, cx)?;
-                let entry = workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .entry_for_path(&project_path, cx)?;
-                Some(MentionLink::File(project_path, entry))
-            }
-            Self::SYMBOL => {
-                let (path, symbol) = argument.split_once(Self::SEPARATOR)?;
-                let project_path = extract_project_path_from_link(path, workspace, cx)?;
-                Some(MentionLink::Symbol(project_path, symbol.to_string()))
-            }
-            Self::SELECTION => {
-                let (path, line_args) = argument.split_once(Self::SEPARATOR)?;
-                let project_path = extract_project_path_from_link(path, workspace, cx)?;
-
-                let line_range = {
-                    let (start, end) = line_args
-                        .trim_start_matches('(')
-                        .trim_end_matches(')')
-                        .split_once('-')?;
-                    start.parse::<usize>().ok()?..end.parse::<usize>().ok()?
-                };
-
-                Some(MentionLink::Selection(project_path, line_range))
-            }
-            Self::THREAD => {
-                if let Some(encoded_filename) = argument.strip_prefix(Self::TEXT_THREAD_URL_PREFIX)
-                {
-                    let filename = urlencoding::decode(encoded_filename).ok()?;
-                    let path = contexts_dir().join(filename.as_ref()).into();
-                    Some(MentionLink::TextThread(path))
-                } else {
-                    let thread_id = ThreadId::from(argument);
-                    Some(MentionLink::Thread(thread_id))
-                }
-            }
-            Self::FETCH => Some(MentionLink::Fetch(argument.to_string())),
-            Self::RULE => {
-                let prompt_id = UserPromptId(Uuid::try_parse(argument).ok()?);
-                Some(MentionLink::Rule(prompt_id))
-            }
-            _ => None,
-        }
     }
 }

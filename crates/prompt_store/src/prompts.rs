@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_system_shell};
+use util::{ResultExt, get_default_system_shell, rel_path::RelPath};
 
 use crate::UserPromptId;
 
@@ -43,7 +43,7 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
+            shell: get_default_system_shell(),
         }
     }
 }
@@ -80,7 +80,7 @@ pub struct WorktreeContext {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
-    pub path_in_worktree: Arc<Path>,
+    pub path_in_worktree: Arc<RelPath>,
     pub text: String,
     // This used for opening rules files. TODO: Since it isn't related to prompt templating, this
     // should be moved elsewhere.
@@ -229,12 +229,12 @@ impl PromptBuilder {
                         log_message.push_str(" -> ");
                         log_message.push_str(&target.display().to_string());
                     }
-                    log::info!("{}.", log_message);
+                    log::trace!("{}.", log_message);
                 } else {
                     if !found_dir_once {
-                        log::info!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
+                        log::trace!("No prompt template overrides directory found at {}. Using built-in prompts.", templates_dir.display());
                         if let Some(target) = symlink_status {
-                            log::info!("Symlink found pointing to {}, but target is invalid.", target.display());
+                            log::trace!("Symlink found pointing to {}, but target is invalid.", target.display());
                         }
                     }
 
@@ -247,7 +247,7 @@ impl PromptBuilder {
                                     log_message.push_str(" -> ");
                                     log_message.push_str(&target.display().to_string());
                                 }
-                                log::info!("{}.", log_message);
+                                log::trace!("{}.", log_message);
                                 break;
                             }
                         }
@@ -286,7 +286,7 @@ impl PromptBuilder {
                             break;
                         }
                     for event in changed_paths {
-                        if event.path.starts_with(&templates_dir) && event.path.extension().map_or(false, |ext| ext == "hbs") {
+                        if event.path.starts_with(&templates_dir) && event.path.extension().is_some_and(|ext| ext == "hbs") {
                             log::info!("Reloading prompt template override: {}", event.path.display());
                             if let Some(content) = params.fs.load(&event.path).await.log_err() {
                                 let file_name = event.path.file_stem().unwrap().to_string_lossy();
@@ -403,7 +403,7 @@ impl PromptBuilder {
                 ContentPromptDiagnosticContext {
                     line_number: (start.row + 1) as usize,
                     error_message: entry.diagnostic.message.clone(),
-                    code_content: buffer.text_for_range(entry.range.clone()).collect(),
+                    code_content: buffer.text_for_range(entry.range).collect(),
                 }
             })
             .collect();
@@ -447,6 +447,7 @@ impl PromptBuilder {
 mod test {
     use super::*;
     use serde_json;
+    use util::rel_path::rel_path;
     use uuid::Uuid;
 
     #[test]
@@ -455,7 +456,7 @@ mod test {
             root_name: "path".into(),
             abs_path: Path::new("/path/to/root").into(),
             rules_file: Some(RulesFileContext {
-                path_in_worktree: Path::new(".rules").into(),
+                path_in_worktree: rel_path(".rules").into(),
                 text: "".into(),
                 project_entry_id: 0,
             }),

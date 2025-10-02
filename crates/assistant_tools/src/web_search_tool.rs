@@ -193,10 +193,7 @@ impl ToolCard for WebSearchToolCard {
                                     )
                                 }
                             })
-                            .on_click({
-                                let url = url.clone();
-                                move |_, _, cx| cx.open_url(&url)
-                            })
+                            .on_click(move |_, _, cx| cx.open_url(&url))
                     }))
                     .into_any(),
             ),

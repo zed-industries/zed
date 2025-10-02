@@ -13,14 +13,15 @@ pub enum BorderPosition {
 /// # Usage Example
 ///
 /// ```
-/// use ui::{Callout};
+/// use ui::prelude::*;
+/// use ui::{Button, Callout, IconName, Label, Severity};
 ///
-/// Callout::new()
+/// let callout = Callout::new()
 ///     .severity(Severity::Warning)
 ///     .icon(IconName::Warning)
-///     .title(Label::new("Be aware of your subscription!"))
-///     .description(Label::new("Your subscription is about to expire. Renew now!"))
-///     .actions_slot(Button::new("renew", "Renew Now"))
+///     .title("Be aware of your subscription!")
+///     .description("Your subscription is about to expire. Renew now!")
+///     .actions_slot(Button::new("renew", "Renew Now"));
 /// ```
 ///
 #[derive(IntoElement, RegisterComponent)]
@@ -81,7 +82,8 @@ impl Callout {
         self
     }
 
-    /// Sets an optional tertiary call-to-action button.
+    /// Sets an optional dismiss button, which is usually an icon button with a close icon.
+    /// This button is always rendered as the last one to the far right.
     pub fn dismiss_action(mut self, action: impl IntoElement) -> Self {
         self.dismiss_action = Some(action.into_any_element());
         self
@@ -131,6 +133,7 @@ impl RenderOnce for Callout {
 
         h_flex()
             .min_w_0()
+            .w_full()
             .p_2()
             .gap_2()
             .items_start()

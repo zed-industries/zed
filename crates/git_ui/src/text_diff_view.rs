@@ -48,7 +48,7 @@ impl TextDiffView {
 
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?.clone();
+            let source_buffer = multibuffer.as_singleton()?;
             let selections = editor.selections.all::<Point>(cx);
             let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 
@@ -207,7 +207,7 @@ impl TextDiffView {
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |_, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
@@ -259,7 +259,7 @@ async fn update_diff_buffer(
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let base_text = base_buffer_snapshot.text().to_string();
+    let base_text = base_buffer_snapshot.text();
 
     let diff_snapshot = cx
         .update(|cx| {
@@ -416,7 +416,7 @@ impl Item for TextDiffView {
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
     let buffer = editor.buffer().read(cx);
     let buffer_snapshot = buffer.snapshot(cx);
-    let first_selection = editor.selections.disjoint.first()?;
+    let first_selection = editor.selections.disjoint_anchors().first()?;
 
     let selection_start = first_selection.start.to_point(&buffer_snapshot);
     let selection_end = first_selection.end.to_point(&buffer_snapshot);

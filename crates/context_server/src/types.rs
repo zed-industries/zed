@@ -711,6 +711,16 @@ pub enum ToolResponseContent {
     Resource { resource: ResourceContents },
 }
 
+impl ToolResponseContent {
+    pub fn text(&self) -> Option<&str> {
+        if let ToolResponseContent::Text { text } = self {
+            Some(text)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResponse {

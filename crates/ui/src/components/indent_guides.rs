@@ -195,7 +195,7 @@ mod uniform_list {
     impl UniformListDecoration for IndentGuides {
         fn compute(
             &self,
-            visible_range: Range<usize>,
+            mut visible_range: Range<usize>,
             bounds: Bounds<Pixels>,
             _scroll_offset: Point<Pixels>,
             item_height: Pixels,
@@ -203,7 +203,6 @@ mod uniform_list {
             window: &mut Window,
             cx: &mut App,
         ) -> AnyElement {
-            let mut visible_range = visible_range.clone();
             let includes_trailing_indent = visible_range.end < item_count;
             // Check if we have entries after the visible range,
             // if so extend the visible range so we can fetch a trailing indent,

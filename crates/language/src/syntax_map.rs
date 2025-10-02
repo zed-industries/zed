@@ -832,7 +832,7 @@ impl SyntaxSnapshot {
         query: fn(&Grammar) -> Option<&Query>,
     ) -> SyntaxMapCaptures<'a> {
         SyntaxMapCaptures::new(
-            range.clone(),
+            range,
             text,
             [SyntaxLayer {
                 language,
@@ -1630,10 +1630,8 @@ impl<'a> SyntaxLayer<'a> {
                     if offset < range.start || offset > range.end {
                         continue;
                     }
-                } else {
-                    if offset <= range.start || offset >= range.end {
-                        continue;
-                    }
+                } else if offset <= range.start || offset >= range.end {
+                    continue;
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {
@@ -1777,13 +1775,13 @@ impl Default for SyntaxLayerSummary {
 }
 
 impl sum_tree::Summary for SyntaxLayerSummary {
-    type Context = BufferSnapshot;
+    type Context<'a> = &'a BufferSnapshot;
 
     fn zero(_cx: &BufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();

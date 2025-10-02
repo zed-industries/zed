@@ -9,8 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Deletes the file or directory (and the directory's contents, recursively) at
-/// the specified path in the project, and returns confirmation of the deletion.
+/// Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
     /// The path of the file or directory to delete.
@@ -45,15 +44,19 @@ impl AgentTool for DeletePathTool {
     type Input = DeletePathToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "delete_path".into()
+    fn name() -> &'static str {
+        "delete_path"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Delete
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             format!("Delete “`{}`”", input.path).into()
         } else {

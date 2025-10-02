@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 #![cfg_attr(any(not(target_os = "macos"), feature = "macos-blade"), allow(unused))]
 
 //TODO: consider generating shader code for WGSL

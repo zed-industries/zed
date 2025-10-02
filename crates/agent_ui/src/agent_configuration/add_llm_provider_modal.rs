@@ -5,11 +5,8 @@ use collections::HashSet;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, Task};
 use language_model::LanguageModelRegistry;
-use language_models::{
-    AllLanguageModelSettings, OpenAiCompatibleSettingsContent,
-    provider::open_ai_compatible::{AvailableModel, ModelCapabilities},
-};
-use settings::update_settings_file;
+use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
+use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState, prelude::*,
 };
@@ -238,14 +235,19 @@ fn save_provider_to_settings(
         task.await
             .map_err(|_| "Failed to write API key to keychain")?;
         cx.update(|cx| {
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-                settings.openai_compatible.get_or_insert_default().insert(
-                    provider_name,
-                    OpenAiCompatibleSettingsContent {
-                        api_url,
-                        available_models: models,
-                    },
-                );
+            update_settings_file(fs, cx, |settings, _cx| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .openai_compatible
+                    .get_or_insert_default()
+                    .insert(
+                        provider_name,
+                        OpenAiCompatibleSettingsContent {
+                            api_url,
+                            available_models: models,
+                        },
+                    );
             });
         })
         .ok();
@@ -668,10 +670,10 @@ mod tests {
             );
 
             let parsed_model = model_input.parse(cx).unwrap();
-            assert_eq!(parsed_model.capabilities.tools, true);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, false);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 
@@ -693,10 +695,10 @@ mod tests {
             model_input.capabilities.supports_prompt_cache_key = ToggleState::Unselected;
 
             let parsed_model = model_input.parse(cx).unwrap();
-            assert_eq!(parsed_model.capabilities.tools, false);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, false);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(!parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(!parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 
@@ -719,10 +721,10 @@ mod tests {
 
             let parsed_model = model_input.parse(cx).unwrap();
             assert_eq!(parsed_model.name, "somemodel");
-            assert_eq!(parsed_model.capabilities.tools, true);
-            assert_eq!(parsed_model.capabilities.images, false);
-            assert_eq!(parsed_model.capabilities.parallel_tool_calls, true);
-            assert_eq!(parsed_model.capabilities.prompt_cache_key, false);
+            assert!(parsed_model.capabilities.tools);
+            assert!(!parsed_model.capabilities.images);
+            assert!(parsed_model.capabilities.parallel_tool_calls);
+            assert!(!parsed_model.capabilities.prompt_cache_key);
         });
     }
 

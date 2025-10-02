@@ -143,6 +143,7 @@ message Operation {
         UpdateSelections update_selections = 3;
         UpdateDiagnostics update_diagnostics = 4;
         UpdateCompletionTriggers update_completion_triggers = 5;
+        UpdateLineEnding update_line_ending = 6;
     }
 
     message Edit {
@@ -173,6 +174,12 @@ message Operation {
         uint32 lamport_timestamp = 2;
         repeated string triggers = 3;
         uint64 language_server_id = 4;
+    }
+
+    message UpdateLineEnding {
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        LineEnding line_ending = 3;
     }
 }
 

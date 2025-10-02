@@ -20,14 +20,14 @@ fn replace_deprecated_settings_values(
         .nodes_for_capture_index(parent_object_capture_ix)
         .next()?
         .byte_range();
-    let parent_object_name = contents.get(parent_object_range.clone())?;
+    let parent_object_name = contents.get(parent_object_range)?;
 
     let setting_name_ix = query.capture_index_for_name("setting_name")?;
     let setting_name_range = mat
         .nodes_for_capture_index(setting_name_ix)
         .next()?
         .byte_range();
-    let setting_name = contents.get(setting_name_range.clone())?;
+    let setting_name = contents.get(setting_name_range)?;
 
     let setting_value_ix = query.capture_index_for_name("setting_value")?;
     let setting_value_range = mat

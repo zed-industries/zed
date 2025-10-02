@@ -7,7 +7,6 @@ pub mod contacts;
 pub mod contributors;
 pub mod embeddings;
 pub mod extensions;
-pub mod messages;
 pub mod notifications;
 pub mod projects;
 pub mod rooms;

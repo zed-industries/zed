@@ -7,7 +7,6 @@ use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
-use project::Fs;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -17,7 +16,6 @@ use smol::fs::{self};
 use std::fmt::Display;
 use std::ops::Range;
 use std::{
-    any::Any,
     borrow::Cow,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -25,6 +23,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
 use crate::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -90,10 +89,10 @@ impl ManifestProvider for CargoManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join("Cargo.toml");
+            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -106,157 +105,7 @@ impl ManifestProvider for CargoManifestProvider {
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        SERVER_NAME.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        let path = delegate.which("rust-analyzer".as_ref()).await?;
-        let env = delegate.shell_env().await;
-
-        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
-        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-        let result = delegate
-            .try_exec(LanguageServerBinary {
-                path: path.clone(),
-                arguments: vec!["--help".into()],
-                env: Some(env.clone()),
-            })
-            .await;
-        if let Err(err) = result {
-            log::debug!(
-                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
-                path,
-                err
-            );
-            return None;
-        }
-
-        Some(LanguageServerBinary {
-            path,
-            env: Some(env),
-            arguments: vec![],
-        })
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release(
-            "rust-lang/rust-analyzer",
-            true,
-            false,
-            delegate.http_client(),
-        )
-        .await?;
-        let asset_name = Self::build_asset_name();
-        let asset = release
-            .assets
-            .into_iter()
-            .find(|asset| asset.name == asset_name)
-            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-        Ok(Box::new(GitHubLspBinaryVersion {
-            name: release.tag_name,
-            url: asset.browser_download_url,
-            digest: asset.digest,
-        }))
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-        };
-
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            delegate,
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
-                digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
-
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: Default::default(),
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir).await
+        SERVER_NAME
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -403,7 +252,7 @@ impl LspAdapter for RustLspAdapter {
                 } else if completion
                     .detail
                     .as_ref()
-                    .map_or(false, |detail| detail.starts_with("macro_rules! "))
+                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
                 {
                     let text = completion.label.clone();
                     let len = text.len();
@@ -496,7 +345,7 @@ impl LspAdapter for RustLspAdapter {
         let enable_lsp_tasks = ProjectSettings::get_global(cx)
             .lsp
             .get(&SERVER_NAME)
-            .map_or(false, |s| s.enable_lsp_tasks);
+            .is_some_and(|s| s.enable_lsp_tasks);
         if enable_lsp_tasks {
             let experimental = json!({
                 "runnables": {
@@ -510,21 +359,162 @@ impl LspAdapter for RustLspAdapter {
             }
         }
 
-        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
-            .diagnostics
-            .fetch_cargo_diagnostics();
-        if cargo_diagnostics_fetched_separately {
-            let disable_check_on_save = json!({
-                "checkOnSave": false,
-            });
-            if let Some(initialization_options) = &mut original.initialization_options {
-                merge_json_value_into(disable_check_on_save, initialization_options);
-            } else {
-                original.initialization_options = Some(disable_check_on_save);
+        Ok(original)
+    }
+}
+
+impl LspInstaller for RustLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which("rust-analyzer".as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        let result = delegate
+            .try_exec(LanguageServerBinary {
+                path: path.clone(),
+                arguments: vec!["--help".into()],
+                env: Some(env.clone()),
+            })
+            .await;
+        if let Err(err) = result {
+            log::debug!(
+                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                path,
+                err
+            );
+            return None;
+        }
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec![],
+        })
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        pre_release: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let release = latest_github_release(
+            "rust-lang/rust-analyzer",
+            true,
+            pre_release,
+            delegate.http_client(),
+        )
+        .await?;
+        let asset_name = Self::build_asset_name();
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = version;
+        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
+
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
             }
         }
 
-        Ok(original)
+        download_server_binary(
+            delegate,
+            &url,
+            expected_digest.as_deref(),
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+
+        Ok(LanguageServerBinary {
+            path: server_path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        get_cached_server_binary(container_dir).await
     }
 }
 
@@ -641,7 +631,6 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -659,7 +648,7 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
+        let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
@@ -1019,8 +1008,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
         let path = last.context("no cached binary")?;
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
         };
 
         anyhow::Ok(LanguageServerBinary {
@@ -1040,7 +1029,7 @@ fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
         // filter out just that module.
         Some("--lib".to_owned())
     } else if stem == "mod" {
-        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().to_string()) })
+        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().into_owned()) })
     } else if stem == "main" {
         if let (Some(bin_name), Some(bin_kind)) = (
             variables.get(&RUST_BIN_NAME_TASK_VARIABLE),
@@ -1063,7 +1052,6 @@ mod tests {
     use super::*;
     use crate::language;
     use gpui::{BorrowAppContext, Hsla, TestAppContext};
-    use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
@@ -1072,7 +1060,7 @@ mod tests {
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines
@@ -1393,8 +1381,8 @@ mod tests {
             cx.set_global(test_settings);
             language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });
