@@ -1251,6 +1251,155 @@ fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Workbench & Window",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Workbench"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Editor Tabs",
+                    description: "Whether or not to show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Active language Button",
+                    description: "Whether to show the active language button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                                &status_bar.active_language_button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .status_bar
+                                .get_or_insert_default()
+                                .active_language_button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Position Button",
+                    description: "Whether to show the cursor position button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                                &status_bar.cursor_position_button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .status_bar
+                                .get_or_insert_default()
+                                .cursor_position_button
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Panels & Tools",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Project Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Button",
+                    description: "Whether to show the project panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Dock",
+                    description: "Where to dock the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project_panel.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Project Panel Default Width",
+                //     description: "Default width of the project panel in pixels",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(project_panel) = &settings_content.project_panel {
+                //                 &project_panel.default_width
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .project_panel
+                //                 .get_or_insert_default()
+                //                 .default_width
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Terminal"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Terminal Dock",
+                    description: "Where to dock the terminal panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
             title: "AI",
             expanded: false,
             items: vec![
@@ -1749,6 +1898,12 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::ClosePosition>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::DockSide>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::TerminalDockPosition>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         });
 
