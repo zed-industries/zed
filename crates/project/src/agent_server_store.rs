@@ -1025,44 +1025,42 @@ impl ExternalAgentServer for LocalCodex {
 
                 let version_dir = dir.join(&release.tag_name);
                 if !fs.is_dir(&version_dir).await {
-                    // Determine the asset name based on CPU architecture.
-                    let arch = if cfg!(target_arch = "x86_64") {
-                        "x86_64"
-                    } else if cfg!(target_arch = "aarch64") {
-                        "aarch64"
-                    } else {
-                        std::env::consts::ARCH
-                    };
-                    let asset_name = format!("{arch}.tar.gz");
-                    let asset_url = release
-                        .assets
-                        .iter()
-                        .find(|a| a.name == asset_name)
-                        .map(|a| a.browser_download_url.clone())
-                        .context(format!(
-                            "no asset named {asset_name} in release {}",
-                            release.tag_name
-                        ))?;
+                    // Assemble release download URL from prefix, tag, and filename based on target triple.
+                    // If unsupported, silently skip download.
+                    let tag = release.tag_name.clone(); // e.g. "v0.1.0"
+                    let version_number = tag.trim_start_matches('v');
+                    if let Some(asset_url) = codex_release_url(version_number) {
+                        let http = http.clone();
+                        let mut response = http
+                            .get(&asset_url, Default::default(), true)
+                            .await
+                            .with_context(|| {
+                                format!("downloading Codex binary from {}", asset_url)
+                            })?;
+                        anyhow::ensure!(
+                            response.status().is_success(),
+                            "failed to download Codex release: {}",
+                            response.status()
+                        );
 
-                    let http = http.clone();
-                    let mut response = http
-                        .get(&asset_url, Default::default(), true)
-                        .await
-                        .context("downloading Codex binary")?;
-                    anyhow::ensure!(
-                        response.status().is_success(),
-                        "failed to download Codex release: {}",
-                        response.status()
-                    );
-
-                    // Decompress and extract the tar.gz into the version directory.
-                    let reader = futures::io::BufReader::new(response.body_mut());
-                    let decoder = async_compression::futures::bufread::GzipDecoder::new(reader);
-                    let archive = async_tar::Archive::new(decoder);
-                    archive
-                        .unpack(&version_dir)
-                        .await
-                        .context("extracting Codex binary")?;
+                        // Extract archive into the version directory.
+                        if asset_url.ends_with(".zip") {
+                            let reader = futures::io::BufReader::new(response.body_mut());
+                            util::archive::extract_zip(&version_dir, reader)
+                                .await
+                                .context("extracting Codex binary from zip")?;
+                        } else {
+                            // Decompress and extract the tar.gz into the version directory.
+                            let reader = futures::io::BufReader::new(response.body_mut());
+                            let decoder =
+                                async_compression::futures::bufread::GzipDecoder::new(reader);
+                            let archive = async_tar::Archive::new(decoder);
+                            archive
+                                .unpack(&version_dir)
+                                .await
+                                .context("extracting Codex binary from tar.gz")?;
+                        }
+                    }
                 }
 
                 let bin_name = if cfg!(windows) {
@@ -1094,6 +1092,45 @@ impl ExternalAgentServer for LocalCodex {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// Assemble Codex release URL for the current OS/arch and the given version number.
+/// Returns None if the current target is unsupported.
+/// Example output:
+/// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
+fn codex_release_url(version: &str) -> Option<String> {
+    // Determine arch
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        return None;
+    };
+
+    // Determine platform triple part
+    let platform = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(target_os = "windows") {
+        "pc-windows-msvc"
+    } else if cfg!(target_os = "linux") {
+        "unknown-linux-gnu"
+    } else {
+        return None;
+    };
+
+    // Determine extension: only Windows x86_64 uses .zip per release assets
+    let ext = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+
+    let prefix = "https://github.com/zed-industries/codex-acp/releases/download/";
+    let tag = format!("v{}", version);
+    let filename = format!("codex-acp-{}-{}-{}.{}", version, arch, platform, ext);
+
+    Some(format!("{prefix}{tag}/{filename}"))
 }
 
 struct LocalCustomAgent {
@@ -1132,6 +1169,35 @@ impl ExternalAgentServer for LocalCustomAgent {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn assembles_codex_release_url_for_current_target() {
+        let version_number = "0.1.0";
+
+        let allowed = [
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-apple-darwin.tar.gz",
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-pc-windows-msvc.tar.gz",
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-unknown-linux-gnu.tar.gz",
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-apple-darwin.tar.gz",
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-pc-windows-msvc.zip",
+            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+        ];
+
+        if let Some(url) = super::codex_release_url(version_number) {
+            assert!(
+                allowed.contains(&url.as_str()),
+                "Assembled URL {} not in allowed list",
+                url
+            );
+        } else {
+            panic!(
+                "This target does not have a known codex-acp release! We should fix this by building a release of codex-acp for this target, as otherwise codex-acp will not be usable with this Zed build."
+            );
+        }
     }
 }
 
