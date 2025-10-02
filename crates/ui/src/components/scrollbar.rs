@@ -25,7 +25,7 @@ use std::ops::Range;
 use crate::scrollbars::{ScrollbarAutoHide, ScrollbarVisibility, ShowScrollbar};
 
 const SCROLLBAR_HIDE_DELAY_INTERVAL: Duration = Duration::from_secs(1);
-const SCROLLBAR_HIDE_DURATION: Duration = Duration::from_millis(900);
+const SCROLLBAR_HIDE_DURATION: Duration = Duration::from_millis(400);
 const SCROLLBAR_SHOW_DURATION: Duration = Duration::from_millis(50);
 
 const SCROLLBAR_PADDING: Pixels = px(4.);
