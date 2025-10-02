@@ -6,10 +6,10 @@ use settings::Settings;
 
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
-    deepseek::DeepSeekSettings, google::GoogleSettings, glm::GlmSettings, lmstudio::LmStudioSettings,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    vercel::VercelSettings, x_ai::XAiSettings,
+    deepseek::DeepSeekSettings, glm::GlmSettings, google::GoogleSettings,
+    lmstudio::LmStudioSettings, mistral::MistralSettings, ollama::OllamaSettings,
+    open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 /// Initializes the language model settings.

@@ -16,8 +16,8 @@ use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::deepseek::DeepSeekLanguageModelProvider;
-use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::glm::GlmLanguageModelProvider;
+use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
@@ -134,10 +134,7 @@ fn register_language_model_providers(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
-    registry.register_provider(
-        GlmLanguageModelProvider::new(client.http_client(), cx),
-        cx,
-    );
+    registry.register_provider(GlmLanguageModelProvider::new(client.http_client(), cx), cx);
     registry.register_provider(
         MistralLanguageModelProvider::new(client.http_client(), cx),
         cx,

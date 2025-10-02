@@ -88,7 +88,7 @@ impl GlmLanguageModelProvider {
                 );
                 cx.notify();
             })
-                .detach();
+            .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx)),
             }
@@ -227,8 +227,7 @@ impl GlmLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                glm::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = glm::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
         });
@@ -301,7 +300,7 @@ impl LanguageModel for GlmLanguageModel {
 
             tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
         })
-            .boxed()
+        .boxed()
     }
 
     fn stream_completion(
@@ -322,7 +321,7 @@ impl LanguageModel for GlmLanguageModel {
             let mapper = GlmEventMapper::new();
             Ok(mapper.map_stream(stream.await?).boxed())
         }
-            .boxed()
+        .boxed()
     }
 }
 
@@ -541,7 +540,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -557,7 +556,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -580,7 +579,7 @@ impl ConfigurationView {
                 .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -593,7 +592,7 @@ impl ConfigurationView {
                 .update(cx, |state, cx| state.set_api_key(None, cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
@@ -628,8 +627,8 @@ impl Render for ConfigurationView {
                     Label::new(format!(
                         "Or set the {API_KEY_ENV_VAR_NAME} environment variable."
                     ))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
                 )
                 .into_any()
         } else {
