@@ -139,7 +139,7 @@ impl LanguageModelProvider for GlmLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiDeepSeek // TODO
+        IconName::AiGlm
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
