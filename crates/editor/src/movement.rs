@@ -1223,13 +1223,13 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 2),
-                    SelectionGoal::HorizontalPosition(f32::from(col_2_x)),
+                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 0),
-                    SelectionGoal::HorizontalPosition(f32::from(col_2_x)),
+                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
                 ),
             );
             assert_eq!(

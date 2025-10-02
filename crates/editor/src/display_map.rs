@@ -1877,33 +1877,33 @@ pub mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(x)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(x),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(x)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(x),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    language::SelectionGoal::HorizontalPosition(x)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
 
@@ -1920,7 +1920,7 @@ pub mod tests {
 
             // Re-wrap on font size changes
             map.update(cx, |map, cx| {
-                map.set_font(font("Helvetica"), px(font_size + 3.), cx)
+                map.set_font(font("Helvetica"), font_size + 3., cx)
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
