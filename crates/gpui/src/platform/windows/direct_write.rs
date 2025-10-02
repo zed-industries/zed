@@ -584,6 +584,11 @@ impl DirectWriteState {
                     .cast()?;
                 if let Some(ref fallbacks) = font_info.fallbacks {
                     format.SetFontFallback(fallbacks)?;
+                } else {
+                    // Ensure system font fallback is explicitly set so missing glyphs
+                    // (e.g., Arabic/Persian) resolve correctly on all Windows setups.
+                    let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
+                    format.SetFontFallback(&system_fallbacks)?;
                 }
 
                 let layout = self.components.factory.CreateTextLayout(
@@ -1491,10 +1496,20 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         let cluster_map =
             unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
 
+        // Determine text direction for this run
+        let is_rtl = (glyphrun.bidiLevel % 2) == 1;
+        let total_advance: f32 = glyph_advances.iter().copied().sum();
+
         let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
         let mut utf16_idx = desc.textPosition as usize;
         let mut glyph_idx = 0;
         let mut glyphs = Vec::with_capacity(glyph_count);
+        // Position cursor accounts for both LTR and RTL runs
+        let mut x_cursor = if is_rtl {
+            context.width + total_advance
+        } else {
+            context.width
+        };
         for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
             context.index_converter.advance_to_utf16_ix(utf16_idx);
             utf16_idx += cluster_utf16_len;
@@ -1507,19 +1522,26 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 let this_glyph_idx = glyph_idx + cluster_glyph_idx;
+                // Compute x position depending on direction
+                let x_for_glyph = if is_rtl {
+                    x_cursor -= glyph_advances[this_glyph_idx];
+                    x_cursor + glyph_offsets[this_glyph_idx].advanceOffset
+                } else {
+                    let x = x_cursor + glyph_offsets[this_glyph_idx].advanceOffset;
+                    x_cursor += glyph_advances[this_glyph_idx];
+                    x
+                };
                 glyphs.push(ShapedGlyph {
                     id,
-                    position: point(
-                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
-                        px(0.0),
-                    ),
+                    position: point(px(x_for_glyph), px(0.0)),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.width += glyph_advances[this_glyph_idx];
             }
             glyph_idx += cluster_glyph_count;
         }
+        // Advance the overall line width by this run's width
+        context.width += total_advance;
         context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
