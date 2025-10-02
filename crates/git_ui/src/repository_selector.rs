@@ -36,11 +36,11 @@ impl RepositorySelector {
     ) -> Self {
         let git_store = project_handle.read(cx).git_store().clone();
         let repository_entries = git_store.update(cx, |git_store, _cx| {
-            git_store
-                .repositories()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>()
+            let mut repos = git_store.repositories().values().cloned().collect()::Vec<_>;
+
+            repos.sort_by(|a, b| a.read(_cx).display_name().cmp(&b.read(_cx).display_name()));
+
+            repos
         });
         let filtered_repositories = repository_entries.clone();
 
@@ -59,7 +59,7 @@ impl RepositorySelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::nonsearchable_uniform_list(delegate, window, cx)
+            Picker::uniform_list(delegate, window, cx)
                 .widest_item(widest_item_ix)
                 .max_height(Some(rems(20.).into()))
         });
@@ -166,25 +166,32 @@ impl PickerDelegate for RepositorySelectorDelegate {
     ) -> Task<()> {
         let all_repositories = self.repository_entries.clone();
 
+        let repo_names: Vec<(Entity<Repository>, String)> = all_repositories
+            .iter()
+            .map(|repo| (repo.clone(), repo.read(cx).display_name().to_lowercase()))
+            .collect();
+
         cx.spawn_in(window, async move |this, cx| {
             let filtered_repositories = cx
                 .background_spawn(async move {
                     if query.is_empty() {
                         all_repositories
                     } else {
-                        all_repositories
+                        let query_lower = query.to_lowercase();
+                        repo_names
                             .into_iter()
-                            .filter(|_repo_info| {
-                                // TODO: Implement repository filtering logic
-                                true
-                            })
+                            .filter(|(_, display_name)| display_name.contains(&query_lower))
+                            .map(|(repo, _)| repo)
                             .collect()
                     }
                 })
                 .await;
 
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_repositories = filtered_repositories;
+                let mut sorted_repositories = filtered_repositories;
+                sorted_repositories
+                    .sort_by(|a, b| a.read(cx).display_name().cmp(&b.read(cx).display_name()));
+                this.delegate.filtered_repositories = sorted_repositories;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
             })
