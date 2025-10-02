@@ -30,12 +30,12 @@ fn remove_formatters_on_save_inner(value: &mut Value) -> Result<()> {
     }
 
     anyhow::ensure!(
-        obj.get("formatters").is_none(),
+        obj.get("formatter").is_none(),
         "Setting formatters in both format_on_save and formatters is deprecated. Please migrate the formatters from `format_on_save` into `formatters`"
     );
 
     obj.insert("format_on_save".to_string(), serde_json::json!("on"));
-    obj.insert("formatters".to_string(), format_on_save);
+    obj.insert("formatter".to_string(), format_on_save);
 
     Ok(())
 }
