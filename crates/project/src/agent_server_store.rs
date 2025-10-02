@@ -854,7 +854,7 @@ impl ExternalAgentServer for LocalGemini {
             command.env.get_or_insert_default().extend(extra_env);
             command.args.push("--experimental-acp".into());
             Ok((
-                dbg!(command),
+                command,
                 root_dir.to_string_lossy().into_owned(),
                 Some(login),
             ))
