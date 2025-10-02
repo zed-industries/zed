@@ -1938,11 +1938,22 @@ impl Terminal {
                     self.child_exited = Some(e);
                 }
 
-                if error_code.is_none()
-                    || self
-                        .child_exited
-                        .is_some_and(|status| status.code() == Some(0))
-                {
+                let should_close = if error_code.is_none() {
+                    let is_oneshot_command =
+                        matches!(self.template.shell, Shell::WithArguments { .. });
+
+                    if is_oneshot_command {
+                        /* Close only if success or no exit code */
+                        self.child_exited.is_none_or(|e| e.code() == Some(0))
+                    } else {
+                        /* Always close the interactive shell */
+                        true
+                    }
+                } else {
+                    self.child_exited.is_some_and(|e| e.code() == Some(0))
+                };
+
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2219,8 +2230,6 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 mod tests {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
-    #[cfg(windows)]
-    use std::os::windows::process::ExitStatusExt;
     use std::time::Duration;
 
     use super::*;
@@ -2276,6 +2285,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[gpui::test(iterations = 10)]
     async fn test_terminal_eof(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
