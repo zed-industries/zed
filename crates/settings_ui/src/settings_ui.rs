@@ -3379,7 +3379,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = new_text.map(Into::into);
                 })
-                .log_err(); // todo! don't log err
+                .log_err(); // todo(settings_ui) don't log err
             }
         })
         .into_any_element()
@@ -3403,12 +3403,10 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                let field = field;
-                cx.update_global(move |store: &mut SettingsStore, cx| {
-                    store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-                        *(field.pick_mut)(settings) = Some(state.into());
-                    });
-                });
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(state.into());
+                })
+                .log_err(); // todo(settings_ui) don't log err
             }
         })
         .color(SwitchColor::Accent)
@@ -3422,7 +3420,7 @@ fn render_dropdown<T>(
     cx: &mut App,
 ) -> AnyElement
 where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + 'static,
+    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
 {
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
@@ -3437,11 +3435,8 @@ where
         "dropdown",
         current_value_label,
         ContextMenu::build(window, cx, move |mut menu, _, _| {
-            for (value, label) in variants()
-                .into_iter()
-                .copied()
-                .zip(labels().into_iter().copied())
-            {
+            for (&value, &label) in std::iter::zip(variants(), labels()) {
+                let file = file.clone();
                 menu = menu.toggleable_entry(
                     label,
                     value == current_value,
@@ -3451,14 +3446,10 @@ where
                         if value == current_value {
                             return;
                         }
-                        cx.update_global(move |store: &mut SettingsStore, cx| {
-                            store.update_settings_file(
-                                <dyn fs::Fs>::global(cx),
-                                move |settings, _cx| {
-                                    *(field.pick_mut)(settings) = Some(value);
-                                },
-                            );
-                        });
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            *(field.pick_mut)(settings) = Some(value);
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
                     },
                 );
             }
