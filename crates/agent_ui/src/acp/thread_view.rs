@@ -3996,7 +3996,7 @@ impl AcpThreadView {
             settings
                 .agent
                 .get_or_insert_default()
-                .set_profile(settings_profile.0.clone());
+                .set_profile(settings_profile.0);
         });
 
         thread.update(cx, |thread, _| {
