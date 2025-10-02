@@ -134,6 +134,7 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 
 enum MigrationType<'a> {
     TreeSitter(MigrationPatterns, &'a Query),
+    #[allow(unused)]
     Json(fn(&mut serde_json::Value)),
 }
 
