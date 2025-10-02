@@ -228,6 +228,15 @@ pub struct TakeSamples<S> {
     left_to_take: usize,
 }
 
+impl<S: Clone> Clone for TakeSamples<S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            left_to_take: self.left_to_take,
+        }
+    }
+}
+
 impl<S: Source> Iterator for TakeSamples<S> {
     type Item = Sample;
 

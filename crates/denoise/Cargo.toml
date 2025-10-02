@@ -15,7 +15,7 @@ log.workspace = true
 
 rodio = { workspace = true, features = ["wav_output"] }
 
-rustfft = { version = "6.2.0", features = ["avx"] }
-realfft = "3.4.0"
+rustfft.workspace = true
+realfft.workspace = true
 thiserror.workspace = true
 workspace-hack.workspace = true

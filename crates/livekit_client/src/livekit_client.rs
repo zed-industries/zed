@@ -10,7 +10,7 @@ use log::info;
 use playback::capture_local_video_track;
 use settings::Settings;
 
-mod playback;
+pub(crate) mod playback;
 
 use crate::{
     LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication,

@@ -26,6 +26,8 @@ use util::ResultExt;
 mod audio_settings;
 mod replays;
 mod rodio_ext;
+#[cfg(test)]
+mod test;
 pub use audio_settings::AudioSettings;
 pub use rodio_ext::RodioExt;
 
@@ -107,46 +109,48 @@ impl Default for Audio {
 impl Global for Audio {}
 
 impl Audio {
+    fn setup_mixer(&mut self) -> impl Source + use<> {
+        let (mixer, source) = rodio::mixer::mixer(CHANNEL_COUNT, SAMPLE_RATE);
+        // or the mixer will end immediately as its empty.
+        mixer.add(rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE));
+        // The webrtc apm is not yet compiling for windows & freebsd
+        #[cfg(not(any(
+            any(all(target_os = "windows", target_env = "gnu")),
+            target_os = "freebsd"
+        )))]
+        let echo_canceller = Arc::clone(&self.echo_canceller);
+        #[cfg(not(any(
+            any(all(target_os = "windows", target_env = "gnu")),
+            target_os = "freebsd"
+        )))]
+        let source = source.inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
+            let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
+            echo_canceller
+                .lock()
+                .process_reverse_stream(
+                    &mut buf,
+                    SAMPLE_RATE.get() as i32,
+                    CHANNEL_COUNT.get().into(),
+                )
+                .expect("Audio input and output threads should not panic");
+        });
+        self.output_mixer = Some(mixer);
+        source
+    }
+
     fn ensure_output_exists(&mut self) -> Result<&Mixer> {
         #[cfg(debug_assertions)]
         log::warn!(
             "Audio does not sound correct without optimizations. Use a release build to debug audio issues"
         );
 
-        if self.output_handle.is_none() {
+        if self.output_mixer.is_none() {
+            let mixer_source = self.setup_mixer();
             let output_handle = OutputStreamBuilder::open_default_stream()
                 .context("Could not open default output stream")?;
             info!("Output stream: {:?}", output_handle);
+            output_handle.mixer().add(mixer_source);
             self.output_handle = Some(output_handle);
-            if let Some(output_handle) = &self.output_handle {
-                let (mixer, source) = rodio::mixer::mixer(CHANNEL_COUNT, SAMPLE_RATE);
-                // or the mixer will end immediately as its empty.
-                mixer.add(rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE));
-                self.output_mixer = Some(mixer);
-
-                // The webrtc apm is not yet compiling for windows & freebsd
-                #[cfg(not(any(
-                    any(all(target_os = "windows", target_env = "gnu")),
-                    target_os = "freebsd"
-                )))]
-                let echo_canceller = Arc::clone(&self.echo_canceller);
-                #[cfg(not(any(
-                    any(all(target_os = "windows", target_env = "gnu")),
-                    target_os = "freebsd"
-                )))]
-                let source = source.inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                    let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
-                    echo_canceller
-                        .lock()
-                        .process_reverse_stream(
-                            &mut buf,
-                            SAMPLE_RATE.get() as i32,
-                            CHANNEL_COUNT.get().into(),
-                        )
-                        .expect("Audio input and output threads should not panic");
-                });
-                output_handle.mixer().add(source);
-            }
         }
 
         Ok(self
@@ -163,22 +167,11 @@ impl Audio {
     }
 
     #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
-    pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
-        let stream = rodio::microphone::MicrophoneBuilder::new()
-            .default_device()?
-            .default_config()?
-            .prefer_sample_rates([
-                SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
-                SAMPLE_RATE.saturating_mul(nz!(2)),
-                SAMPLE_RATE.saturating_mul(nz!(3)),
-                SAMPLE_RATE.saturating_mul(nz!(4)),
-            ])
-            .prefer_channel_counts([nz!(1), nz!(2), nz!(3), nz!(4)])
-            .prefer_buffer_sizes(512..)
-            .open_stream()?;
-        info!("Opened microphone: {:?}", stream.config());
-
-        let stream = stream
+    pub fn input_pipeline(
+        voip_parts: VoipParts,
+        raw_mic_input: impl Source,
+    ) -> anyhow::Result<impl Source> {
+        let stream = raw_mic_input
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
@@ -223,6 +216,24 @@ impl Audio {
             .add_voip_stream("local microphone".to_string(), replay);
 
         Ok(stream)
+    }
+
+    #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
+    pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
+        let stream = rodio::microphone::MicrophoneBuilder::new()
+            .default_device()?
+            .default_config()?
+            .prefer_sample_rates([
+                SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
+                SAMPLE_RATE.saturating_mul(nz!(2)),
+                SAMPLE_RATE.saturating_mul(nz!(3)),
+                SAMPLE_RATE.saturating_mul(nz!(4)),
+            ])
+            .prefer_channel_counts([nz!(1), nz!(2), nz!(3), nz!(4)])
+            .prefer_buffer_sizes(512..)
+            .open_stream()?;
+        info!("Opened microphone: {:?}", stream.config());
+        Self::input_pipeline(voip_parts, stream)
     }
 
     pub fn play_voip_stream(
