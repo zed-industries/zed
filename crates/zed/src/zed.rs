@@ -1231,31 +1231,61 @@ pub fn handle_settings_file_changes(
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Helper function to process settings content
-    let process_settings =
-        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
-            // Apply migrations to both user and global settings
-            let (processed_content, content_migrated) =
-                if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+    let process_settings = move |content: String,
+                                 is_user: bool,
+                                 store: &mut SettingsStore,
+                                 cx: &mut App|
+          -> bool {
+        // Apply migrations to both user and global settings
+        let (processed_content, content_migrated) = match migrate_settings(&content) {
+            Ok(result) => {
+                if let Some(migrated_content) = result {
                     (migrated_content, true)
                 } else {
                     (content, false)
-                };
-
-            let result = if is_user {
-                store.set_user_settings(&processed_content, cx)
-            } else {
-                store.set_global_settings(&processed_content, cx)
-            };
-
-            if let Err(err) = &result {
-                let settings_type = if is_user { "user" } else { "global" };
-                log::error!("Failed to load {} settings: {err}", settings_type);
+                }
             }
-
-            settings_changed(result.err(), cx);
-
-            content_migrated
+            Err(err) => {
+                // todo! markdown content
+                // todo! show path to failed setting in migration
+                show_app_notification(
+                    NotificationId::Named("failed-to-migrate-settings".into()),
+                    cx,
+                    move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(
+                                format!("Failed to migrate settings\n{err}"),
+                                cx,
+                            )
+                            .primary_message("Open Settings File")
+                            .primary_icon(IconName::Settings)
+                            .primary_on_click(|window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                cx.emit(DismissEvent);
+                            })
+                        })
+                    },
+                );
+                // notify user here
+                (content, false)
+            }
         };
+
+        let result = if is_user {
+            store.set_user_settings(&processed_content, cx)
+        } else {
+            store.set_global_settings(&processed_content, cx)
+        };
+
+        if let Err(err) = &result {
+            let settings_type = if is_user { "user" } else { "global" };
+            log::error!("Failed to load {} settings: {err}", settings_type);
+        }
+
+        settings_changed(result.err(), cx);
+
+        content_migrated
+    };
 
     // Initial load of both settings files
     let global_content = cx
