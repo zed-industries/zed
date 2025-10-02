@@ -311,16 +311,100 @@ fn user_settings_data() -> Vec<SettingsPage> {
             expanded: true,
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
+                // todo(settings_ui): Figure out how we want to add these
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Theme Mode",
                 //     description: "How to select the theme",
                 //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.as_ref().mode,
-                //         pick_mut: |settings_content| &mut settings_content.theme.mode,
+                //         pick: |settings_content| &settings_content.theme.theme,
+                //         pick_mut: |settings_content| &mut settings_content.theme.theme,
                 //     }),
                 //     metadata: None,
                 // }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Icon Theme",
+                //     // todo!(settings_ui)
+                //     // This description is misleading because the icon theme is used in more places than the file explorer)
+                //     description: "Choose the icon theme for file explorer",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.icon_theme,
+                //         pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Fonts"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Font Family",
+                    description: "Font family for editor text",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_font_family,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): We need to implement a numeric stepper for these
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Buffer Font Size",
+                //     description: "Font size for editor text",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.buffer_font_size,
+                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
+                //     }),
+                //     metadata: None,
+                // }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Buffer Font Weight",
+                //     description: "Font weight for editor text (100-900)",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.buffer_font_weight,
+                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Line Height",
+                    description: "Line height for editor text",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_line_height,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_line_height,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "UI Font Family",
+                    description: "Font family for UI elements",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.ui_font_family,
+                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): We need to implement a numeric stepper for these
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "UI Font Size",
+                //     description: "Font size for UI elements",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.ui_font_size,
+                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
+                //     }),
+                //     metadata: None,
+                // }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "UI Font Weight",
+                //     description: "Font weight for UI elements (100-900)",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.ui_font_weight,
+                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Keymap"),
                 SettingsPageItem::SectionHeader("Cursor"),
+                SettingsPageItem::SectionHeader("Highlighting"),
+                SettingsPageItem::SectionHeader("Guides"),
+                SettingsPageItem::SectionHeader("Whitespace"),
+                SettingsPageItem::SectionHeader("Window"),
+                SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
                     description: "Cursor shape for the editor",
@@ -516,7 +600,20 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<CloseWindowWhenNoItems>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::FontFamilyName>(|settings_field, file, metadata, _, cx| {
+            // todo(settings_ui): We need to pass in a validator for this to ensure that users that type in invalid font names
+            render_text_field(settings_field.clone(), file, metadata, cx)
+        })
+        .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
+            // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
+            // right now there's a manual impl of strum::VariantArray
+            render_dropdown(*settings_field, file, window, cx)
         });
+    // todo!( Figure out how we want to handle discriminant unions)
+    // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
+    //     render_dropdown(*settings_field, file, window, cx)
+    // });
 }
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
@@ -1109,22 +1206,20 @@ impl Render for SettingsWindow {
     }
 }
 
-// fn read_field<T>(pick: fn(&SettingsContent) -> &Option<T>, file: SettingsFile, cx: &App) -> Option<T> {
-//     let (_, value) = cx.global::<SettingsStore>().get_value_from_file(file.to_settings(), (), pick);
-// }
-
-fn render_text_field(
-    field: SettingField<String>,
+fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
+    field: SettingField<T>,
     file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
     cx: &mut App,
 ) -> AnyElement {
     let (_, initial_text) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let initial_text = Some(initial_text.clone()).filter(|s| !s.is_empty());
+    let initial_text = Some(initial_text.clone()).filter(|s| !s.as_ref().is_empty());
 
     SettingsEditor::new()
-        .when_some(initial_text, |editor, text| editor.with_initial_text(text))
+        .when_some(initial_text, |editor, text| {
+            editor.with_initial_text(text.into())
+        })
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
@@ -1132,7 +1227,7 @@ fn render_text_field(
         .on_confirm(move |new_text, cx: &mut App| {
             cx.update_global(move |store: &mut SettingsStore, cx| {
                 store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-                    *(field.pick_mut)(settings) = new_text;
+                    *(field.pick_mut)(settings) = new_text.map(Into::into);
                 });
             });
         })

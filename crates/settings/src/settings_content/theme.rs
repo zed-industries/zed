@@ -200,8 +200,37 @@ impl UiDensity {
 #[serde(transparent)]
 pub struct FontFamilyName(pub Arc<str>);
 
+impl AsRef<str> for FontFamilyName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for FontFamilyName {
+    fn from(value: String) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<FontFamilyName> for String {
+    fn from(value: FontFamilyName) -> Self {
+        value.0.to_string()
+    }
+}
+
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -211,6 +240,10 @@ pub enum BufferLineHeight {
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+}
+
+impl strum::VariantArray for BufferLineHeight {
+    const VARIANTS: &'static [Self] = &[Self::Comfortable, Self::Standard];
 }
 
 fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
