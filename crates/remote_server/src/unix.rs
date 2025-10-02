@@ -1082,9 +1082,7 @@ impl ProtocolHandler for IrohZedProtocolHandler {
     }
 }
 
-struct IrohZedNode {
-    secret: SecretKey,
-}
+struct IrohZedNode(SecretKey);
 
 impl IrohZedNode {
     async fn create(persist: Option<&PathBuf>) -> Self {
@@ -1123,12 +1121,12 @@ impl IrohZedNode {
         }
         let secret = SecretKey::try_from(&key_bytes[0..32])?;
 
-        Ok(Some(IrohZedNode { secret }))
+        Ok(Some(IrohZedNode(secret)))
     }
 
     fn generate() -> Self {
         let secret = SecretKey::generate(rand_core::OsRng);
-        IrohZedNode { secret }
+        IrohZedNode(secret)
     }
 
     async fn write(key_path: &PathBuf, iroh_zed_node: &IrohZedNode) -> Result<()> {
@@ -1144,7 +1142,7 @@ impl IrohZedNode {
     }
 
     fn secret(&self) -> &SecretKey {
-        &self.secret
+        &self.0
     }
 }
 
