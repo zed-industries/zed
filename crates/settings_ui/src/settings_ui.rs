@@ -26,7 +26,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
     prelude::*,
 };
-use util::{paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
 
@@ -3309,11 +3309,10 @@ impl Render for SettingsWindow {
     }
 }
 
-fn update_settings_file<T: Send + 'static>(
+fn update_settings_file(
     file: SettingsUiFile,
-    field: SettingField<T>,
-    value: T,
     cx: &mut App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
     match file {
         SettingsUiFile::Local((worktree_id, rel_path)) => {
@@ -3333,6 +3332,7 @@ fn update_settings_file<T: Send + 'static>(
                     .into_iter()
                     .flatten()
             }
+            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
             let project = all_projects(cx).find(|project| {
                 project.read_with(cx, |project, cx| {
                     project.contains_local_settings_file(worktree_id, &rel_path, cx)
@@ -3345,20 +3345,12 @@ fn update_settings_file<T: Send + 'static>(
                 );
             };
             project.update(cx, |project, cx| {
-                project.update_local_settings_file(worktree_id, rel_path, cx, move |settings| {
-                    *(field.pick_mut)(settings) = Some(value);
-                });
+                project.update_local_settings_file(worktree_id, rel_path, cx, update);
             });
             return Ok(());
         }
         SettingsUiFile::User => Ok(
-            /* todo! error? */
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    *(field.pick_mut)(settings) = Some(value);
-                },
-            ),
+            /* todo! error? */ SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update)
         ),
         SettingsUiFile::Server(_) => unimplemented!(),
     }
@@ -3382,12 +3374,13 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
-        .on_confirm(move |new_text, cx: &mut App| {
-            cx.update_global(move |store: &mut SettingsStore, cx| {
-                store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+        .on_confirm({
+            move |new_text, cx| {
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = new_text.map(Into::into);
-                });
-            });
+                })
+                .log_err(); // todo! don't log err
+            }
         })
         .into_any_element()
 }

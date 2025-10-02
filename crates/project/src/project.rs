@@ -5310,7 +5310,7 @@ impl Project {
         worktree_id: WorktreeId,
         rel_path: Arc<RelPath>,
         cx: &mut App,
-        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent),
+        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
     ) {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
             // todo! error?
@@ -5322,8 +5322,8 @@ impl Project {
                 .await
                 .context("Failed to load settings file")?;
 
-            let new_text = cx.read_global::<SettingsStore, _>(|store, _| {
-                store.new_text_for_update(file.text, update)
+            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
+                store.new_text_for_update(file.text, move |settings| update(settings, cx))
             })?;
             worktree
                 .update(cx, |worktree, cx| {
