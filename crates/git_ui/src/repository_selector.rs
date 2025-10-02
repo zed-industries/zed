@@ -36,7 +36,7 @@ impl RepositorySelector {
     ) -> Self {
         let git_store = project_handle.read(cx).git_store().clone();
         let repository_entries = git_store.update(cx, |git_store, _cx| {
-            let mut repos = git_store.repositories().values().cloned().collect()::Vec<_>;
+            let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
 
             repos.sort_by(|a, b| a.read(_cx).display_name().cmp(&b.read(_cx).display_name()));
 
