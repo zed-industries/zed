@@ -24,6 +24,7 @@ pub enum ContextMenuItem {
         entry_render: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
         selectable: bool,
+        documentation_aside: Option<DocumentationAside>,
     },
 }
 
@@ -31,11 +32,13 @@ impl ContextMenuItem {
     pub fn custom_entry(
         entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
         handler: impl Fn(&mut Window, &mut App) + 'static,
+        documentation_aside: Option<DocumentationAside>,
     ) -> Self {
         Self::CustomEntry {
             entry_render: Box::new(entry_render),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             selectable: true,
+            documentation_aside,
         }
     }
 }
@@ -125,16 +128,20 @@ impl ContextMenuEntry {
     pub fn documentation_aside(
         mut self,
         side: DocumentationSide,
+        edge: DocumentationEdge,
         render: impl Fn(&mut App) -> AnyElement + 'static,
     ) -> Self {
         self.documentation_aside = Some(DocumentationAside {
             side,
+            edge,
             render: Rc::new(render),
         });
 
         self
     }
 }
+
+impl FluentBuilder for ContextMenuEntry {}
 
 impl From<ContextMenuEntry> for ContextMenuItem {
     fn from(entry: ContextMenuEntry) -> Self {
@@ -164,10 +171,28 @@ pub enum DocumentationSide {
     Right,
 }
 
+#[derive(Copy, Default, Clone, PartialEq, Eq)]
+pub enum DocumentationEdge {
+    #[default]
+    Top,
+    Bottom,
+}
+
 #[derive(Clone)]
 pub struct DocumentationAside {
-    side: DocumentationSide,
-    render: Rc<dyn Fn(&mut App) -> AnyElement>,
+    pub side: DocumentationSide,
+    pub edge: DocumentationEdge,
+    pub render: Rc<dyn Fn(&mut App) -> AnyElement>,
+}
+
+impl DocumentationAside {
+    pub fn new(
+        side: DocumentationSide,
+        edge: DocumentationEdge,
+        render: Rc<dyn Fn(&mut App) -> AnyElement>,
+    ) -> Self {
+        Self { side, edge, render }
+    }
 }
 
 impl Focusable for ContextMenu {
@@ -340,6 +365,10 @@ impl ContextMenu {
         self
     }
 
+    pub fn push_item(&mut self, item: impl Into<ContextMenuItem>) {
+        self.items.push(item.into());
+    }
+
     pub fn entry(
         mut self,
         label: impl Into<SharedString>,
@@ -456,6 +485,7 @@ impl ContextMenu {
             entry_render: Box::new(entry_render),
             handler: Rc::new(|_, _, _| {}),
             selectable: false,
+            documentation_aside: None,
         });
         self
     }
@@ -469,6 +499,7 @@ impl ContextMenu {
             entry_render: Box::new(entry_render),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             selectable: true,
+            documentation_aside: None,
         });
         self
     }
@@ -503,8 +534,9 @@ impl ContextMenu {
         self
     }
 
-    pub fn disabled_action(
+    pub fn action_disabled_when(
         mut self,
+        disabled: bool,
         label: impl Into<SharedString>,
         action: Box<dyn Action>,
     ) -> Self {
@@ -522,7 +554,7 @@ impl ContextMenu {
             icon_size: IconSize::Small,
             icon_position: IconPosition::End,
             icon_color: None,
-            disabled: true,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,
@@ -652,23 +684,23 @@ impl ContextMenu {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.selected_index {
             let next_index = ix + 1;
             if self.items.len() <= next_index {
                 self.select_first(&SelectFirst, window, cx);
+                return;
             } else {
                 for (ix, item) in self.items.iter().enumerate().skip(next_index) {
                     if item.is_selectable() {
                         self.select_index(ix, window, cx);
                         cx.notify();
-                        break;
+                        return;
                     }
                 }
             }
-        } else {
-            self.select_first(&SelectFirst, window, cx);
         }
+        self.select_first(&SelectFirst, window, cx);
     }
 
     pub fn select_previous(
@@ -678,20 +710,15 @@ impl ContextMenu {
         cx: &mut Context<Self>,
     ) {
         if let Some(ix) = self.selected_index {
-            if ix == 0 {
-                self.handle_select_last(&SelectLast, window, cx);
-            } else {
-                for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
-                    if item.is_selectable() {
-                        self.select_index(ix, window, cx);
-                        cx.notify();
-                        break;
-                    }
+            for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
+                if item.is_selectable() {
+                    self.select_index(ix, window, cx);
+                    cx.notify();
+                    return;
                 }
             }
-        } else {
-            self.handle_select_last(&SelectLast, window, cx);
         }
+        self.handle_select_last(&SelectLast, window, cx);
     }
 
     fn select_index(
@@ -704,10 +731,19 @@ impl ContextMenu {
         let item = self.items.get(ix)?;
         if item.is_selectable() {
             self.selected_index = Some(ix);
-            if let ContextMenuItem::Entry(entry) = item {
-                if let Some(callback) = &entry.documentation_aside {
+            match item {
+                ContextMenuItem::Entry(entry) => {
+                    if let Some(callback) = &entry.documentation_aside {
+                        self.documentation_aside = Some((ix, callback.clone()));
+                    }
+                }
+                ContextMenuItem::CustomEntry {
+                    documentation_aside: Some(callback),
+                    ..
+                } => {
                     self.documentation_aside = Some((ix, callback.clone()));
                 }
+                _ => (),
             }
         }
         Some(ix)
@@ -805,6 +841,7 @@ impl ContextMenu {
                 entry_render,
                 handler,
                 selectable,
+                ..
             } => {
                 let handler = handler.clone();
                 let menu = cx.entity().downgrade();
@@ -946,12 +983,10 @@ impl ContextMenu {
                             .children(action.as_ref().and_then(|action| {
                                 self.action_context
                                     .as_ref()
-                                    .map(|focus| {
+                                    .and_then(|focus| {
                                         KeyBinding::for_action_in(&**action, focus, window, cx)
                                     })
-                                    .unwrap_or_else(|| {
-                                        KeyBinding::for_action(&**action, window, cx)
-                                    })
+                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside.is_some(),
@@ -1072,6 +1107,7 @@ impl Render for ContextMenu {
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
+                .w_full()
                 .p_2()
                 .overflow_hidden()
                 .when(is_wide_window, |this| this.max_w_96())
@@ -1079,25 +1115,19 @@ impl Render for ContextMenu {
                 .child((aside.render)(cx))
         };
 
-        h_flex()
-            .when(is_wide_window, |this| this.flex_row())
-            .when(!is_wide_window, |this| this.flex_col())
-            .w_full()
-            .items_start()
-            .gap_1()
-            .child(div().children(aside.clone().and_then(|(_, aside)| {
-                (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))
-            })))
-            .child(
+        let render_menu =
+            |cx: &mut Context<Self>, window: &mut Window| {
                 WithRemSize::new(ui_font_size)
                     .occlude()
                     .elevation_2(cx)
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
                     .child(
                         v_flex()
                             .id("context-menu")
                             .max_h(vh(0.75, window))
+                            .flex_shrink_0()
                             .when_some(self.fixed_width, |this, width| {
                                 this.w(width).overflow_x_hidden()
                             })
@@ -1142,10 +1172,130 @@ impl Render for ContextMenu {
                                     }),
                                 ),
                             ),
-                    ),
-            )
-            .child(div().children(aside.and_then(|(_, aside)| {
-                (aside.side == DocumentationSide::Right).then(|| render_aside(aside, cx))
-            })))
+                    )
+            };
+
+        if is_wide_window {
+            div()
+                .relative()
+                .child(render_menu(cx, window))
+                .children(aside.map(|(_item_index, aside)| {
+                    h_flex()
+                        .absolute()
+                        .when(aside.side == DocumentationSide::Left, |this| {
+                            this.right_full().mr_1()
+                        })
+                        .when(aside.side == DocumentationSide::Right, |this| {
+                            this.left_full().ml_1()
+                        })
+                        .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
+                        .when(aside.edge == DocumentationEdge::Bottom, |this| {
+                            this.bottom_0()
+                        })
+                        .child(render_aside(aside, cx))
+                }))
+        } else {
+            v_flex()
+                .w_full()
+                .gap_1()
+                .justify_end()
+                .children(aside.map(|(_, aside)| render_aside(aside, cx)))
+                .child(render_menu(cx, window))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    fn can_navigate_back_over_headers(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let context_menu = cx.update(|window, cx| {
+            ContextMenu::build(window, cx, |menu, _, _| {
+                menu.header("First header")
+                    .separator()
+                    .entry("First entry", None, |_, _| {})
+                    .separator()
+                    .separator()
+                    .entry("Last entry", None, |_, _| {})
+                    .header("Last header")
+            })
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            assert_eq!(
+                None, context_menu.selected_index,
+                "No selection is in the menu initially"
+            );
+
+            context_menu.select_first(&SelectFirst, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should select first selectable entry, skipping the header and the separator"
+            );
+
+            context_menu.select_next(&SelectNext, window, cx);
+            assert_eq!(
+                Some(5),
+                context_menu.selected_index,
+                "Should select next selectable entry, skipping 2 separators along the way"
+            );
+
+            context_menu.select_next(&SelectNext, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should wrap around to first selectable entry"
+            );
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should start from the first selectable entry"
+            );
+
+            context_menu.select_previous(&SelectPrevious, window, cx);
+            assert_eq!(
+                Some(5),
+                context_menu.selected_index,
+                "Should wrap around to previous selectable entry (last)"
+            );
+
+            context_menu.select_previous(&SelectPrevious, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should go back to previous selectable entry (first)"
+            );
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&SelectFirst, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should start from the first selectable entry"
+            );
+
+            context_menu.select_previous(&SelectPrevious, window, cx);
+            assert_eq!(
+                Some(5),
+                context_menu.selected_index,
+                "Should wrap around to last selectable entry"
+            );
+            context_menu.select_next(&SelectNext, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should wrap around to first selectable entry"
+            );
+        });
     }
 }

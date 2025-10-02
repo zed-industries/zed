@@ -10,7 +10,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
 };
-use gpui::{Window, actions, impl_actions};
+use gpui::{Action, Window, actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
@@ -46,20 +46,26 @@ pub enum Object {
     EntireFile,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects a word text object.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects a subword text object.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
@@ -94,10 +100,10 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
         for (open_range, close_range) in ranges {
             let start_off = open_range.start;
             let end_off = close_range.end;
-            if let Some(range_filter) = range_filter {
-                if !range_filter(open_range.clone(), close_range.clone()) {
-                    continue;
-                }
+            if let Some(range_filter) = range_filter
+                && !range_filter(open_range.clone(), close_range.clone())
+            {
+                continue;
             }
             let candidate = CandidateWithRanges {
                 candidate: CandidateRange {
@@ -181,9 +187,7 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
     if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
         return Some(
             DelimiterRange {
@@ -252,30 +256,48 @@ fn find_mini_brackets(
     find_mini_delimiters(map, display_point, around, &is_bracket_delimiter)
 }
 
-impl_actions!(vim, [Word, Subword, IndentObj]);
-
 actions!(
     vim,
     [
+        /// Selects a sentence text object.
         Sentence,
+        /// Selects a paragraph text object.
         Paragraph,
+        /// Selects text within single quotes.
         Quotes,
+        /// Selects text within backticks.
         BackQuotes,
+        /// Selects text within the nearest quotes (single or double).
         MiniQuotes,
+        /// Selects text within any type of quotes.
         AnyQuotes,
+        /// Selects text within double quotes.
         DoubleQuotes,
+        /// Selects text within vertical bars (pipes).
         VerticalBars,
+        /// Selects text within parentheses.
         Parentheses,
+        /// Selects text within the nearest brackets.
         MiniBrackets,
+        /// Selects text within any type of brackets.
         AnyBrackets,
+        /// Selects text within square brackets.
         SquareBrackets,
+        /// Selects text within curly brackets.
         CurlyBrackets,
+        /// Selects text within angle brackets.
         AngleBrackets,
+        /// Selects a function argument.
         Argument,
+        /// Selects an HTML/XML tag.
         Tag,
+        /// Selects a method or function.
         Method,
+        /// Selects a class definition.
         Class,
+        /// Selects a comment block.
         Comment,
+        /// Selects the entire file.
         EntireFile
     ]
 );
@@ -372,12 +394,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        let count = Self::take_count(cx);
+
         match self.mode {
-            Mode::Normal => self.normal_object(object, window, cx),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_object(object, window, cx)
+            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
+                self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
@@ -484,6 +508,7 @@ impl Object {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
         match self {
@@ -502,7 +527,8 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            Object::Paragraph => paragraph(map, relative_to, around),
+            //change others later
+            Object::Paragraph => paragraph(map, relative_to, around, times.unwrap_or(1)),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -691,8 +717,9 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -1012,7 +1039,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     if let Some(buffer_range) = matches.first() {
         let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
@@ -1023,7 +1050,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == around { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     let around_range = matches.first()?;
 
     let mut matches: Vec<Range<usize>> = buffer
@@ -1031,11 +1058,11 @@ fn text_object(
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| r.start);
-    if let Some(buffer_range) = matches.first() {
-        if !buffer_range.is_empty() {
-            let range = excerpt.map_range_from_buffer(buffer_range.clone());
-            return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
-        }
+    if let Some(buffer_range) = matches.first()
+        && !buffer_range.is_empty()
+    {
+        let range = excerpt.map_range_from_buffer(buffer_range.clone());
+        return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
     }
     let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
     return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
@@ -1337,7 +1364,7 @@ fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
 /// whitespace to the end first and falls back to the start if there was none.
-fn expand_to_include_whitespace(
+pub fn expand_to_include_whitespace(
     map: &DisplaySnapshot,
     range: Range<DisplayPoint>,
     stop_at_newline: bool,
@@ -1398,30 +1425,38 @@ fn paragraph(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
-    let paragraph_end_row = paragraph_end.row();
-    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
-    let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    for i in 0..times {
+        let paragraph_end_row = paragraph_end.row();
+        let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
+        let point = relative_to.to_point(map);
+        let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    if around {
-        if paragraph_ends_with_eof {
-            if current_line_is_empty {
-                return None;
-            }
+        if around {
+            if paragraph_ends_with_eof {
+                if current_line_is_empty {
+                    return None;
+                }
 
-            let paragraph_start_row = paragraph_start.row();
-            if paragraph_start_row.0 != 0 {
-                let previous_paragraph_last_line_start =
-                    DisplayPoint::new(paragraph_start_row - 1, 0);
-                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                let paragraph_start_buffer_point = paragraph_start.to_point(map);
+                if paragraph_start_buffer_point.row != 0 {
+                    let previous_paragraph_last_line_start =
+                        Point::new(paragraph_start_buffer_point.row - 1, 0).to_display_point(map);
+                    paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                }
+            } else {
+                let paragraph_end_buffer_point = paragraph_end.to_point(map);
+                let mut start_row = paragraph_end_buffer_point.row + 1;
+                if i > 0 {
+                    start_row += 1;
+                }
+                let next_paragraph_start = Point::new(start_row, 0).to_display_point(map);
+                paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
-        } else {
-            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
-            paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
 
@@ -1475,7 +1510,7 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
     map.max_point()
 }
 
-fn surrounding_markers(
+pub fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,
@@ -1492,25 +1527,25 @@ fn surrounding_markers(
         Some((ch, _)) => ch,
         _ => '\0',
     };
-    if let Some((ch, range)) = movement::chars_after(map, point).next() {
-        if ch == open_marker && before_ch != '\\' {
-            if open_marker == close_marker {
-                let mut total = 0;
-                for ((ch, _), (before_ch, _)) in movement::chars_before(map, point).tuple_windows()
-                {
-                    if ch == '\n' {
-                        break;
-                    }
-                    if ch == open_marker && before_ch != '\\' {
-                        total += 1;
-                    }
+    if let Some((ch, range)) = movement::chars_after(map, point).next()
+        && ch == open_marker
+        && before_ch != '\\'
+    {
+        if open_marker == close_marker {
+            let mut total = 0;
+            for ((ch, _), (before_ch, _)) in movement::chars_before(map, point).tuple_windows() {
+                if ch == '\n' {
+                    break;
                 }
-                if total % 2 == 0 {
-                    opening = Some(range)
+                if ch == open_marker && before_ch != '\\' {
+                    total += 1;
                 }
-            } else {
+            }
+            if total % 2 == 0 {
                 opening = Some(range)
             }
+        } else {
+            opening = Some(range)
         }
     }
 
@@ -1521,10 +1556,10 @@ fn surrounding_markers(
                 break;
             }
 
-            if let Some((before_ch, _)) = chars_before.peek() {
-                if *before_ch == '\\' {
-                    continue;
-                }
+            if let Some((before_ch, _)) = chars_before.peek()
+                && *before_ch == '\\'
+            {
+                continue;
             }
 
             if ch == open_marker {
@@ -1865,6 +1900,90 @@ mod test {
                 .await
                 .assert_matches();
         }
+    }
+
+    #[gpui::test]
+    async fn test_change_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("c i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("c a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("d i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("d a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_paragraph_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            a
+                   ˇ•
+            aaaaaaaaaaaaa
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes("d i p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            a
+            aaaaaaaˇaaaaaa
+        "});
+    }
+
+    #[gpui::test]
+    async fn test_visual_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("v i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("v a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
     }
 
     // Test string with "`" for opening surrounders and "'" for closing surrounders

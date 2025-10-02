@@ -1,4 +1,4 @@
-use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
+use crate::{CompletionDiffElement, EditPrediction, EditPredictionRating, Zeta};
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
@@ -9,11 +9,17 @@ use workspace::{ModalView, Workspace};
 actions!(
     zeta,
     [
+        /// Rates the active completion with a thumbs up.
         ThumbsUpActiveCompletion,
+        /// Rates the active completion with a thumbs down.
         ThumbsDownActiveCompletion,
+        /// Navigates to the next edit in the completion history.
         NextEdit,
+        /// Navigates to the previous edit in the completion history.
         PreviousEdit,
+        /// Focuses on the completions list.
         FocusCompletions,
+        /// Previews the selected completion.
         PreviewCompletion,
     ]
 );
@@ -28,7 +34,7 @@ pub struct RateCompletionModal {
 }
 
 struct ActiveCompletion {
-    completion: InlineCompletion,
+    completion: EditPrediction,
     feedback_editor: Entity<Editor>,
 }
 
@@ -151,7 +157,7 @@ impl RateCompletionModal {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Positive,
+                    EditPredictionRating::Positive,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -183,7 +189,7 @@ impl RateCompletionModal {
             self.zeta.update(cx, |zeta, cx| {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Negative,
+                    EditPredictionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -244,7 +250,7 @@ impl RateCompletionModal {
 
     pub fn select_completion(
         &mut self,
-        completion: Option<InlineCompletion>,
+        completion: Option<EditPrediction>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -261,13 +267,13 @@ impl RateCompletionModal {
                 .unwrap_or(self.selected_index);
             cx.notify();
 
-            if let Some(prev_completion) = self.active_completion.as_ref() {
-                if completion.id == prev_completion.completion.id {
-                    if focus {
-                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
-                    }
-                    return;
+            if let Some(prev_completion) = self.active_completion.as_ref()
+                && completion.id == prev_completion.completion.id
+            {
+                if focus {
+                    window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                 }
+                return;
             }
         }
 
@@ -285,7 +291,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
-                editor.set_placeholder_text("Add your feedback…", cx);
+                editor.set_placeholder_text("Add your feedback…", window, cx);
                 if focus {
                     cx.focus_self(window);
                 }
@@ -601,7 +607,7 @@ impl Render for RateCompletionModal {
                                     .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
-                                                self.active_completion.as_ref().map_or(false, |selected| {
+                                                self.active_completion.as_ref().is_some_and(|selected| {
                                                     selected.completion.id == completion.id
                                                 });
                                             let rated =
@@ -613,8 +619,8 @@ impl Render for RateCompletionModal {
                                                 (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                                             };
 
-                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("untitled".to_string());
-                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().to_string());
+                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or("untitled".to_string());
+                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().into_owned());
 
                                             ListItem::new(completion.id)
                                                 .inset(true)

@@ -226,6 +226,12 @@
   ">>"
   "|"
   "~"
+  "&="
+  "<<="
+  ">>="
+  "@="
+  "^="
+  "|="
 ] @operator
 
 [
@@ -251,7 +257,6 @@
   "elif"
   "else"
   "except"
-  "except*"
   "exec"
   "finally"
   "for"

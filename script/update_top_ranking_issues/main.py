@@ -47,29 +47,29 @@ def main(
     # GitHub Workflow will pass in the token as an environment variable,
     # but we can place it in our env when running the script locally, for convenience
     github_token = github_token or os.getenv("GITHUB_ACCESS_TOKEN")
-    github = Github(github_token)
 
-    remaining_requests_before: int = github.rate_limiting[0]
-    print(f"Remaining requests before: {remaining_requests_before}")
+    with Github(github_token, per_page=100) as github:
+        remaining_requests_before: int = github.rate_limiting[0]
+        print(f"Remaining requests before: {remaining_requests_before}")
 
-    repo_name: str = "zed-industries/zed"
-    repository: Repository = github.get_repo(repo_name)
+        repo_name: str = "zed-industries/zed"
+        repository: Repository = github.get_repo(repo_name)
 
-    label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
-        github, repository, start_date
-    )
+        label_to_issue_data: dict[str, list[IssueData]] = get_issue_maps(
+            github, repository, start_date
+        )
 
-    issue_text: str = get_issue_text(label_to_issue_data)
+        issue_text: str = get_issue_text(label_to_issue_data)
 
-    if issue_reference_number:
-        top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
-        top_ranking_issues_issue.edit(body=issue_text)
-    else:
-        print(issue_text)
+        if issue_reference_number:
+            top_ranking_issues_issue: Issue = repository.get_issue(issue_reference_number)
+            top_ranking_issues_issue.edit(body=issue_text)
+        else:
+            print(issue_text)
 
-    remaining_requests_after: int = github.rate_limiting[0]
-    print(f"Remaining requests after: {remaining_requests_after}")
-    print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
+        remaining_requests_after: int = github.rate_limiting[0]
+        print(f"Remaining requests after: {remaining_requests_after}")
+        print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
 
     run_duration: timedelta = datetime.now() - start_time
     print(run_duration)
@@ -80,13 +80,10 @@ def get_issue_maps(
     repository: Repository,
     start_date: datetime | None = None,
 ) -> dict[str, list[IssueData]]:
-    label_to_issues: defaultdict[str, list[Issue]] = get_label_to_issues(
+    label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
         github,
         repository,
         start_date,
-    )
-    label_to_issue_data: dict[str, list[IssueData]] = get_label_to_issue_data(
-        label_to_issues
     )
 
     # Create a new dictionary with labels ordered by the summation the of likes on the associated issues
@@ -104,11 +101,11 @@ def get_issue_maps(
     return label_to_issue_data
 
 
-def get_label_to_issues(
+def get_label_to_issue_data(
     github: Github,
     repository: Repository,
     start_date: datetime | None = None,
-) -> defaultdict[str, list[Issue]]:
+) -> dict[str, list[IssueData]]:
     common_filters = [
         f"repo:{repository.full_name}",
         "is:open",
@@ -126,36 +123,37 @@ def get_label_to_issues(
 
     common_filter_string = " ".join(common_filters)
 
-    section_queries = {
-        "bug": "label:bug,type:Bug",
-        "crash": "label:crash,type:Crash",
-        "feature": "label:feature",
-        "meta": "type:Meta",
-        "unlabeled": "no:label no:type",
+    # Because PyGithub doesn't seem to support logical operators `AND` and `OR`
+    # that GitHub issue queries can use, we use lists as values, rather than
+    # using `(label:bug OR type:Bug)`. This is not as efficient, as we might
+    # query the same issue multiple times. Issues that are potentially queried
+    # multiple times are deduplicated in the `label_to_issues` dictionary. If
+    # PyGithub ever supports logical operators, we should definitely make the
+    # switch.
+    section_queries: dict[str, list[str]] = {
+        "bug": ["label:bug", "type:Bug"],
+        "crash": ["label:crash", "type:Crash"],
+        "feature": ["label:feature", "type:Feature"],
+        "meta": ["type:Meta"],
+        "unlabeled": ["no:label no:type"],
     }
 
-    label_to_issues: defaultdict[str, list[Issue]] = defaultdict(list)
-
-    for section, section_query in section_queries.items():
-        label_query: str = f"{common_filter_string} {section_query}"
-
-        issues = github.search_issues(label_query)
-
-        if issues.totalCount > 0:
-            for issue in issues[0:ISSUES_PER_LABEL]:
-                label_to_issues[section].append(issue)
-
-    return label_to_issues
-
-
-def get_label_to_issue_data(
-    label_to_issues: defaultdict[str, list[Issue]],
-) -> dict[str, list[IssueData]]:
     label_to_issue_data: dict[str, list[IssueData]] = {}
 
-    for label in label_to_issues:
-        issues: list[Issue] = label_to_issues[label]
-        issue_data: list[IssueData] = [IssueData(issue) for issue in issues]
+    for section, section_queries in section_queries.items():
+        unique_issues = set()
+
+        for section_query in section_queries:
+            query: str = f"{common_filter_string} {section_query}"
+            issues = github.search_issues(query)
+
+            for issue in issues:
+                unique_issues.add(issue)
+
+        if len(unique_issues) <= 0:
+            continue
+
+        issue_data: list[IssueData] = [IssueData(issue) for issue in unique_issues]
         issue_data.sort(
             key=lambda issue_data: (
                 -issue_data.like_count,
@@ -163,8 +161,7 @@ def get_label_to_issue_data(
             )
         )
 
-        if issue_data:
-            label_to_issue_data[label] = issue_data
+        label_to_issue_data[section] = issue_data[0:ISSUES_PER_LABEL]
 
     return label_to_issue_data
 

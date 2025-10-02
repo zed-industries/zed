@@ -70,10 +70,14 @@ impl EventStream {
                     path_bytes.len() as cf::CFIndex,
                     false,
                 );
-                let cf_path = cf::CFURLCopyFileSystemPath(cf_url, cf::kCFURLPOSIXPathStyle);
-                cf::CFArrayAppendValue(cf_paths, cf_path);
-                cf::CFRelease(cf_path);
-                cf::CFRelease(cf_url);
+                if !cf_url.is_null() {
+                    let cf_path = cf::CFURLCopyFileSystemPath(cf_url, cf::kCFURLPOSIXPathStyle);
+                    cf::CFArrayAppendValue(cf_paths, cf_path);
+                    cf::CFRelease(cf_path);
+                    cf::CFRelease(cf_url);
+                } else {
+                    log::error!("Failed to create CFURL for path: {}", path.display());
+                }
             }
 
             let mut state = Box::new(State {
@@ -178,40 +182,39 @@ impl EventStream {
                     flags.contains(StreamFlags::USER_DROPPED)
                         || flags.contains(StreamFlags::KERNEL_DROPPED)
                 })
+                && let Some(last_valid_event_id) = state.last_valid_event_id.take()
             {
-                if let Some(last_valid_event_id) = state.last_valid_event_id.take() {
-                    fs::FSEventStreamStop(state.stream);
-                    fs::FSEventStreamInvalidate(state.stream);
-                    fs::FSEventStreamRelease(state.stream);
+                fs::FSEventStreamStop(state.stream);
+                fs::FSEventStreamInvalidate(state.stream);
+                fs::FSEventStreamRelease(state.stream);
 
-                    let stream_context = fs::FSEventStreamContext {
-                        version: 0,
-                        info,
-                        retain: None,
-                        release: None,
-                        copy_description: None,
-                    };
-                    let stream = fs::FSEventStreamCreate(
-                        cf::kCFAllocatorDefault,
-                        Self::trampoline,
-                        &stream_context,
-                        state.paths,
-                        last_valid_event_id,
-                        state.latency.as_secs_f64(),
-                        fs::kFSEventStreamCreateFlagFileEvents
-                            | fs::kFSEventStreamCreateFlagNoDefer
-                            | fs::kFSEventStreamCreateFlagWatchRoot,
-                    );
+                let stream_context = fs::FSEventStreamContext {
+                    version: 0,
+                    info,
+                    retain: None,
+                    release: None,
+                    copy_description: None,
+                };
+                let stream = fs::FSEventStreamCreate(
+                    cf::kCFAllocatorDefault,
+                    Self::trampoline,
+                    &stream_context,
+                    state.paths,
+                    last_valid_event_id,
+                    state.latency.as_secs_f64(),
+                    fs::kFSEventStreamCreateFlagFileEvents
+                        | fs::kFSEventStreamCreateFlagNoDefer
+                        | fs::kFSEventStreamCreateFlagWatchRoot,
+                );
 
-                    state.stream = stream;
-                    fs::FSEventStreamScheduleWithRunLoop(
-                        state.stream,
-                        cf::CFRunLoopGetCurrent(),
-                        cf::kCFRunLoopDefaultMode,
-                    );
-                    fs::FSEventStreamStart(state.stream);
-                    stream_restarted = true;
-                }
+                state.stream = stream;
+                fs::FSEventStreamScheduleWithRunLoop(
+                    state.stream,
+                    cf::CFRunLoopGetCurrent(),
+                    cf::kCFRunLoopDefaultMode,
+                );
+                fs::FSEventStreamStart(state.stream);
+                stream_restarted = true;
             }
 
             if !stream_restarted {

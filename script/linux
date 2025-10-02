@@ -11,12 +11,12 @@ fi
 function finalize {
   # after packages install (curl, etc), get the rust toolchain
   which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-  # verify the mold situation
-  if ! command -v mold >/dev/null 2>&1; then
-    echo "Warning: Mold binaries are unavailable on your system." >&2
-    echo "    Builds will be slower without mold. Try: script/install-mold" >&2
-  fi
-  echo "Finished installing Linux dependencies with script/linux"
+  cat <<EOF
+Note: It's recommended to install and configure Wild or Mold for faster builds.
+      Run script/install-wild or script/install-mold.
+
+Finished installing Linux dependencies with script/linux
+EOF
 }
 
 # Ubuntu, Debian, Mint, Kali, Pop!_OS, Raspbian, etc.
@@ -47,7 +47,10 @@ if [[ -n $apt ]]; then
     musl-dev
     build-essential
   )
-  if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
+  if (grep -qP 'PRETTY_NAME="(Debian|Raspbian).+13' /etc/os-release); then
+      # libstdc++-14-dev is in build-essential
+      deps+=( mold )
+  elif (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )
@@ -143,6 +146,7 @@ if [[ -n $zyp ]]; then
     gzip
     jq
     libvulkan1
+    libx11-devel
     libxcb-devel
     libxkbcommon-devel
     libxkbcommon-x11-devel

@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
+use anyhow::Context as _;
 use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
@@ -19,12 +20,12 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
-use settings::Settings;
+use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
-    ToggleButton, Tooltip, prelude::*,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, ToggleButton, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -38,7 +39,13 @@ use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
-actions!(zed, [InstallDevExtension]);
+actions!(
+    zed,
+    [
+        /// Installs an extension from a local directory for development.
+        InstallDevExtension
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
@@ -64,6 +71,7 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::IndexedDocsProviders
                         }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
+                        ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });
 
                     let existing = workspace
@@ -73,16 +81,24 @@ pub fn init(cx: &mut App) {
                         .find_map(|item| item.downcast::<ExtensionsPage>());
 
                     if let Some(existing) = existing {
-                        if provides_filter.is_some() {
-                            existing.update(cx, |extensions_page, cx| {
+                        existing.update(cx, |extensions_page, cx| {
+                            if provides_filter.is_some() {
                                 extensions_page.change_provides_filter(provides_filter, cx);
-                            });
-                        }
+                            }
+                            if let Some(id) = action.id.as_ref() {
+                                extensions_page.focus_extension(id, window, cx);
+                            }
+                        });
 
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let extensions_page =
-                            ExtensionsPage::new(workspace, provides_filter, window, cx);
+                        let extensions_page = ExtensionsPage::new(
+                            workspace,
+                            provides_filter,
+                            action.id.as_deref(),
+                            window,
+                            cx,
+                        );
                         workspace.add_item_to_active_pane(
                             Box::new(extensions_page),
                             None,
@@ -100,6 +116,7 @@ pub fn init(cx: &mut App) {
                         files: false,
                         directories: true,
                         multiple: false,
+                        prompt: None,
                     },
                     DirectoryLister::Local(
                         workspace.project().clone(),
@@ -175,6 +192,7 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
         ExtensionProvides::SlashCommands => "Slash Commands",
         ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
         ExtensionProvides::Snippets => "Snippets",
+        ExtensionProvides::DebugAdapters => "Debug Adapters",
     }
 }
 
@@ -272,13 +290,13 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    scrollbar_state: ScrollbarState,
 }
 
 impl ExtensionsPage {
     pub fn new(
         workspace: &Workspace,
         provides_filter: Option<ExtensionProvides>,
+        focus_extension_id: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -308,7 +326,10 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", cx);
+                input.set_placeholder_text("Search extensions...", window, cx);
+                if let Some(id) = focus_extension_id {
+                    input.set_text(format!("id:{id}"), window, cx);
+                }
                 input
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
@@ -317,7 +338,7 @@ impl ExtensionsPage {
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
-                list: scroll_handle.clone(),
+                list: scroll_handle,
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
@@ -329,10 +350,9 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(
-                None,
+                this.search_query(cx),
                 Some(BTreeSet::from_iter(this.provides_filter)),
                 None,
                 cx,
@@ -456,9 +476,23 @@ impl ExtensionsPage {
             .cloned()
             .collect::<Vec<_>>();
 
-        let remote_extensions = extension_store.update(cx, |store, cx| {
-            store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
-        });
+        let remote_extensions =
+            if let Some(id) = search.as_ref().and_then(|s| s.strip_prefix("id:")) {
+                let versions =
+                    extension_store.update(cx, |store, cx| store.fetch_extension_versions(id, cx));
+                cx.foreground_executor().spawn(async move {
+                    let versions = versions.await?;
+                    let latest = versions
+                        .into_iter()
+                        .max_by_key(|v| v.published_at)
+                        .context("no extension found")?;
+                    Ok(vec![latest])
+                })
+            } else {
+                extension_store.update(cx, |store, cx| {
+                    store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
+                })
+            };
 
         cx.spawn(async move |this, cx| {
             let dev_extensions = if let Some(search) = search {
@@ -472,6 +506,7 @@ impl ExtensionsPage {
                     &match_candidates,
                     &search,
                     false,
+                    true,
                     match_candidates.len(),
                     &Default::default(),
                     cx.background_executor().clone(),
@@ -554,13 +589,15 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .justify_between()
                             .child(
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
+                                .color(Color::Accent)
+                                .disabled(matches!(status, ExtensionStatus::Upgrading))
                                 .on_click({
                                     let extension_id = extension.id.clone();
                                     move |_, _, cx| {
@@ -568,22 +605,20 @@ impl ExtensionsPage {
                                             store.rebuild_dev_extension(extension_id.clone(), cx)
                                         });
                                     }
-                                })
-                                .color(Color::Accent)
-                                .disabled(matches!(status, ExtensionStatus::Upgrading)),
+                                }),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
                                         let extension_id = extension.id.clone();
                                         move |_, _, cx| {
                                             ExtensionStore::global(cx).update(cx, |store, cx| {
-                                                store.uninstall_extension(extension_id.clone(), cx)
+                                                store.uninstall_extension(extension_id.clone(), cx).detach_and_log_err(cx);
                                             });
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Removing)),
+                                    }),
                             )
                             .when(can_configure, |this| {
                                 this.child(
@@ -591,8 +626,8 @@ impl ExtensionsPage {
                                         SharedString::from(format!("configure-{}", extension.id)),
                                         "Configure",
                                     )
-
-
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Installing))
                                     .on_click({
                                         let manifest = Arc::new(extension.clone());
                                         move |_, _, cx| {
@@ -609,9 +644,7 @@ impl ExtensionsPage {
                                                 });
                                             }
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Installing)),
+                                    }),
                                 )
                             }),
                     ),
@@ -659,7 +692,7 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(Tooltip::text(repository_url.clone()))
+                        .tooltip(Tooltip::text(repository_url))
                     })),
             )
     }
@@ -669,7 +702,7 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 
@@ -711,24 +744,21 @@ impl ExtensionsPage {
                                 }
 
                                 parent.child(
-                                    h_flex().gap_2().children(
+                                    h_flex().gap_1().children(
                                         extension
                                             .manifest
                                             .provides
                                             .iter()
-                                            .map(|provides| {
-                                                div()
-                                                    .bg(cx.theme().colors().element_background)
-                                                    .px_0p5()
-                                                    .border_1()
-                                                    .border_color(cx.theme().colors().border)
-                                                    .rounded_sm()
-                                                    .child(
-                                                        Label::new(extension_provides_label(
-                                                            *provides,
-                                                        ))
-                                                        .size(LabelSize::XSmall),
-                                                    )
+                                            .filter_map(|provides| {
+                                                match provides {
+                                                    ExtensionProvides::SlashCommands
+                                                    | ExtensionProvides::IndexedDocsProviders => {
+                                                        return None;
+                                                    }
+                                                    _ => {}
+                                                }
+
+                                                Some(Chip::new(extension_provides_label(*provides)))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
@@ -737,8 +767,7 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
-                            .justify_between()
+                            .gap_1()
                             .children(buttons.upgrade)
                             .children(buttons.configure)
                             .child(buttons.install_or_uninstall),
@@ -796,7 +825,7 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(Tooltip::text(repository_url.clone())),
+                                .tooltip(Tooltip::text(repository_url)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
@@ -832,7 +861,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+        ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
                     "Install Another Version...",
@@ -856,9 +885,7 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
-        });
-
-        context_menu
+        })
     }
 
     fn show_extension_version_list(
@@ -982,7 +1009,9 @@ impl ExtensionsPage {
                     move |_, _, cx| {
                         telemetry::event!("Extension Uninstalled", extension_id);
                         ExtensionStore::global(cx).update(cx, |store, cx| {
-                            store.uninstall_extension(extension_id.clone(), cx)
+                            store
+                                .uninstall_extension(extension_id.clone(), cx)
+                                .detach_and_log_err(cx);
                         });
                     }
                 }),
@@ -998,15 +1027,14 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
                             {
-                                if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
                             }
                         }
                     })
@@ -1147,6 +1175,13 @@ impl ExtensionsPage {
         self.refresh_feature_upsells(cx);
     }
 
+    pub fn focus_extension(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.query_editor.update(cx, |editor, cx| {
+            editor.set_text(format!("id:{id}"), window, cx)
+        });
+        self.refresh_search(cx);
+    }
+
     pub fn change_provides_filter(
         &mut self,
         provides_filter: Option<ExtensionProvides>,
@@ -1234,17 +1269,17 @@ impl ExtensionsPage {
         Label::new(message)
     }
 
-    fn update_settings<T: Settings>(
+    fn update_settings(
         &mut self,
         selection: &ToggleState,
 
         cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+        callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
+            settings::update_settings_file(fs, cx, move |settings, _| {
                 let value = match selection {
                     ToggleState::Unselected => false,
                     ToggleState::Selected => true,
@@ -1305,11 +1340,9 @@ impl ExtensionsPage {
                         },
                         cx.listener(move |this, selection, _, cx| {
                             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
-                            this.update_settings::<VimModeSetting>(
-                                selection,
-                                cx,
-                                |setting, value| *setting = Some(value),
-                            );
+                            this.update_settings(selection, cx, |setting, value| {
+                                setting.vim_mode = Some(value)
+                            });
                         }),
                     )),
                 Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!")
@@ -1338,7 +1371,7 @@ impl ExtensionsPage {
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1443,23 +1476,30 @@ impl Render for ExtensionsPage {
                                 this.change_provides_filter(None, cx);
                             })),
                     )
-                    .children(ExtensionProvides::iter().map(|provides| {
+                    .children(ExtensionProvides::iter().filter_map(|provides| {
+                        match provides {
+                            ExtensionProvides::SlashCommands
+                            | ExtensionProvides::IndexedDocsProviders => return None,
+                            _ => {}
+                        }
+
                         let label = extension_provides_label(provides);
-                        Button::new(
-                            SharedString::from(format!("filter-category-{}", label)),
-                            label,
+                        let button_id = SharedString::from(format!("filter-category-{}", label));
+
+                        Some(
+                            Button::new(button_id, label)
+                                .style(if self.provides_filter == Some(provides) {
+                                    ButtonStyle::Filled
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .toggle_state(self.provides_filter == Some(provides))
+                                .on_click({
+                                    cx.listener(move |this, _event, _, cx| {
+                                        this.change_provides_filter(Some(provides), cx);
+                                    })
+                                }),
                         )
-                        .style(if self.provides_filter == Some(provides) {
-                            ButtonStyle::Filled
-                        } else {
-                            ButtonStyle::Subtle
-                        })
-                        .toggle_state(self.provides_filter == Some(provides))
-                        .on_click({
-                            cx.listener(move |this, _event, _, cx| {
-                                this.change_provides_filter(Some(provides), cx);
-                            })
-                        })
                     })),
             )
             .child(self.render_feature_upsells(cx))
@@ -1476,31 +1516,24 @@ impl Render for ExtensionsPage {
                         }
 
                         if count == 0 {
-                            return this.py_4().child(self.render_empty_state(cx));
-                        }
-
-                        let extensions_page = cx.entity().clone();
-                        let scroll_handle = self.list.clone();
-                        this.child(
-                            uniform_list(
-                                extensions_page,
-                                "entries",
-                                count,
-                                Self::render_extensions,
+                            this.py_4()
+                                .child(self.render_empty_state(cx))
+                                .into_any_element()
+                        } else {
+                            let scroll_handle = self.list.clone();
+                            this.child(
+                                uniform_list(
+                                    "entries",
+                                    count,
+                                    cx.processor(Self::render_extensions),
+                                )
+                                .flex_grow()
+                                .pb_4()
+                                .track_scroll(scroll_handle.clone()),
                             )
-                            .flex_grow()
-                            .pb_4()
-                            .track_scroll(scroll_handle),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .right_1()
-                                .top_0()
-                                .bottom_0()
-                                .w(px(12.))
-                                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-                        )
+                            .vertical_scrollbar_for(scroll_handle, window, cx)
+                            .into_any_element()
+                        }
                     }),
             )
     }

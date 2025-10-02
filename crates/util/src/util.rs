@@ -4,6 +4,9 @@ pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
+pub mod redact;
+pub mod rel_path;
+pub mod schemars;
 pub mod serde;
 pub mod shell_env;
 pub mod size;
@@ -11,7 +14,7 @@ pub mod size;
 pub mod test;
 pub mod time;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
@@ -30,7 +33,7 @@ use unicase::UniCase;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{line_endings, separator, uri};
+pub use util_macros::{line_endings, path, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -41,50 +44,6 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        concat!("C:", util::separator!($path))
-    };
-}
-
-/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
-/// the separator from `/` to `\`.
-/// But on non-Windows platforms, it will return the path literal as is.
-///
-/// # Examples
-/// ```rust
-/// use util::path;
-///
-/// let path = path!("/Users/user/file.txt");
-/// #[cfg(target_os = "windows")]
-/// assert_eq!(path, "C:\\Users\\user\\file.txt");
-/// #[cfg(not(target_os = "windows"))]
-/// assert_eq!(path, "/Users/user/file.txt");
-/// ```
-#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
-#[macro_export]
-macro_rules! path {
-    ($path:literal) => {
-        $path
     };
 }
 
@@ -170,11 +129,9 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     }
 
     for i in (0..max_bytes).rev() {
-        if s.is_char_boundary(i) {
-            if s.as_bytes()[i] == b'\n' {
-                // Since the i-th character is \n, valid to slice at i + 1.
-                return &s[..i + 1];
-            }
+        if s.is_char_boundary(i) && s.as_bytes()[i] == b'\n' {
+            // Since the i-th character is \n, valid to slice at i + 1.
+            return &s[..i + 1];
         }
     }
 
@@ -257,6 +214,28 @@ where
     items.sort_by(compare);
 }
 
+/// Prevents execution of the application with root privileges on Unix systems.
+///
+/// This function checks if the current process is running with root privileges
+/// and terminates the program with an error message unless explicitly allowed via the
+/// `ZED_ALLOW_ROOT` environment variable.
+#[cfg(unix)]
+pub fn prevent_root_execution() {
+    let is_root = nix::unistd::geteuid().is_root();
+    let allow_root = std::env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+    if is_root && !allow_root {
+        eprintln!(
+            "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+        );
+        std::process::exit(1);
+    }
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
@@ -278,6 +257,9 @@ fn load_shell_from_passwd() -> Result<()> {
             &mut result,
         )
     };
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+
+    // SAFETY: If `getpwuid_r` doesn't error, we have the entry here.
     let entry = unsafe { pwd.assume_init() };
 
     anyhow::ensure!(
@@ -286,7 +268,6 @@ fn load_shell_from_passwd() -> Result<()> {
         uid,
         status
     );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
     anyhow::ensure!(
         entry.pw_uid == uid,
         "passwd entry has different uid ({}) than getuid ({}) returned",
@@ -307,7 +288,78 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 #[cfg(unix)]
-pub fn load_login_shell_environment() -> Result<()> {
+/// Returns a shell escaped path for the current zed executable
+pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
+    let zed_path = std::env::current_exe()
+        .context("Failed to determine current zed executable path.")?
+        .to_string_lossy()
+        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
+        .to_string();
+
+    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+    // errors are introduced in the future :(
+    let zed_path_escaped =
+        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
+
+    Ok(zed_path_escaped.to_string())
+}
+
+/// Returns a shell escaped path for the zed cli executable, this function
+/// should be called from the zed executable, not zed-cli.
+pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let parent = zed_path
+        .parent()
+        .context("Failed to determine parent directory of zed executable path.")?;
+
+    let possible_locations: &[&str] = if cfg!(target_os = "macos") {
+        // On macOS, the zed executable and zed-cli are inside the app bundle,
+        // so here ./cli is for both installed and development builds.
+        &["./cli"]
+    } else if cfg!(target_os = "windows") {
+        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
+        &["bin/zed.exe", "./cli.exe"]
+    } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
+        // bin is the standard, ./cli is for the target directory in development builds.
+        &["../bin/zed", "./cli"]
+    } else {
+        anyhow::bail!("unsupported platform for determining zed-cli path");
+    };
+
+    let zed_cli_path = possible_locations
+        .iter()
+        .find_map(|p| {
+            parent
+                .join(p)
+                .canonicalize()
+                .ok()
+                .filter(|p| p != &zed_path)
+        })
+        .with_context(|| {
+            format!(
+                "could not find zed-cli from any of: {}",
+                possible_locations.join(", ")
+            )
+        })?
+        .to_string_lossy()
+        .to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(zed_cli_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(shlex::try_quote(&zed_cli_path)
+            .context("Failed to shell-escape Zed executable path.")?
+            .to_string())
+    }
+}
+
+#[cfg(unix)]
+pub async fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
@@ -315,7 +367,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(Some(paths::home_dir()))? {
+    for (name, value) in shell_env::capture(paths::home_dir()).await? {
         unsafe { env::set_var(&name, &value) };
     }
 
@@ -331,7 +383,7 @@ pub fn load_login_shell_environment() -> Result<()> {
 /// Configures the process to start a new session, to prevent interactive shells from taking control
 /// of the terminal.
 ///
-/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+/// For more details: <https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell>
 pub fn set_pre_exec_to_start_new_session(
     command: &mut std::process::Command,
 ) -> &mut std::process::Command {
@@ -598,7 +650,7 @@ pub fn get_windows_system_shell() -> String {
             .or_else(|| find_pwsh_in_msix(true))
             .or_else(|| find_pwsh_in_programfiles(true, true))
             .or_else(find_pwsh_in_scoop)
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or("powershell.exe".to_string())
     });
 
@@ -669,9 +721,12 @@ where
     let file = caller.file();
     #[cfg(target_os = "windows")]
     let file = caller.file().replace('\\', "/");
-    // In this codebase, the first segment of the file path is
-    // the 'crates' folder, followed by the crate name.
-    let target = file.split('/').nth(1);
+    // In this codebase all crates reside in a `crates` directory,
+    // so discard the prefix up to that segment to find the crate name
+    let target = file
+        .split_once("crates/")
+        .and_then(|(_, s)| s.split_once('/'))
+        .map(|(p, _)| p);
 
     log::logger().log(
         &log::Record::builder()
@@ -814,7 +869,8 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{Rng, seq::SliceRandom};
+    use rand::prelude::*;
+
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -824,7 +880,7 @@ mod rng {
         pub fn new(rng: T) -> Self {
             Self {
                 rng,
-                simple_text: std::env::var("SIMPLE_TEXT").map_or(false, |v| !v.is_empty()),
+                simple_text: std::env::var("SIMPLE_TEXT").is_ok_and(|v| !v.is_empty()),
             }
         }
 
@@ -839,18 +895,18 @@ mod rng {
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.simple_text {
-                return if self.rng.gen_range(0..100) < 5 {
+                return if self.rng.random_range(0..100) < 5 {
                     Some('\n')
                 } else {
-                    Some(self.rng.gen_range(b'a'..b'z' + 1).into())
+                    Some(self.rng.random_range(b'a'..b'z' + 1).into())
                 };
             }
 
-            match self.rng.gen_range(0..100) {
+            match self.rng.random_range(0..100) {
                 // whitespace
                 0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                20..=32 => char::from_u32(self.rng.random_range(('α' as u32)..('ω' as u32 + 1))),
                 // // three-byte characters
                 33..=45 => ['✋', '✅', '❌', '❎', '⭐']
                     .choose(&mut self.rng)
@@ -858,13 +914,14 @@ mod rng {
                 // // four-byte characters
                 46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
                 // ascii letters
-                _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
+                _ => Some(self.rng.random_range(b'a'..b'z' + 1).into()),
             }
         }
     }
 }
 #[cfg(any(test, feature = "test-support"))]
 pub use rng::RandomCharIter;
+
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     match A::get(path).expect(path).data {
@@ -883,10 +940,10 @@ macro_rules! maybe {
         (|| $block)()
     };
     (async $block:block) => {
-        (|| async $block)()
+        (async || $block)()
     };
     (async move $block:block) => {
-        (|| async move $block)()
+        (async move || $block)()
     };
 }
 
@@ -1055,6 +1112,18 @@ pub fn get_system_shell() -> String {
     }
 }
 
+pub fn get_default_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        "/bin/sh".to_string()
+    }
+}
+
 #[derive(Debug)]
 pub enum ConnectionResult<O> {
     Timeout,
@@ -1076,6 +1145,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     fn from(result: anyhow::Result<O>) -> Self {
         ConnectionResult::Result(result)
     }
+}
+
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
 }
 
 #[cfg(test)]

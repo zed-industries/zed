@@ -5,15 +5,23 @@ use crate::{
     state::Mode,
 };
 use editor::{
-    Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint, display_map::ToDisplayPoint,
-    scroll::Autoscroll,
+    Anchor, Bias, Editor, EditorSnapshot, SelectionEffects, ToOffset, ToPoint,
+    display_map::ToDisplayPoint,
 };
 use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
 
-actions!(vim, [ToggleReplace, UndoReplace]);
+actions!(
+    vim,
+    [
+        /// Toggles replace mode.
+        ToggleReplace,
+        /// Undoes the last replacement.
+        UndoReplace
+    ]
+);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleReplace, window, cx| {
@@ -41,7 +49,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
@@ -72,7 +80,7 @@ impl Vim {
 
                 editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
                 });
                 editor.set_clip_at_line_ends(true, cx);
@@ -86,7 +94,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
@@ -124,7 +132,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
 
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges(new_selections);
                 });
                 editor.set_clip_at_line_ends(true, cx);
@@ -140,13 +148,13 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let mut selection = editor
                 .selections
                 .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
-            object.expand_selection(&snapshot, &mut selection, around);
+            object.expand_selection(&snapshot, &mut selection, around, None);
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));
@@ -161,7 +169,7 @@ impl Vim {
 
     pub fn exchange_visual(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
             let new_range = selection.start..selection.end;
             let snapshot = editor.snapshot(window, cx);
@@ -172,7 +180,7 @@ impl Vim {
 
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.clear_background_highlights::<VimExchange>(cx);
         });
         self.clear_operator(window, cx);
@@ -187,7 +195,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor
@@ -255,7 +263,7 @@ impl Vim {
             }
 
             if let Some(position) = final_cursor_position {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|_map, selection| {
                         selection.collapse_to(position, SelectionGoal::None);
                     });
@@ -265,7 +273,7 @@ impl Vim {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
                 &ranges,
-                |theme| theme.editor_document_highlight_read_background,
+                |theme| theme.colors().editor_document_highlight_read_background,
                 cx,
             );
         }

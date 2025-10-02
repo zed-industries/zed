@@ -43,7 +43,7 @@ use super::button_icon::ButtonIcon;
 ///
 /// Button::new("button_id", "Click me!")
 ///     .icon(IconName::Check)
-///     .selected(true)
+///     .toggle_state(true)
 ///     .on_click(|event, window, cx| {
 ///         // Handle click event
 ///     });
@@ -56,7 +56,7 @@ use super::button_icon::ButtonIcon;
 /// use ui::TintColor;
 ///
 /// Button::new("button_id", "Click me!")
-///     .selected(true)
+///     .toggle_state(true)
 ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
 ///     .on_click(|event, window, cx| {
 ///         // Handle click event
@@ -228,7 +228,7 @@ impl Toggleable for Button {
     /// use ui::prelude::*;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .selected(true)
+    ///     .toggle_state(true)
     ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
@@ -251,7 +251,7 @@ impl SelectableButton for Button {
     /// use ui::TintColor;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .selected(true)
+    ///     .toggle_state(true)
     ///     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
     ///     .on_click(|event, window, cx| {
     ///         // Handle click event
@@ -317,14 +317,14 @@ impl FixedWidth for Button {
     /// use ui::prelude::*;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .width(px(100.).into())
+    ///     .width(px(100.))
     ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
     /// ```
     ///
     /// This sets the button's width to be exactly 100 pixels.
-    fn width(mut self, width: DefiniteLength) -> Self {
+    fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.base = self.base.width(width);
         self
     }
@@ -381,7 +381,7 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
+    ///     .tooltip(Tooltip::text("This is a tooltip"))
     ///     .on_click(|event, window, cx| {
     ///         // Handle click event
     ///     });
@@ -390,6 +390,11 @@ impl ButtonCommon for Button {
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
     fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
+        self
+    }
+
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
         self
     }
 

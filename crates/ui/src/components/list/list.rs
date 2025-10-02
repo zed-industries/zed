@@ -84,7 +84,9 @@ impl RenderOnce for List {
                 (false, _) => this.children(self.children),
                 (true, Some(false)) => this,
                 (true, _) => match self.empty_message {
-                    EmptyMessage::Text(text) => this.child(Label::new(text).color(Color::Muted)),
+                    EmptyMessage::Text(text) => {
+                        this.px_2().child(Label::new(text).color(Color::Muted))
+                    }
                     EmptyMessage::Element(element) => this.child(element),
                 },
             })

@@ -54,7 +54,15 @@ impl From<ScopeFileName> for ScopeName {
     }
 }
 
-actions!(snippets, [ConfigureSnippets, OpenFolder]);
+actions!(
+    snippets,
+    [
+        /// Opens the snippets configuration file.
+        ConfigureSnippets,
+        /// Opens the snippets folder in the file manager.
+        OpenFolder
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
@@ -141,13 +149,12 @@ impl ScopeSelectorDelegate {
         scope_selector: WeakEntity<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        let candidates = Vec::from([GLOBAL_SCOPE_NAME.to_string()]).into_iter();
         let languages = language_registry.language_names().into_iter();
 
-        let candidates = candidates
+        let candidates = std::iter::once(LanguageName::new(GLOBAL_SCOPE_NAME))
             .chain(languages)
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
         let mut existing_scopes = HashSet::new();
@@ -156,13 +163,12 @@ impl ScopeSelectorDelegate {
             for entry in read_dir {
                 if let Some(entry) = entry.log_err() {
                     let path = entry.path();
-                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension()) {
-                        if extension.to_os_string().to_str() == Some("json") {
-                            if let Ok(file_name) = stem.to_os_string().into_string() {
-                                existing_scopes
-                                    .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
-                            }
-                        }
+                    if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension())
+                        && extension.to_os_string().to_str() == Some("json")
+                        && let Ok(file_name) = stem.to_os_string().into_string()
+                    {
+                        existing_scopes
+                            .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
                     }
                 }
             }
@@ -215,15 +221,19 @@ impl PickerDelegate for ScopeSelectorDelegate {
 
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace
-                            .open_abs_path(
-                                snippets_dir().join(scope_file_name.with_extension()),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::None),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
+                            .with_local_workspace(window, cx, |workspace, window, cx| {
+                                workspace
+                                    .open_abs_path(
+                                        snippets_dir().join(scope_file_name.with_extension()),
+                                        OpenOptions {
+                                            visible: Some(OpenVisible::None),
+                                            ..Default::default()
+                                        },
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
+                            })
                             .detach();
                     })
                 })
@@ -277,6 +287,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,
@@ -303,7 +314,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
         let name_label = mat.string.clone();
 
         let scope_name = ScopeName(Cow::Owned(
@@ -322,7 +333,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 .and_then(|available_language| self.scope_icon(available_language.matcher(), cx))
                 .or_else(|| {
                     Some(
-                        Icon::from_path(IconName::Globe.path())
+                        Icon::from_path(IconName::ToolWeb.path())
                             .map(|icon| icon.color(Color::Muted)),
                     )
                 })

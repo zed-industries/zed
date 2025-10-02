@@ -1,6 +1,6 @@
 use std::cmp;
 
-use crate::InlineCompletion;
+use crate::EditPrediction;
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, Corners, Edges, HighlightStyle, Hsla, StyledText,
     TextLayout, TextStyle, point, prelude::*, quad, size,
@@ -17,7 +17,7 @@ pub struct CompletionDiffElement {
 }
 
 impl CompletionDiffElement {
-    pub fn new(completion: &InlineCompletion, cx: &App) -> Self {
+    pub fn new(completion: &EditPrediction, cx: &App) -> Self {
         let mut diff = completion
             .snapshot
             .text_for_range(completion.excerpt_range.clone())

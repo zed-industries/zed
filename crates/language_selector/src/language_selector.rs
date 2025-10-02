@@ -19,7 +19,13 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(language_selector, [Toggle]);
+actions!(
+    language_selector,
+    [
+        /// Toggles the language selector modal.
+        Toggle
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(LanguageSelector::register).detach();
@@ -80,7 +86,10 @@ impl LanguageSelector {
 
 impl Render for LanguageSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("LanguageSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -115,13 +124,13 @@ impl LanguageSelectorDelegate {
             .into_iter()
             .filter_map(|name| {
                 language_registry
-                    .available_language_for_name(&name)?
+                    .available_language_for_name(name.as_ref())?
                     .hidden()
                     .not()
                     .then_some(name)
             })
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
         Self {
@@ -247,6 +256,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,
@@ -273,7 +283,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
         let (label, language_icon) = self.language_data_for_match(mat, cx);
         Some(
             ListItem::new(ix)

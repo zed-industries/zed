@@ -50,7 +50,7 @@ impl RenderOnce for Popover {
                 v_flex()
                     .elevation_2(cx)
                     .py(POPOVER_Y_PADDING / 2.)
-                    .children(self.children),
+                    .child(div().children(self.children)),
             )
             .when_some(self.aside, |this, aside| {
                 this.child(

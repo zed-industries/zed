@@ -8,7 +8,8 @@
 //! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
 //! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
 //!
-//! ```
+//! ```toml
+//! [dependencies]
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
 //!
@@ -24,7 +25,7 @@
 //! - State management and communication with [`Entity`]'s. Whenever you need to store application state
 //!   that communicates between different parts of your application, you'll want to use GPUI's
 //!   entities. Entities are owned by GPUI and are only accessible through an owned smart pointer
-//!   similar to an [`std::rc::Rc`]. See the [`app::context`] module for more information.
+//!   similar to an [`std::rc::Rc`]. See [`app::Context`] for more information.
 //!
 //! - High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply
 //!   a [`Entity`] that can be rendered, by implementing the [`Render`] trait. At the start of each frame, GPUI
@@ -37,7 +38,7 @@
 //!   provide a nice wrapper around an imperative API that provides as much flexibility and control as
 //!   you need. Elements have total control over how they and their child elements are rendered and
 //!   can be used for making efficient views into large lists, implement custom layouting for a code editor,
-//!   and anything else you can think of. See the [`element`] module for more information.
+//!   and anything else you can think of. See the [`elements`] module for more information.
 //!
 //!  Each of these registers has one or more corresponding contexts that can be accessed from all GPUI services.
 //!  This context is your main interface to GPUI, and is used extensively throughout the framework.
@@ -51,9 +52,9 @@
 //!   Use this for implementing keyboard shortcuts, such as cmd-q (See `action` module for more information).
 //! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::App`].
 //! - An async executor that is integrated with the platform's event loop. See the [`executor`] module for more information.,
-//! - The [`gpui::test`](test) macro provides a convenient way to write tests for your GPUI applications. Tests also have their
-//!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]
-//!   and [`test`] modules for more details.
+//! - The [`gpui::test`](macro@test) macro provides a convenient way to write tests for your GPUI applications. Tests also have their
+//!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`TestAppContext`]
+//!   and [`mod@test`] modules for more details.
 //!
 //! Currently, the best way to learn about these APIs is to read the Zed source code, ask us about it at a fireside hack, or drop
 //! a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples,
@@ -63,6 +64,8 @@
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
+
+extern crate self as gpui;
 
 #[macro_use]
 mod action;
@@ -95,6 +98,7 @@ mod style;
 mod styled;
 mod subscription;
 mod svg_renderer;
+mod tab_stop;
 mod taffy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -110,13 +114,12 @@ pub mod private {
     pub use inventory;
     pub use schemars;
     pub use serde;
-    pub use serde_derive;
     pub use serde_json;
 }
 
 mod seal {
     /// A mechanism for restricting implementations of a trait to only those in GPUI.
-    /// See: https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/
+    /// See: <https://predr.ag/blog/definitive-guide-to-sealed-traits-in-rust/>
     pub trait Sealed {}
 }
 
@@ -151,11 +154,12 @@ pub use style::*;
 pub use styled::*;
 pub use subscription::*;
 use svg_renderer::*;
+pub(crate) use tab_stop::*;
 pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
-pub use util::arc_cow::ArcCow;
+pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;
 
@@ -170,6 +174,10 @@ pub trait AppContext {
     type Result<T>;
 
     /// Create a new entity in the app context.
+    #[expect(
+        clippy::wrong_self_convention,
+        reason = "`App::new` is an ubiquitous function for creating entities"
+    )]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -194,6 +202,11 @@ pub trait AppContext {
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R>
+    where
+        T: 'static;
+
+    /// Update a entity in the app context.
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<GpuiBorrow<'a, T>>
     where
         T: 'static;
 
@@ -255,7 +268,7 @@ pub trait VisualContext: AppContext {
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R>;
 
-    /// Update a view with the given callback
+    /// Create a new entity, with access to `Window`.
     fn new_window_entity<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
@@ -341,7 +354,7 @@ impl<T> Flatten<T> for Result<T> {
 }
 
 /// Information about the GPU GPUI is running on.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct GpuSpecs {
     /// Whether the GPU is really a fake (like `llvmpipe`) running on the CPU.
     pub is_software_emulated: bool,

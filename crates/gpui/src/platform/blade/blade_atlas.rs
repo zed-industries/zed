@@ -10,8 +10,6 @@ use etagere::BucketedAtlasAllocator;
 use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 
-pub(crate) const PATH_TEXTURE_FORMAT: gpu::TextureFormat = gpu::TextureFormat::R16Float;
-
 pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
 
 struct PendingUpload {
@@ -27,7 +25,6 @@ struct BladeAtlasState {
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
-    path_sample_count: u32,
 }
 
 #[cfg(gles)]
@@ -41,13 +38,11 @@ impl BladeAtlasState {
 }
 
 pub struct BladeTextureInfo {
-    pub size: gpu::Extent,
     pub raw_view: gpu::TextureView,
-    pub msaa_view: Option<gpu::TextureView>,
 }
 
 impl BladeAtlas {
-    pub(crate) fn new(gpu: &Arc<gpu::Context>, path_sample_count: u32) -> Self {
+    pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
             upload_belt: BufferBelt::new(BufferBeltDescriptor {
@@ -59,33 +54,11 @@ impl BladeAtlas {
             tiles_by_key: Default::default(),
             initializations: Vec::new(),
             uploads: Vec::new(),
-            path_sample_count,
         }))
     }
 
     pub(crate) fn destroy(&self) {
         self.0.lock().destroy();
-    }
-
-    pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
-        let mut lock = self.0.lock();
-        let textures = &mut lock.storage[texture_kind];
-        for texture in textures.iter_mut() {
-            texture.clear();
-        }
-    }
-
-    /// Allocate a rectangle and make it available for rendering immediately (without waiting for `before_frame`)
-    pub fn allocate_for_rendering(
-        &self,
-        size: Size<DevicePixels>,
-        texture_kind: AtlasTextureKind,
-        gpu_encoder: &mut gpu::CommandEncoder,
-    ) -> AtlasTile {
-        let mut lock = self.0.lock();
-        let tile = lock.allocate(size, texture_kind);
-        lock.flush_initializations(gpu_encoder);
-        tile
     }
 
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
@@ -101,15 +74,8 @@ impl BladeAtlas {
     pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
         let lock = self.0.lock();
         let texture = &lock.storage[id];
-        let size = texture.allocator.size();
         BladeTextureInfo {
-            size: gpu::Extent {
-                width: size.width as u32,
-                height: size.height as u32,
-                depth: 1,
-            },
             raw_view: texture.raw_view,
-            msaa_view: texture.msaa_view,
         }
     }
 }
@@ -197,50 +163,10 @@ impl BladeAtlasState {
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
             AtlasTextureKind::Polychrome => {
-                format = gpu::TextureFormat::Bgra8UnormSrgb;
+                format = gpu::TextureFormat::Bgra8Unorm;
                 usage = gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE;
             }
-            AtlasTextureKind::Path => {
-                format = PATH_TEXTURE_FORMAT;
-                usage = gpu::TextureUsage::COPY
-                    | gpu::TextureUsage::RESOURCE
-                    | gpu::TextureUsage::TARGET;
-            }
         }
-
-        // We currently only enable MSAA for path textures.
-        let (msaa, msaa_view) = if self.path_sample_count > 1 && kind == AtlasTextureKind::Path {
-            let msaa = self.gpu.create_texture(gpu::TextureDesc {
-                name: "msaa path texture",
-                format,
-                size: gpu::Extent {
-                    width: size.width.into(),
-                    height: size.height.into(),
-                    depth: 1,
-                },
-                array_layer_count: 1,
-                mip_level_count: 1,
-                sample_count: self.path_sample_count,
-                dimension: gpu::TextureDimension::D2,
-                usage: gpu::TextureUsage::TARGET,
-                external: None,
-            });
-
-            (
-                Some(msaa),
-                Some(self.gpu.create_texture_view(
-                    msaa,
-                    gpu::TextureViewDesc {
-                        name: "msaa texture view",
-                        format,
-                        dimension: gpu::ViewDimension::D2,
-                        subresources: &Default::default(),
-                    },
-                )),
-            )
-        } else {
-            (None, None)
-        };
 
         let raw = self.gpu.create_texture(gpu::TextureDesc {
             name: "atlas",
@@ -279,8 +205,6 @@ impl BladeAtlasState {
             format,
             raw,
             raw_view,
-            msaa,
-            msaa_view,
             live_atlas_keys: 0,
         };
 
@@ -340,7 +264,6 @@ impl BladeAtlasState {
 struct BladeAtlasStorage {
     monochrome_textures: AtlasTextureList<BladeAtlasTexture>,
     polychrome_textures: AtlasTextureList<BladeAtlasTexture>,
-    path_textures: AtlasTextureList<BladeAtlasTexture>,
 }
 
 impl ops::Index<AtlasTextureKind> for BladeAtlasStorage {
@@ -349,7 +272,6 @@ impl ops::Index<AtlasTextureKind> for BladeAtlasStorage {
         match kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-            crate::AtlasTextureKind::Path => &self.path_textures,
         }
     }
 }
@@ -359,7 +281,6 @@ impl ops::IndexMut<AtlasTextureKind> for BladeAtlasStorage {
         match kind {
             crate::AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
-            crate::AtlasTextureKind::Path => &mut self.path_textures,
         }
     }
 }
@@ -370,7 +291,6 @@ impl ops::Index<AtlasTextureId> for BladeAtlasStorage {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-            crate::AtlasTextureKind::Path => &self.path_textures,
         };
         textures[id.index as usize].as_ref().unwrap()
     }
@@ -384,9 +304,6 @@ impl BladeAtlasStorage {
         for mut texture in self.polychrome_textures.drain().flatten() {
             texture.destroy(gpu);
         }
-        for mut texture in self.path_textures.drain().flatten() {
-            texture.destroy(gpu);
-        }
     }
 }
 
@@ -395,17 +312,11 @@ struct BladeAtlasTexture {
     allocator: BucketedAtlasAllocator,
     raw: gpu::Texture,
     raw_view: gpu::TextureView,
-    msaa: Option<gpu::Texture>,
-    msaa_view: Option<gpu::TextureView>,
     format: gpu::TextureFormat,
     live_atlas_keys: u32,
 }
 
 impl BladeAtlasTexture {
-    fn clear(&mut self) {
-        self.allocator.clear();
-    }
-
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
         let allocation = self.allocator.allocate(size.into())?;
         let tile = AtlasTile {
@@ -424,12 +335,6 @@ impl BladeAtlasTexture {
     fn destroy(&mut self, gpu: &gpu::Context) {
         gpu.destroy_texture(self.raw);
         gpu.destroy_texture_view(self.raw_view);
-        if let Some(msaa) = self.msaa {
-            gpu.destroy_texture(msaa);
-        }
-        if let Some(msaa_view) = self.msaa_view {
-            gpu.destroy_texture_view(msaa_view);
-        }
     }
 
     fn bytes_per_pixel(&self) -> u8 {

@@ -41,7 +41,7 @@ pub struct CommandPalette {
 /// Removes subsequent whitespace characters and double colons from the query.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
-fn normalize_query(input: &str) -> String {
+pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
@@ -136,7 +136,10 @@ impl Focusable for CommandPalette {
 
 impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("CommandPalette")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -203,7 +206,7 @@ impl CommandPaletteDelegate {
         if parse_zed_link(&query, cx).is_some() {
             intercept_results = vec![CommandInterceptResult {
                 action: OpenZedUrl { url: query.clone() }.boxed_clone(),
-                string: query.clone(),
+                string: query,
                 positions: vec![],
             }]
         }
@@ -242,7 +245,7 @@ impl CommandPaletteDelegate {
             self.selected_ix = cmp::min(self.selected_ix, self.matches.len() - 1);
         }
     }
-    ///
+
     /// Hit count for each command in the palette.
     /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
     /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
@@ -297,7 +300,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = self.hit_counts();
             let executor = cx.background_executor().clone();
-            let query = normalize_query(query.as_str());
+            let query = normalize_action_query(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -311,28 +314,17 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .enumerate()
                     .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<_>>();
-                let matches = if query.is_empty() {
-                    candidates
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, candidate)| StringMatch {
-                            candidate_id: index,
-                            string: candidate.string,
-                            positions: Vec::new(),
-                            score: 0.0,
-                        })
-                        .collect()
-                } else {
-                    fuzzy::match_strings(
-                        &candidates,
-                        &query,
-                        true,
-                        10000,
-                        &Default::default(),
-                        executor,
-                    )
-                    .await
-                };
+
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query,
+                    true,
+                    true,
+                    10000,
+                    &Default::default(),
+                    executor,
+                )
+                .await;
 
                 tx.send((commands, matches)).await.log_err();
             }
@@ -421,8 +413,8 @@ impl PickerDelegate for CommandPaletteDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let r#match = self.matches.get(ix)?;
-        let command = self.commands.get(r#match.candidate_id)?;
+        let matching_command = self.matches.get(ix)?;
+        let command = self.commands.get(matching_command.candidate_id)?;
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -435,7 +427,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .justify_between()
                         .child(HighlightedLabel::new(
                             command.name.clone(),
-                            r#match.positions.clone(),
+                            matching_command.positions.clone(),
                         ))
                         .children(KeyBinding::for_action_in(
                             &*command.action,
@@ -511,19 +503,28 @@ mod tests {
 
     #[test]
     fn test_normalize_query() {
-        assert_eq!(normalize_query("editor: backspace"), "editor: backspace");
-        assert_eq!(normalize_query("editor:  backspace"), "editor: backspace");
-        assert_eq!(normalize_query("editor:    backspace"), "editor: backspace");
         assert_eq!(
-            normalize_query("editor::GoToDefinition"),
+            normalize_action_query("editor: backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor:  backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor:    backspace"),
+            "editor: backspace"
+        );
+        assert_eq!(
+            normalize_action_query("editor::GoToDefinition"),
             "editor:GoToDefinition"
         );
         assert_eq!(
-            normalize_query("editor::::GoToDefinition"),
+            normalize_action_query("editor::::GoToDefinition"),
             "editor:GoToDefinition"
         );
         assert_eq!(
-            normalize_query("editor: :GoToDefinition"),
+            normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
         );
     }
@@ -664,7 +665,11 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert!(editor.focus_handle(cx).is_focused(window));
             assert_eq!(
-                editor.selections.last::<Point>(cx).range().start,
+                editor
+                    .selections
+                    .last::<Point>(&editor.display_snapshot(cx))
+                    .range()
+                    .start,
                 Point::new(2, 0)
             );
         });

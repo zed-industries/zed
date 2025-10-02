@@ -9,8 +9,6 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
@@ -171,7 +169,7 @@ where
     }
 
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle {
-        self.read(cx).focus_handle(cx).clone()
+        self.read(cx).focus_handle(cx)
     }
 
     fn activation_priority(&self, cx: &App) -> u32 {
@@ -210,20 +208,39 @@ impl Focusable for Dock {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DockPosition {
     Left,
     Bottom,
     Right,
 }
 
+impl From<settings::DockPosition> for DockPosition {
+    fn from(value: settings::DockPosition) -> Self {
+        match value {
+            settings::DockPosition::Left => Self::Left,
+            settings::DockPosition::Bottom => Self::Bottom,
+            settings::DockPosition::Right => Self::Right,
+        }
+    }
+}
+
+impl Into<settings::DockPosition> for DockPosition {
+    fn into(self) -> settings::DockPosition {
+        match self {
+            Self::Left => settings::DockPosition::Left,
+            Self::Bottom => settings::DockPosition::Bottom,
+            Self::Right => settings::DockPosition::Right,
+        }
+    }
+}
+
 impl DockPosition {
     fn label(&self) -> &'static str {
         match self {
-            Self::Left => "left",
-            Self::Bottom => "bottom",
-            Self::Right => "right",
+            Self::Left => "Left",
+            Self::Bottom => "Bottom",
+            Self::Right => "Right",
         }
     }
 
@@ -242,6 +259,7 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -252,7 +270,7 @@ impl Dock {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let focus_handle = cx.focus_handle();
-        let workspace = cx.entity().clone();
+        let workspace = cx.entity();
         let dock = cx.new(|cx| {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
@@ -304,15 +322,14 @@ impl Dock {
         .detach();
 
         cx.observe_in(&dock, window, move |workspace, dock, window, cx| {
-            if dock.read(cx).is_open() {
-                if let Some(panel) = dock.read(cx).active_panel() {
-                    if panel.is_zoomed(window, cx) {
-                        workspace.zoomed = Some(panel.to_any().downgrade());
-                        workspace.zoomed_position = Some(position);
-                        cx.emit(Event::ZoomChanged);
-                        return;
-                    }
-                }
+            if dock.read(cx).is_open()
+                && let Some(panel) = dock.read(cx).active_panel()
+                && panel.is_zoomed(window, cx)
+            {
+                workspace.zoomed = Some(panel.to_any().downgrade());
+                workspace.zoomed_position = Some(position);
+                cx.emit(Event::ZoomChanged);
+                return;
             }
             if workspace.zoomed_position == Some(position) {
                 workspace.zoomed = None;
@@ -340,7 +357,7 @@ impl Dock {
     pub fn panel<T: Panel>(&self) -> Option<Entity<T>> {
         self.panel_entries
             .iter()
-            .find_map(|entry| entry.panel.to_any().clone().downcast().ok())
+            .find_map(|entry| entry.panel.to_any().downcast().ok())
     }
 
     pub fn panel_index_for_type<T: Panel>(&self) -> Option<usize> {
@@ -460,7 +477,7 @@ impl Dock {
                     };
 
                     let was_visible = this.is_open()
-                        && this.visible_panel().map_or(false, |active_panel| {
+                        && this.visible_panel().is_some_and(|active_panel| {
                             active_panel.panel_id() == Entity::entity_id(&panel)
                         });
 
@@ -523,7 +540,7 @@ impl Dock {
                     PanelEvent::Close => {
                         if this
                             .visible_panel()
-                            .map_or(false, |p| p.panel_id() == Entity::entity_id(panel))
+                            .is_some_and(|p| p.panel_id() == Entity::entity_id(panel))
                         {
                             this.set_open(false, window, cx);
                         }
@@ -540,10 +557,10 @@ impl Dock {
             Ok(ix) => ix,
             Err(ix) => ix,
         };
-        if let Some(active_index) = self.active_panel_index.as_mut() {
-            if *active_index >= index {
-                *active_index += 1;
-            }
+        if let Some(active_index) = self.active_panel_index.as_mut()
+            && *active_index >= index
+        {
+            *active_index += 1;
         }
         self.panel_entries.insert(
             index,
@@ -565,16 +582,16 @@ impl Dock {
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
-                if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
-                    self.activate_panel(idx, window, cx);
-                }
+            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible)
+                && let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx)
+            {
+                self.activate_panel(idx, window, cx);
             }
 
-            if serialized.zoom {
-                if let Some(panel) = self.active_panel() {
-                    panel.set_zoomed(true, window, cx)
-                }
+            if serialized.zoom
+                && let Some(panel) = self.active_panel()
+            {
+                panel.set_zoomed(true, window, cx)
             }
             self.set_open(serialized.visible, window, cx);
             return true;
@@ -833,7 +850,11 @@ impl Render for Dock {
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-        Self { dock }
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+        Self {
+            dock,
+            _settings_subscription: settings_subscription,
+        }
     }
 }
 
@@ -864,7 +885,7 @@ impl Render for PanelButtons {
                     let action = dock.toggle_action();
 
                     let tooltip: SharedString =
-                        format!("Close {} dock", dock.position.label()).into();
+                        format!("Close {} Dock", dock.position.label()).into();
 
                     (action, tooltip)
                 } else {
@@ -872,6 +893,8 @@ impl Render for PanelButtons {
 
                     (action, icon_tooltip.into())
                 };
+
+                let focus_handle = dock.focus_handle(cx);
 
                 Some(
                     right_click_menu(name)
@@ -902,13 +925,19 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(move |is_active| {
+                        .trigger(move |is_active, _window, _cx| {
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
+                                        telemetry::event!(
+                                            "Panel Button Clicked",
+                                            name = name,
+                                            toggle_state = !is_open
+                                        );
+                                        window.focus(&focus_handle);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
@@ -923,8 +952,13 @@ impl Render for PanelButtons {
             .collect();
 
         let has_buttons = !buttons.is_empty();
+
         h_flex()
             .gap_1()
+            .when(
+                has_buttons && dock.position == DockPosition::Bottom,
+                |this| this.child(Divider::vertical().color(DividerColor::Border)),
+            )
             .children(buttons)
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))
@@ -955,7 +989,7 @@ pub mod test {
         pub focus_handle: FocusHandle,
         pub size: Pixels,
     }
-    actions!(test, [ToggleTestPanel]);
+    actions!(test_only, [ToggleTestPanel]);
 
     impl EventEmitter<PanelEvent> for TestPanel {}
 

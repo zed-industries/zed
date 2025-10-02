@@ -2,24 +2,20 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    StopReason,
+    StopReason, TokenUsage,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use lmstudio::{
-    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models,
-    stream_chat_completion,
-};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use lmstudio::{ModelType, get_models};
+pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -34,8 +30,8 @@ const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
 const LMSTUDIO_SITE: &str = "https://lmstudio.ai/";
 
-const PROVIDER_ID: &str = "lmstudio";
-const PROVIDER_NAME: &str = "LM Studio";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("lmstudio");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("LM Studio");
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct LmStudioSettings {
@@ -43,17 +39,9 @@ pub struct LmStudioSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub supports_tool_calls: bool,
-}
-
 pub struct LmStudioLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -88,6 +76,7 @@ impl State {
                             .loaded_context_length
                             .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
+                        model.capabilities.supports_images() || model.r#type == ModelType::Vlm,
                     )
                 })
                 .collect();
@@ -112,7 +101,30 @@ impl State {
         }
 
         let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
+        cx.spawn(async move |_this, _cx| {
+            match fetch_models_task.await {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    // If any cause in the error chain is an std::io::Error with
+                    // ErrorKind::ConnectionRefused, treat this as "credentials not found"
+                    // (i.e. LM Studio not running).
+                    let mut connection_refused = false;
+                    for cause in err.chain() {
+                        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                                connection_refused = true;
+                                break;
+                            }
+                        }
+                    }
+                    if connection_refused {
+                        Err(AuthenticateError::ConnectionRefused)
+                    } else {
+                        Err(AuthenticateError::Other(err))
+                    }
+                }
+            }
+        })
     }
 }
 
@@ -150,18 +162,18 @@ impl LmStudioLanguageModelProvider {
 impl LanguageModelProviderState for LmStudioLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
 
 impl LanguageModelProvider for LmStudioLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -201,6 +213,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     supports_tool_calls: model.supports_tool_calls,
+                    supports_images: model.supports_images,
                 },
             );
         }
@@ -210,7 +223,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
             .map(|model| {
                 Arc::new(LmStudioLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
-                    model: model.clone(),
+                    model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -226,7 +239,12 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         let state = self.state.clone();
         cx.new(|cx| ConfigurationView::new(state, cx)).into()
     }
@@ -244,23 +262,34 @@ pub struct LmStudioLanguageModel {
 }
 
 impl LmStudioLanguageModel {
-    fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
+    fn to_lmstudio_request(
+        &self,
+        request: LanguageModelRequest,
+    ) -> lmstudio::ChatCompletionRequest {
         let mut messages = Vec::new();
 
         for message in request.messages {
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                        .push(match message.role {
-                            Role::User => ChatMessage::User { content: text },
-                            Role::Assistant => ChatMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                            },
-                            Role::System => ChatMessage::System { content: text },
-                        }),
+                    MessageContent::Text(text) => add_message_content_part(
+                        lmstudio::MessagePart::Text { text },
+                        message.role,
+                        &mut messages,
+                    ),
+                    MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
-                    MessageContent::Image(_) => {}
+                    MessageContent::Image(image) => {
+                        add_message_content_part(
+                            lmstudio::MessagePart::Image {
+                                image_url: lmstudio::ImageUrl {
+                                    url: image.to_base64_url(),
+                                    detail: None,
+                                },
+                            },
+                            message.role,
+                            &mut messages,
+                        );
+                    }
                     MessageContent::ToolUse(tool_use) => {
                         let tool_call = lmstudio::ToolCall {
                             id: tool_use.id.to_string(),
@@ -285,23 +314,32 @@ impl LmStudioLanguageModel {
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
-                        match &tool_result.content {
+                        let content = match &tool_result.content {
                             LanguageModelToolResultContent::Text(text) => {
-                                messages.push(lmstudio::ChatMessage::Tool {
-                                    content: text.to_string(),
-                                    tool_call_id: tool_result.tool_use_id.to_string(),
-                                });
+                                vec![lmstudio::MessagePart::Text {
+                                    text: text.to_string(),
+                                }]
                             }
-                            LanguageModelToolResultContent::Image(_) => {
-                                // no support for images for now
+                            LanguageModelToolResultContent::Image(image) => {
+                                vec![lmstudio::MessagePart::Image {
+                                    image_url: lmstudio::ImageUrl {
+                                        url: image.to_base64_url(),
+                                        detail: None,
+                                    },
+                                }]
                             }
                         };
+
+                        messages.push(lmstudio::ChatMessage::Tool {
+                            content: content.into(),
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                        });
                     }
                 }
             }
         }
 
-        ChatCompletionRequest {
+        lmstudio::ChatCompletionRequest {
             model: self.model.name.clone(),
             messages,
             stream: true,
@@ -332,10 +370,12 @@ impl LmStudioLanguageModel {
 
     fn stream_completion(
         &self,
-        request: ChatCompletionRequest,
+        request: lmstudio::ChatCompletionRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
+    > {
         let http_client = self.http_client.clone();
         let Ok(api_url) = cx.update(|cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
@@ -345,7 +385,7 @@ impl LmStudioLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let request = stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let request = lmstudio::stream_chat_completion(http_client.as_ref(), &api_url, request);
             let response = request.await?;
             Ok(response)
         });
@@ -364,11 +404,11 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -385,14 +425,14 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images
     }
 
     fn telemetry_id(&self) -> String {
         format!("lmstudio/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
@@ -400,7 +440,7 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         _cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         // Endpoint for this is coming soon. In the meantime, hacky estimation
         let token_count = request
             .messages
@@ -408,7 +448,7 @@ impl LanguageModel for LmStudioLanguageModel {
             .map(|msg| msg.string_contents().split_whitespace().count())
             .sum::<usize>();
 
-        let estimated_tokens = (token_count as f64 * 0.75) as usize;
+        let estimated_tokens = (token_count as f64 * 0.75) as u64;
         async move { Ok(estimated_tokens) }.boxed()
     }
 
@@ -420,6 +460,7 @@ impl LanguageModel for LmStudioLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_lmstudio_request(request);
@@ -445,23 +486,23 @@ impl LmStudioEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<lmstudio::ResponseStreamEvent>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
             })
         })
     }
 
     pub fn map_event(
         &mut self,
-        event: ResponseStreamEvent,
+        event: lmstudio::ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.into_iter().next() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+            return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
         };
@@ -469,6 +510,13 @@ impl LmStudioEventMapper {
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(reasoning_content) = choice.delta.reasoning_content {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }));
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls {
@@ -498,6 +546,15 @@ impl LmStudioEventMapper {
             }
         }
 
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         match choice.finish_reason.as_deref() {
             Some("stop") => {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
@@ -514,7 +571,7 @@ impl LmStudioEventMapper {
                                 raw_input: tool_call.arguments,
                             },
                         )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                             id: tool_call.id.into(),
                             tool_name: tool_call.name.into(),
                             raw_input: tool_call.arguments.into(),
@@ -526,7 +583,7 @@ impl LmStudioEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
             Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                log::error!("Unexpected LMStudio stop_reason: {stop_reason:?}",);
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
@@ -543,13 +600,47 @@ struct RawToolCall {
     arguments: String,
 }
 
+fn add_message_content_part(
+    new_part: lmstudio::MessagePart,
+    role: Role,
+    messages: &mut Vec<lmstudio::ChatMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(lmstudio::ChatMessage::User { content }))
+        | (
+            Role::Assistant,
+            Some(lmstudio::ChatMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
+        | (Role::System, Some(lmstudio::ChatMessage::System { content })) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => lmstudio::ChatMessage::User {
+                    content: lmstudio::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => lmstudio::ChatMessage::Assistant {
+                    content: Some(lmstudio::MessageContent::from(vec![new_part])),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => lmstudio::ChatMessage::System {
+                    content: lmstudio::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
+    }
+}
+
 struct ConfigurationView {
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     loading_models_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
@@ -617,7 +708,7 @@ impl Render for ConfigurationView {
                                             Button::new("lmstudio-site", "LM Studio")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _window, cx| {
                                                     cx.open_url(LMSTUDIO_SITE)
@@ -632,7 +723,7 @@ impl Render for ConfigurationView {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _window, cx| {
                                                 cx.open_url(LMSTUDIO_DOWNLOAD_URL)
@@ -645,7 +736,7 @@ impl Render for ConfigurationView {
                                     Button::new("view-models", "Model Catalog")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
+                                        .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _window, cx| {
                                             cx.open_url(LMSTUDIO_CATALOG_URL)
@@ -671,7 +762,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_lmstudio_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::Play)
+                                        .icon(IconName::PlayFilled)
                                         .on_click(cx.listener(move |this, _, _window, cx| {
                                             this.retry_connection(cx)
                                         })),

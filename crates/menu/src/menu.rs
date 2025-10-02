@@ -12,13 +12,21 @@ pub fn init() {}
 actions!(
     menu,
     [
+        /// Cancels the current menu operation.
         Cancel,
+        /// Confirms the selected menu item.
         Confirm,
+        /// Performs secondary confirmation action.
         SecondaryConfirm,
+        /// Selects the previous item in the menu.
         SelectPrevious,
+        /// Selects the next item in the menu.
         SelectNext,
+        /// Selects the first item in the menu.
         SelectFirst,
+        /// Selects the last item in the menu.
         SelectLast,
+        /// Restarts the menu from the beginning.
         Restart,
         EndSlot,
     ]

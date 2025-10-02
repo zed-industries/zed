@@ -1,6 +1,4 @@
-use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
-};
+use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{Project, git_store::Repository};
@@ -111,7 +109,10 @@ impl Focusable for RepositorySelector {
 
 impl Render for RepositorySelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().w(self.width).child(self.picker.clone())
+        div()
+            .key_context("GitRepositorySelector")
+            .w(self.width)
+            .child(self.picker.clone())
     }
 }
 
@@ -205,15 +206,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
         self.repository_selector
             .update(cx, |_this, cx| cx.emit(DismissEvent))
             .ok();
-    }
-
-    fn render_header(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        // TODO: Implement header rendering if needed
-        None
     }
 
     fn render_match(

@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::BackgroundExecutor;
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     cmp::{self, Ordering},
     iter,
     ops::Range,
@@ -28,13 +28,13 @@ impl StringMatchCandidate {
     }
 }
 
-impl<'a> MatchCandidate for &'a StringMatchCandidate {
+impl MatchCandidate for &StringMatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool {
         self.char_bag.is_superset(bag)
     }
 
-    fn to_string(&self) -> Cow<'a, str> {
-        self.string.as_str().into()
+    fn candidate_chars(&self) -> impl Iterator<Item = char> {
+        self.string.chars()
     }
 }
 
@@ -117,6 +117,7 @@ pub async fn match_strings<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
+    penalize_length: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
@@ -160,8 +161,13 @@ where
                 scope.spawn(async move {
                     let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
                     let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                    let mut matcher =
-                        Matcher::new(query, lowercase_query, query_char_bag, smart_case);
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        penalize_length,
+                    );
 
                     matcher.match_candidates(
                         &[],
@@ -183,7 +189,7 @@ where
         })
         .await;
 
-    if cancel_flag.load(atomic::Ordering::Relaxed) {
+    if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();
     }
 

@@ -146,6 +146,7 @@
   "&&="
   "||="
   "??="
+  "..."
 ] @operator
 
 (regex "/" @string.regex)
@@ -230,6 +231,7 @@
   "implements"
   "interface"
   "keyof"
+  "module"
   "namespace"
   "private"
   "protected"

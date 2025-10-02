@@ -49,7 +49,7 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
         "Expected a 4 digit PCI ID in hexadecimal format"
     );
 
-    return u32::from_str_radix(id, 16).context("parsing PCI ID as hex");
+    u32::from_str_radix(id, 16).context("parsing PCI ID as hex")
 }
 
 #[cfg(test)]

@@ -37,11 +37,13 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldSnapshot};
+use fold_map::FoldSnapshot;
+pub use fold_map::{
+    ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
-use inlay_map::{InlayMap, InlaySnapshot};
+use inlay_map::InlaySnapshot;
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
@@ -64,11 +66,13 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, TreeMap};
-use tab_map::{TabMap, TabSnapshot};
+use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
 use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
+
+pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -76,11 +80,17 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HighlightKey {
+    Type(TypeId),
+    TypePlus(TypeId, usize),
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -263,7 +273,6 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
-                        render_in_minimap: true,
                     }
                 }),
         );
@@ -473,12 +482,11 @@ impl DisplayMap {
 
     pub fn highlight_text(
         &mut self,
-        type_id: TypeId,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
     ) {
-        self.text_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+        self.text_highlights.insert(key, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -501,11 +509,22 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&type_id)?;
+        let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
         Some((highlights.0, &highlights.1))
     }
+
+    #[cfg(feature = "test-support")]
+    pub fn all_text_highlights(
+        &self,
+    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        self.text_highlights.values()
+    }
+
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&type_id).is_some();
+        let mut cleared = self
+            .text_highlights
+            .remove(&HighlightKey::Type(type_id))
+            .is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -522,7 +541,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -618,7 +637,7 @@ pub(crate) struct Highlights<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InlineCompletionStyles {
+pub struct EditPredictionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
 }
@@ -626,7 +645,7 @@ pub struct InlineCompletionStyles {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub inline_completion: Option<InlineCompletionStyles>,
+    pub edit_prediction: Option<EditPredictionStyles>,
 }
 
 #[derive(Clone)]
@@ -686,9 +705,8 @@ impl<'a> HighlightedChunk<'a> {
                         }),
                         ..Default::default()
                     };
-                    let invisible_style = if let Some(mut style) = style {
-                        style.highlight(invisible_highlight);
-                        style
+                    let invisible_style = if let Some(style) = style {
+                        style.highlight(invisible_highlight)
                     } else {
                         invisible_highlight
                     };
@@ -709,9 +727,8 @@ impl<'a> HighlightedChunk<'a> {
                         }),
                         ..Default::default()
                     };
-                    let invisible_style = if let Some(mut style) = style {
-                        style.highlight(invisible_highlight);
-                        style
+                    let invisible_style = if let Some(style) = style {
+                        style.highlight(invisible_highlight)
                     } else {
                         invisible_highlight
                     };
@@ -941,54 +958,63 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                inline_completion: Some(editor_style.inline_completion_styles),
+                edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
         .flat_map(|chunk| {
-            let mut highlight_style = chunk
+            let highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
 
-            if let Some(chunk_highlight) = chunk.highlight_style {
-                if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
-                } else {
-                    highlight_style = Some(chunk_highlight);
+            let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
+                HighlightStyle {
+                    // For color inlays, blend the color with the editor background
+                    // if the color has transparency (alpha < 1.0)
+                    color: chunk_highlight.color.map(|color| {
+                        if chunk.is_inlay && !color.is_opaque() {
+                            editor_style.background.blend(color)
+                        } else {
+                            color
+                        }
+                    }),
+                    ..chunk_highlight
                 }
-            }
+            });
 
-            let mut diagnostic_highlight = HighlightStyle::default();
+            let diagnostic_highlight = chunk
+                .diagnostic_severity
+                .filter(|severity| {
+                    self.diagnostics_max_severity
+                        .into_lsp()
+                        .is_some_and(|max_severity| severity <= &max_severity)
+                })
+                .map(|severity| HighlightStyle {
+                    fade_out: chunk
+                        .is_unnecessary
+                        .then_some(editor_style.unnecessary_code_fade),
+                    underline: (chunk.underline
+                        && editor_style.show_underlines
+                        && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING))
+                        .then(|| {
+                            let diagnostic_color =
+                                super::diagnostic_style(severity, &editor_style.status);
+                            UnderlineStyle {
+                                color: Some(diagnostic_color),
+                                thickness: 1.0.into(),
+                                wavy: true,
+                            }
+                        }),
+                    ..Default::default()
+                });
 
-            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
-                self.diagnostics_max_severity
-                    .into_lsp()
-                    .map_or(false, |max_severity| severity <= &max_severity)
-            }) {
-                if chunk.is_unnecessary {
-                    diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
-                }
-                if chunk.underline
-                    && editor_style.show_underlines
-                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
-                {
-                    let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
-                    diagnostic_highlight.underline = Some(UnderlineStyle {
-                        color: Some(diagnostic_color),
-                        thickness: 1.0.into(),
-                        wavy: true,
-                    });
-                }
-            }
-
-            if let Some(highlight_style) = highlight_style.as_mut() {
-                highlight_style.highlight(diagnostic_highlight);
-            } else {
-                highlight_style = Some(diagnostic_highlight);
-            }
+            let style = [highlight_style, chunk_highlight, diagnostic_highlight]
+                .into_iter()
+                .flatten()
+                .reduce(|acc, highlight| acc.highlight(highlight));
 
             HighlightedChunk {
                 text: chunk.text,
-                style: highlight_style,
+                style,
                 is_tab: chunk.is_tab,
                 is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
@@ -1036,7 +1062,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system.layout_line(&line, font_size, &runs)
+        text_system.layout_line(&line, font_size, &runs, None)
     }
 
     pub fn x_for_display_point(
@@ -1333,7 +1359,9 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&type_id).cloned()
+        self.text_highlights
+            .get(&HighlightKey::Type(type_id))
+            .cloned()
     }
 
     #[allow(unused)]
@@ -1501,12 +1529,11 @@ pub mod tests {
     use language::{
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
     };
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
-    use settings::SettingsStore;
+    use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
@@ -1521,27 +1548,29 @@ pub mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let mut tab_size = rng.gen_range(1..=4);
-        let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
-        let excerpt_header_height = rng.gen_range(1..=5);
+        let mut tab_size = rng.random_range(1..=4);
+        let buffer_start_excerpt_header_height = rng.random_range(1..=5);
+        let excerpt_header_height = rng.random_range(1..=5);
         let font_size = px(14.0);
         let max_wrap_width = 300.0;
-        let mut wrap_width = if rng.gen_bool(0.1) {
+        let mut wrap_width = if rng.random_bool(0.1) {
             None
         } else {
-            Some(px(rng.gen_range(0.0..=max_wrap_width)))
+            Some(px(rng.random_range(0.0..=max_wrap_width)))
         };
 
         log::info!("tab size: {}", tab_size);
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            init_test(cx, |s| s.defaults.tab_size = NonZeroU32::new(tab_size));
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size)
+            });
         });
 
         let buffer = cx.update(|cx| {
-            if rng.r#gen() {
-                let len = rng.gen_range(0..10);
+            if rng.random() {
+                let len = rng.random_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
                     .collect::<String>();
@@ -1578,12 +1607,12 @@ pub mod tests {
         log::info!("display text: {:?}", snapshot.text());
 
         for _i in 0..operations {
-            match rng.gen_range(0..100) {
+            match rng.random_range(0..100) {
                 0..=19 => {
-                    wrap_width = if rng.gen_bool(0.2) {
+                    wrap_width = if rng.random_bool(0.2) {
                         None
                     } else {
-                        Some(px(rng.gen_range(0.0..=max_wrap_width)))
+                        Some(px(rng.random_range(0.0..=max_wrap_width)))
                     };
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
@@ -1595,52 +1624,51 @@ pub mod tests {
                     log::info!("setting tab size to {:?}", tab_size);
                     cx.update(|cx| {
                         cx.update_global::<SettingsStore, _>(|store, cx| {
-                            store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                            store.update_user_settings(cx, |s| {
+                                s.project.all_languages.defaults.tab_size =
+                                    NonZeroU32::new(tab_size);
                             });
                         });
                     });
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.r#gen() || blocks.is_empty() {
+                        if rng.random() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
-                            let block_properties = (0..rng.gen_range(1..=1))
+                            let block_properties = (0..rng.random_range(1..=1))
                                 .map(|_| {
-                                    let position =
-                                        buffer.anchor_after(buffer.clip_offset(
-                                            rng.gen_range(0..=buffer.len()),
-                                            Bias::Left,
-                                        ));
+                                    let position = buffer.anchor_after(buffer.clip_offset(
+                                        rng.random_range(0..=buffer.len()),
+                                        Bias::Left,
+                                    ));
 
-                                    let placement = if rng.r#gen() {
+                                    let placement = if rng.random() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
                                     };
-                                    let height = rng.gen_range(1..5);
+                                    let height = rng.random_range(1..5);
                                     log::info!(
                                         "inserting block {:?} with height {}",
                                         placement.as_ref().map(|p| p.to_point(&buffer)),
                                         height
                                     );
-                                    let priority = rng.gen_range(1..100);
+                                    let priority = rng.random_range(1..100);
                                     BlockProperties {
                                         placement,
                                         style: BlockStyle::Fixed,
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
-                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
                             blocks.extend(map.insert_blocks(block_properties, cx));
                         } else {
                             blocks.shuffle(&mut rng);
-                            let remove_count = rng.gen_range(1..=4.min(blocks.len()));
+                            let remove_count = rng.random_range(1..=4.min(blocks.len()));
                             let block_ids_to_remove = (0..remove_count)
-                                .map(|_| blocks.remove(rng.gen_range(0..blocks.len())))
+                                .map(|_| blocks.remove(rng.random_range(0..blocks.len())))
                                 .collect();
                             log::info!("removing block ids {:?}", block_ids_to_remove);
                             map.remove_blocks(block_ids_to_remove, cx);
@@ -1649,16 +1677,16 @@ pub mod tests {
                 }
                 45..=79 => {
                     let mut ranges = Vec::new();
-                    for _ in 0..rng.gen_range(1..=3) {
+                    for _ in 0..rng.random_range(1..=3) {
                         buffer.read_with(cx, |buffer, cx| {
                             let buffer = buffer.read(cx);
-                            let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
-                            let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
+                            let end = buffer.clip_offset(rng.random_range(0..=buffer.len()), Right);
+                            let start = buffer.clip_offset(rng.random_range(0..=end), Left);
                             ranges.push(start..end);
                         });
                     }
 
-                    if rng.r#gen() && fold_count > 0 {
+                    if rng.random() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);
@@ -1697,8 +1725,8 @@ pub mod tests {
             // Line boundaries
             let buffer = &snapshot.buffer_snapshot;
             for _ in 0..5 {
-                let row = rng.gen_range(0..=buffer.max_point().row);
-                let column = rng.gen_range(0..=buffer.line_len(MultiBufferRow(row)));
+                let row = rng.random_range(0..=buffer.max_point().row);
+                let column = rng.random_range(0..=buffer.line_len(MultiBufferRow(row)));
                 let point = buffer.clip_point(Point::new(row, column), Left);
 
                 let (prev_buffer_bound, prev_display_bound) = snapshot.prev_line_boundary(point);
@@ -1746,8 +1774,8 @@ pub mod tests {
             let min_point = snapshot.clip_point(DisplayPoint::new(DisplayRow(0), 0), Left);
             let max_point = snapshot.clip_point(snapshot.max_point(), Right);
             for _ in 0..5 {
-                let row = rng.gen_range(0..=snapshot.max_point().row().0);
-                let column = rng.gen_range(0..=snapshot.line_len(DisplayRow(row)));
+                let row = rng.random_range(0..=snapshot.max_point().row().0);
+                let column = rng.random_range(0..=snapshot.line_len(DisplayRow(row)));
                 let point = snapshot.clip_point(DisplayPoint::new(DisplayRow(row), column), Left);
 
                 log::info!("Moving from point {:?}", point);
@@ -1997,7 +2025,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2007,11 +2034,11 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay {
-                    id: InlayId::InlineCompletion(0),
-                    position: buffer_snapshot.anchor_after(0),
-                    text: "\n".into(),
-                }],
+                vec![Inlay::edit_prediction(
+                    0,
+                    buffer_snapshot.anchor_after(0),
+                    "\n",
+                )],
                 cx,
             );
         });
@@ -2059,7 +2086,11 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
+        cx.update(|cx| {
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = Some(2.try_into().unwrap())
+            })
+        });
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2195,7 +2226,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2205,7 +2235,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2294,7 +2323,7 @@ pub mod tests {
         // Insert a block in the middle of a multi-line diagnostic.
         map.update(cx, |map, cx| {
             map.highlight_text(
-                TypeId::of::<usize>(),
+                HighlightKey::Type(TypeId::of::<usize>()),
                 vec![
                     buffer_snapshot.anchor_before(Point::new(3, 9))
                         ..buffer_snapshot.anchor_after(Point::new(3, 14)),
@@ -2312,7 +2341,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             )
@@ -2325,11 +2353,12 @@ pub mod tests {
                 .highlight_style
                 .and_then(|style| style.color)
                 .map_or(black, |color| color.to_rgb());
-            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut() {
-                if *last_severity == chunk.diagnostic_severity && *last_color == color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut()
+                && *last_severity == chunk.diagnostic_severity
+                && *last_color == color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
 
             chunks.push((chunk.text.to_string(), chunk.diagnostic_severity, color));
@@ -2388,7 +2417,6 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2584,7 +2612,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
+        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»«:» B = "c «d»""#, false);
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2616,7 +2644,7 @@ pub mod tests {
 
         map.update(cx, |map, _cx| {
             map.highlight_text(
-                TypeId::of::<MyType>(),
+                HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
                     .into_iter()
                     .map(|range| {
@@ -2633,7 +2661,7 @@ pub mod tests {
             [
                 ("const ".to_string(), None, None),
                 ("a".to_string(), None, Some(Hsla::blue())),
-                (":".to_string(), Some(Hsla::red()), None),
+                (":".to_string(), Some(Hsla::red()), Some(Hsla::blue())),
                 (" B = ".to_string(), None, None),
                 ("\"c ".to_string(), Some(Hsla::green()), None),
                 ("d".to_string(), Some(Hsla::green()), Some(Hsla::blue())),
@@ -2876,18 +2904,19 @@ pub mod tests {
                 .syntax_highlight_id
                 .and_then(|id| id.style(theme)?.color);
             let highlight_color = chunk.highlight_style.and_then(|style| style.color);
-            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut() {
-                if syntax_color == *last_syntax_color && highlight_color == *last_highlight_color {
-                    last_chunk.push_str(chunk.text);
-                    continue;
-                }
+            if let Some((last_chunk, last_syntax_color, last_highlight_color)) = chunks.last_mut()
+                && syntax_color == *last_syntax_color
+                && highlight_color == *last_highlight_color
+            {
+                last_chunk.push_str(chunk.text);
+                continue;
             }
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
     }
 
-    fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
+    fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         workspace::init_settings(cx);
@@ -2896,7 +2925,7 @@ pub mod tests {
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, f);
+            store.update_user_settings(cx, f);
         });
     }
 }

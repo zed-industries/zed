@@ -25,8 +25,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
-    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, Point, Result, Task, WindowAppearance, WindowParams, px,
 };
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -51,10 +51,12 @@ pub trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -106,13 +108,13 @@ impl LinuxCommon {
 
         let callbacks = PlatformHandlers::default();
 
-        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender.clone()));
+        let dispatcher = Arc::new(LinuxDispatcher::new(main_sender));
 
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
 
         let common = LinuxCommon {
             background_executor,
-            foreground_executor: ForegroundExecutor::new(dispatcher.clone()),
+            foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
@@ -140,6 +142,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
+    }
+
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(crate::DummyKeyboardMapper)
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
@@ -198,8 +204,12 @@ impl<P: LinuxClient + 'static> Platform for P {
             app_path = app_path.display()
         );
 
-        // execute the script using /bin/bash
-        let restart_process = Command::new("/bin/bash")
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
+        let restart_process = Command::new("/usr/bin/env")
+            .arg("bash")
             .arg("-c")
             .arg(script)
             .process_group(0)
@@ -235,13 +245,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         self.is_screen_capture_supported()
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 
@@ -290,6 +302,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
                     .modal(true)
                     .title(title)
+                    .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
                     .multiple(options.multiple)
                     .directory(options.directories)
                     .send()
@@ -323,26 +336,35 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> oneshot::Receiver<Result<Option<PathBuf>>> {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        let _ = (done_tx.send(Ok(None)), directory);
+        let _ = (done_tx.send(Ok(None)), directory, suggested_name);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
             .spawn({
                 let directory = directory.to_owned();
+                let suggested_name = suggested_name.map(|s| s.to_owned());
 
                 async move {
-                    let request = match ashpd::desktop::file_chooser::SaveFileRequest::default()
-                        .modal(true)
-                        .title("Save File")
-                        .current_folder(directory)
-                        .expect("pathbuf should not be nul terminated")
-                        .send()
-                        .await
-                    {
+                    let mut request_builder =
+                        ashpd::desktop::file_chooser::SaveFileRequest::default()
+                            .modal(true)
+                            .title("Save File")
+                            .current_folder(directory)
+                            .expect("pathbuf should not be nul terminated");
+
+                    if let Some(suggested_name) = suggested_name {
+                        request_builder = request_builder.current_name(suggested_name.as_str());
+                    }
+
+                    let request = match request_builder.send().await {
                         Ok(request) => request,
                         Err(err) => {
                             let result = match err {
@@ -385,11 +407,15 @@ impl<P: LinuxClient + 'static> Platform for P {
         let path = path.to_owned();
         self.background_executor()
             .spawn(async move {
-                let _ = std::process::Command::new("xdg-open")
+                let _ = smol::process::Command::new("xdg-open")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
-                    .log_err();
+                    .log_err()?
+                    .status()
+                    .await
+                    .log_err()?;
+                Some(())
             })
             .detach();
     }
@@ -427,7 +453,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let app_path = env::current_exe()?;
-        return Ok(app_path);
+        Ok(app_path)
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
@@ -491,6 +517,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .context("Cannot find username in stored credentials")?;
+                    item.unlock().await?;
                     let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
@@ -572,10 +599,14 @@ pub(super) fn open_uri_internal(
                     if let Some(token) = activation_token.as_ref() {
                         command.env("XDG_ACTIVATION_TOKEN", token);
                     }
-                    match command.spawn() {
-                        Ok(_) => return,
+                    let program = format!("{:?}", command.get_program());
+                    match smol::process::Command::from(command).spawn() {
+                        Ok(mut cmd) => {
+                            cmd.status().await.log_err();
+                            return;
+                        }
                         Err(e) => {
-                            log::error!("Failed to open with {:?}: {}", command.get_program(), e)
+                            log::error!("Failed to open with {}: {}", program, e)
                         }
                     }
                 }
@@ -627,7 +658,7 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     let mut state: Option<xkb::compose::State> = None;
     for locale in locales {
         if let Ok(table) =
-            xkb::compose::Table::new_from_locale(&cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+            xkb::compose::Table::new_from_locale(cx, &locale, xkb::compose::COMPILE_NO_FLAGS)
         {
             state = Some(xkb::compose::State::new(
                 &table,
@@ -647,42 +678,112 @@ pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<V
     Ok(buffer)
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) const DEFAULT_CURSOR_ICON_NAME: &str = "left_ptr";
+
 impl CursorStyle {
     #[cfg(any(feature = "wayland", feature = "x11"))]
-    pub(super) fn to_icon_name(&self) -> &'static str {
-        // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
-        // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
-        // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
+    pub(super) fn to_icon_names(self) -> &'static [&'static str] {
+        // Based on cursor names from chromium:
+        // https://github.com/chromium/chromium/blob/d3069cf9c973dc3627fa75f64085c6a86c8f41bf/ui/base/cursor/cursor_factory.cc#L113
         match self {
-            CursorStyle::Arrow => "left_ptr",
-            CursorStyle::IBeam => "text",
-            CursorStyle::Crosshair => "crosshair",
-            CursorStyle::ClosedHand => "grabbing",
-            CursorStyle::OpenHand => "grab",
-            CursorStyle::PointingHand => "pointer",
-            CursorStyle::ResizeLeft => "w-resize",
-            CursorStyle::ResizeRight => "e-resize",
-            CursorStyle::ResizeLeftRight => "ew-resize",
-            CursorStyle::ResizeUp => "n-resize",
-            CursorStyle::ResizeDown => "s-resize",
-            CursorStyle::ResizeUpDown => "ns-resize",
-            CursorStyle::ResizeUpLeftDownRight => "nwse-resize",
-            CursorStyle::ResizeUpRightDownLeft => "nesw-resize",
-            CursorStyle::ResizeColumn => "col-resize",
-            CursorStyle::ResizeRow => "row-resize",
-            CursorStyle::IBeamCursorForVerticalLayout => "vertical-text",
-            CursorStyle::OperationNotAllowed => "not-allowed",
-            CursorStyle::DragLink => "alias",
-            CursorStyle::DragCopy => "copy",
-            CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::Arrow => &[DEFAULT_CURSOR_ICON_NAME],
+            CursorStyle::IBeam => &["text", "xterm"],
+            CursorStyle::Crosshair => &["crosshair", "cross"],
+            CursorStyle::ClosedHand => &["closedhand", "grabbing", "hand2"],
+            CursorStyle::OpenHand => &["openhand", "grab", "hand1"],
+            CursorStyle::PointingHand => &["pointer", "hand", "hand2"],
+            CursorStyle::ResizeLeft => &["w-resize", "left_side"],
+            CursorStyle::ResizeRight => &["e-resize", "right_side"],
+            CursorStyle::ResizeLeftRight => &["ew-resize", "sb_h_double_arrow"],
+            CursorStyle::ResizeUp => &["n-resize", "top_side"],
+            CursorStyle::ResizeDown => &["s-resize", "bottom_side"],
+            CursorStyle::ResizeUpDown => &["sb_v_double_arrow", "ns-resize"],
+            CursorStyle::ResizeUpLeftDownRight => &["size_fdiag", "bd_double_arrow", "nwse-resize"],
+            CursorStyle::ResizeUpRightDownLeft => &["size_bdiag", "nesw-resize", "fd_double_arrow"],
+            CursorStyle::ResizeColumn => &["col-resize", "sb_h_double_arrow"],
+            CursorStyle::ResizeRow => &["row-resize", "sb_v_double_arrow"],
+            CursorStyle::IBeamCursorForVerticalLayout => &["vertical-text"],
+            CursorStyle::OperationNotAllowed => &["not-allowed", "crossed_circle"],
+            CursorStyle::DragLink => &["alias"],
+            CursorStyle::DragCopy => &["copy"],
+            CursorStyle::ContextualMenu => &["context-menu"],
             CursorStyle::None => {
                 #[cfg(debug_assertions)]
                 panic!("CursorStyle::None should be handled separately in the client");
                 #[cfg(not(debug_assertions))]
-                "default"
+                &[DEFAULT_CURSOR_ICON_NAME]
             }
         }
     }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
+    if let Ok(xcursor_path) = env::var("XCURSOR_PATH") {
+        log::warn!(
+            "{:#}\ncursor icon loading may be failing if XCURSOR_PATH environment variable is invalid. \
+                    XCURSOR_PATH overrides the default icon search. Its current value is '{}'",
+            message,
+            xcursor_path
+        );
+    } else {
+        log::warn!("{:#}", message);
+    }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+    let c = match (keycode.raw(), shift) {
+        (24, _) => 'q',
+        (25, _) => 'w',
+        (26, _) => 'e',
+        (27, _) => 'r',
+        (28, _) => 't',
+        (29, _) => 'y',
+        (30, _) => 'u',
+        (31, _) => 'i',
+        (32, _) => 'o',
+        (33, _) => 'p',
+        (34, false) => '[',
+        (34, true) => '{',
+        (35, false) => ']',
+        (35, true) => '}',
+        (38, _) => 'a',
+        (39, _) => 's',
+        (40, _) => 'd',
+        (41, _) => 'f',
+        (42, _) => 'g',
+        (43, _) => 'h',
+        (44, _) => 'j',
+        (45, _) => 'k',
+        (46, _) => 'l',
+        (47, false) => ';',
+        (47, true) => ':',
+        (48, false) => '\'',
+        (48, true) => '"',
+        (49, false) => '`',
+        (49, true) => '~',
+        (51, false) => '\\',
+        (51, true) => '|',
+        (52, _) => 'z',
+        (53, _) => 'x',
+        (54, _) => 'c',
+        (55, _) => 'v',
+        (56, _) => 'b',
+        (57, _) => 'n',
+        (58, _) => 'm',
+        (59, false) => ',',
+        (59, true) => '>',
+        (60, false) => '.',
+        (60, true) => '<',
+        (61, false) => '/',
+        (61, true) => '?',
+
+        _ => return None,
+    };
+
+    Some(c)
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -747,11 +848,44 @@ impl crate::Keystroke {
             Keysym::underscore => "_".to_owned(),
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
+            Keysym::space => "space".to_owned(),
+            Keysym::BackSpace => "backspace".to_owned(),
+            Keysym::Tab => "tab".to_owned(),
+            Keysym::Delete => "delete".to_owned(),
+            Keysym::Escape => "escape".to_owned(),
+
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+            Keysym::Home => "home".to_owned(),
+            Keysym::End => "end".to_owned(),
+            Keysym::Insert => "insert".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if let Some(key) = key_utf8.chars().next()
+                    && key_utf8.len() == 1
+                    && key.is_ascii()
+                {
+                    if key.is_ascii_graphic() {
+                        key_utf8.to_lowercase()
+                    // map ctrl-a to `a`
+                    // ctrl-0..9 may emit control codes like ctrl-[, but
+                    // we don't want to map them to `[`
+                    } else if key_utf32 <= 0x1f
+                        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    {
+                        ((key_utf32 as u8 + 0x40) as char)
+                            .to_ascii_lowercase()
+                            .to_string()
+                    } else {
+                        name
+                    }
+                } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
+                    String::from(key_en)
                 } else {
                     name
                 }
@@ -857,6 +991,14 @@ impl crate::Modifiers {
     }
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl crate::Capslock {
+    pub(super) fn from_xkb(keymap_state: &State) -> Self {
+        let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+        Self { on }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,21 +1007,18 @@ mod tests {
     #[test]
     fn test_is_within_click_distance() {
         let zero = Point::new(px(0.0), px(0.0));
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(5.0), px(5.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(-4.9), px(5.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(Point::new(px(3.0), px(2.0)), Point::new(px(-2.0), px(-2.0))),
-            true
-        );
-        assert_eq!(
-            is_within_click_distance(zero, Point::new(px(5.0), px(5.1))),
-            false
-        );
+        assert!(is_within_click_distance(zero, Point::new(px(5.0), px(5.0))));
+        assert!(is_within_click_distance(
+            zero,
+            Point::new(px(-4.9), px(5.0))
+        ));
+        assert!(is_within_click_distance(
+            Point::new(px(3.0), px(2.0)),
+            Point::new(px(-2.0), px(-2.0))
+        ));
+        assert!(!is_within_click_distance(
+            zero,
+            Point::new(px(5.0), px(5.1))
+        ),);
     }
 }

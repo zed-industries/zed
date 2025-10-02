@@ -5,6 +5,7 @@ use crate::{
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::{str::FromStr, sync::Arc};
+use thiserror::Error;
 use util::maybe;
 
 pub fn init(cx: &mut App) {
@@ -15,6 +16,28 @@ pub fn init(cx: &mut App) {
 struct GlobalLanguageModelRegistry(Entity<LanguageModelRegistry>);
 
 impl Global for GlobalLanguageModelRegistry {}
+
+#[derive(Error)]
+pub enum ConfigurationError {
+    #[error("Configure at least one LLM provider to start using the panel.")]
+    NoProvider,
+    #[error("LLM provider is not configured or does not support the configured model.")]
+    ModelNotFound,
+    #[error("{} LLM provider is not configured.", .0.name().0)]
+    ProviderNotAuthenticated(Arc<dyn LanguageModelProvider>),
+}
+
+impl std::fmt::Debug for ConfigurationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoProvider => write!(f, "NoProvider"),
+            Self::ModelNotFound => write!(f, "ModelNotFound"),
+            Self::ProviderNotAuthenticated(provider) => {
+                write!(f, "ProviderNotAuthenticated({})", provider.id())
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
@@ -69,7 +92,7 @@ impl ConfiguredModel {
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id().0 == crate::ZED_CLOUD_PROVIDER_ID
+        self.provider.id() == crate::ZED_CLOUD_PROVIDER_ID
     }
 }
 
@@ -78,7 +101,7 @@ pub enum Event {
     InlineAssistantModelChanged,
     CommitMessageModelChanged,
     ThreadSummaryModelChanged,
-    ProviderStateChanged,
+    ProviderStateChanged(LanguageModelProviderId),
     AddedProvider(LanguageModelProviderId),
     RemovedProvider(LanguageModelProviderId),
 }
@@ -96,7 +119,7 @@ impl LanguageModelRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> crate::fake_provider::FakeLanguageModelProvider {
-        let fake_provider = crate::fake_provider::FakeLanguageModelProvider;
+        let fake_provider = crate::fake_provider::FakeLanguageModelProvider::default();
         let registry = cx.new(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
@@ -119,8 +142,11 @@ impl LanguageModelRegistry {
     ) {
         let id = provider.id();
 
-        let subscription = provider.subscribe(cx, |_, cx| {
-            cx.emit(Event::ProviderStateChanged);
+        let subscription = provider.subscribe(cx, {
+            let id = id.clone();
+            move |_, cx| {
+                cx.emit(Event::ProviderStateChanged(id.clone()));
+            }
         });
         if let Some(subscription) = subscription {
             subscription.detach();
@@ -152,12 +178,37 @@ impl LanguageModelRegistry {
         providers
     }
 
+    pub fn configuration_error(
+        &self,
+        model: Option<ConfiguredModel>,
+        cx: &App,
+    ) -> Option<ConfigurationError> {
+        let Some(model) = model else {
+            if !self.has_authenticated_provider(cx) {
+                return Some(ConfigurationError::NoProvider);
+            }
+            return Some(ConfigurationError::ModelNotFound);
+        };
+
+        if !model.provider.is_authenticated(cx) {
+            return Some(ConfigurationError::ProviderNotAuthenticated(model.provider));
+        }
+
+        None
+    }
+
+    /// Returns `true` if at least one provider that is authenticated.
+    pub fn has_authenticated_provider(&self, cx: &App) -> bool {
+        self.providers.values().any(|p| p.is_authenticated(cx))
+    }
+
     pub fn available_models<'a>(
         &'a self,
         cx: &'a App,
     ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
+            .filter(|provider| provider.is_authenticated(cx))
             .flat_map(|provider| provider.provided_models(cx))
     }
 
@@ -344,16 +395,17 @@ mod tests {
     fn test_register_providers(cx: &mut App) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
+        let provider = FakeLanguageModelProvider::default();
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider, cx);
+            registry.register_provider(provider.clone(), cx);
         });
 
         let providers = registry.read(cx).providers();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id(), crate::fake_provider::provider_id());
+        assert_eq!(providers[0].id(), provider.id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(crate::fake_provider::provider_id(), cx);
+            registry.unregister_provider(provider.id(), cx);
         });
 
         let providers = registry.read(cx).providers();

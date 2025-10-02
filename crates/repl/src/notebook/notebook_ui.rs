@@ -15,7 +15,7 @@ use gpui::{
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{Tooltip, prelude::*};
-use workspace::item::{ItemEvent, TabContentParams};
+use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
@@ -28,12 +28,19 @@ use nbformat::v4::Metadata as NotebookMetadata;
 actions!(
     notebook,
     [
+        /// Opens a Jupyter notebook file.
         OpenNotebook,
+        /// Runs all cells in the notebook.
         RunAll,
+        /// Clears all cell outputs.
         ClearOutputs,
+        /// Moves the current cell up.
         MoveCellUp,
+        /// Moves the current cell down.
         MoveCellDown,
+        /// Adds a new markdown cell.
         AddMarkdownBlock,
+        /// Adds a new code cell.
         AddCodeBlock,
     ]
 );
@@ -119,29 +126,7 @@ impl NotebookEditor {
         let cell_count = cell_order.len();
 
         let this = cx.entity();
-        let cell_list = ListState::new(
-            cell_count,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, window, cx| {
-                notebook_handle
-                    .upgrade()
-                    .and_then(|notebook_handle| {
-                        notebook_handle.update(cx, |notebook, cx| {
-                            notebook
-                                .cell_order
-                                .get(ix)
-                                .and_then(|cell_id| notebook.cell_map.get(cell_id))
-                                .map(|cell| {
-                                    notebook
-                                        .render_cell(ix, cell, window, cx)
-                                        .into_any_element()
-                                })
-                        })
-                    })
-                    .unwrap_or_else(|| div().into_any())
-            },
-        );
+        let cell_list = ListState::new(cell_count, gpui::ListAlignment::Top, px(1000.));
 
         Self {
             project,
@@ -310,7 +295,7 @@ impl NotebookEditor {
         _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
-        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+        IconButton::new(id, icon).width(px(CONTROL_SIZE))
     }
 
     fn render_notebook_controls(
@@ -336,7 +321,7 @@ impl NotebookEditor {
                             .child(
                                 Self::render_notebook_control(
                                     "run-all-cells",
-                                    IconName::Play,
+                                    IconName::PlayFilled,
                                     window,
                                     cx,
                                 )
@@ -537,7 +522,19 @@ impl Render for NotebookEditor {
                     .flex_1()
                     .size_full()
                     .overflow_y_scroll()
-                    .child(list(self.cell_list.clone()).size_full()),
+                    .child(list(
+                        self.cell_list.clone(),
+                        cx.processor(|this, ix, window, cx| {
+                            this.cell_order
+                                .get(ix)
+                                .and_then(|cell_id| this.cell_map.get(cell_id))
+                                .map(|cell| {
+                                    this.render_cell(ix, cell, window, cx).into_any_element()
+                                })
+                                .unwrap_or_else(|| div().into_any())
+                        }),
+                    ))
+                    .size_full(),
             )
             .child(self.render_notebook_controls(window, cx))
     }
@@ -578,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
                     .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
-                let file_content = fs.load(&abs_path.as_path()).await?;
+                let file_content = fs.load(abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
@@ -587,8 +584,8 @@ impl project::ProjectItem for NotebookItem {
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // TODO: Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
-                        let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
-                        notebook
+
+                        nbformat::upgrade_legacy_notebook(legacy_notebook)?
                     }
                     // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {
@@ -597,9 +594,10 @@ impl project::ProjectItem for NotebookItem {
                 };
 
                 let id = project
-                    .update(cx, |project, cx| project.entry_for_path(&path, cx))?
-                    .context("Entry not found")?
-                    .id;
+                    .update(cx, |project, cx| {
+                        project.entry_for_path(&path, cx).map(|entry| entry.id)
+                    })?
+                    .context("Entry not found")?;
 
                 cx.new(|_| NotebookItem {
                     path: abs_path,
@@ -782,7 +780,7 @@ impl Item for NotebookEditor {
     // TODO
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,

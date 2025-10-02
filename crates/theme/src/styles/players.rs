@@ -1,11 +1,9 @@
 #![allow(missing_docs)]
 
 use gpui::Hsla;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
-use crate::{
-    PlayerColorContent, amber, blue, jade, lime, orange, pink, purple, red, try_parse_color,
-};
+use crate::{amber, blue, jade, lime, orange, pink, purple, red, try_parse_color};
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
 pub struct PlayerColor {
@@ -20,7 +18,7 @@ pub struct PlayerColor {
 ///
 /// The rest of the default colors crisscross back and forth on the
 /// color wheel so that the colors are as distinct as possible.
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
 impl Default for PlayerColors {
@@ -152,7 +150,7 @@ impl PlayerColors {
     }
 
     /// Merges the given player colors into this [`PlayerColors`] instance.
-    pub fn merge(&mut self, user_player_colors: &[PlayerColorContent]) {
+    pub fn merge(&mut self, user_player_colors: &[settings::PlayerColorContent]) {
         if user_player_colors.is_empty() {
             return;
         }

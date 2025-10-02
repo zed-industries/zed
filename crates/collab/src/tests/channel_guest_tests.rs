@@ -4,6 +4,7 @@ use chrono::Utc;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
+use util::rel_path::rel_path;
 
 #[gpui::test]
 async fn test_channel_guests(
@@ -55,7 +56,7 @@ async fn test_channel_guests(
         project_b
             .update(cx_b, |project, cx| {
                 let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
-                project.create_entry((worktree_id, "b.txt"), false, cx)
+                project.create_entry((worktree_id, rel_path("b.txt")), false, cx)
             })
             .await
             .is_err()
@@ -180,7 +181,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
+        .update_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
         .await
         .unwrap();
 

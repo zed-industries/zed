@@ -160,16 +160,14 @@ fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
     let mut doc_lines = Vec::new();
 
     for attr in attrs {
-        if attr.path().is_ident("doc") {
-            if let Meta::NameValue(meta) = &attr.meta {
-                if let Expr::Lit(expr_lit) = &meta.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
-                        let line = lit_str.value();
-                        let line = line.strip_prefix(' ').unwrap_or(&line);
-                        doc_lines.push(line.to_string());
-                    }
-                }
-            }
+        if attr.path().is_ident("doc")
+            && let Meta::NameValue(meta) = &attr.meta
+            && let Expr::Lit(expr_lit) = &meta.value
+            && let Lit::Str(lit_str) = &expr_lit.lit
+        {
+            let line = lit_str.value();
+            let line = line.strip_prefix(' ').unwrap_or(&line);
+            doc_lines.push(line.to_string());
         }
     }
 
@@ -191,7 +189,7 @@ fn extract_cfg_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
 fn is_called_from_gpui_crate(_span: Span) -> bool {
     // Check if we're being called from within the gpui crate by examining the call site
     // This is a heuristic approach - we check if the current crate name is "gpui"
-    std::env::var("CARGO_PKG_NAME").map_or(false, |name| name == "gpui")
+    std::env::var("CARGO_PKG_NAME").is_ok_and(|name| name == "gpui")
 }
 
 struct MacroExpander;

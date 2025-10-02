@@ -16,19 +16,35 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-## Backend dependencies
+### Backend Dependencies (optional) {#backend-dependencies}
 
-> This section is still in development. The instructions are not yet complete.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+### Linkers {#linker}
 
-- Install [Postgres](https://www.postgresql.org/download/linux/)
-- Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
+On Linux, Rust's default linker is [LLVM's `lld`](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/). Alternative linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold) can significantly improve clean and incremental build time.
 
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+At present Zed uses Mold in CI because it's more mature. For local development Wild is recommended because it's 5-20% faster than Mold.
 
-```sh
-docker compose up -d
+These linkers can be installed with `script/install-mold` and `script/install-wild`.
+
+To use Wild as your default, add these lines to your `~/.cargo/config.toml`:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+```
+
+To use Mold as your default:
+
+```toml
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 ```
 
 ## Building from source
@@ -102,7 +118,7 @@ Zed has two main binaries:
 
 - You will need to build `crates/cli` and make its binary available in `$PATH` with the name `zed`.
 - You will need to build `crates/zed` and put it at `$PATH/to/cli/../../libexec/zed-editor`. For example, if you are going to put the cli at `~/.local/bin/zed` put zed at `~/.local/libexec/zed-editor`. As some linux distributions (notably Arch) discourage the use of `libexec`, you can also put this binary at `$PATH/to/cli/../../lib/zed/zed-editor` (e.g. `~/.local/lib/zed/zed-editor`) instead.
-- If you are going to provide a `.desktop` file you can find a template in `crates/zed/resources/zed.desktop.in`, and use `envsubst` to populate it with the values required. This file should also be renamed to `$APP_ID.desktop` so that the file [follows the FreeDesktop standards](https://github.com/zed-industries/zed/issues/12707#issuecomment-2168742761).
+- If you are going to provide a `.desktop` file you can find a template in `crates/zed/resources/zed.desktop.in`, and use `envsubst` to populate it with the values required. This file should also be renamed to `$APP_ID.desktop` so that the file [follows the FreeDesktop standards](https://github.com/zed-industries/zed/issues/12707#issuecomment-2168742761). You should also make this desktop file executable (`chmod 755`).
 - You will need to ensure that the necessary libraries are installed. You can get the current list by [inspecting the built binary](https://github.com/zed-industries/zed/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux#L65-L67) on your system.
 - For an example of a complete build script, see [script/bundle-linux](https://github.com/zed-industries/zed/blob/935cf542aebf55122ce6ed1c91d0fe8711970c82/script/bundle-linux).
 - You can disable Zed's auto updates and provide instructions for users who try to update Zed manually by building (or running) Zed with the environment variable `ZED_UPDATE_EXPLANATION`. For example: `ZED_UPDATE_EXPLANATION="Please use flatpak to update zed."`.
@@ -154,69 +170,3 @@ When this zed instance is exited, terminal output will include a command to run 
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
-
-### Vulkan/GPU issues
-
-If Zed crashes at runtime due to GPU or vulkan issues, you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` package on various distributions) to try to troubleshoot where the issue is coming from. Try running in both X11 and wayland modes by running `vkcube -m [x11|wayland]`. Some versions of `vkcube` use `vkcube` to run in X11 and `vkcube-wayland` to run in wayland.
-
-If you have multiple GPUs, you can also try running Zed on a different one to figure out where the issue comes from. You can do so a couple different ways:
-Option A: with [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser))
-Or Option B: By using the `ZED_DEVICE_ID={device_id}` environment variable to specify the device ID.
-
-You can obtain the device ID of your GPU by running `lspci -nn | grep VGA` which will output each GPU on one line like:
-
-```
-08:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
-```
-
-where the device ID here is `2484`. This value is in hexadecimal, so to force Zed to use this specific GPU you would set the environment variable like so:
-
-```
-ZED_DEVICE_ID=0x2484
-```
-
-Make sure to export the variable if you choose to define it globally in a `.bashrc` or similar
-
-#### Reporting Vulkan/GPU issues
-
-When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the `zed: copy system specs into clipboard` command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
-
-Passing the `--system-specs` flag to Zed like
-
-```sh
-zed --system-specs
-```
-
-will print the system specs to the terminal like so. It is strongly recommended to copy the output verbatim into the issue on GitHub, as it uses markdown formatting to ensure the output is readable.
-
-Additionally, it is extremely beneficial to provide the contents of your Zed log when reporting such issues. The log is usually stored at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
-
-```sh
-truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
-ZED_LOG=blade_graphics=info zed .
-cat ~/.local/share/zed/logs/Zed.log
-# copy the output
-```
-
-Or, if you have the Zed cli setup, you can do
-
-```sh
-ZED_LOG=blade_graphics=info /path/to/zed/cli --foreground .
-# copy the output
-```
-
-It is also highly recommended when pasting the log into a github issue, to do so with the following template:
-
-> **_Note_**: The whitespace in the template is important, and will cause incorrect formatting if not preserved.
-
-````
-<details><summary>Zed Log</summary>
-
-```
-{zed log contents}
-```
-
-</details>
-````
-
-This will cause the logs to be collapsed by default, making it easier to read the issue.

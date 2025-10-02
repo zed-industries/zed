@@ -1,4 +1,4 @@
-use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SelectionEffects, SemanticsProvider};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
@@ -12,7 +12,7 @@ use text::ToOffset;
 use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
     Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
-    searchable::SearchableItemHandle,
+    item::SaveOptions, searchable::SearchableItemHandle,
 };
 
 pub struct ProposedChangesEditor {
@@ -213,7 +213,9 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
-            editor.change_selections(None, window, cx, |selections| selections.refresh());
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.refresh()
+            });
             editor.buffer.update(cx, |buffer, cx| {
                 for diff in new_diffs {
                     buffer.add_diff(diff, cx)
@@ -239,24 +241,13 @@ impl ProposedChangesEditor {
         event: &BufferEvent,
         _cx: &mut Context<Self>,
     ) {
-        match event {
-            BufferEvent::Operation { .. } => {
-                self.recalculate_diffs_tx
-                    .unbounded_send(RecalculateDiff {
-                        buffer,
-                        debounce: true,
-                    })
-                    .ok();
-            }
-            // BufferEvent::DiffBaseChanged => {
-            //     self.recalculate_diffs_tx
-            //         .unbounded_send(RecalculateDiff {
-            //             buffer,
-            //             debounce: false,
-            //         })
-            //         .ok();
-            // }
-            _ => (),
+        if let BufferEvent::Operation { .. } = event {
+            self.recalculate_diffs_tx
+                .unbounded_send(RecalculateDiff {
+                    buffer,
+                    debounce: true,
+                })
+                .ok();
         }
     }
 }
@@ -351,13 +342,13 @@ impl Item for ProposedChangesEditor {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.editor.update(cx, |editor, cx| {
-            Item::save(editor, format, project, window, cx)
+            Item::save(editor, options, project, window, cx)
         })
     }
 }
@@ -440,7 +431,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<Vec<project::Hover>>> {
+    ) -> Option<Task<Option<Vec<project::Hover>>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
     }
@@ -476,7 +467,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        if let Some(buffer) = self.to_base(&buffer, &[], cx) {
+        if let Some(buffer) = self.to_base(buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {
             false
@@ -489,7 +480,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::DocumentHighlight>>>> {
-        let buffer = self.to_base(&buffer, &[position], cx)?;
+        let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
     }
 
@@ -499,8 +490,8 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<anyhow::Result<Vec<project::LocationLink>>>> {
-        let buffer = self.to_base(&buffer, &[position], cx)?;
+    ) -> Option<Task<anyhow::Result<Option<Vec<project::LocationLink>>>>> {
+        let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
     }
 
@@ -521,13 +512,5 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &mut App,
     ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
         None
-    }
-
-    fn pull_diagnostics_for_buffer(
-        &self,
-        _: Entity<Buffer>,
-        _: &mut App,
-    ) -> Task<anyhow::Result<()>> {
-        Task::ready(Ok(()))
     }
 }

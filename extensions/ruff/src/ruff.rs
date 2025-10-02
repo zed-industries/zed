@@ -38,13 +38,13 @@ impl RuffExtension {
             });
         }
 
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |stat| stat.is_file()) {
-                return Ok(RuffBinary {
-                    path: path.clone(),
-                    args: binary_args,
-                });
-            }
+        if let Some(path) = &self.cached_binary_path
+            && fs::metadata(path).is_ok_and(|stat| stat.is_file())
+        {
+            return Ok(RuffBinary {
+                path: path.clone(),
+                args: binary_args,
+            });
         }
 
         zed::set_language_server_installation_status(
@@ -94,7 +94,7 @@ impl RuffExtension {
             _ => format!("{version_dir}/{asset_stem}/ruff"),
         };
 
-        if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
+        if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
@@ -151,7 +151,7 @@ impl zed::Extension for RuffExtension {
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.initialization_options.clone())
+            .and_then(|lsp_settings| lsp_settings.initialization_options)
             .unwrap_or_default();
         Ok(Some(settings))
     }
@@ -163,7 +163,7 @@ impl zed::Extension for RuffExtension {
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone())
+            .and_then(|lsp_settings| lsp_settings.settings)
             .unwrap_or_default();
         Ok(Some(settings))
     }

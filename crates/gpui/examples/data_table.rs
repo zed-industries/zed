@@ -1,8 +1,4 @@
-use std::{
-    ops::Range,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{ops::Range, rc::Rc, time::Duration};
 
 use gpui::{
     App, Application, Bounds, Context, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
@@ -22,7 +18,7 @@ pub struct Quote {
     open: f64,
     high: f64,
     low: f64,
-    timestamp: Instant,
+    timestamp: Duration,
     volume: i64,
     turnover: f64,
     ttm: f64,
@@ -42,59 +38,58 @@ pub struct Quote {
 impl Quote {
     pub fn random() -> Self {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         // simulate a base price in a realistic range
-        let prev_close = rng.gen_range(100.0..200.0);
-        let change = rng.gen_range(-5.0..5.0);
+        let prev_close = rng.random_range(100.0..200.0);
+        let change = rng.random_range(-5.0..5.0);
         let last_done = prev_close + change;
-        let open = prev_close + rng.gen_range(-3.0..3.0);
-        let high = (prev_close + rng.gen_range::<f64, _>(0.0..10.0)).max(open);
-        let low = (prev_close - rng.gen_range::<f64, _>(0.0..10.0)).min(open);
-        // Randomize the timestamp in the past 24 hours
-        let timestamp = Instant::now() - Duration::from_secs(rng.gen_range(0..86400));
-        let volume = rng.gen_range(1_000_000..100_000_000);
+        let open = prev_close + rng.random_range(-3.0..3.0);
+        let high = (prev_close + rng.random_range::<f64, _>(0.0..10.0)).max(open);
+        let low = (prev_close - rng.random_range::<f64, _>(0.0..10.0)).min(open);
+        let timestamp = Duration::from_secs(rng.random_range(0..86400));
+        let volume = rng.random_range(1_000_000..100_000_000);
         let turnover = last_done * volume as f64;
         let symbol = {
             let mut ticker = String::new();
-            if rng.gen_bool(0.5) {
+            if rng.random_bool(0.5) {
                 ticker.push_str(&format!(
                     "{:03}.{}",
-                    rng.gen_range(100..1000),
-                    rng.gen_range(0..10)
+                    rng.random_range(100..1000),
+                    rng.random_range(0..10)
                 ));
             } else {
                 ticker.push_str(&format!(
                     "{}{}",
-                    rng.gen_range('A'..='Z'),
-                    rng.gen_range('A'..='Z')
+                    rng.random_range('A'..='Z'),
+                    rng.random_range('A'..='Z')
                 ));
             }
-            ticker.push_str(&format!(".{}", rng.gen_range('A'..='Z')));
+            ticker.push_str(&format!(".{}", rng.random_range('A'..='Z')));
             ticker
         };
         let name = format!(
             "{} {} - #{}",
             symbol,
-            rng.gen_range(1..100),
-            rng.gen_range(10000..100000)
+            rng.random_range(1..100),
+            rng.random_range(10000..100000)
         );
-        let ttm = rng.gen_range(0.0..10.0);
-        let market_cap = rng.gen_range(1_000_000.0..10_000_000.0);
-        let float_cap = market_cap + rng.gen_range(1_000.0..10_000.0);
-        let shares = rng.gen_range(100.0..1000.0);
+        let ttm = rng.random_range(0.0..10.0);
+        let market_cap = rng.random_range(1_000_000.0..10_000_000.0);
+        let float_cap = market_cap + rng.random_range(1_000.0..10_000.0);
+        let shares = rng.random_range(100.0..1000.0);
         let pb = market_cap / shares;
         let pe = market_cap / shares;
         let eps = market_cap / shares;
-        let dividend = rng.gen_range(0.0..10.0);
-        let dividend_yield = rng.gen_range(0.0..10.0);
-        let dividend_per_share = rng.gen_range(0.0..10.0);
+        let dividend = rng.random_range(0.0..10.0);
+        let dividend_yield = rng.random_range(0.0..10.0);
+        let dividend_per_share = rng.random_range(0.0..10.0);
         let dividend_date = SharedString::new(format!(
             "{}-{}-{}",
-            rng.gen_range(2000..2023),
-            rng.gen_range(1..12),
-            rng.gen_range(1..28)
+            rng.random_range(2000..2023),
+            rng.random_range(1..12),
+            rng.random_range(1..28)
         ));
-        let dividend_payment = rng.gen_range(0.0..10.0);
+        let dividend_payment = rng.random_range(0.0..10.0);
 
         Self {
             name: name.into(),
@@ -170,7 +165,7 @@ impl TableRow {
                     .child(format!("{:.2}%", self.quote.change())),
                 "timestamp" => div()
                     .text_color(color)
-                    .child(format!("{:?}", self.quote.timestamp.elapsed().as_secs())),
+                    .child(format!("{:?}", self.quote.timestamp.as_secs())),
                 "open" => div()
                     .text_color(color)
                     .child(format!("{:.2}", self.quote.open)),
@@ -243,7 +238,7 @@ impl RenderOnce for TableRow {
             .flex_row()
             .border_b_1()
             .border_color(rgb(0xE0E0E0))
-            .bg(if self.ix % 2 == 0 {
+            .bg(if self.ix.is_multiple_of(2) {
                 rgb(0xFFFFFF)
             } else {
                 rgb(0xFAFAFA)
@@ -378,8 +373,6 @@ impl DataTable {
 
 impl Render for DataTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entity = cx.entity();
-
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -431,8 +424,10 @@ impl Render for DataTable {
                             .relative()
                             .size_full()
                             .child(
-                                uniform_list(entity, "items", self.quotes.len(), {
-                                    move |this, range, _, _| {
+                                uniform_list(
+                                    "items",
+                                    self.quotes.len(),
+                                    cx.processor(move |this, range: Range<usize>, _, _| {
                                         this.visible_range = range.clone();
                                         let mut items = Vec::with_capacity(range.end - range.start);
                                         for i in range {
@@ -441,8 +436,8 @@ impl Render for DataTable {
                                             }
                                         }
                                         items
-                                    }
-                                })
+                                    }),
+                                )
                                 .size_full()
                                 .track_scroll(self.scroll_handle.clone()),
                             )

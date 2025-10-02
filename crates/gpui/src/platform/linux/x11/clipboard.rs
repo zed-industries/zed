@@ -957,15 +957,17 @@ impl Clipboard {
         }
         // At this point we know that the clipboard does not exist.
         let ctx = Arc::new(Inner::new()?);
-        let join_handle;
-        {
-            let ctx = Arc::clone(&ctx);
-            join_handle = std::thread::spawn(move || {
-                if let Err(error) = serve_requests(ctx) {
-                    log::error!("Worker thread errored with: {}", error);
+        let join_handle = std::thread::Builder::new()
+            .name("Clipboard".to_owned())
+            .spawn({
+                let ctx = Arc::clone(&ctx);
+                move || {
+                    if let Err(error) = serve_requests(ctx) {
+                        log::error!("Worker thread errored with: {}", error);
+                    }
                 }
-            });
-        }
+            })
+            .unwrap();
         *global_cb = Some(GlobalClipboard {
             inner: Arc::clone(&ctx),
             server_handle: join_handle,
@@ -1078,11 +1080,11 @@ impl Clipboard {
         } else {
             String::from_utf8(result.bytes).map_err(|_| Error::ConversionFailure)?
         };
-        return Ok(ClipboardItem::new_string(text));
+        Ok(ClipboardItem::new_string(text))
     }
 
     pub fn is_owner(&self, selection: ClipboardKind) -> bool {
-        return self.inner.is_owner(selection).unwrap_or(false);
+        self.inner.is_owner(selection).unwrap_or(false)
     }
 }
 
@@ -1120,25 +1122,25 @@ impl Drop for Clipboard {
                 log::error!("Failed to flush the clipboard window. Error: {}", e);
                 return;
             }
-            if let Some(global_cb) = global_cb {
-                if let Err(e) = global_cb.server_handle.join() {
-                    // Let's try extracting the error message
-                    let message;
-                    if let Some(msg) = e.downcast_ref::<&'static str>() {
-                        message = Some((*msg).to_string());
-                    } else if let Some(msg) = e.downcast_ref::<String>() {
-                        message = Some(msg.clone());
-                    } else {
-                        message = None;
-                    }
-                    if let Some(message) = message {
-                        log::error!(
-                            "The clipboard server thread panicked. Panic message: '{}'",
-                            message,
-                        );
-                    } else {
-                        log::error!("The clipboard server thread panicked.");
-                    }
+            if let Some(global_cb) = global_cb
+                && let Err(e) = global_cb.server_handle.join()
+            {
+                // Let's try extracting the error message
+                let message;
+                if let Some(msg) = e.downcast_ref::<&'static str>() {
+                    message = Some((*msg).to_string());
+                } else if let Some(msg) = e.downcast_ref::<String>() {
+                    message = Some(msg.clone());
+                } else {
+                    message = None;
+                }
+                if let Some(message) = message {
+                    log::error!(
+                        "The clipboard server thread panicked. Panic message: '{}'",
+                        message,
+                    );
+                } else {
+                    log::error!("The clipboard server thread panicked.");
                 }
             }
         }

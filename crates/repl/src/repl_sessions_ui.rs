@@ -16,13 +16,21 @@ use crate::repl_store::ReplStore;
 actions!(
     repl,
     [
+        /// Runs the current cell and advances to the next one.
         Run,
+        /// Runs the current cell without advancing.
         RunInPlace,
+        /// Clears all outputs in the REPL.
         ClearOutputs,
+        /// Opens the REPL sessions panel.
         Sessions,
+        /// Interrupts the currently running kernel.
         Interrupt,
+        /// Shuts down the current kernel.
         Shutdown,
+        /// Restarts the current kernel.
         Restart,
+        /// Refreshes the list of available kernelspecs.
         RefreshKernelspecs
     ]
 );
@@ -94,21 +102,16 @@ pub fn init(cx: &mut App) {
 
                 let editor_handle = cx.entity().downgrade();
 
-                if let Some(language) = language {
-                    if language.name() == "Python".into() {
-                        if let (Some(project_path), Some(project)) = (project_path, project) {
-                            let store = ReplStore::global(cx);
-                            store.update(cx, |store, cx| {
-                                store
-                                    .refresh_python_kernelspecs(
-                                        project_path.worktree_id,
-                                        &project,
-                                        cx,
-                                    )
-                                    .detach_and_log_err(cx);
-                            });
-                        }
-                    }
+                if let Some(language) = language
+                    && language.name() == "Python".into()
+                    && let (Some(project_path), Some(project)) = (project_path, project)
+                {
+                    let store = ReplStore::global(cx);
+                    store.update(cx, |store, cx| {
+                        store
+                            .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
+                            .detach_and_log_err(cx);
+                    });
                 }
 
                 editor
@@ -126,7 +129,6 @@ pub fn init(cx: &mut App) {
 
                 editor
                     .register_action({
-                        let editor_handle = editor_handle.clone();
                         move |_: &RunInPlace, window, cx| {
                             if !JupyterSettings::enabled(cx) {
                                 return;

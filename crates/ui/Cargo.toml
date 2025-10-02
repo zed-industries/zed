@@ -21,6 +21,7 @@ gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
 menu.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
@@ -33,6 +34,9 @@ workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [features]
 default = []

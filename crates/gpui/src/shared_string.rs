@@ -2,7 +2,10 @@ use derive_more::{Deref, DerefMut};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Borrow, sync::Arc};
+use std::{
+    borrow::{Borrow, Cow},
+    sync::Arc,
+};
 use util::arc_cow::ArcCow;
 
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
@@ -20,15 +23,24 @@ impl SharedString {
     pub fn new(str: impl Into<Arc<str>>) -> Self {
         SharedString(ArcCow::Owned(str.into()))
     }
+
+    /// Get a &str from the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl JsonSchema for SharedString {
-    fn schema_name() -> String {
+    fn inline_schema() -> bool {
+        String::inline_schema()
+    }
+
+    fn schema_name() -> Cow<'static, str> {
         String::schema_name()
     }
 
-    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        String::json_schema(r#gen)
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        String::json_schema(generator)
     }
 }
 
@@ -96,7 +108,7 @@ impl From<SharedString> for Arc<str> {
     fn from(val: SharedString) -> Self {
         match val.0 {
             ArcCow::Borrowed(borrowed) => Arc::from(borrowed),
-            ArcCow::Owned(owned) => owned.clone(),
+            ArcCow::Owned(owned) => owned,
         }
     }
 }

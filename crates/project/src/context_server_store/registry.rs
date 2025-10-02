@@ -4,7 +4,7 @@ use anyhow::Result;
 use collections::HashMap;
 use context_server::ContextServerCommand;
 use extension::ContextServerConfiguration;
-use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task};
 
 use crate::worktree_store::WorktreeStore;
 
@@ -66,12 +66,19 @@ impl ContextServerDescriptorRegistry {
         &mut self,
         id: Arc<str>,
         descriptor: Arc<dyn ContextServerDescriptor>,
+        cx: &mut Context<Self>,
     ) {
         self.context_servers.insert(id, descriptor);
+        cx.notify();
     }
 
     /// Unregisters the [`ContextServerDescriptor`] for the server with the given ID.
-    pub fn unregister_context_server_descriptor_by_id(&mut self, server_id: &str) {
+    pub fn unregister_context_server_descriptor_by_id(
+        &mut self,
+        server_id: &str,
+        cx: &mut Context<Self>,
+    ) {
         self.context_servers.remove(server_id);
+        cx.notify();
     }
 }

@@ -6,6 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use futures::AsyncRead;
+use http_body::{Body, Frame};
 
 /// Based on the implementation of AsyncBody in
 /// <https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs>.
@@ -39,7 +40,7 @@ impl AsyncBody {
     }
 
     pub fn from_bytes(bytes: Bytes) -> Self {
-        Self(Inner::Bytes(Cursor::new(bytes.clone())))
+        Self(Inner::Bytes(Cursor::new(bytes)))
     }
 }
 
@@ -87,6 +88,17 @@ impl From<&'static str> for AsyncBody {
     }
 }
 
+impl TryFrom<reqwest::Body> for AsyncBody {
+    type Error = anyhow::Error;
+
+    fn try_from(value: reqwest::Body) -> Result<Self, Self::Error> {
+        value
+            .as_bytes()
+            .ok_or_else(|| anyhow::anyhow!("Underlying data is a stream"))
+            .map(|bytes| Self::from_bytes(Bytes::copy_from_slice(bytes)))
+    }
+}
+
 impl<T: Into<Self>> From<Option<T>> for AsyncBody {
     fn from(body: Option<T>) -> Self {
         match body {
@@ -111,6 +123,27 @@ impl futures::AsyncRead for AsyncBody {
             Inner::AsyncReader(async_reader) => {
                 AsyncRead::poll_read(async_reader.as_mut(), cx, buf)
             }
+        }
+    }
+}
+
+impl Body for AsyncBody {
+    type Data = Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let mut buffer = vec![0; 8192];
+        match AsyncRead::poll_read(self.as_mut(), cx, &mut buffer) {
+            Poll::Ready(Ok(0)) => Poll::Ready(None),
+            Poll::Ready(Ok(n)) => {
+                let data = Bytes::copy_from_slice(&buffer[..n]);
+                Poll::Ready(Some(Ok(Frame::data(data))))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

@@ -31,6 +31,7 @@ pub enum ComponentStory {
     ToggleButton,
     ViewportUnits,
     WithRemSize,
+    IndentGuides,
 }
 
 impl ComponentStory {
@@ -60,6 +61,7 @@ impl ComponentStory {
             Self::ToggleButton => cx.new(|_| ui::ToggleButtonStory).into(),
             Self::ViewportUnits => cx.new(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new(|_| crate::stories::WithRemSizeStory).into(),
+            Self::IndentGuides => crate::stories::IndentGuidesStory::model(window, cx).into(),
         }
     }
 }
@@ -107,15 +109,13 @@ static ALL_STORY_SELECTORS: OnceLock<Vec<StorySelector>> = OnceLock::new();
 
 impl ValueEnum for StorySelector {
     fn value_variants<'a>() -> &'a [Self] {
-        let stories = ALL_STORY_SELECTORS.get_or_init(|| {
+        (ALL_STORY_SELECTORS.get_or_init(|| {
             let component_stories = ComponentStory::iter().map(StorySelector::Component);
 
             component_stories
                 .chain(std::iter::once(StorySelector::KitchenSink))
                 .collect::<Vec<_>>()
-        });
-
-        stories
+        })) as _
     }
 
     fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {

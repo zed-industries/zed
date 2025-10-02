@@ -9,7 +9,12 @@ main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
-    temp="$(mktemp -d "/tmp/zed-XXXXXX")"
+    # Use TMPDIR if available (for environments with non-standard temp directories)
+    if [ -n "${TMPDIR:-}" ] && [ -d "${TMPDIR}" ]; then
+        temp="$(mktemp -d "$TMPDIR/zed-XXXXXX")"
+    else
+        temp="$(mktemp -d "/tmp/zed-XXXXXX")"
+    fi
 
     if [ "$platform" = "Darwin" ]; then
         platform="macos"

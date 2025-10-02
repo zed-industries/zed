@@ -1,5 +1,5 @@
 use crate::{
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
@@ -25,7 +25,7 @@ pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
@@ -121,6 +121,11 @@ impl PlatformInput {
                 NSEventType::NSFlagsChanged => {
                     Some(Self::ModifiersChanged(ModifiersChangedEvent {
                         modifiers: read_modifiers(native_event),
+                        capslock: Capslock {
+                            on: native_event
+                                .modifierFlags()
+                                .contains(NSEventModifierFlags::NSAlphaShiftKeyMask),
+                        },
                     }))
                 }
                 NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {
@@ -306,9 +311,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
         let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
         let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
-            && first_char.map_or(true, |ch| {
-                !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
-            });
+            && first_char
+                .is_none_or(|ch| !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch));
 
         #[allow(non_upper_case_globals)]
         let key = match first_char {
@@ -422,7 +426,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
                 }
 
-                let mut key = if shift
+                if shift
                     && chars_ignoring_modifiers
                         .chars()
                         .all(|c| c.is_ascii_lowercase())
@@ -433,9 +437,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     chars_with_shift
                 } else {
                     chars_ignoring_modifiers
-                };
-
-                key
+                }
             }
         };
 

@@ -2,6 +2,7 @@ use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
 
+use dap::{Capabilities, adapters::DebugTaskDefinition, transport::RequestHandling};
 use debugger_ui::debugger_panel::DebugPanel;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _, RemoveOptions};
@@ -13,24 +14,26 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-        language_settings,
-    },
+    language_settings::{Formatter, FormatterList, SelectedFormatter, language_settings},
     tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
 use project::{
     ProjectPath,
+    debugger::session::ThreadId,
     lsp_store::{FormatTrigger, LspFormatTarget},
 };
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
 use rpc::proto;
 use serde_json::json;
-use settings::SettingsStore;
-use std::{path::Path, sync::Arc};
-use util::{path, separator};
+use settings::{PrettierSettingsContent, SettingsStore};
+use std::{
+    path::Path,
+    sync::{Arc, atomic::AtomicUsize},
+};
+use task::TcpArgumentsTemplate;
+use util::{path, rel_path::rel_path};
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -53,7 +56,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -95,7 +98,7 @@ async fn test_sharing_an_ssh_remote_project(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/code/project1"), client_ssh, cx_a)
         .await;
@@ -121,26 +124,26 @@ async fn test_sharing_an_ssh_remote_project(
 
     worktree_a.update(cx_a, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
 
     worktree_b.update(cx_b, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path(".zed"),
+                rel_path(".zed/settings.json"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });
@@ -148,7 +151,7 @@ async fn test_sharing_an_ssh_remote_project(
     // User B can open buffers in the remote project.
     let buffer_b = project_b
         .update(cx_b, |project, cx| {
-            project.open_buffer((worktree_id, "src/lib.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -174,7 +177,7 @@ async fn test_sharing_an_ssh_remote_project(
                 buffer_b.clone(),
                 ProjectPath {
                     worktree_id: worktree_id.to_owned(),
-                    path: Arc::from(Path::new("src/renamed.rs")),
+                    path: rel_path("src/renamed.rs").into(),
                 },
                 cx,
             )
@@ -191,14 +194,8 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.run_until_parked();
     cx_b.update(|cx| {
         assert_eq!(
-            buffer_b
-                .read(cx)
-                .file()
-                .unwrap()
-                .path()
-                .to_string_lossy()
-                .to_string(),
-            separator!("src/renamed.rs").to_string()
+            buffer_b.read(cx).file().unwrap().path().as_ref(),
+            rel_path("src/renamed.rs")
         );
     });
 }
@@ -229,7 +226,7 @@ async fn test_ssh_collaboration_git_branches(
         .await;
 
     // Set up project on remote FS
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree("/project", serde_json::json!({ ".git":{} }))
@@ -262,7 +259,7 @@ async fn test_ssh_collaboration_git_branches(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, _) = client_a
         .build_ssh_project("/project", client_ssh, cx_a)
         .await;
@@ -414,7 +411,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
 
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     let buffer_text = "let one = \"two\"";
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
@@ -467,7 +464,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project(path!("/project"), client_ssh, cx_a)
         .await;
@@ -486,31 +483,31 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     // Opens the buffer and formats it
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.ts")), cx)
         })
         .await
         .expect("user B opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
-                )));
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
+                    FormatterList::Single(Formatter::LanguageServer { name: None }),
+                ));
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
@@ -544,17 +541,19 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 
     // User A opens and formats the same buffer too
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.ts")), cx)
+        })
         .await
         .expect("user A opens buffer for formatting");
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
@@ -596,7 +595,7 @@ async fn test_remote_server_debugger(
         release_channel::init(SemanticVersion::default(), cx);
         dap_adapters::init(cx);
     });
-    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -627,7 +626,7 @@ async fn test_remote_server_debugger(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
     let mut server = TestServer::start(server_cx.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     cx_a.update(|cx| {
@@ -671,8 +670,167 @@ async fn test_remote_server_debugger(
     });
 
     session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().command, "ssh");
+        assert_eq!(session.binary().unwrap().command.as_deref(), Some("ssh"));
     });
+
+    let shutdown_session = workspace.update(cx_a, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.dap_store().update(cx, |dap_store, cx| {
+                dap_store.shutdown_session(session.read(cx).session_id(), cx)
+            })
+        })
+    });
+
+    client_ssh.update(cx_a, |a, _| {
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_slow_adapter_startup_retries(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+) {
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+        command_palette_hooks::init(cx);
+        zlog::init_test();
+        dap_adapters::init(cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+        dap_adapters::init(cx);
+    });
+    let (opts, server_ssh) = RemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "lib.rs": "fn one() -> usize { 1 }"
+            }),
+        )
+        .await;
+
+    // User A connects to the remote project via SSH.
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = RemoteClient::fake_client(opts, cx_a).await;
+    let mut server = TestServer::start(server_cx.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    cx_a.update(|cx| {
+        debugger_ui::init(cx);
+        command_palette_hooks::init(cx);
+    });
+    let (project_a, _) = client_a
+        .build_ssh_project(path!("/code"), client_ssh.clone(), cx_a)
+        .await;
+
+    let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    let debugger_panel = workspace
+        .update_in(cx_a, |_workspace, window, cx| {
+            cx.spawn_in(window, DebugPanel::load)
+        })
+        .await
+        .unwrap();
+
+    workspace.update_in(cx_a, |workspace, window, cx| {
+        workspace.add_panel(debugger_panel, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    let debug_panel = workspace
+        .update(cx_a, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+        .unwrap();
+
+    let workspace_window = cx_a
+        .window_handle()
+        .downcast::<workspace::Workspace>()
+        .unwrap();
+
+    let count = Arc::new(AtomicUsize::new(0));
+    let session = debugger_ui::tests::start_debug_session_with(
+        &workspace_window,
+        cx_a,
+        DebugTaskDefinition {
+            adapter: "fake-adapter".into(),
+            label: "test".into(),
+            config: json!({
+                "request": "launch"
+            }),
+            tcp_connection: Some(TcpArgumentsTemplate {
+                port: None,
+                host: None,
+                timeout: None,
+            }),
+        },
+        move |client| {
+            let count = count.clone();
+            client.on_request_ext::<dap::requests::Initialize, _>(move |_seq, _request| {
+                if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 5 {
+                    return RequestHandling::Exit;
+                }
+                RequestHandling::Respond(Ok(Capabilities::default()))
+            });
+        },
+    )
+    .unwrap();
+    cx_a.run_until_parked();
+
+    let client = session.update(cx_a, |session, _| session.adapter_client().unwrap());
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_a.run_until_parked();
+
+    let active_session = debug_panel
+        .update(cx_a, |this, _| this.active_session())
+        .unwrap();
+
+    let running_state = active_session.update(cx_a, |active_session, _| {
+        active_session.running_state().clone()
+    });
+
+    assert_eq!(
+        client.id(),
+        running_state.read_with(cx_a, |running_state, _| running_state.session_id())
+    );
+    assert_eq!(
+        ThreadId(1),
+        running_state.read_with(cx_a, |running_state, _| running_state
+            .selected_thread_id()
+            .unwrap())
+    );
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {

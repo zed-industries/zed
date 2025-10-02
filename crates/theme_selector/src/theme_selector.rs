@@ -17,7 +17,13 @@ use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
-actions!(theme_selector, [Reload]);
+actions!(
+    theme_selector,
+    [
+        /// Reloads all themes from disk.
+        Reload
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.on_action(|action: &zed_actions::theme_selector::Toggle, cx| {
@@ -86,7 +92,10 @@ impl Focusable for ThemeSelector {
 
 impl Render for ThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("ThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -229,8 +238,8 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector
@@ -296,6 +305,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,
@@ -335,7 +345,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let theme_match = &self.matches[ix];
+        let theme_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -366,7 +376,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     Button::new("docs", "View Theme Docs")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.open_url("https://zed.dev/docs/themes");
@@ -378,6 +388,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::Themes),
+                                    id: None,
                                 }),
                                 cx,
                             );

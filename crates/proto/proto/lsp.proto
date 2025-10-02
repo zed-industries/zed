@@ -222,11 +222,13 @@ message Completion {
     optional Anchor buffer_word_end = 10;
     Anchor old_insert_start = 11;
     Anchor old_insert_end = 12;
+    optional string sort_text = 13;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
         BufferWord = 2;
+        Dap = 3;
     }
 }
 
@@ -516,12 +518,14 @@ message LanguageServer {
 message StartLanguageServer {
     uint64 project_id = 1;
     LanguageServer server = 2;
+    string capabilities = 3;
 }
 
 message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     DiagnosticSummary summary = 3;
+    repeated DiagnosticSummary more_summaries = 4;
 }
 
 message DiagnosticSummary {
@@ -534,12 +538,16 @@ message DiagnosticSummary {
 message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    optional string server_name = 8;
     oneof variant {
         LspWorkStart work_start = 3;
         LspWorkProgress work_progress = 4;
         LspWorkEnd work_end = 5;
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+        StatusUpdate status_update = 9;
+        RegisteredForBuffer registered_for_buffer = 10;
+        ServerMetadataUpdated metadata_updated = 11;
     }
 }
 
@@ -566,14 +574,72 @@ message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
 
+message StatusUpdate {
+    optional string message = 1;
+    oneof status {
+        ServerBinaryStatus binary = 2;
+        ServerHealth health = 3;
+    }
+}
+
+enum ServerHealth {
+    OK = 0;
+    WARNING = 1;
+    ERROR = 2;
+}
+
+enum ServerBinaryStatus {
+    NONE = 0;
+    CHECKING_FOR_UPDATE = 1;
+    DOWNLOADING = 2;
+    STARTING = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    FAILED = 6;
+}
+
+message RegisteredForBuffer {
+    string buffer_abs_path = 1;
+    uint64 buffer_id = 2;
+}
+
+message ServerMetadataUpdated {
+    optional string capabilities = 1;
+}
+
 message LanguageServerLog {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    string message = 3;
     oneof log_type {
-        uint32 log_message_type = 3;
-        LspLogTrace log_trace = 4;
+        LogMessage log = 4;
+        TraceMessage trace = 5;
+        RpcMessage rpc = 6;
     }
-    string message = 5;
+}
+
+message LogMessage {
+    LogLevel level = 1;
+
+    enum LogLevel {
+        LOG = 0;
+        INFO = 1;
+        WARNING = 2;
+        ERROR = 3;
+    }
+}
+
+message TraceMessage {
+    optional string verbose_info = 1;
+}
+
+message RpcMessage {
+    Kind kind = 1;
+
+    enum Kind {
+        RECEIVED = 0;
+        SENT = 1;
+    }
 }
 
 message LspLogTrace {
@@ -593,6 +659,7 @@ message ApplyCodeActionKindResponse {
 message RegisterBufferWithLanguageServers {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    repeated LanguageServerSelector only_servers = 3;
 }
 
 enum FormatTrigger {
@@ -666,36 +733,73 @@ message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
 }
 
-message MultiLspQuery {
+message GetDocumentColor {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
-    oneof strategy {
-        AllLanguageServers all = 4;
-    }
+
+}
+
+message GetDocumentColorResponse {
+    repeated ColorInformation colors = 1;
+    repeated VectorClockEntry version = 2;
+
+}
+
+message ColorInformation {
+    PointUtf16 lsp_range_start = 1;
+    PointUtf16 lsp_range_end = 2;
+    float red = 3;
+    float green = 4;
+    float blue = 5;
+    float alpha = 6;
+}
+
+message GetColorPresentation {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    ColorInformation color = 3;
+    uint64 server_id = 4;
+}
+
+message GetColorPresentationResponse {
+    repeated ColorPresentation presentations = 1;
+}
+
+message ColorPresentation {
+    string label = 1;
+    optional TextEdit text_edit = 2;
+    repeated TextEdit additional_text_edits = 3;
+}
+
+message TextEdit {
+    string new_text = 1;
+    PointUtf16 lsp_range_start = 2;
+    PointUtf16 lsp_range_end = 3;
+}
+
+message LspQuery {
+    uint64 project_id = 1;
+    uint64 lsp_request_id = 2;
     oneof request {
+        GetReferences get_references = 3;
+        GetDocumentColor get_document_color = 4;
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
+        GetDefinition get_definition = 10;
+        GetDeclaration get_declaration = 11;
+        GetTypeDefinition get_type_definition = 12;
+        GetImplementation get_implementation = 13;
     }
 }
 
-message AllLanguageServers {}
-
-message RestartLanguageServers {
+message LspQueryResponse {
     uint64 project_id = 1;
-    repeated uint64 buffer_ids = 2;
-}
-
-message StopLanguageServers {
-    uint64 project_id = 1;
-    repeated uint64 buffer_ids = 2;
-}
-
-message MultiLspQueryResponse {
-    repeated LspResponse responses = 1;
+    uint64 lsp_request_id = 2;
+    repeated LspResponse responses = 3;
 }
 
 message LspResponse {
@@ -705,17 +809,37 @@ message LspResponse {
         GetSignatureHelpResponse get_signature_help_response = 3;
         GetCodeLensResponse get_code_lens_response = 4;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
+        GetDocumentColorResponse get_document_color_response = 6;
+        GetDefinitionResponse get_definition_response = 8;
+        GetDeclarationResponse get_declaration_response = 9;
+        GetTypeDefinitionResponse get_type_definition_response = 10;
+        GetImplementationResponse get_implementation_response = 11;
+        GetReferencesResponse get_references_response = 12;
+    }
+    uint64 server_id = 7;
+}
+
+message AllLanguageServers {}
+
+message LanguageServerSelector {
+    oneof selector {
+        uint64 server_id = 1;
+        string name = 2;
     }
 }
 
-message LanguageServerIdForName {
+message RestartLanguageServers {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    string name = 3;
+    repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector only_servers = 3;
+    bool all = 4;
 }
 
-message LanguageServerIdForNameResponse {
-    optional uint64 server_id = 1;
+message StopLanguageServers {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector also_servers = 3;
+    bool all = 4;
 }
 
 message LspExtRunnables {
@@ -735,21 +859,19 @@ message LspRunnable {
 
 message LspExtCancelFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspExtRunFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
+    optional uint64 buffer_id = 2;
     uint64 language_server_id = 3;
     bool current_file_only = 4;
 }
 
 message LspExtClearFlycheck {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    uint64 language_server_id = 2;
 }
 
 message LspDiagnosticRelatedInformation {
@@ -806,4 +928,18 @@ message PulledDiagnostics {
 
 message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
+    uint64 server_id = 2;
+}
+
+message ToggleLspLogs {
+    uint64 project_id = 1;
+    LogType log_type = 2;
+    uint64 server_id = 3;
+    bool enabled = 4;
+
+    enum LogType {
+        LOG = 0;
+        TRACE = 1;
+        RPC = 2;
+    }
 }

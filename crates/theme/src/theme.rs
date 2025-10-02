@@ -35,6 +35,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 pub use crate::default_colors::*;
+use crate::fallback_themes::apply_theme_color_defaults;
 pub use crate::font_family_cache::*;
 pub use crate::icon_theme::*;
 pub use crate::icon_theme_schema::*;
@@ -43,6 +44,10 @@ pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::settings::*;
 pub use crate::styles::*;
+pub use ::settings::{
+    FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
+    ThemeStyleContent,
+};
 
 /// Defines window border radius for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
@@ -106,6 +111,8 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let mut prev_buffer_font_size_settings =
         ThemeSettings::get_global(cx).buffer_font_size_settings();
     let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    let mut prev_agent_font_size_settings =
+        ThemeSettings::get_global(cx).agent_font_size_settings();
     cx.observe_global::<SettingsStore>(move |cx| {
         let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
         if buffer_font_size_settings != prev_buffer_font_size_settings {
@@ -117,6 +124,12 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         if ui_font_size_settings != prev_ui_font_size_settings {
             prev_ui_font_size_settings = ui_font_size_settings;
             reset_ui_font_size(cx);
+        }
+
+        let agent_font_size_settings = ThemeSettings::get_global(cx).agent_font_size_settings();
+        if agent_font_size_settings != prev_agent_font_size_settings {
+            prev_agent_font_size_settings = agent_font_size_settings;
+            reset_agent_font_size(cx);
         }
     })
     .detach();
@@ -165,17 +178,11 @@ impl ThemeFamily {
             AppearanceContent::Dark => Appearance::Dark,
         };
 
-        let mut refined_theme_colors = match theme.appearance {
-            AppearanceContent::Light => ThemeColors::light(),
-            AppearanceContent::Dark => ThemeColors::dark(),
-        };
-        refined_theme_colors.refine(&theme.style.theme_colors_refinement());
-
         let mut refined_status_colors = match theme.appearance {
             AppearanceContent::Light => StatusColors::light(),
             AppearanceContent::Dark => StatusColors::dark(),
         };
-        let mut status_colors_refinement = theme.style.status_colors_refinement();
+        let mut status_colors_refinement = status_colors_refinement(&theme.style.status);
         apply_status_color_defaults(&mut status_colors_refinement);
         refined_status_colors.refine(&status_colors_refinement);
 
@@ -184,6 +191,15 @@ impl ThemeFamily {
             AppearanceContent::Dark => PlayerColors::dark(),
         };
         refined_player_colors.merge(&theme.style.players);
+
+        let mut refined_theme_colors = match theme.appearance {
+            AppearanceContent::Light => ThemeColors::light(),
+            AppearanceContent::Dark => ThemeColors::dark(),
+        };
+        let mut theme_colors_refinement =
+            theme_colors_refinement(&theme.style.colors, &status_colors_refinement);
+        apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
+        refined_theme_colors.refine(&theme_colors_refinement);
 
         let mut refined_accent_colors = match theme.appearance {
             AppearanceContent::Light => AccentColors::light(),
@@ -246,9 +262,9 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
     let author = theme_family_content.author.clone();
 
     let mut theme_family = ThemeFamily {
-        id: id.clone(),
-        name: name.clone().into(),
-        author: author.clone().into(),
+        id,
+        name: name.into(),
+        author: author.into(),
         themes: vec![],
         scales: default_color_scales(),
     };
@@ -265,7 +281,7 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
 }
 
 /// A theme is the primary mechanism for defining the appearance of the UI.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     /// The unique identifier for the theme.
     pub id: String,

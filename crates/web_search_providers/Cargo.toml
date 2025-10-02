@@ -14,6 +14,7 @@ path = "src/web_search_providers.rs"
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -22,4 +23,3 @@ serde.workspace = true
 serde_json.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true

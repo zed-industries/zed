@@ -1,198 +1,96 @@
-use crate::AllLanguageModelSettings;
-use crate::ui::InstructionListItem;
 use anthropic::{
-    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
-    ToolResultPart, Usage,
+    ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent,
+    ToolResultContent, ToolResultPart, Usage,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
-use credentials_provider::CredentialsProvider;
-use editor::{Editor, EditorElement, EditorStyle};
-use futures::Stream;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
-};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
+    LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::ResultExt;
+use ui_input::SingleLineInput;
+use util::{ResultExt, truncate_and_trailoff};
+use zed_env_vars::{EnvVar, env_var};
 
-const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: &str = "Anthropic";
+use crate::api_key::ApiKeyState;
+use crate::ui::InstructionListItem;
+
+pub use settings::AnthropicAvailableModel as AvailableModel;
+
+const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The model's context window size.
-    pub max_tokens: usize,
-    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
-    pub tool_override: Option<String>,
-    /// Configuration of Anthropic's caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u32>,
-    pub default_temperature: Option<f32>,
-    #[serde(default)]
-    pub extra_beta_headers: Vec<String>,
-    /// The model's mode (e.g. thinking)
-    pub mode: Option<ModelMode>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
-}
-
-impl From<ModelMode> for AnthropicModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => AnthropicModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-impl From<AnthropicModelMode> for ModelMode {
-    fn from(value: AnthropicModelMode) -> Self {
-        match value {
-            AnthropicModelMode::Default => ModelMode::Default,
-            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-        }
-    }
 }
 
 pub struct AnthropicLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
-const ANTHROPIC_API_KEY_VAR: &str = "ANTHROPIC_API_KEY";
+const API_KEY_ENV_VAR_NAME: &str = "ANTHROPIC_API_KEY";
+static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 pub struct State {
-    api_key: Option<String>,
-    api_key_from_env: bool,
-    _subscription: Subscription,
+    api_key_state: ApiKeyState,
 }
 
 impl State {
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .api_url
-            .clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(&api_url, &cx)
-                .await
-                .ok();
-            this.update(cx, |this, cx| {
-                this.api_key = None;
-                this.api_key_from_env = false;
-                cx.notify();
-            })
-        })
-    }
-
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .api_url
-            .clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
-                .await
-                .ok();
-
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
-        })
-    }
-
     fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key_state.has_key()
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let api_url = AnthropicLanguageModelProvider::api_url(cx);
+        self.api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+    }
 
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .api_url
-            .clone();
-
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
-
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = AnthropicLanguageModelProvider::api_url(cx);
+        self.api_key_state.load_if_needed(
+            api_url,
+            &API_KEY_ENV_VAR,
+            |this| &mut this.api_key_state,
+            cx,
+        )
     }
 }
 
 impl AnthropicLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        let state = cx.new(|cx| State {
-            api_key: None,
-            api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+        let state = cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let api_url = Self::api_url(cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    &API_KEY_ENV_VAR,
+                    |this| &mut this.api_key_state,
+                    cx,
+                );
                 cx.notify();
-            }),
+            })
+            .detach();
+            State {
+                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+            }
         });
 
         Self { http_client, state }
@@ -207,23 +105,36 @@ impl AnthropicLanguageModelProvider {
             request_limiter: RateLimiter::new(4),
         })
     }
+
+    fn settings(cx: &App) -> &AnthropicSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).anthropic
+    }
+
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            ANTHROPIC_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
+    }
 }
 
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -240,8 +151,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4,
-            anthropic::Model::ClaudeSonnet4Thinking,
+            anthropic::Model::ClaudeSonnet4_5,
+            anthropic::Model::ClaudeSonnet4_5Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -259,11 +170,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .available_models
-            .iter()
-        {
+        for model in &AnthropicLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 anthropic::Model::Custom {
@@ -281,7 +188,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.clone().unwrap_or_default().into(),
+                    mode: model.mode.unwrap_or_default().into(),
                 },
             );
         }
@@ -300,20 +207,26 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+    fn configuration_view(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
             .into()
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
 pub struct AnthropicModel {
     id: LanguageModelId,
     model: anthropic::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -321,7 +234,7 @@ pub struct AnthropicModel {
 pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
         let messages = request.messages;
         let mut tokens_from_images = 0;
@@ -377,7 +290,7 @@ pub fn count_anthropic_tokens(
         // Tiktoken doesn't yet support these models, so we manually use the
         // same tokenizer as GPT-4.
         tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-            .map(|tokens| tokens + tokens_from_images)
+            .map(|tokens| (tokens + tokens_from_images) as u64)
     })
     .boxed()
 }
@@ -387,22 +300,38 @@ impl AnthropicModel {
         &self,
         request: anthropic::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<anthropic::Event, AnthropicError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
-            (state.api_key.clone(), settings.api_url.clone())
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            (state.api_key_state.key(&api_url), api_url)
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
+        let beta_headers = self.model.beta_headers();
+
         async move {
-            let api_key = api_key.context("Missing Anthropic API Key")?;
-            let request =
-                anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.context("failed to stream completion")
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                beta_headers,
+            );
+            request.await.map_err(Into::into)
         }
         .boxed()
     }
@@ -418,11 +347,11 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -446,14 +375,17 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn api_key(&self, cx: &App) -> Option<String> {
-        self.state.read(cx).api_key.clone()
+        self.state.read_with(cx, |state, cx| {
+            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+            state.api_key_state.key(&api_url).map(|key| key.to_string())
+        })
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
     }
 
@@ -461,7 +393,7 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_anthropic_tokens(request, cx)
     }
 
@@ -473,6 +405,7 @@ impl LanguageModel for AnthropicModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_anthropic(
@@ -484,12 +417,7 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request
-                .await
-                .map_err(|err| match err.downcast::<AnthropicError>() {
-                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
-                    Err(err) => anyhow!(err),
-                })?;
+            let response = request.await?;
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -510,7 +438,7 @@ pub fn into_anthropic(
     request: LanguageModelRequest,
     model: String,
     default_temperature: f32,
-    max_output_tokens: u32,
+    max_output_tokens: u64,
     mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
@@ -528,6 +456,11 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
+                            let text = if text.chars().last().is_some_and(|c| c.is_whitespace()) {
+                                text.trim_end().to_string()
+                            } else {
+                                text
+                            };
                             if !text.is_empty() {
                                 Some(anthropic::RequestContent::Text {
                                     text,
@@ -553,9 +486,7 @@ pub fn into_anthropic(
                         }
                         MessageContent::RedactedThinking(data) => {
                             if !data.is_empty() {
-                                Some(anthropic::RequestContent::RedactedThinking {
-                                    data: String::from_utf8(data).ok()?,
-                                })
+                                Some(anthropic::RequestContent::RedactedThinking { data })
                             } else {
                                 None
                             }
@@ -604,11 +535,11 @@ pub fn into_anthropic(
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == anthropic_role {
-                        last_message.content.extend(anthropic_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == anthropic_role
+                {
+                    last_message.content.extend(anthropic_message_content);
+                    continue;
                 }
 
                 // Mark the last segment of the message as cached
@@ -656,7 +587,9 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {
             None
@@ -706,7 +639,7 @@ impl AnthropicEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -729,10 +662,8 @@ impl AnthropicEventMapper {
                         signature: None,
                     })]
                 }
-                ResponseContent::RedactedThinking { .. } => {
-                    // Redacted thinking is encrypted and not accessible to the user, see:
-                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
-                    Vec::new()
+                ResponseContent::RedactedThinking { data } => {
+                    vec![Ok(LanguageModelCompletionEvent::RedactedThinking { data })]
                 }
                 ResponseContent::ToolUse { id, name, .. } => {
                     self.tool_uses_by_index.insert(
@@ -784,7 +715,7 @@ impl AnthropicEventMapper {
                             ))];
                         }
                     }
-                    return vec![];
+                    vec![]
                 }
             },
             Event::ContentBlockStop { index } => {
@@ -805,12 +736,14 @@ impl AnthropicEventMapper {
                                 raw_input: tool_use.input_json.clone(),
                             },
                         )),
-                        Err(json_parse_err) => Err(LanguageModelCompletionError::BadInputJson {
-                            id: tool_use.id.into(),
-                            tool_name: tool_use.name.into(),
-                            raw_input: input_json.into(),
-                            json_parse_error: json_parse_err.to_string(),
-                        }),
+                        Err(json_parse_err) => {
+                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: tool_use.id.into(),
+                                tool_name: tool_use.name.into(),
+                                raw_input: input_json.into(),
+                                json_parse_error: json_parse_err.to_string(),
+                            })
+                        }
                     };
 
                     vec![event_result]
@@ -851,9 +784,7 @@ impl AnthropicEventMapper {
                 vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
             }
             Event::Error { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    AnthropicError::ApiError(error)
-                )))]
+                vec![Err(error.into())]
             }
             _ => Vec::new(),
         }
@@ -864,16 +795,6 @@ struct RawToolUse {
     id: String,
     name: String,
     input_json: String,
-}
-
-pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
-    if let AnthropicError::ApiError(api_err) = &err {
-        if let Some(tokens) = api_err.match_window_exceeded() {
-            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
-        }
-    }
-
-    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.
@@ -902,15 +823,21 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
+    target_agent: ConfigurationViewTargetAgent,
 }
 
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        state: Entity<State>,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -935,13 +862,10 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
-                editor
-            }),
+            api_key_editor: cx.new(|cx| SingleLineInput::new(window, cx, Self::PLACEHOLDER_TEXT)),
             state,
             load_credentials_task,
+            target_agent,
         }
     }
 
@@ -951,15 +875,17 @@ impl ConfigurationView {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -968,36 +894,11 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
-    }
-
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
@@ -1007,7 +908,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_from_env;
+        let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
@@ -1015,7 +916,10 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Anthropic".into(),
+                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
+                })))
                 .child(
                     List::new()
                         .child(
@@ -1026,24 +930,13 @@ impl Render for ConfigurationView {
                             )
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
                         )
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
-                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -1063,9 +956,14 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {ANTHROPIC_API_KEY_VAR} environment variable.")
+                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
                         } else {
-                            "API key configured.".to_string()
+                            let api_url = AnthropicLanguageModelProvider::api_url(cx);
+                            if api_url == ANTHROPIC_API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
+                            }
                         })),
                 )
                 .child(
@@ -1076,7 +974,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {ANTHROPIC_API_KEY_VAR} environment variable.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
@@ -1113,6 +1011,7 @@ mod tests {
             temperature: None,
             tools: vec![],
             tool_choice: None,
+            thinking_allowed: true,
         };
 
         let anthropic_request = into_anthropic(

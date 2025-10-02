@@ -37,32 +37,33 @@ impl IntoElement for InstructionListItem {
         let item_content = if let (Some(button_label), Some(button_link)) =
             (self.button_label, self.button_link)
         {
-            let link = button_link.clone();
+            let link = button_link;
             let unique_id = SharedString::from(format!("{}-button", self.label));
 
-            h_flex().flex_wrap().child(Label::new(self.label)).child(
-                Button::new(unique_id, button_label)
-                    .style(ButtonStyle::Subtle)
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .on_click(move |_, _window, cx| cx.open_url(&link)),
-            )
+            h_flex()
+                .flex_wrap()
+                .child(Label::new(self.label))
+                .child(
+                    Button::new(unique_id, button_label)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ArrowUpRight)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, _window, cx| cx.open_url(&link)),
+                )
+                .into_any_element()
         } else {
-            div().child(Label::new(self.label))
+            Label::new(self.label).into_any_element()
         };
 
-        div()
-            .child(
-                ListItem::new("list-item")
-                    .selectable(false)
-                    .start_slot(
-                        Icon::new(IconName::Dash)
-                            .size(IconSize::XSmall)
-                            .color(Color::Hidden),
-                    )
-                    .child(item_content),
+        ListItem::new("list-item")
+            .selectable(false)
+            .start_slot(
+                Icon::new(IconName::Dash)
+                    .size(IconSize::XSmall)
+                    .color(Color::Hidden),
             )
-            .into_any()
+            .child(div().w_full().child(item_content))
+            .into_any_element()
     }
 }

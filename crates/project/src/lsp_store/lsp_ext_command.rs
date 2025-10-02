@@ -16,7 +16,7 @@ use language::{
     Buffer, point_to_lsp,
     proto::{deserialize_anchor, serialize_anchor},
 };
-use lsp::{LanguageServer, LanguageServerId};
+use lsp::{AdapterServerCapabilities, LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -68,6 +68,10 @@ impl LspCommand for ExpandMacro {
         "Expand macro"
     }
 
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -111,14 +115,14 @@ impl LspCommand for ExpandMacro {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -196,6 +200,10 @@ impl LspCommand for OpenDocs {
         "Open docs"
     }
 
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -205,7 +213,7 @@ impl LspCommand for OpenDocs {
     ) -> Result<OpenDocsParams> {
         Ok(OpenDocsParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+                uri: lsp::Uri::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
         })
@@ -241,14 +249,14 @@ impl LspCommand for OpenDocs {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -324,6 +332,10 @@ impl LspCommand for SwitchSourceHeader {
 
     fn display_name(&self) -> &str {
         "Switch source header"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
@@ -404,6 +416,10 @@ impl LspCommand for GoToParentModule {
         "Go to parent module"
     }
 
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -446,14 +462,14 @@ impl LspCommand for GoToParentModule {
         request: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = request
             .position
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -578,6 +594,10 @@ impl LspCommand for GetLspRunnables {
         "LSP Runnables"
     }
 
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -671,7 +691,7 @@ impl LspCommand for GetLspRunnables {
                     task_template.command = shell.program;
                     task_template.args = shell.args;
                     task_template.env = shell.environment;
-                    task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                    task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
                 }
             }
 

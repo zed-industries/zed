@@ -3,71 +3,120 @@ pub mod commit;
 mod hosting_provider;
 mod remote;
 pub mod repository;
+pub mod stash;
 pub mod status;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 use anyhow::{Context as _, Result};
 pub use git2 as libgit;
-use gpui::action_with_deprecated_aliases;
-use gpui::actions;
-use gpui::impl_action_with_deprecated_aliases;
-pub use repository::WORK_DIRECTORY_REPO_PATH;
+use gpui::{Action, actions};
+pub use repository::RemoteCommandOutput;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
 
-pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
-pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
-pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
-pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
-pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
-pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
+pub const DOT_GIT: &str = ".git";
+pub const GITIGNORE: &str = ".gitignore";
+pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
+pub const LFS_DIR: &str = "lfs";
+pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
+pub const INDEX_LOCK: &str = "index.lock";
 
 actions!(
     git,
     [
         // per-hunk
+        /// Toggles the staged state of the hunk or status entry at cursor.
         ToggleStaged,
+        /// Stage status entries between an anchor entry and the cursor.
+        StageRange,
+        /// Stages the current hunk and moves to the next one.
         StageAndNext,
+        /// Unstages the current hunk and moves to the next one.
         UnstageAndNext,
+        /// Restores the selected hunks to their original state.
+        #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
+        Restore,
         // per-file
+        /// Shows git blame information for the current file.
+        #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
+        Blame,
+        /// Stages the current file.
         StageFile,
+        /// Unstages the current file.
         UnstageFile,
         // repo-wide
+        /// Stages all changes in the repository.
         StageAll,
+        /// Unstages all changes in the repository.
         UnstageAll,
+        /// Stashes all changes in the repository, including untracked files.
+        StashAll,
+        /// Pops the most recent stash.
+        StashPop,
+        /// Apply the most recent stash.
+        StashApply,
+        /// Restores all tracked files to their last committed state.
         RestoreTrackedFiles,
+        /// Moves all untracked files to trash.
         TrashUntrackedFiles,
+        /// Undoes the last commit, keeping changes in the working directory.
         Uncommit,
+        /// Pushes commits to the remote repository.
         Push,
+        /// Pushes commits to a specific remote branch.
+        PushTo,
+        /// Force pushes commits to the remote repository.
         ForcePush,
+        /// Pulls changes from the remote repository.
         Pull,
+        /// Fetches changes from the remote repository.
         Fetch,
+        /// Fetches changes from a specific remote.
         FetchFrom,
+        /// Creates a new commit with staged changes.
         Commit,
+        /// Amends the last commit with staged changes.
         Amend,
+        /// Enable the --signoff option.
+        Signoff,
+        /// Cancels the current git operation.
         Cancel,
+        /// Expands the commit message editor.
         ExpandCommitEditor,
+        /// Generates a commit message using AI.
         GenerateCommitMessage,
+        /// Initializes a new git repository.
         Init,
+        /// Opens all modified files in the editor.
+        OpenModifiedFiles,
+        /// Clones a repository.
+        Clone,
     ]
 );
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+/// Renames a git branch.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct RenameBranch {
+    /// The branch to rename.
+    ///
+    /// Default: the current branch.
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
+/// Restores a file to its last committed state, discarding local changes.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git, deprecated_aliases = ["editor::RevertFile"])]
+#[serde(deny_unknown_fields)]
 pub struct RestoreFile {
     #[serde(default)]
     pub skip_prompt: bool,
 }
-
-impl_action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
-action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
-action_with_deprecated_aliases!(git, Blame, ["editor::ToggleGitBlame"]);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
@@ -79,6 +128,13 @@ impl Oid {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
         Ok(Self(oid))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn random(rng: &mut impl rand::Rng) -> Self {
+        let mut bytes = [0; 20];
+        rng.fill(&mut bytes);
+        Self::from_bytes(&bytes).unwrap()
     }
 
     pub fn as_bytes(&self) -> &[u8] {

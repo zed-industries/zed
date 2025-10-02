@@ -82,7 +82,7 @@ impl RenderOnce for ToolCallCardHeader {
                     .child(
                         h_flex().h(line_height).justify_center().child(
                             Icon::new(self.icon)
-                                .size(IconSize::XSmall)
+                                .size(IconSize::Small)
                                 .color(Color::Muted),
                         ),
                     )
@@ -101,14 +101,11 @@ impl RenderOnce for ToolCallCardHeader {
                     })
                     .when_some(secondary_text, |this, secondary_text| {
                         this.child(bullet_divider())
-                            .child(div().text_size(font_size).child(secondary_text.clone()))
+                            .child(div().text_size(font_size).child(secondary_text))
                     })
                     .when_some(code_path, |this, code_path| {
-                        this.child(bullet_divider()).child(
-                            Label::new(code_path.clone())
-                                .size(LabelSize::Small)
-                                .inline_code(cx),
-                        )
+                        this.child(bullet_divider())
+                            .child(Label::new(code_path).size(LabelSize::Small).inline_code(cx))
                     })
                     .with_animation(
                         "loading-label",

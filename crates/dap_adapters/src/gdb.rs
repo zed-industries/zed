@@ -21,7 +21,7 @@ impl DebugAdapter for GdbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut obj = serde_json::Map::default();
 
         match &zed_scenario.request {
@@ -63,7 +63,7 @@ impl DebugAdapter for GdbDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "oneOf": [
                 {
@@ -159,6 +159,7 @@ impl DebugAdapter for GdbDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let user_setting_path = user_installed_path
@@ -177,18 +178,23 @@ impl DebugAdapter for GdbDebugAdapter {
 
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
-        let request_args = StartDebuggingRequestArguments {
-            request: self.request_kind(&config.config)?,
-            configuration: config.config.clone(),
-        };
+        let mut configuration = config.config.clone();
+        if let Some(configuration) = configuration.as_object_mut() {
+            configuration
+                .entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
 
         Ok(DebugAdapterBinary {
-            command: gdb_path,
-            arguments: vec!["-i=dap".into()],
+            command: Some(gdb_path),
+            arguments: user_args.unwrap_or_else(|| vec!["-i=dap".into()]),
             envs: HashMap::default(),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
-            request_args,
+            request_args: StartDebuggingRequestArguments {
+                request: self.request_kind(&config.config).await?,
+                configuration,
+            },
         })
     }
 }

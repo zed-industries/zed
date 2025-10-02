@@ -21,13 +21,11 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
             .manifest_path
             .parent()
             .and_then(|parent| parent.parent())
-            .map_or(false, |grandparent_dir| {
-                grandparent_dir.ends_with("extensions")
-            });
+            .is_some_and(|grandparent_dir| grandparent_dir.ends_with("extensions"));
 
         let cargo_toml = read_cargo_toml(&package.manifest_path)?;
 
-        let is_using_workspace_lints = cargo_toml.lints.map_or(false, |lints| lints.workspace);
+        let is_using_workspace_lints = cargo_toml.lints.is_some_and(|lints| lints.workspace);
         if !is_using_workspace_lints {
             eprintln!(
                 "{package:?} is not using workspace lints",

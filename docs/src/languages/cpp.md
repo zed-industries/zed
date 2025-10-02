@@ -9,7 +9,37 @@ C++ support is available natively in Zed.
 
 You can configure which `clangd` binary Zed should use.
 
-To use a binary in a custom location, add the following to your `settings.json`:
+By default, Zed will try to find a `clangd` in your `$PATH` and try to use that. If that binary successfully executes, it's used. Otherwise, Zed will fall back to installing its own `clangd` version and use that.
+
+If you want to install a pre-release `clangd` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "clangd": {
+      "fetch": {
+        "pre_release": true
+      }
+    }
+  }
+}
+```
+
+If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "ignore_system_version": true
+      }
+    }
+  }
+}
+```
+
+If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
 
 ```json
 {
@@ -24,19 +54,7 @@ To use a binary in a custom location, add the following to your `settings.json`:
 }
 ```
 
-If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
-
-```json
-{
-  "lsp": {
-    "clangd": {
-      "binary": {
-        "ignore_system_version": true
-      }
-    }
-  }
-}
-```
+This `"path"` has to be an absolute path.
 
 ## Arguments
 
@@ -112,3 +130,25 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 ```
 
 After building your project, CMake will generate the `compile_commands.json` file in the build directory and clangd will automatically pick it up.
+
+## Debugging
+
+You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
+
+### Build and Debug Binary
+
+```json
+[
+  {
+    "label": "Debug native binary",
+    "build": {
+      "command": "make",
+      "args": ["-j8"],
+      "cwd": "$ZED_WORKTREE_ROOT"
+    },
+    "program": "$ZED_WORKTREE_ROOT/build/prog",
+    "request": "launch",
+    "adapter": "CodeLLDB"
+  }
+]
+```

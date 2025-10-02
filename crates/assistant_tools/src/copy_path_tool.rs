@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModel;
@@ -44,7 +45,7 @@ impl Tool for CopyPathTool {
         "copy_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 
@@ -57,7 +58,7 @@ impl Tool for CopyPathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Clipboard
+        IconName::ToolCopy
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -95,9 +96,7 @@ impl Tool for CopyPathTool {
                 .and_then(|project_path| project.entry_for_path(&project_path, cx))
             {
                 Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => {
-                        project.copy_entry(entity.id, None, project_path.path, cx)
-                    }
+                    Some(project_path) => project.copy_entry(entity.id, project_path, cx),
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path

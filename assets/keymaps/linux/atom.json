@@ -10,6 +10,13 @@
   {
     "context": "Editor",
     "bindings": {
+      "ctrl-k ctrl-u": "editor::ConvertToUpperCase", // editor:upper-case
+      "ctrl-k ctrl-l": "editor::ConvertToLowerCase" // editor:lower-case
+    }
+  },
+  {
+    "context": "Editor && mode == full",
+    "bindings": {
       "ctrl-shift-l": "language_selector::Toggle", // grammar-selector:show
       "ctrl-|": "pane::RevealInProjectPanel", // tree-view:reveal-active-file
       "ctrl-b": "editor::GoToDefinition", // fuzzy-finder:toggle-buffer-finder
@@ -19,25 +26,20 @@
       "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
       "alt-shift-down": "editor::AddSelectionBelow", // editor:add-selection-below
       "alt-shift-up": "editor::AddSelectionAbove", // editor:add-selection-above
-      "ctrl-k ctrl-u": "editor::ConvertToUpperCase", // editor:upper-case
-      "ctrl-k ctrl-l": "editor::ConvertToLowerCase", // editor:lower-case
       "ctrl-j": "editor::JoinLines", // editor:join-lines
       "ctrl-shift-d": "editor::DuplicateLineDown", // editor:duplicate-lines
       "ctrl-up": "editor::MoveLineUp", // editor:move-line-up
       "ctrl-down": "editor::MoveLineDown", // editor:move-line-down
       "ctrl-\\": "workspace::ToggleLeftDock", // tree-view:toggle
-      "ctrl-shift-m": "markdown::OpenPreviewToTheSide" // markdown-preview:toggle
-    }
-  },
-  {
-    "context": "Editor && mode == full",
-    "bindings": {
+      "ctrl-shift-m": "markdown::OpenPreviewToTheSide", // markdown-preview:toggle
       "ctrl-r": "outline::Toggle" // symbols-view:toggle-project-symbols
     }
   },
   {
     "context": "BufferSearchBar",
     "bindings": {
+      "f3": ["editor::SelectNext", { "replace_newest": true }], // find-and-replace:find-next
+      "shift-f3": ["editor::SelectPrevious", { "replace_newest": true }], //find-and-replace:find-previous
       "ctrl-f3": "search::SelectNextMatch", // find-and-replace:find-next-selected
       "ctrl-shift-f3": "search::SelectPreviousMatch" // find-and-replace:find-previous-selected
     }

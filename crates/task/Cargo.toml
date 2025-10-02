@@ -11,6 +11,10 @@ test-support = [
     "util/test-support"
 ]
 
+[lib]
+path = "src/task.rs"
+doctest = false
+
 [lints]
 workspace = true
 

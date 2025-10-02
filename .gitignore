@@ -12,6 +12,7 @@
 .flatpak-builder
 .idea
 .netrc
+*.pyc
 .pytest_cache
 .swiftpm
 .swiftpm/config/registries.json
@@ -19,6 +20,7 @@
 .venv
 .vscode
 .wrangler
+.perf-runs
 /assets/*licenses.*
 /crates/collab/seed.json
 /crates/theme/schemas/theme.json

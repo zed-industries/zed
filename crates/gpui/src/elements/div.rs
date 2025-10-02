@@ -16,17 +16,18 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
-    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
-    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
+    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
+    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
 use smallvec::SmallVec;
+use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -285,21 +286,20 @@ impl Interactivity {
     {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture {
-                    if let Some(drag) = &cx.active_drag {
-                        if drag.value.as_ref().type_id() == TypeId::of::<T>() {
-                            (listener)(
-                                &DragMoveEvent {
-                                    event: event.clone(),
-                                    bounds: hitbox.bounds,
-                                    drag: PhantomData,
-                                    dragged_item: Arc::clone(&drag.value),
-                                },
-                                window,
-                                cx,
-                            );
-                        }
-                    }
+                if phase == DispatchPhase::Capture
+                    && let Some(drag) = &cx.active_drag
+                    && drag.value.as_ref().type_id() == TypeId::of::<T>()
+                {
+                    (listener)(
+                        &DragMoveEvent {
+                            event: event.clone(),
+                            bounds: hitbox.bounds,
+                            drag: PhantomData,
+                            dragged_item: Arc::clone(&drag.value),
+                        },
+                        window,
+                        cx,
+                    );
                 }
             }));
     }
@@ -484,10 +484,9 @@ impl Interactivity {
     where
         Self: Sized,
     {
-        self.click_listeners
-            .push(Box::new(move |event, window, cx| {
-                listener(event, window, cx)
-            }));
+        self.click_listeners.push(Rc::new(move |event, window, cx| {
+            listener(event, window, cx)
+        }));
     }
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
@@ -534,7 +533,7 @@ impl Interactivity {
     }
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
-    /// The imperative API equivalent to [`InteractiveElement::tooltip`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::tooltip`]
     pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
     where
         Self: Sized,
@@ -551,7 +550,7 @@ impl Interactivity {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The tooltip itself is also hoverable and won't disappear when the user moves the mouse into
-    /// the tooltip. The imperative API equivalent to [`InteractiveElement::hoverable_tooltip`]
+    /// the tooltip. The imperative API equivalent to [`StatefulInteractiveElement::hoverable_tooltip`]
     pub fn hoverable_tooltip(
         &mut self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
@@ -613,10 +612,36 @@ pub trait InteractiveElement: Sized {
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
-    fn track_focus(mut self, focus_handle: &FocusHandle) -> FocusableWrapper<Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
-        FocusableWrapper { element: self }
+        self
+    }
+
+    /// Designate this element as a tab stop, equivalent to `tab_index(0)`.
+    /// This should be the primary mechanism for tab navigation within the application.
+    fn tab_stop(mut self) -> Self {
+        self.tab_index(0)
+    }
+
+    /// Set index of the tab stop order. This should only be used in conjunction with `tab_group`
+    /// in order to not interfere with the tab index of other elements.
+    fn tab_index(mut self, index: isize) -> Self {
+        self.interactivity().focusable = true;
+        self.interactivity().tab_index = Some(index);
+        self
+    }
+
+    /// Designate this div as a "tab group". Tab groups have their own location in the tab-index order,
+    /// but for children of the tab group, the tab index is reset to 0. This can be useful for swapping
+    /// the order of tab stops within the group, without having to renumber all the tab stops in the whole
+    /// application.
+    fn tab_group(mut self) -> Self {
+        self.interactivity().tab_group = true;
+        if self.interactivity().tab_index.is_none() {
+            self.interactivity().tab_index = Some(0);
+        }
+        self
     }
 
     /// Set the keymap context for this element. This will be used to determine
@@ -670,7 +695,7 @@ pub trait InteractiveElement: Sized {
 
     #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`VisualTestContext::debug_bounds`] map
+    /// in the [`crate::VisualTestContext::debug_bounds`] map
     /// This is a noop in release builds
     fn debug_selector(mut self, f: impl FnOnce() -> String) -> Self {
         self.interactivity().debug_selector = Some(f());
@@ -679,7 +704,7 @@ pub trait InteractiveElement: Sized {
 
     #[cfg(not(any(test, feature = "test-support")))]
     /// Set a key that can be used to look up this element's bounds
-    /// in the [`VisualTestContext::debug_bounds`] map
+    /// in the [`crate::VisualTestContext::debug_bounds`] map
     /// This is a noop in release builds
     #[inline]
     fn debug_selector(self, _: impl FnOnce() -> String) -> Self {
@@ -903,7 +928,7 @@ pub trait InteractiveElement: Sized {
     /// Apply the given style when the given data type is dragged over this element
     fn drag_over<S: 'static>(
         mut self,
-        f: impl 'static + Fn(StyleRefinement, &S, &Window, &App) -> StyleRefinement,
+        f: impl 'static + Fn(StyleRefinement, &S, &mut Window, &mut App) -> StyleRefinement,
     ) -> Self {
         self.interactivity().drag_over_styles.push((
             TypeId::of::<S>(),
@@ -980,15 +1005,35 @@ pub trait InteractiveElement: Sized {
         self.interactivity().block_mouse_except_scroll();
         self
     }
+
+    /// Set the given styles to be applied when this element, specifically, is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
+
+    /// Set the given styles to be applied when this element is inside another element that is focused.
+    /// Requires that the element is focusable. Elements can be made focusable using [`InteractiveElement::track_focus`].
+    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
+        self
+    }
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
-    fn focusable(mut self) -> FocusableWrapper<Self> {
+    fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
-        FocusableWrapper { element: self }
+        self
     }
 
     /// Set the overflow x and y to scroll.
@@ -1007,6 +1052,15 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the overflow y to scroll.
     fn overflow_y_scroll(mut self) -> Self {
         self.interactivity().base_style.overflow.y = Some(Overflow::Scroll);
+        self
+    }
+
+    /// Set the space to be reserved for rendering the scrollbar.
+    ///
+    /// This will only affect the layout of the element when overflow for this element is set to
+    /// `Overflow::Scroll`.
+    fn scrollbar_width(mut self, width: impl Into<AbsoluteLength>) -> Self {
+        self.interactivity().base_style.scrollbar_width = Some(width.into());
         self
     }
 
@@ -1061,7 +1115,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
     /// drag and drop operation. This API should also be used as the equivalent of 'on drag start' with
-    /// the [`Self::on_drag_move`] API.
+    /// the [`InteractiveElement::on_drag_move`] API.
     /// The callback also has access to the offset of triggering click from the origin of parent element.
     /// The fluent API equivalent to [`Interactivity::on_drag`]
     ///
@@ -1118,27 +1172,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 }
 
-/// A trait for providing focus related APIs to interactive elements
-pub trait FocusableElement: InteractiveElement {
-    /// Set the given styles to be applied when this element, specifically, is focused.
-    fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
-        self
-    }
-
-    /// Set the given styles to be applied when this element is inside another element that is focused.
-    fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
-    where
-        Self: Sized,
-    {
-        self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
-        self
-    }
-}
-
 pub(crate) type MouseDownListener =
     Box<dyn Fn(&MouseDownEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 pub(crate) type MouseUpListener =
@@ -1150,7 +1183,7 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
@@ -1190,7 +1223,7 @@ pub fn div() -> Div {
 /// A [`Div`] element, the all-in-one element for building complex UIs in GPUI
 pub struct Div {
     interactivity: Interactivity,
-    children: SmallVec<[AnyElement; 2]>,
+    children: SmallVec<[StackSafe<AnyElement>; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
     image_cache: Option<Box<dyn ImageCacheProvider>>,
 }
@@ -1251,7 +1284,8 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
+        self.children
+            .extend(elements.into_iter().map(StackSafe::new))
     }
 }
 
@@ -1267,6 +1301,7 @@ impl Element for Div {
         self.interactivity.source_location()
     }
 
+    #[stacksafe]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1302,6 +1337,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
+    #[stacksafe]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1328,7 +1364,6 @@ impl Element for Div {
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
-            state.bounds = bounds;
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
@@ -1348,6 +1383,10 @@ impl Element for Div {
             }
             (child_max - child_min).into()
         };
+
+        if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
+            scroll_handle.scroll_to_active_item();
+        }
 
         self.interactivity.prepaint(
             global_id,
@@ -1372,6 +1411,7 @@ impl Element for Div {
         )
     }
 
+    #[stacksafe]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1463,6 +1503,8 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) tab_index: Option<isize>,
+    pub(crate) tab_group: bool,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1504,15 +1546,14 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                if let Some(element_state) = element_state.as_ref() {
-                    if cx.has_active_drag() {
-                        if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref()
-                        {
-                            *pending_mouse_down.borrow_mut() = None;
-                        }
-                        if let Some(clicked_state) = element_state.clicked_state.as_ref() {
-                            *clicked_state.borrow_mut() = ElementClickedState::default();
-                        }
+                if let Some(element_state) = element_state.as_ref()
+                    && cx.has_active_drag()
+                {
+                    if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref() {
+                        *pending_mouse_down.borrow_mut() = None;
+                    }
+                    if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                        *clicked_state.borrow_mut() = ElementClickedState::default();
                     }
                 }
 
@@ -1520,30 +1561,35 @@ impl Interactivity {
                 // If there's an explicit focus handle we're tracking, use that. Otherwise
                 // create a new handle and store it in the element state, which lives for as
                 // as frames contain an element with this id.
-                if self.focusable && self.tracked_focus_handle.is_none() {
-                    if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
+                if self.focusable
+                    && self.tracked_focus_handle.is_none()
+                    && let Some(element_state) = element_state.as_mut()
+                {
+                    let mut handle = element_state
+                        .focus_handle
+                        .get_or_insert_with(|| cx.focus_handle())
+                        .clone()
+                        .tab_stop(false);
+
+                    if let Some(index) = self.tab_index {
+                        handle = handle.tab_index(index).tab_stop(true);
                     }
+
+                    self.tracked_focus_handle = Some(handle);
                 }
 
                 if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
                     self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
-                } else if self.base_style.overflow.x == Some(Overflow::Scroll)
-                    || self.base_style.overflow.y == Some(Overflow::Scroll)
+                } else if (self.base_style.overflow.x == Some(Overflow::Scroll)
+                    || self.base_style.overflow.y == Some(Overflow::Scroll))
+                    && let Some(element_state) = element_state.as_mut()
                 {
-                    if let Some(element_state) = element_state.as_mut() {
-                        self.scroll_offset = Some(
-                            element_state
-                                .scroll_offset
-                                .get_or_insert_with(Rc::default)
-                                .clone(),
-                        );
-                    }
+                    self.scroll_offset = Some(
+                        element_state
+                            .scroll_offset
+                            .get_or_insert_with(Rc::default)
+                            .clone(),
+                    );
                 }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
@@ -1652,6 +1698,11 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
+        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
+            const ROUNDING_FACTOR: f32 = 100.0;
+            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
+        }
+
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
             let mut tracked_scroll_handle = self
@@ -1666,8 +1717,16 @@ impl Interactivity {
             let rem_size = window.rem_size();
             let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            // The floating point values produced by Taffy and ours often vary
+            // slightly after ~5 decimal places. This can lead to cases where after
+            // subtracting these, the container becomes scrollable for less than
+            // 0.00000x pixels. As we generally don't benefit from a precision that
+            // high for the maximum scroll, we round the scroll max to 2 decimal
+            // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
+            let scroll_max = (padded_content_size - bounds.size)
+                .map(round_to_two_decimals)
+                .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1680,7 +1739,8 @@ impl Interactivity {
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
-                scroll_handle_state.padded_content_size = padded_content_size;
+                scroll_handle_state.max_offset = scroll_max;
+                scroll_handle_state.bounds = bounds;
             }
 
             *scroll_offset
@@ -1730,61 +1790,73 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
+                let mut tab_group = None;
+                if self.tab_group {
+                    tab_group = self.tab_index;
+                }
+                if let Some(focus_handle) = &self.tracked_focus_handle {
+                    window.next_frame.tab_stops.insert(focus_handle);
+                }
+
                 window.with_element_opacity(style.opacity, |window| {
                     style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                         window.with_text_style(style.text_style().cloned(), |window| {
                             window.with_content_mask(
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
-                                    if let Some(hitbox) = hitbox {
-                                        #[cfg(debug_assertions)]
-                                        self.paint_debug_info(
-                                            global_id, hitbox, &style, window, cx,
-                                        );
+                                    window.with_tab_group(tab_group, |window| {
+                                        if let Some(hitbox) = hitbox {
+                                            #[cfg(debug_assertions)]
+                                            self.paint_debug_info(
+                                                global_id, hitbox, &style, window, cx,
+                                            );
 
-                                        if let Some(drag) = cx.active_drag.as_ref() {
-                                            if let Some(mouse_cursor) = drag.cursor_style {
-                                                window.set_window_cursor_style(mouse_cursor);
+                                            if let Some(drag) = cx.active_drag.as_ref() {
+                                                if let Some(mouse_cursor) = drag.cursor_style {
+                                                    window.set_window_cursor_style(mouse_cursor);
+                                                }
+                                            } else {
+                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                    window.set_cursor_style(mouse_cursor, hitbox);
+                                                }
                                             }
-                                        } else {
-                                            if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+
+                                            if let Some(group) = self.group.clone() {
+                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            }
+
+                                            if let Some(area) = self.window_control {
+                                                window.insert_window_control_hitbox(
+                                                    area,
+                                                    hitbox.clone(),
+                                                );
+                                            }
+
+                                            self.paint_mouse_listeners(
+                                                hitbox,
+                                                element_state.as_mut(),
+                                                window,
+                                                cx,
+                                            );
+                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                        }
+
+                                        self.paint_keyboard_listeners(window, cx);
+                                        f(&style, window, cx);
+
+                                        if let Some(_hitbox) = hitbox {
+                                            #[cfg(any(feature = "inspector", debug_assertions))]
+                                            window.insert_inspector_hitbox(
+                                                _hitbox.id,
+                                                _inspector_id,
+                                                cx,
+                                            );
+
+                                            if let Some(group) = self.group.as_ref() {
+                                                GroupHitboxes::pop(group, cx);
                                             }
                                         }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupHitboxes::push(group, hitbox.id, cx);
-                                        }
-
-                                        if let Some(area) = self.window_control {
-                                            window
-                                                .insert_window_control_hitbox(area, hitbox.clone());
-                                        }
-
-                                        self.paint_mouse_listeners(
-                                            hitbox,
-                                            element_state.as_mut(),
-                                            window,
-                                            cx,
-                                        );
-                                        self.paint_scroll_listener(hitbox, &style, window, cx);
-                                    }
-
-                                    self.paint_keyboard_listeners(window, cx);
-                                    f(&style, window, cx);
-
-                                    if let Some(_hitbox) = hitbox {
-                                        #[cfg(any(feature = "inspector", debug_assertions))]
-                                        window.insert_inspector_hitbox(
-                                            _hitbox.id,
-                                            _inspector_id,
-                                            cx,
-                                        );
-
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-                                    }
+                                    })
                                 },
                             );
                         });
@@ -1921,6 +1993,12 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let is_focused = self
+            .tracked_focus_handle
+            .as_ref()
+            .map(|handle| handle.is_focused(window))
+            .unwrap_or(false);
+
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
@@ -1992,26 +2070,27 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event({
                 move |_: &MouseUpEvent, phase, window, cx| {
-                    if let Some(drag) = &cx.active_drag {
-                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                            let drag_state_type = drag.value.as_ref().type_id();
-                            for (drop_state_type, listener) in &drop_listeners {
-                                if *drop_state_type == drag_state_type {
-                                    let drag = cx
-                                        .active_drag
-                                        .take()
-                                        .expect("checked for type drag state type above");
+                    if let Some(drag) = &cx.active_drag
+                        && phase == DispatchPhase::Bubble
+                        && hitbox.is_hovered(window)
+                    {
+                        let drag_state_type = drag.value.as_ref().type_id();
+                        for (drop_state_type, listener) in &drop_listeners {
+                            if *drop_state_type == drag_state_type {
+                                let drag = cx
+                                    .active_drag
+                                    .take()
+                                    .expect("checked for type drag state type above");
 
-                                    let mut can_drop = true;
-                                    if let Some(predicate) = &can_drop_predicate {
-                                        can_drop = predicate(drag.value.as_ref(), window, cx);
-                                    }
+                                let mut can_drop = true;
+                                if let Some(predicate) = &can_drop_predicate {
+                                    can_drop = predicate(drag.value.as_ref(), window, cx);
+                                }
 
-                                    if can_drop {
-                                        listener(drag.value.as_ref(), window, cx);
-                                        window.refresh();
-                                        cx.stop_propagation();
-                                    }
+                                if can_drop {
+                                    listener(drag.value.as_ref(), window, cx);
+                                    window.refresh();
+                                    cx.stop_propagation();
                                 }
                             }
                         }
@@ -2055,34 +2134,60 @@ impl Interactivity {
                         }
 
                         let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                        if let Some(mouse_down) = pending_mouse_down.clone() {
-                            if !cx.has_active_drag()
-                                && (event.position - mouse_down.position).magnitude()
-                                    > DRAG_THRESHOLD
-                            {
-                                if let Some((drag_value, drag_listener)) = drag_listener.take() {
-                                    *clicked_state.borrow_mut() = ElementClickedState::default();
-                                    let cursor_offset = event.position - hitbox.origin;
-                                    let drag = (drag_listener)(
-                                        drag_value.as_ref(),
-                                        cursor_offset,
-                                        window,
-                                        cx,
-                                    );
-                                    cx.active_drag = Some(AnyDrag {
-                                        view: drag,
-                                        value: drag_value,
-                                        cursor_offset,
-                                        cursor_style: drag_cursor_style,
-                                    });
-                                    pending_mouse_down.take();
-                                    window.refresh();
-                                    cx.stop_propagation();
-                                }
-                            }
+                        if let Some(mouse_down) = pending_mouse_down.clone()
+                            && !cx.has_active_drag()
+                            && (event.position - mouse_down.position).magnitude() > DRAG_THRESHOLD
+                            && let Some((drag_value, drag_listener)) = drag_listener.take()
+                        {
+                            *clicked_state.borrow_mut() = ElementClickedState::default();
+                            let cursor_offset = event.position - hitbox.origin;
+                            let drag =
+                                (drag_listener)(drag_value.as_ref(), cursor_offset, window, cx);
+                            cx.active_drag = Some(AnyDrag {
+                                view: drag,
+                                value: drag_value,
+                                cursor_offset,
+                                cursor_style: drag_cursor_style,
+                            });
+                            pending_mouse_down.take();
+                            window.refresh();
+                            cx.stop_propagation();
                         }
                     }
                 });
+
+                if is_focused {
+                    // Press enter, space to trigger click, when the element is focused.
+                    window.on_key_event({
+                        let click_listeners = click_listeners.clone();
+                        let hitbox = hitbox.clone();
+                        move |event: &KeyUpEvent, phase, window, cx| {
+                            if phase.bubble() && !window.default_prevented() {
+                                let stroke = &event.keystroke;
+                                let keyboard_button = if stroke.key.eq("enter") {
+                                    Some(KeyboardButton::Enter)
+                                } else if stroke.key.eq("space") {
+                                    Some(KeyboardButton::Space)
+                                } else {
+                                    None
+                                };
+
+                                if let Some(button) = keyboard_button
+                                    && !stroke.modifiers.modified()
+                                {
+                                    let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
+                                        button,
+                                        bounds: hitbox.bounds,
+                                    });
+
+                                    for listener in &click_listeners {
+                                        listener(&click_event, window, cx);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
 
                 window.on_mouse_event({
                     let mut captured_mouse_down = None;
@@ -2109,10 +2214,10 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let mouse_click = ClickEvent {
+                                let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
-                                };
+                                });
                                 for listener in &click_listeners {
                                     listener(&mouse_click, window, cx);
                                 }
@@ -2210,7 +2315,7 @@ impl Interactivity {
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
-                            .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
+                            .is_some_and(|group_hitbox_id| group_hitbox_id.is_hovered(window));
                         let element_hovered = hitbox.is_hovered(window);
                         if group_hovered || element_hovered {
                             *active_state.borrow_mut() = ElementClickedState {
@@ -2356,33 +2461,32 @@ impl Interactivity {
         style.refine(&self.base_style);
 
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            if let Some(in_focus_style) = self.in_focus_style.as_ref() {
-                if focus_handle.within_focused(window, cx) {
-                    style.refine(in_focus_style);
-                }
+            if let Some(in_focus_style) = self.in_focus_style.as_ref()
+                && focus_handle.within_focused(window, cx)
+            {
+                style.refine(in_focus_style);
             }
 
-            if let Some(focus_style) = self.focus_style.as_ref() {
-                if focus_handle.is_focused(window) {
-                    style.refine(focus_style);
-                }
+            if let Some(focus_style) = self.focus_style.as_ref()
+                && focus_handle.is_focused(window)
+            {
+                style.refine(focus_style);
             }
         }
 
         if let Some(hitbox) = hitbox {
             if !cx.has_active_drag() {
-                if let Some(group_hover) = self.group_hover_style.as_ref() {
-                    if let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx) {
-                        if group_hitbox_id.is_hovered(window) {
-                            style.refine(&group_hover.style);
-                        }
-                    }
+                if let Some(group_hover) = self.group_hover_style.as_ref()
+                    && let Some(group_hitbox_id) = GroupHitboxes::get(&group_hover.group, cx)
+                    && group_hitbox_id.is_hovered(window)
+                {
+                    style.refine(&group_hover.style);
                 }
 
-                if let Some(hover_style) = self.hover_style.as_ref() {
-                    if hitbox.is_hovered(window) {
-                        style.refine(hover_style);
-                    }
+                if let Some(hover_style) = self.hover_style.as_ref()
+                    && hitbox.is_hovered(window)
+                {
+                    style.refine(hover_style);
                 }
             }
 
@@ -2396,12 +2500,10 @@ impl Interactivity {
                     for (state_type, group_drag_style) in &self.group_drag_over_styles {
                         if let Some(group_hitbox_id) =
                             GroupHitboxes::get(&group_drag_style.group, cx)
+                            && *state_type == drag.value.as_ref().type_id()
+                            && group_hitbox_id.is_hovered(window)
                         {
-                            if *state_type == drag.value.as_ref().type_id()
-                                && group_hitbox_id.is_hovered(window)
-                            {
-                                style.refine(&group_drag_style.style);
-                            }
+                            style.refine(&group_drag_style.style);
                         }
                     }
 
@@ -2423,16 +2525,16 @@ impl Interactivity {
                 .clicked_state
                 .get_or_insert_with(Default::default)
                 .borrow();
-            if clicked_state.group {
-                if let Some(group) = self.group_active_style.as_ref() {
-                    style.refine(&group.style)
-                }
+            if clicked_state.group
+                && let Some(group) = self.group_active_style.as_ref()
+            {
+                style.refine(&group.style)
             }
 
-            if let Some(active_style) = self.active_style.as_ref() {
-                if clicked_state.element {
-                    style.refine(active_style)
-                }
+            if let Some(active_style) = self.active_style.as_ref()
+                && clicked_state.element
+            {
+                style.refine(active_style)
             }
         }
 
@@ -2553,7 +2655,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
         move |_: &MouseDownEvent, _phase, window: &mut Window, _cx| {
-            if !tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window)) {
+            if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
         }
@@ -2562,7 +2664,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
         move |_: &ScrollWheelEvent, _phase, window: &mut Window, _cx| {
-            if !tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window)) {
+            if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
             }
         }
@@ -2718,7 +2820,7 @@ fn handle_tooltip_check_visible_and_update(
 
     match action {
         Action::None => {}
-        Action::Hide => clear_active_tooltip(&active_tooltip, window),
+        Action::Hide => clear_active_tooltip(active_tooltip, window),
         Action::ScheduleHide(tooltip) => {
             let delayed_hide_task = window.spawn(cx, {
                 let active_tooltip = active_tooltip.clone();
@@ -2777,126 +2879,6 @@ impl GroupHitboxes {
     }
 }
 
-/// A wrapper around an element that can be focused.
-pub struct FocusableWrapper<E> {
-    /// The element that is focusable
-    pub element: E,
-}
-
-impl<E: InteractiveElement> FocusableElement for FocusableWrapper<E> {}
-
-impl<E> InteractiveElement for FocusableWrapper<E>
-where
-    E: InteractiveElement,
-{
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.element.interactivity()
-    }
-}
-
-impl<E: StatefulInteractiveElement> StatefulInteractiveElement for FocusableWrapper<E> {}
-
-impl<E> Styled for FocusableWrapper<E>
-where
-    E: Styled,
-{
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.element.style()
-    }
-}
-
-impl FocusableWrapper<Div> {
-    /// Add a listener to be called when the children of this `Div` are prepainted.
-    /// This allows you to store the [`Bounds`] of the children for later use.
-    pub fn on_children_prepainted(
-        mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.element = self.element.on_children_prepainted(listener);
-        self
-    }
-}
-
-impl<E> Element for FocusableWrapper<E>
-where
-    E: Element,
-{
-    type RequestLayoutState = E::RequestLayoutState;
-    type PrepaintState = E::PrepaintState;
-
-    fn id(&self) -> Option<ElementId> {
-        self.element.id()
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        self.element.source_location()
-    }
-
-    fn request_layout(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, inspector_id, window, cx)
-    }
-
-    fn prepaint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        state: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> E::PrepaintState {
-        self.element
-            .prepaint(id, inspector_id, bounds, state, window, cx)
-    }
-
-    fn paint(
-        &mut self,
-        id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.element.paint(
-            id,
-            inspector_id,
-            bounds,
-            request_layout,
-            prepaint,
-            window,
-            cx,
-        )
-    }
-}
-
-impl<E> IntoElement for FocusableWrapper<E>
-where
-    E: IntoElement,
-{
-    type Element = E::Element;
-
-    fn into_element(self) -> Self::Element {
-        self.element.into_element()
-    }
-}
-
-impl<E> ParentElement for FocusableWrapper<E>
-where
-    E: ParentElement,
-{
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.element.extend(elements)
-    }
-}
-
 /// A wrapper around an element that can store state, produced after assigning an ElementId.
 pub struct Stateful<E> {
     pub(crate) element: E,
@@ -2926,8 +2908,6 @@ where
         self.element.interactivity()
     }
 }
-
-impl<E: FocusableElement> FocusableElement for Stateful<E> {}
 
 impl<E> Element for Stateful<E>
 where
@@ -3010,8 +2990,7 @@ where
 }
 
 /// Represents an element that can be scrolled *to* in its parent element.
-///
-/// Contrary to [ScrollHandle::scroll_to_item], an anchored element does not have to be an immediate child of the parent.
+/// Contrary to [ScrollHandle::scroll_to_active_item], an anchored element does not have to be an immediate child of the parent.
 #[derive(Clone)]
 pub struct ScrollAnchor {
     handle: ScrollHandle,
@@ -3042,10 +3021,11 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    padded_content_size: Size<Pixels>,
+    max_offset: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
+    active_item: Option<usize>,
 }
 
 /// A handle to the scrollable aspects of an element.
@@ -3069,6 +3049,11 @@ impl ScrollHandle {
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
         *self.0.borrow().offset.borrow()
+    }
+
+    /// Get the maximum scroll offset.
+    pub fn max_offset(&self) -> Size<Pixels> {
+        self.0.borrow().max_offset
     }
 
     /// Get the top child that's scrolled into view.
@@ -3095,47 +3080,49 @@ impl ScrollHandle {
         self.0.borrow().bounds
     }
 
-    /// Set the bounds into which this child is painted
-    pub(super) fn set_bounds(&self, bounds: Bounds<Pixels>) {
-        self.0.borrow_mut().bounds = bounds;
-    }
-
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
     }
 
-    /// Get the size of the content with padding of the container.
-    pub fn padded_content_size(&self) -> Size<Pixels> {
-        self.0.borrow().padded_content_size
+    /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
+    pub fn scroll_to_item(&self, ix: usize) {
+        let mut state = self.0.borrow_mut();
+        state.active_item = Some(ix);
     }
 
-    /// scroll_to_item scrolls the minimal amount to ensure that the child is
+    /// Scrolls the minimal amount to ensure that the child is
     /// fully visible
-    pub fn scroll_to_item(&self, ix: usize) {
-        let state = self.0.borrow();
+    fn scroll_to_active_item(&self) {
+        let mut state = self.0.borrow_mut();
 
-        let Some(bounds) = state.child_bounds.get(ix) else {
+        let Some(active_item_index) = state.active_item else {
             return;
         };
+        let active_item = match state.child_bounds.get(active_item_index) {
+            Some(bounds) => {
+                let mut scroll_offset = state.offset.borrow_mut();
 
-        let mut scroll_offset = state.offset.borrow_mut();
+                if state.overflow.y == Overflow::Scroll {
+                    if bounds.top() + scroll_offset.y < state.bounds.top() {
+                        scroll_offset.y = state.bounds.top() - bounds.top();
+                    } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                        scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+                    }
+                }
 
-        if state.overflow.y == Overflow::Scroll {
-            if bounds.top() + scroll_offset.y < state.bounds.top() {
-                scroll_offset.y = state.bounds.top() - bounds.top();
-            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+                if state.overflow.x == Overflow::Scroll {
+                    if bounds.left() + scroll_offset.x < state.bounds.left() {
+                        scroll_offset.x = state.bounds.left() - bounds.left();
+                    } else if bounds.right() + scroll_offset.x > state.bounds.right() {
+                        scroll_offset.x = state.bounds.right() - bounds.right();
+                    }
+                }
+                None
             }
-        }
-
-        if state.overflow.x == Overflow::Scroll {
-            if bounds.left() + scroll_offset.x < state.bounds.left() {
-                scroll_offset.x = state.bounds.left() - bounds.left();
-            } else if bounds.right() + scroll_offset.x > state.bounds.right() {
-                scroll_offset.x = state.bounds.right() - bounds.right();
-            }
-        }
+            None => Some(active_item_index),
+        };
+        state.active_item = active_item;
     }
 
     /// Scrolls to the bottom.

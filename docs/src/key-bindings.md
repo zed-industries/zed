@@ -1,30 +1,36 @@
 # Key bindings
 
-Zed has a very customizable key binding system — you can tweak everything to work exactly how your fingers expect!
+Zed has a very customizable key binding system—you can tweak everything to work exactly how your fingers expect!
 
 ## Predefined keymaps
 
-If you're used to a specific editor's defaults you can set a `base_keymap` in your [settings file](./configuring-zed.md). We currently have:
+If you're used to a specific editor's defaults, you can set a `base_keymap` in your [settings file](./configuring-zed.md).
+We currently support:
 
-- VSCode (default)
+- VS Code (default)
 - Atom
 - Emacs (Beta)
 - JetBrains
-- SublimeText
+- Sublime Text
 - TextMate
+- Cursor
 - None (disables _all_ key bindings)
 
-You can also enable `vim_mode`, which adds vim bindings too.
+This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
+
+You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
+For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
 
 ## User keymaps
 
-Zed reads your keymap from `~/.zed/keymap.json` on MacOS (or `~/.config/zed/keymap.json` on Linux). You can open the file within Zed with {#kb zed::OpenKeymap}, or via `zed: Open Keymap` in the command palette.
+Zed reads your keymap from `~/.config/zed/keymap.json`, which you can open with the {#action zed::OpenKeymap} action from the command palette.
+You can also edit your keymap through the Zed Keymap Editor, accessible via the {#action zed::OpenKeymapEditor} action or the {#kb zed::OpenKeymapEditor} keybinding.
 
-The file contains a JSON array of objects with `"bindings"`. If no `"context"` is set the bindings are always active. If it is set the binding is only active when the [context matches](#contexts).
+The `keymap.json` file contains a JSON array of objects with `"bindings"`. If no `"context"` is set, the bindings are always active. If it is set, the binding is only active when the [context matches](#contexts).
 
-Within each binding section a [key sequence](#keybinding-syntax) is mapped to an [action](#actions). If conflicts are detected they are resolved as [described below](#precedence).
+Within each binding section, a [key sequence](#keybinding-syntax) is mapped to [an action](#actions). If conflicts are detected, they are resolved as [described below](#precedence).
 
-If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_layout_keys` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
+If you are using a non-QWERTY, Latin-character keyboard, you may want to set `use_key_equivalents` to `true`. See [Non-QWERTY keyboards](#non-qwerty-keyboards) for more information.
 
 For example:
 
@@ -45,9 +51,9 @@ For example:
 ]
 ```
 
-You can see all of Zed's default bindings in the default keymaps for [MacOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
+You can see all of Zed's default bindings in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
+If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding syntax
 
@@ -62,7 +68,7 @@ Each keypress is a sequence of modifiers followed by a key. The modifiers are:
 - `fn-` The function key
 - `secondary-` Equivalent to `cmd` when Zed is running on macOS and `ctrl` when on Windows and Linux
 
-The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that key generates with `cmd` pressed.
+The keys can be any single Unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the Cyrillic character or the Latin character that key generates with `cmd` pressed.
 
 A few examples:
 
@@ -75,19 +81,17 @@ A few examples:
  }
 ```
 
-The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified and so `shift-(` does not match.
+The `shift-` modifier can only be used in combination with a letter to indicate the uppercase version. For example, `shift-g` matches typing `G`. Although on many keyboards shift is used to type punctuation characters like `(`, the keypress is not considered to be modified, and so `shift-(` does not match.
 
-The `alt-` modifier can be used on many layouts to generate a different key. For example on macOS US keyboard the combination `alt-c` types `ç`. You can match against either in your keymap file, though by convention Zed spells this combination as `alt-c`.
+The `alt-` modifier can be used on many layouts to generate a different key. For example, on a macOS US keyboard, the combination `alt-c` types `ç`. You can match against either in your keymap file, though by convention, Zed spells this combination as `alt-c`.
 
-It is possible to match against typing a modifier key on its own. For example `shift shift` can be used to implement JetBrains search everywhere shortcut. In this case the binding happens on key release instead of keypress.
+It is possible to match against typing a modifier key on its own. For example, `shift shift` can be used to implement JetBrains' 'Search Everywhere' shortcut. In this case, the binding happens on key release instead of on keypress.
 
 ### Contexts
 
-If a binding group has a `"context"` key it will be matched against the currently active contexts in Zed.
+If a binding group has a `"context"` key, it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `dev: Open Key Context View` in the command palette.
-
-Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the `dev: open key context view` command in the command palette.
 
 For example:
 
@@ -95,7 +99,7 @@ For example:
 # in an editor, it might look like this:
 Workspace os=macos keyboard_layout=com.apple.keylayout.QWERTY
   Pane
-    Editor mode=full extension=md inline_completion vim_mode=insert
+    Editor mode=full extension=md vim_mode=insert
 
 # in the project panel
 Workspace os=macos
@@ -106,47 +110,54 @@ Workspace os=macos
 Context expressions can contain the following syntax:
 
 - `X && Y`, `X || Y` to and/or two conditions
-- `!X` to negate a condition
+- `!X` to check that a condition is false
 - `(X)` for grouping
-- `X > Y` to match if a parent in the tree matches X and this layer matches Y.
+- `X > Y` to match if an ancestor in the tree matches X and this layer matches Y.
 
-If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts)
+For example:
+
+- `"context": "Editor"` - matches any editor (including inline inputs)
+- `"context": "Editor && mode=full"` - matches the main editors used for editing code
+- `"context": "!Editor && !Terminal"` - matches anywhere except where an Editor or Terminal is focused
+- `"context": "os=macos > Editor"` - matches any editor on macOS.
+
+It's worth noting that attributes are only available on the node they are defined on. This means that if you want to (for example) only enable a keybinding when the debugger is stopped in vim normal mode, you need to do `debugger_stopped > vim_mode == normal`.
+
+> Note: Before Zed v0.197.x, the `!` operator only looked at one node at a time, and `>` meant "parent" not "ancestor". This meant that `!Editor` would match the context `Workspace > Pane > Editor`, because (confusingly) the Pane matches `!Editor`, and that `os=macos > Editor` did not match the context `Workspace > Pane > Editor` because of the intermediate `Pane` node.
+
+If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts). Helix mode is built on top of Vim mode and uses the same contexts.
 
 ### Actions
 
-Pretty much all of Zed's functionality is exposed as actions. Although there is
-no explicitly documented list, you can find most of them by searching in the
-command palette, by looking in the default keymaps for
-[MacOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json)
-or
-[Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
+Almost all of Zed's functionality is exposed as actions.
+Although there is no explicitly documented list, you can find most of them by searching in the command palette, by looking in the default keymaps for [macOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json), or by using Zed's autocomplete in your keymap file.
 
-Most actions do not require any arguments, and so you can bind them as strings: `"ctrl-a": "language_selector::Toggle"`. Some require a single argument, and must be bound as an array: `"cmd-1": ["workspace::ActivatePane", 0]`. Some actions require multiple arguments, and are bound as an array of a string and an object: `"ctrl-a": ["pane::DeploySearch", { "replace_enabled": true }]`.
+Most actions do not require any arguments, and so you can bind them as strings: `"ctrl-a": "language_selector::Toggle"`. Some require a single argument and must be bound as an array: `"cmd-1": ["workspace::ActivatePane", 0]`. Some actions require multiple arguments and are bound as an array of a string and an object: `"ctrl-a": ["pane::DeploySearch", { "replace_enabled": true }]`.
 
 ### Precedence
 
 When multiple keybindings have the same keystroke and are active at the same time, precedence is resolved in two ways:
 
-- Bindings that match on lower nodes in the context tree win. This means that if you have a binding with a context of `Editor` it will take precedence over a binding with a context of `Workspace`. Bindings with no context match at the lowest level in the tree.
-- If there are multiple bindings that match at the same level in the tree, then the binding defined later takes precedence. As user keybindings are loaded after system keybindings, this allows user bindings to take precedence over builtin keybindings.
+- Bindings that match on lower nodes in the context tree win. This means that if you have a binding with a context of `Editor`, it will take precedence over a binding with a context of `Workspace`. Bindings with no context match at the lowest level in the tree.
+- If there are multiple bindings that match at the same level in the tree, then the binding defined later takes precedence. As user keybindings are loaded after system keybindings, this allows user bindings to take precedence over built-in keybindings.
 
-The other kind of conflict that arises is when you have two bindings, one of which is a prefix of the other. For example if you have `"ctrl-w":"editor::DeleteToNextWordEnd"` and `"ctrl-w left":"editor::DeleteToEndOfLine"`.
+The other kind of conflict that arises is when you have two bindings, one of which is a prefix of the other. For example, if you have `"ctrl-w":"editor::DeleteToNextWordEnd"` and `"ctrl-w left":"editor::DeleteToEndOfLine"`.
 
 When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
 
 ### Non-QWERTY keyboards
 
-As of Zed 0.162.0, Zed has some support for non-QWERTY keyboards on macOS. Better support for non-QWERTY keyboards on Linux is planned.
+Zed's support for non-QWERTY keyboards is still a work in progress.
 
-There are roughly three categories of keyboard to consider:
+If your keyboard can type the full ASCII range (DVORAK, COLEMAK, etc.), then shortcuts should work as you expect.
 
-Keyboards that support full ASCII (QWERTY, DVORAK, COLEMAK, etc.). On these keyboards bindings are resolved based on the character that would be generated by the key. So to type `cmd-[`, find the key labeled `[` and press it with command.
+Otherwise, read on...
 
-Keyboards that are mostly non-ASCII, but support full ASCII when the command key is pressed. For example Cyrillic keyboards, Armenian, Hebrew, etc. On these keyboards bindings are resolved based on the character that would be generated by typing the key with command pressed. So to type `ctrl-a`, find the key that generates `cmd-a`. For these keyboards, keyboard shortcuts are displayed in the app using their ASCII equivalents. If the ASCII-equivalents are not printed on your keyboard, you can use the macOS keyboard viewer and holding down the `cmd` key to find things (though often the ASCII equivalents are in a QWERTY layout).
+#### macOS
 
-Finally keyboards that support extended Latin alphabets (usually ISO keyboards) require the most support. For example French AZERTY, German QWERTZ, etc. On these keyboards it is often not possible to type the entire ASCII range without option. To ensure that shortcuts _can_ be typed without option, keyboard shortcuts are mapped to "key equivalents" in the same way as [macOS](). This mapping is defined per layout, and is a compromise between leaving keyboard shortcuts triggered by the same character they are defined with, keeping shortcuts in the same place as a QWERTY layout, and moving shortcuts out of the way of system shortcuts.
+On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII, macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further, and it can always match key-presses against either the ASCII layout or the real layout, regardless of modifiers and the `use_key_equivalents` setting. For example, in Thai, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q` or `ctrl-ๆ`.
 
-For example on a German QWERTZ keyboard, the `cmd->` shortcut is moved to `cmd-:` because `cmd->` is the system window switcher and this is where that shortcut is typed on a QWERTY keyboard. `cmd-+` stays the same because + is still typeable without option, and as a result, `cmd-[` and `cmd-]` become `cmd-ö` and `cmd-ä`, moving out of the way of the `+` key.
+On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running `dev: open key context view` from the command palette.
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 
@@ -161,12 +172,18 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 ]
 ```
 
+### Linux
+
+Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII character, then we use the QWERTY-layout equivalent key for keyboard shortcuts. This means that many shortcuts can be typed on many layouts.
+
+We do not yet move shortcuts around to ensure that all the built-in shortcuts can be typed on every layout, so if there are some ASCII characters that cannot be typed, and your keyboard layout has different ASCII characters on the same keys as would be needed to type them, you may need to add custom key bindings to make this work. We do intend to fix this at some point, and help is very much appreciated!
+
 ## Tips and tricks
 
 ### Disabling a binding
 
-If you'd like a given binding to do nothing in a given context you can use
-`null` as the action. This is useful if you hit the keybinding by accident and
+If you'd like a given binding to do nothing in a given context, you can use
+`null` as the action. This is useful if you hit the key binding by accident and
 want to disable it, or if you want to type the character that would be typed by
 the sequence, or if you want to disable multikey bindings starting with that key.
 
@@ -181,9 +198,9 @@ the sequence, or if you want to disable multikey bindings starting with that key
 ]
 ```
 
-A `null` binding follows the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
+A `null` binding follows the same precedence rules as normal actions, so it disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
 
-This is useful for preventing Zed from falling back to a default keybinding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that binding, such as opening the right dock. To prevent this from happening:
+This is useful for preventing Zed from falling back to a default key binding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that key binding, such as opening the right dock. To prevent this from happening:
 
 ```json
 [
@@ -210,12 +227,14 @@ A common request is to be able to map from a single keystroke to a sequence. You
 [
   {
     "bindings": {
+      // Move down four times
       "alt-down": ["workspace::SendKeystrokes", "down down down down"],
+      // Expand the selection (editor::SelectLargerSyntaxNode);
+      // copy to the clipboard; and then undo the selection expansion.
       "cmd-alt-c": [
         "workspace::SendKeystrokes",
-        "cmd-shift-p copy relative path enter"
-      ],
-      "cmd-alt-r": ["workspace::SendKeystrokes", "cmd-p README enter"]
+        "ctrl-shift-right ctrl-shift-right ctrl-shift-right cmd-c ctrl-shift-left ctrl-shift-left ctrl-shift-left"
+      ]
     }
   },
   {
@@ -229,7 +248,7 @@ A common request is to be able to map from a single keystroke to a sequence. You
 
 There are some limitations to this, notably:
 
-- Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example this means that while you can use a binding to open a file (as in the `cmd-alt-r` example) you cannot send further keystrokes and hope to have them interpreted by the new view.
+- Any asynchronous operation will not happen until after all your key bindings have been dispatched. For example, this means that while you can use a binding to open a file (as in the `cmd-alt-r` example), you cannot send further keystrokes and hope to have them interpreted by the new view.
 - Other examples of asynchronous things are: opening the command palette, communicating with a language server, changing the language of a buffer, anything that hits the network.
 - There is a limit of 100 simulated keys at a time.
 
@@ -254,5 +273,5 @@ For example, `ctrl-n` creates a new tab in Zed on Linux. If you want to send `ct
 
 ### Task Key bindings
 
-You can also bind keys to launch Zed Tasks defined in your tasks.json.
+You can also bind keys to launch Zed Tasks defined in your `tasks.json`.
 See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.

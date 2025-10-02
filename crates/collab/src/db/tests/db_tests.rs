@@ -72,12 +72,12 @@ async fn test_get_users(db: &Arc<Database>) {
 }
 
 test_both_dbs!(
-    test_get_or_create_user_by_github_account,
-    test_get_or_create_user_by_github_account_postgres,
-    test_get_or_create_user_by_github_account_sqlite
+    test_update_or_create_user_by_github_account,
+    test_update_or_create_user_by_github_account_postgres,
+    test_update_or_create_user_by_github_account_sqlite
 );
 
-async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
+async fn test_update_or_create_user_by_github_account(db: &Arc<Database>) {
     db.create_user(
         "user1@example.com",
         None,
@@ -104,7 +104,14 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
         .user_id;
 
     let user = db
-        .get_or_create_user_by_github_account("the-new-login2", 102, None, None, Utc::now(), None)
+        .update_or_create_user_by_github_account(
+            "the-new-login2",
+            102,
+            None,
+            None,
+            Utc::now(),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(user.id, user_id2);
@@ -112,7 +119,7 @@ async fn test_get_or_create_user_by_github_account(db: &Arc<Database>) {
     assert_eq!(user.github_user_id, 102);
 
     let user = db
-        .get_or_create_user_by_github_account(
+        .update_or_create_user_by_github_account(
             "login3",
             103,
             Some("user3@example.com"),
@@ -551,18 +558,18 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 0);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 1);
 
-    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 1 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);
 
     // Projects shared by admins aren't counted.
-    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false)
+    db.share_project(room_id, ConnectionId { owner_id, id: 0 }, &[], false, false)
         .await
         .unwrap();
     assert_eq!(db.project_count_excluding_admins().await.unwrap(), 2);

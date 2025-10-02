@@ -25,11 +25,13 @@ use alacritty_terminal::{
 use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
 use language::Buffer;
 use settings::Settings as _;
+use terminal::terminal_settings::TerminalSettings;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
+use crate::repl_settings::ReplSettings;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -52,9 +54,6 @@ pub struct TerminalOutput {
     handler: alacritty_terminal::Term<VoidListener>,
 }
 
-const DEFAULT_NUM_LINES: usize = 32;
-const DEFAULT_NUM_COLUMNS: usize = 128;
-
 /// Returns the default text style for the terminal output.
 pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
@@ -67,7 +66,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
 
     let theme = cx.theme();
 
-    let text_style = TextStyle {
+    TextStyle {
         font_family,
         font_features,
         font_weight,
@@ -80,9 +79,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
         // These are going to be overridden per-cell
         color: theme.colors().terminal_foreground,
         ..Default::default()
-    };
-
-    text_style
+    }
 }
 
 /// Returns the default terminal size for the terminal output.
@@ -100,8 +97,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap()
         .width;
 
-    let num_lines = DEFAULT_NUM_LINES;
-    let columns = DEFAULT_NUM_COLUMNS;
+    let num_lines = ReplSettings::get_global(cx).max_lines;
+    let columns = ReplSettings::get_global(cx).max_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
@@ -172,9 +169,9 @@ impl TerminalOutput {
     ///
     /// Then append_text will be called twice, with the following arguments:
     ///
-    /// ```rust
-    /// terminal_output.append_text("Hello,")
-    /// terminal_output.append_text(" world!")
+    /// ```ignore
+    /// terminal_output.append_text("Hello,");
+    /// terminal_output.append_text(" world!");
     /// ```
     /// Resulting in a single output of "Hello, world!".
     ///
@@ -234,8 +231,7 @@ impl TerminalOutput {
             }
         }
 
-        // Trim any trailing newlines
-        full_text.trim_end().to_string()
+        full_text
     }
 }
 
@@ -257,12 +253,18 @@ impl Render for TerminalOutput {
                 point: ic.point,
                 cell: ic.cell.clone(),
             });
-        let (cells, rects) =
-            TerminalElement::layout_grid(grid, &text_style, text_system, None, window, cx);
+        let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
+        let (rects, batched_text_runs) =
+            TerminalElement::layout_grid(grid, 0, &text_style, None, minimum_contrast, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
-        let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0) + 1;
+        let num_lines = batched_text_runs
+            .iter()
+            .map(|b| b.start_point.line)
+            .max()
+            .unwrap_or(0)
+            + 1;
         let height = num_lines as f32 * text_line_height;
 
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
@@ -290,15 +292,14 @@ impl Render for TerminalOutput {
                     );
                 }
 
-                for cell in cells {
-                    cell.paint(
+                for batch in batched_text_runs {
+                    batch.paint(
                         bounds.origin,
                         &terminal::TerminalBounds {
                             cell_width,
                             line_height: text_line_height,
                             bounds,
                         },
-                        bounds,
                         window,
                         cx,
                     );

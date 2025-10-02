@@ -8,8 +8,9 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent,
+    Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
+    multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use futures::StreamExt;
@@ -37,11 +38,19 @@ use util::ResultExt as _;
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
-actions!(git, [Diff, Add]);
+actions!(
+    git,
+    [
+        /// Shows the diff between the working directory and the index.
+        Diff,
+        /// Adds files to the git staging area.
+        Add
+    ]
+);
 
 pub struct ProjectDiff {
     project: Entity<Project>,
@@ -141,7 +150,7 @@ impl ProjectDiff {
         let editor = cx.new(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
-            diff_display_editor.disable_inline_diagnostics();
+            diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 workspace: workspace.downgrade(),
@@ -177,12 +186,19 @@ impl ProjectDiff {
         );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_collapse_untracked_diff =
+            GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global::<SettingsStore>(move |this, cx| {
             let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            if is_sort_by_path != was_sort_by_path {
+            let is_collapse_untracked_diff =
+                GitPanelSettings::get_global(cx).collapse_untracked_diff;
+            if is_sort_by_path != was_sort_by_path
+                || is_collapse_untracked_diff != was_collapse_untracked_diff
+            {
                 *this.update_needed.borrow_mut() = ();
             }
-            was_sort_by_path = is_sort_by_path
+            was_sort_by_path = is_sort_by_path;
+            was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
 
@@ -227,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -248,9 +264,14 @@ impl ProjectDiff {
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                    s.select_ranges([position..position]);
-                })
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::focused()),
+                    window,
+                    cx,
+                    |s| {
+                        s.select_ranges([position..position]);
+                    },
+                )
             });
         } else {
             self.pending_scroll = Some(path_key);
@@ -260,7 +281,7 @@ impl ProjectDiff {
     fn button_states(&self, cx: &App) -> ButtonStates {
         let editor = self.editor.read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().skip(1).next().is_some();
+        let prev_next = snapshot.diff_hunks().nth(1).is_some();
         let mut selection = true;
 
         let mut ranges = editor
@@ -309,14 +330,14 @@ impl ProjectDiff {
             })
             .ok();
 
-        return ButtonStates {
+        ButtonStates {
             stage: has_unstaged_hunks,
             unstage: has_staged_hunks,
             prev_next,
             selection,
             stage_all,
             unstage_all,
-        };
+        }
     }
 
     fn handle_editor_event(
@@ -326,27 +347,24 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            EditorEvent::SelectionsChanged { local: true } => {
-                let Some(project_path) = self.active_path(cx) else {
-                    return;
-                };
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                            git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path, window, cx)
-                            })
-                        }
-                    })
-                    .ok();
-            }
-            _ => {}
+        if let EditorEvent::SelectionsChanged { local: true } = event {
+            let Some(project_path) = self.active_path(cx) else {
+                return;
+            };
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                        git_panel.update(cx, |git_panel, cx| {
+                            git_panel.select_entry_by_path(project_path, window, cx)
+                        })
+                    }
+                })
+                .ok();
         }
-        if editor.focus_handle(cx).contains_focused(window, cx) {
-            if self.multibuffer.read(cx).is_empty() {
-                self.focus_handle.focus(window)
-            }
+        if editor.focus_handle(cx).contains_focused(window, cx)
+            && self.multibuffer.read(cx).is_empty()
+        {
+            self.focus_handle.focus(window)
         }
     }
 
@@ -379,7 +397,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -431,10 +449,10 @@ impl ProjectDiff {
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+            .map(|diff_hunk| diff_hunk.buffer_range);
         let conflicts = conflict_addon
             .conflict_set(snapshot.remote_id())
-            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts)
             .unwrap_or_default();
         let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
 
@@ -448,7 +466,7 @@ impl ProjectDiff {
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             (was_empty, is_newly_added)
@@ -456,12 +474,16 @@ impl ProjectDiff {
 
         self.editor.update(cx, |editor, cx| {
             if was_empty {
-                editor.change_selections(None, window, cx, |selections| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
                     selections.select_ranges([0..0])
                 });
             }
-            if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
+            if is_excerpt_newly_added
+                && (diff_buffer.file_status.is_deleted()
+                    || (diff_buffer.file_status.is_untracked()
+                        && GitPanelSettings::get_global(cx).collapse_untracked_diff))
+            {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
             }
         });
@@ -489,7 +511,7 @@ impl ProjectDiff {
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        while let Some(_) = recv.next().await {
+        while (recv.next().await).is_some() {
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -513,7 +535,7 @@ impl ProjectDiff {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string_lossy().to_string())
+            .map(|key| key.path().to_string())
             .collect()
     }
 }
@@ -632,12 +654,12 @@ impl Item for ProjectDiff {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(
@@ -716,7 +738,7 @@ impl Render for ProjectDiff {
                 } else {
                     None
                 };
-                let keybinding_focus_handle = self.focus_handle(cx).clone();
+                let keybinding_focus_handle = self.focus_handle(cx);
                 el.child(
                     v_flex()
                         .gap_1()
@@ -1049,8 +1071,7 @@ pub struct ProjectDiffEmptyState {
 impl RenderOnce for ProjectDiffEmptyState {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let status_against_remote = |ahead_by: usize, behind_by: usize| -> bool {
-            match self.current_branch {
-                Some(Branch {
+            matches!(self.current_branch, Some(Branch {
                     upstream:
                         Some(Upstream {
                             tracking:
@@ -1060,9 +1081,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             ..
                         }),
                     ..
-                }) if (ahead > 0) == (ahead_by > 0) && (behind > 0) == (behind_by > 0) => true,
-                _ => false,
-            }
+                }) if (ahead > 0) == (ahead_by > 0) && (behind > 0) == (behind_by > 0))
         };
 
         let change_count = |current_branch: &Branch| -> (usize, usize) {
@@ -1149,7 +1168,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             .child(Label::new("No Changes").color(Color::Muted))
                     } else {
                         this.when_some(self.current_branch.as_ref(), |this, branch| {
-                            this.child(has_branch_container(&branch))
+                            this.child(has_branch_container(branch))
                         })
                     }
                 }),
@@ -1201,6 +1220,7 @@ mod preview {
                         sha: "abc123".into(),
                         subject: "Modify stuff".into(),
                         commit_timestamp: 1710932954,
+                        author_name: "John Doe".into(),
                         has_parent: true,
                     }),
                 }
@@ -1308,14 +1328,14 @@ fn merge_anchor_ranges<'a>(
         loop {
             if let Some(left_range) = left
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 left.next();
                 next_range.end = left_range.end;
             } else if let Some(right_range) = right
                 .peek()
-                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .filter(|range| range.start.cmp(&next_range.end, snapshot).is_le())
                 .cloned()
             {
                 right.next();
@@ -1386,12 +1406,12 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
             "deadbeef",
         );
         fs.set_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
         );
         cx.run_until_parked();
 
@@ -1441,16 +1461,13 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[
-                ("bar".into(), "bar\n".into()),
-                ("foo".into(), "foo\n".into()),
-            ],
+            &[("bar", "bar\n".into()), ("foo", "foo\n".into())],
         );
         cx.run_until_parked();
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, "foo".into()),
                 window,
                 cx,
             );
@@ -1471,7 +1488,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, "bar".into()),
                 window,
                 cx,
             );
@@ -1523,7 +1540,7 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "original\n".into())],
+            &[("foo", "original\n".into())],
             "deadbeef",
         );
         cx.run_until_parked();
@@ -1565,7 +1582,15 @@ mod tests {
 
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.set_text("different\n", window, cx);
-            buffer_editor.save(false, project.clone(), window, cx)
+            buffer_editor.save(
+                SaveOptions {
+                    format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -1618,12 +1643,12 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
             &[
-                ("b.txt".into(), "before\n".to_string(), None),
-                ("c.txt".into(), "unchanged\n".to_string(), None),
-                ("d.txt".into(), "deleted\n".to_string(), None),
+                ("b.txt", "before\n".to_string()),
+                ("c.txt", "unchanged\n".to_string()),
+                ("d.txt", "deleted\n".to_string()),
             ],
         );
 
@@ -1736,9 +1761,9 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
-            &[("main.rs".into(), git_contents.to_owned(), None)],
+            &[("main.rs", git_contents.to_owned())],
         );
 
         let project = Project::test(fs, [Path::new("/a")], cx).await;
@@ -1788,7 +1813,7 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/project/.git")),
             &[(
-                Path::new("foo"),
+                "foo",
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

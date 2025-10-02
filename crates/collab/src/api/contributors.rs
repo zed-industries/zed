@@ -8,7 +8,6 @@ use axum::{
 use chrono::{NaiveDateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};
 
-use crate::api::AuthenticatedUserParams;
 use crate::db::ContributorSelector;
 use crate::{AppState, Result};
 
@@ -104,9 +103,18 @@ impl RenovateBot {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct AddContributorBody {
+    github_user_id: i32,
+    github_login: String,
+    github_email: Option<String>,
+    github_name: Option<String>,
+    github_user_created_at: chrono::DateTime<chrono::Utc>,
+}
+
 async fn add_contributor(
     Extension(app): Extension<Arc<AppState>>,
-    extract::Json(params): extract::Json<AuthenticatedUserParams>,
+    extract::Json(params): extract::Json<AddContributorBody>,
 ) -> Result<()> {
     let initial_channel_id = app.config.auto_join_channel_id;
     app.db

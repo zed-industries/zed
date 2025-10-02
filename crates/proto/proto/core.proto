@@ -7,10 +7,10 @@ message PeerId {
 }
 
 message User {
+    reserved 4;
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
-    optional string email = 4;
     optional string name = 5;
 }
 
@@ -24,4 +24,6 @@ message Collaborator {
     uint32 replica_id = 2;
     uint64 user_id = 3;
     bool is_host = 4;
+    optional string committer_name = 5;
+    optional string committer_email = 6;
 }

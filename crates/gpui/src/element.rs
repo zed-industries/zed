@@ -14,13 +14,13 @@
 //! tree and any callbacks they have registered with GPUI are dropped and the process repeats.
 //!
 //! But some state is too simple and voluminous to store in every view that needs it, e.g.
-//! whether a hover has been started or not. For this, GPUI provides the [`Element::State`], associated type.
+//! whether a hover has been started or not. For this, GPUI provides the [`Element::PrepaintState`], associated type.
 //!
 //! # Implementing your own elements
 //!
 //! Elements are intended to be the low level, imperative API to GPUI. They are responsible for upholding,
 //! or breaking, GPUI's features as they deem necessary. As an example, most GPUI elements are expected
-//! to stay in the bounds that their parent element gives them. But with [`WindowContext::break_content_mask`],
+//! to stay in the bounds that their parent element gives them. But with [`Window::with_content_mask`],
 //! you can ignore this restriction and paint anywhere inside of the window's bounds. This is useful for overlays
 //! and popups and anything else that shows up 'on top' of other elements.
 //! With great power, comes great responsibility.
@@ -39,7 +39,7 @@ use crate::{
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
 use std::{
-    any::Any,
+    any::{Any, type_name},
     fmt::{self, Debug, Display},
     mem, panic,
 };
@@ -220,14 +220,17 @@ impl<C: RenderOnce> Element for Component<C> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self
-            .component
-            .take()
-            .unwrap()
-            .render(window, cx)
-            .into_any_element();
-        let layout_id = element.request_layout(window, cx);
-        (layout_id, element)
+        window.with_global_id(ElementId::Name(type_name::<C>().into()), |_, window| {
+            let mut element = self
+                .component
+                .take()
+                .unwrap()
+                .render(window, cx)
+                .into_any_element();
+
+            let layout_id = element.request_layout(window, cx);
+            (layout_id, element)
+        })
     }
 
     fn prepaint(
@@ -239,7 +242,9 @@ impl<C: RenderOnce> Element for Component<C> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        element.prepaint(window, cx);
+        window.with_global_id(ElementId::Name(type_name::<C>().into()), |_, window| {
+            element.prepaint(window, cx);
+        })
     }
 
     fn paint(
@@ -252,7 +257,9 @@ impl<C: RenderOnce> Element for Component<C> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        element.paint(window, cx);
+        window.with_global_id(ElementId::Name(type_name::<C>().into()), |_, window| {
+            element.paint(window, cx);
+        })
     }
 }
 
@@ -596,10 +603,8 @@ impl AnyElement {
 
         self.0.prepaint(window, cx);
 
-        if !focus_assigned {
-            if let Some(focus_id) = window.next_frame.focus {
-                return FocusHandle::for_id(focus_id, &cx.focus_handles);
-            }
+        if !focus_assigned && let Some(focus_id) = window.next_frame.focus {
+            return FocusHandle::for_id(focus_id, &cx.focus_handles);
         }
 
         None

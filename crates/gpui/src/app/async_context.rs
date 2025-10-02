@@ -3,7 +3,7 @@ use crate::{
     Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
     Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
@@ -56,6 +56,15 @@ impl AppContext for AsyncApp {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot as_mut with an async context. Try calling update() first"
+        ))
     }
 
     fn read_entity<T, R>(
@@ -209,7 +218,24 @@ impl AsyncApp {
         Some(read(app.try_global()?, &app))
     }
 
-    /// A convenience method for [App::update_global]
+    /// Reads the global state of the specified type, passing it to the given callback.
+    /// A default value is assigned if a global of this type has not yet been assigned.
+    ///
+    /// # Errors
+    /// If the app has ben dropped this returns an error.
+    pub fn try_read_default_global<G: Global + Default, R>(
+        &self,
+        read: impl FnOnce(&G, &App) -> R,
+    ) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut app = app.borrow_mut();
+        app.update(|cx| {
+            cx.default_global::<G>();
+        });
+        Ok(read(app.try_global().context("app was released")?, &app))
+    }
+
+    /// A convenience method for [`App::update_global`](BorrowAppContext::update_global)
     /// for updating the global state of the specified type.
     pub fn update_global<G: Global, R>(
         &self,
@@ -284,7 +310,7 @@ impl AsyncWindowContext {
             .update(self, |_, window, cx| read(cx.global(), window, cx))
     }
 
-    /// A convenience method for [`App::update_global`].
+    /// A convenience method for [`App::update_global`](BorrowAppContext::update_global).
     /// for updating the global state of the specified type.
     pub fn update_global<G, R>(
         &mut self,
@@ -362,6 +388,15 @@ impl AppContext for AsyncWindowContext {
     ) -> Result<R> {
         self.window
             .update(self, |_, _, cx| cx.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot use as_mut() from an async context, call `update`"
+        ))
     }
 
     fn read_entity<T, R>(
@@ -447,7 +482,7 @@ impl VisualContext for AsyncWindowContext {
         V: Focusable,
     {
         self.window.update(self, |_, window, cx| {
-            view.read(cx).focus_handle(cx).clone().focus(window);
+            view.read(cx).focus_handle(cx).focus(window);
         })
     }
 }

@@ -8,17 +8,18 @@ use futures::{Future, FutureExt, StreamExt};
 use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
+use regex::Regex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -45,29 +46,11 @@ struct TelemetryState {
     first_event_date_time: Option<Instant>,
     event_coalescer: EventCoalescer,
     max_queue_size: usize,
-    worktree_id_map: WorktreeIdMap,
+    worktrees_with_project_type_events_sent: HashSet<WorktreeId>,
 
     os_name: String,
     app_version: String,
     os_version: Option<String>,
-}
-
-#[derive(Debug)]
-struct WorktreeIdMap(HashMap<String, ProjectCache>);
-
-#[derive(Debug)]
-struct ProjectCache {
-    name: String,
-    worktree_ids_reported: HashSet<WorktreeId>,
-}
-
-impl ProjectCache {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            worktree_ids_reported: HashSet::default(),
-        }
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -91,14 +74,32 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
         })
 });
 
+pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
+    option_env!("ZED_MINIDUMP_ENDPOINT")
+        .map(str::to_string)
+        .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
+});
+
+static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
+});
+
+#[cfg(target_os = "macos")]
+static MACOS_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
+
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
     {
         "macOS".to_string()
     }
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(target_os = "linux")]
     {
         format!("Linux {}", gpui::guess_compositor())
+    }
+    #[cfg(target_os = "freebsd")]
+    {
+        format!("FreeBSD {}", gpui::guess_compositor())
     }
 
     #[cfg(target_os = "windows")]
@@ -111,19 +112,16 @@ pub fn os_name() -> String {
 pub fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::base::nil;
-        use cocoa::foundation::NSProcessInfo;
-
-        unsafe {
-            let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            gpui::SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            )
+        use objc2_foundation::NSProcessInfo;
+        let process_info = NSProcessInfo::processInfo();
+        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
+        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+        let version_string = version_nsstring.to_string().replace("Version ", "");
+        // "15.6.1 (Build 24G90)" -> "15.6.1"
+        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+        MACOS_VERSION_REGEX
+            .replace_all(&version_string, "")
             .to_string()
-        }
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -133,8 +131,12 @@ pub fn os_version() -> String {
             file
         } else if let Ok(file) = std::fs::read_to_string(&Path::new("/usr/lib/os-release")) {
             file
+        } else if let Ok(file) = std::fs::read_to_string(&Path::new("/var/run/os-release")) {
+            file
         } else {
-            log::error!("Failed to load /etc/os-release, /usr/lib/os-release");
+            log::error!(
+                "Failed to load /etc/os-release, /usr/lib/os-release, or /var/run/os-release"
+            );
             "".to_string()
         };
         let mut name = "unknown";
@@ -194,20 +196,7 @@ impl Telemetry {
             first_event_date_time: None,
             event_coalescer: EventCoalescer::new(clock.clone()),
             max_queue_size: MAX_QUEUE_LEN,
-            worktree_id_map: WorktreeIdMap(HashMap::from_iter([
-                (
-                    "pnpm-lock.yaml".to_string(),
-                    ProjectCache::new("pnpm".to_string()),
-                ),
-                (
-                    "yarn.lock".to_string(),
-                    ProjectCache::new("yarn".to_string()),
-                ),
-                (
-                    "package.json".to_string(),
-                    ProjectCache::new("node".to_string()),
-                ),
-            ])),
+            worktrees_with_project_type_events_sent: HashSet::new(),
 
             os_version: None,
             os_name: os_name(),
@@ -220,7 +209,7 @@ impl Telemetry {
             let os_version = os_version();
             state.lock().os_version = Some(os_version);
             async move {
-                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                if let Some(tempfile) = File::create(Self::log_file_path()).ok() {
                     state.lock().log_file = Some(tempfile);
                 }
             }
@@ -352,68 +341,100 @@ impl Telemetry {
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
+        static LAST_EVENT_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
         drop(state);
 
-        if let Some((start, end, environment)) = period_data {
-            let duration = end
-                .saturating_duration_since(start)
-                .min(Duration::from_secs(60 * 60 * 24))
-                .as_millis() as i64;
+        if let Some(mut last_event) = LAST_EVENT_TIME.try_lock() {
+            let current_time = std::time::Instant::now();
+            let last_time = last_event.get_or_insert(current_time);
 
-            telemetry::event!(
-                "Editor Edited",
-                duration = duration,
-                environment = environment,
-                is_via_ssh = is_via_ssh
-            );
+            if current_time.duration_since(*last_time) > Duration::from_secs(60 * 10) {
+                *last_time = current_time;
+            } else {
+                return;
+            }
+
+            if let Some((start, end, environment)) = period_data {
+                let duration = end
+                    .saturating_duration_since(start)
+                    .min(Duration::from_secs(60 * 60 * 24))
+                    .as_millis() as i64;
+
+                telemetry::event!(
+                    "Editor Edited",
+                    duration = duration,
+                    environment = environment,
+                    is_via_ssh = is_via_ssh
+                );
+            }
         }
     }
 
-    pub fn report_discovered_project_events(
+    pub fn report_discovered_project_type_events(
         self: &Arc<Self>,
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let project_type_names: Vec<String> = {
-            let mut state = self.state.lock();
-            state
-                .worktree_id_map
-                .0
-                .iter_mut()
-                .filter_map(|(project_file_name, project_type_telemetry)| {
-                    if project_type_telemetry
-                        .worktree_ids_reported
-                        .contains(&worktree_id)
-                    {
-                        return None;
-                    }
-
-                    let project_file_found = updated_entries_set.iter().any(|(path, _, _)| {
-                        path.as_ref()
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .map(|name_str| name_str == project_file_name)
-                            .unwrap_or(false)
-                    });
-
-                    if !project_file_found {
-                        return None;
-                    }
-
-                    project_type_telemetry
-                        .worktree_ids_reported
-                        .insert(worktree_id);
-
-                    Some(project_type_telemetry.name.clone())
-                })
-                .collect()
+        let Some(project_types) = self.detect_project_types(worktree_id, updated_entries_set)
+        else {
+            return;
         };
 
-        for project_type_name in project_type_names {
-            telemetry::event!("Project Opened", project_type = project_type_name);
+        for project_type in project_types {
+            telemetry::event!("Project Opened", project_type = project_type);
         }
+    }
+
+    fn detect_project_types(
+        self: &Arc<Self>,
+        worktree_id: WorktreeId,
+        updated_entries_set: &UpdatedEntriesSet,
+    ) -> Option<Vec<String>> {
+        let mut state = self.state.lock();
+
+        if state
+            .worktrees_with_project_type_events_sent
+            .contains(&worktree_id)
+        {
+            return None;
+        }
+
+        let mut project_types: HashSet<&str> = HashSet::new();
+
+        for (path, _, _) in updated_entries_set.iter() {
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+
+            let project_type = if file_name == "pnpm-lock.yaml" {
+                Some("pnpm")
+            } else if file_name == "yarn.lock" {
+                Some("yarn")
+            } else if file_name == "package.json" {
+                Some("node")
+            } else if DOTNET_PROJECT_FILES_REGEX.is_match(file_name) {
+                Some("dotnet")
+            } else {
+                None
+            };
+
+            if let Some(project_type) = project_type {
+                project_types.insert(project_type);
+            };
+        }
+
+        if !project_types.is_empty() {
+            state
+                .worktrees_with_project_type_events_sent
+                .insert(worktree_id);
+        }
+
+        let mut project_types: Vec<_> = project_types.into_iter().map(String::from).collect();
+        project_types.sort();
+        Some(project_types)
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {
@@ -578,7 +599,10 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
+    use util::rel_path::RelPath;
+    use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -696,6 +720,115 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn test_project_discovery_does_not_double_report(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+        let worktree_id = 1;
+
+        // Scan of empty worktree finds nothing
+        test_project_discovery_helper(telemetry.clone(), vec![], Some(vec![]), worktree_id);
+
+        // Files added, second scan of worktree 1 finds project type
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["package.json"],
+            Some(vec!["node"]),
+            worktree_id,
+        );
+
+        // Third scan of worktree does not double report, as we already reported
+        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
+    }
+
+    #[gpui::test]
+    fn test_pnpm_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        test_project_discovery_helper(
+            telemetry,
+            vec!["package.json", "pnpm-lock.yaml"],
+            Some(vec!["node", "pnpm"]),
+            1,
+        );
+    }
+
+    #[gpui::test]
+    fn test_yarn_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        test_project_discovery_helper(
+            telemetry,
+            vec!["package.json", "yarn.lock"],
+            Some(vec!["node", "yarn"]),
+            1,
+        );
+    }
+
+    #[gpui::test]
+    fn test_dotnet_project_discovery(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let clock = Arc::new(FakeSystemClock::new());
+        let http = FakeHttpClient::with_200_response();
+        let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
+
+        // Using different worktrees, as production code blocks from reporting a
+        // project type for the same worktree multiple times
+
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["global.json"],
+            Some(vec!["dotnet"]),
+            1,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["Directory.Build.props"],
+            Some(vec!["dotnet"]),
+            2,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.csproj"],
+            Some(vec!["dotnet"]),
+            3,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.fsproj"],
+            Some(vec!["dotnet"]),
+            4,
+        );
+        test_project_discovery_helper(
+            telemetry.clone(),
+            vec!["file.vbproj"],
+            Some(vec!["dotnet"]),
+            5,
+        );
+        test_project_discovery_helper(telemetry.clone(), vec!["file.sln"], Some(vec!["dotnet"]), 6);
+
+        // Each worktree should only send a single project type event, even when
+        // encountering multiple files associated with that project type
+        test_project_discovery_helper(
+            telemetry,
+            vec!["global.json", "Directory.Build.props"],
+            Some(vec!["dotnet"]),
+            7,
+        );
+    }
+
     // TODO:
     // Test settings
     // Update FakeHTTPClient to keep track of the number of requests and assert on it
@@ -711,5 +844,33 @@ mod tests {
         telemetry.state.lock().events_queue.is_empty()
             && telemetry.state.lock().flush_events_task.is_none()
             && telemetry.state.lock().first_event_date_time.is_none()
+    }
+
+    fn test_project_discovery_helper(
+        telemetry: Arc<Telemetry>,
+        file_paths: Vec<&str>,
+        expected_project_types: Option<Vec<&str>>,
+        worktree_id_num: usize,
+    ) {
+        let worktree_id = WorktreeId::from_usize(worktree_id_num);
+        let entries: Vec<_> = file_paths
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, path)| {
+                Some((
+                    Arc::from(RelPath::unix(path).ok()?),
+                    ProjectEntryId::from_proto(i as u64 + 1),
+                    PathChange::Added,
+                ))
+            })
+            .collect();
+        let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());
+
+        let detected_project_types = telemetry.detect_project_types(worktree_id, &updated_entries);
+
+        let expected_project_types =
+            expected_project_types.map(|types| types.iter().map(|&t| t.to_string()).collect());
+
+        assert_eq!(detected_project_types, expected_project_types);
     }
 }

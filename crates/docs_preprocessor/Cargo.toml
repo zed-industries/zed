@@ -7,17 +7,19 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
-mdbook = "0.4.40"
+command_palette.workspace = true
+gpui.workspace = true
+# We are specifically pinning this version of mdbook, as later versions introduce issues with double-nested subdirectories.
+# Ask @maxdeviant about this before bumping.
+mdbook = "= 0.4.40"
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-regex.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 zed.workspace = true
-gpui.workspace = true
-command_palette.workspace = true
+zlog.workspace = true
 
 [lints]
 workspace = true

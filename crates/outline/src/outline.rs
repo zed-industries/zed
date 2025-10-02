@@ -4,8 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use editor::RowHighlightOptions;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
+use editor::{RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -81,8 +81,19 @@ impl ModalView for OutlineView {
 }
 
 impl Render for OutlineView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(34.))
+            .on_action(cx.listener(
+                |_this: &mut OutlineView,
+                 _: &zed_actions::outline::ToggleOutline,
+                 _window: &mut Window,
+                 cx: &mut Context<OutlineView>| {
+                    // When outline::Toggle is triggered while the outline is open, dismiss it
+                    cx.emit(DismissEvent);
+                },
+            ))
+            .child(self.picker.clone())
     }
 }
 
@@ -291,9 +302,12 @@ impl PickerDelegate for OutlineViewDelegate {
                 .highlighted_rows::<OutlineRowHighlights>()
                 .next();
             if let Some((rows, _)) = highlight {
-                active_editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                    s.select_ranges([rows.start..rows.start])
-                });
+                active_editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_ranges([rows.start..rows.start]),
+                );
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 window.focus(&active_editor.focus_handle(cx));
             }
@@ -378,7 +392,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -419,7 +433,7 @@ mod tests {
             .unwrap();
         let editor = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
             })
             .await
             .unwrap()

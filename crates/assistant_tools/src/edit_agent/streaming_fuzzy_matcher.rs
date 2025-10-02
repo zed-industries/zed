@@ -10,8 +10,9 @@ const DELETION_COST: u32 = 10;
 pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
+    line_hint: Option<u32>,
     incomplete_line: String,
-    best_matches: Vec<Range<usize>>,
+    matches: Vec<Range<usize>>,
     matrix: SearchMatrix,
 }
 
@@ -21,8 +22,9 @@ impl StreamingFuzzyMatcher {
         Self {
             snapshot,
             query_lines: Vec::new(),
+            line_hint: None,
             incomplete_line: String::new(),
-            best_matches: Vec::new(),
+            matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
         }
     }
@@ -41,9 +43,14 @@ impl StreamingFuzzyMatcher {
     ///
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
-    pub fn push(&mut self, chunk: &str) -> Option<Range<usize>> {
+    pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
+        if line_hint.is_some() {
+            self.line_hint = line_hint;
+        }
+
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
+        self.line_hint = line_hint;
 
         if let Some((last_pos, _)) = self.incomplete_line.match_indices('\n').next_back() {
             let complete_part = &self.incomplete_line[..=last_pos];
@@ -55,20 +62,11 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            self.best_matches = self.resolve_location_fuzzy();
-
-            if let Some(first_match) = self.best_matches.first() {
-                Some(first_match.clone())
-            } else {
-                None
-            }
-        } else {
-            if let Some(first_match) = self.best_matches.first() {
-                Some(first_match.clone())
-            } else {
-                None
-            }
+            self.matches = self.resolve_location_fuzzy();
         }
+
+        let best_match = self.select_best_match();
+        best_match.or_else(|| self.matches.first().cloned())
     }
 
     /// Finish processing and return the final best match(es).
@@ -80,9 +78,9 @@ impl StreamingFuzzyMatcher {
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
             self.incomplete_line.clear();
-            self.best_matches = self.resolve_location_fuzzy();
+            self.matches = self.resolve_location_fuzzy();
         }
-        self.best_matches.clone()
+        self.matches.clone()
     }
 
     fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
@@ -198,6 +196,43 @@ impl StreamingFuzzyMatcher {
 
         valid_matches.into_iter().map(|(_, range)| range).collect()
     }
+
+    /// Return the best match with starting position close enough to line_hint.
+    pub fn select_best_match(&self) -> Option<Range<usize>> {
+        // Allow line hint to be off by that many lines.
+        // Higher values increase probability of applying edits to a wrong place,
+        // Lower values increase edits failures and overall conversation length.
+        const LINE_HINT_TOLERANCE: u32 = 200;
+
+        if self.matches.is_empty() {
+            return None;
+        }
+
+        if self.matches.len() == 1 {
+            return self.matches.first().cloned();
+        }
+
+        let Some(line_hint) = self.line_hint else {
+            // Multiple ambiguous matches
+            return None;
+        };
+
+        let mut best_match = None;
+        let mut best_distance = u32::MAX;
+
+        for range in &self.matches {
+            let start_point = self.snapshot.offset_to_point(range.start);
+            let start_line = start_point.row;
+            let distance = start_line.abs_diff(line_hint);
+
+            if distance <= LINE_HINT_TOLERANCE && distance < best_distance {
+                best_distance = distance;
+                best_match = Some(range.clone());
+            }
+        }
+
+        best_match
+    }
 }
 
 fn fuzzy_eq(left: &str, right: &str) -> bool {
@@ -284,7 +319,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
         assert_eq!(push(&mut finder, ""), None);
         assert_eq!(finish(finder), None);
     }
@@ -298,7 +333,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push partial query
         assert_eq!(push(&mut finder, "This"), None);
@@ -330,7 +365,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push a fuzzy query that should match the first function
         assert_eq!(
@@ -356,7 +391,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // No match initially
         assert_eq!(push(&mut finder, "Lin"), None);
@@ -385,7 +420,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         // Push text in small chunks across line boundaries
         assert_eq!(push(&mut finder, "jumps "), None); // No newline yet
@@ -423,7 +458,7 @@ mod tests {
         );
         let snapshot = buffer.snapshot();
 
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut finder = StreamingFuzzyMatcher::new(snapshot);
 
         assert_eq!(
             push(&mut finder, "impl Debug for User {\n"),
@@ -640,20 +675,66 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_line_hint_selection() {
+        let text = indoc! {r#"
+            fn first_function() {
+                return 42;
+            }
+
+            fn second_function() {
+                return 42;
+            }
+
+            fn third_function() {
+                return 42;
+            }
+        "#};
+
+        let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.to_string());
+        let snapshot = buffer.snapshot();
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+
+        // Given a query that matches all three functions
+        let query = "return 42;\n";
+
+        // Test with line hint pointing to second function (around line 5)
+        let best_match = matcher.push(query, Some(5)).expect("Failed to match query");
+
+        let matched_text = snapshot
+            .text_for_range(best_match.clone())
+            .collect::<String>();
+        assert!(matched_text.contains("return 42;"));
+        assert_eq!(
+            best_match,
+            63..77,
+            "Expected to match `second_function` based on the line hint"
+        );
+
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
+        matcher.push(query, None);
+        matcher.finish();
+        let best_match = matcher.select_best_match();
+        assert!(
+            best_match.is_none(),
+            "Best match should be None when query cannot be uniquely resolved"
+        );
+    }
+
     #[track_caller]
     fn assert_location_resolution(text_with_expected_range: &str, query: &str, rng: &mut StdRng) {
         let (text, expected_ranges) = marked_text_ranges(text_with_expected_range, false);
         let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.clone());
         let snapshot = buffer.snapshot();
 
-        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot);
 
         // Split query into random chunks
         let chunks = to_random_chunks(rng, query);
 
         // Push chunks incrementally
         for chunk in &chunks {
-            matcher.push(chunk);
+            matcher.push(chunk, None);
         }
 
         let actual_ranges = matcher.finish();
@@ -690,7 +771,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());
@@ -706,17 +787,15 @@ mod tests {
 
     fn push(finder: &mut StreamingFuzzyMatcher, chunk: &str) -> Option<String> {
         finder
-            .push(chunk)
+            .push(chunk, None)
             .map(|range| finder.snapshot.text_for_range(range).collect::<String>())
     }
 
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
         let matches = finder.finish();
-        if let Some(range) = matches.first() {
-            Some(snapshot.text_for_range(range.clone()).collect::<String>())
-        } else {
-            None
-        }
+        matches
+            .first()
+            .map(|range| snapshot.text_for_range(range.clone()).collect::<String>())
     }
 }

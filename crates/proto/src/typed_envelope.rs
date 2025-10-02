@@ -5,8 +5,6 @@ use std::{
     any::{Any, TypeId},
     cmp,
     fmt::{self, Debug},
-    path::{Path, PathBuf},
-    sync::Arc,
 };
 use std::{marker::PhantomData, time::Instant};
 
@@ -29,6 +27,58 @@ pub trait EntityMessage: EnvelopedMessage {
 
 pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
+}
+
+/// A trait to bind LSP request and responses for the proto layer.
+/// Should be used for every LSP request that has to traverse through the proto layer.
+///
+/// `lsp_messages` macro in the same crate provides a convenient way to implement this.
+pub trait LspRequestMessage: EnvelopedMessage {
+    type Response: EnvelopedMessage;
+
+    fn to_proto_query(self) -> crate::lsp_query::Request;
+
+    fn response_to_proto_query(response: Self::Response) -> crate::lsp_response::Response;
+
+    fn buffer_id(&self) -> u64;
+
+    fn buffer_version(&self) -> &[crate::VectorClockEntry];
+
+    /// Whether to deduplicate the requests, or keep the previous ones running when another
+    /// request of the same kind is processed.
+    fn stop_previous_requests() -> bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LspRequestId(pub u64);
+
+/// A response from a single language server.
+/// There could be multiple responses for a single LSP request,
+/// from different servers.
+pub struct ProtoLspResponse<R> {
+    pub server_id: u64,
+    pub response: R,
+}
+
+impl ProtoLspResponse<Box<dyn AnyTypedEnvelope>> {
+    pub fn into_response<T: LspRequestMessage>(self) -> Result<ProtoLspResponse<T::Response>> {
+        let envelope = self
+            .response
+            .into_any()
+            .downcast::<TypedEnvelope<T::Response>>()
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "cannot downcast LspResponse to {} for message {}",
+                    T::Response::NAME,
+                    T::NAME,
+                )
+            })?;
+
+        Ok(ProtoLspResponse {
+            server_id: self.server_id,
+            response: envelope.payload,
+        })
+    }
 }
 
 pub trait AnyTypedEnvelope: Any + Send + Sync {
@@ -116,62 +166,6 @@ impl std::hash::Hash for PeerId {
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner_id, self.id)
-    }
-}
-
-pub trait FromProto {
-    fn from_proto(proto: String) -> Self;
-}
-
-pub trait ToProto {
-    fn to_proto(self) -> String;
-}
-
-impl FromProto for PathBuf {
-    #[cfg(target_os = "windows")]
-    fn from_proto(proto: String) -> Self {
-        proto.split("/").collect()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn from_proto(proto: String) -> Self {
-        PathBuf::from(proto)
-    }
-}
-
-impl FromProto for Arc<Path> {
-    fn from_proto(proto: String) -> Self {
-        PathBuf::from_proto(proto).into()
-    }
-}
-
-impl ToProto for PathBuf {
-    #[cfg(target_os = "windows")]
-    fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
-    }
-}
-
-impl ToProto for &Path {
-    #[cfg(target_os = "windows")]
-    fn to_proto(self) -> String {
-        self.components()
-            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>()
-            .join("/")
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn to_proto(self) -> String {
-        self.to_string_lossy().to_string()
     }
 }
 

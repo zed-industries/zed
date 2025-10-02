@@ -4,25 +4,26 @@ pub mod popover_menu;
 
 use anyhow::Result;
 use editor::{
-    Editor,
+    Editor, SelectionEffects,
     actions::{MoveDown, MoveUp},
     scroll::Autoscroll,
 };
 use gpui::{
-    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div, impl_actions,
-    list, prelude::*, uniform_list,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, div, list, prelude::*,
+    uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
+use theme::ThemeSettings;
 use ui::{
-    Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
+    Color, Divider, DocumentationAside, DocumentationEdge, DocumentationSide, Label, ListItem,
+    ListItemSpacing, ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
 };
-use util::ResultExt;
-use workspace::ModalView;
+use workspace::{ModalView, item::Settings};
 
 enum ElementContainer {
     List(ListState),
@@ -34,17 +35,22 @@ pub enum Direction {
     Down,
 }
 
-actions!(picker, [ConfirmCompletion]);
+actions!(
+    picker,
+    [
+        /// Confirms the selected completion in the picker.
+        ConfirmCompletion
+    ]
+);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = picker)]
 #[serde(deny_unknown_fields)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }
-
-impl_actions!(picker, [ConfirmInput]);
 
 struct PendingUpdateMatches {
     delegate_update_matches: Option<Task<()>>,
@@ -60,13 +66,8 @@ pub struct Picker<D: PickerDelegate> {
     width: Option<Length>,
     widest_item: Option<usize>,
     max_height: Option<Length>,
-    focus_handle: FocusHandle,
     /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
-    /// An internal state that controls whether to show the scrollbar based on the user's focus.
-    scrollbar_visibility: bool,
-    scrollbar_state: ScrollbarState,
-    hide_scrollbar_task: Option<Task<()>>,
     /// Whether the `Picker` is rendered as a self-contained modal.
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
@@ -206,6 +207,7 @@ pub trait PickerDelegate: Sized + 'static {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem>;
+
     fn render_header(
         &self,
         _window: &mut Window,
@@ -213,11 +215,20 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> Option<AnyElement> {
         None
     }
+
     fn render_footer(
         &self,
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        None
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
         None
     }
 }
@@ -285,14 +296,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let element_container = Self::create_element_container(container, cx);
-        let scrollbar_state = match &element_container {
-            ElementContainer::UniformList(scroll_handle) => {
-                ScrollbarState::new(scroll_handle.clone())
-            }
-            ElementContainer::List(state) => ScrollbarState::new(state.clone()),
-        };
-        let focus_handle = cx.focus_handle();
+        let element_container = Self::create_element_container(container);
         let mut this = Self {
             delegate,
             head,
@@ -302,12 +306,8 @@ impl<D: PickerDelegate> Picker<D> {
             width: None,
             widest_item: None,
             max_height: Some(rems(18.).into()),
-            focus_handle,
             show_scrollbar: false,
-            scrollbar_visibility: true,
-            scrollbar_state,
             is_modal: true,
-            hide_scrollbar_task: None,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -316,31 +316,13 @@ impl<D: PickerDelegate> Picker<D> {
         this
     }
 
-    fn create_element_container(
-        container: ContainerKind,
-        cx: &mut Context<Self>,
-    ) -> ElementContainer {
+    fn create_element_container(container: ContainerKind) -> ElementContainer {
         match container {
             ContainerKind::UniformList => {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let entity = cx.entity().downgrade();
-                ElementContainer::List(ListState::new(
-                    0,
-                    gpui::ListAlignment::Top,
-                    px(1000.),
-                    move |ix, window, cx| {
-                        entity
-                            .upgrade()
-                            .map(|entity| {
-                                entity.update(cx, |this, cx| {
-                                    this.render_element(window, cx, ix).into_any_element()
-                                })
-                            })
-                            .unwrap_or_else(|| div().into_any_element())
-                    },
-                ))
+                ElementContainer::List(ListState::new(0, gpui::ListAlignment::Top, px(1000.)))
             }
         }
     }
@@ -626,7 +608,7 @@ impl<D: PickerDelegate> Picker<D> {
             Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);
                 editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(placeholder, cx);
+                    editor.set_placeholder_text(placeholder.as_ref(), window, cx);
                     cx.notify();
                 });
             }
@@ -694,9 +676,12 @@ impl<D: PickerDelegate> Picker<D> {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges(Some(editor_offset..editor_offset))
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges(Some(editor_offset..editor_offset)),
+                );
             });
         }
     }
@@ -760,14 +745,13 @@ impl<D: PickerDelegate> Picker<D> {
 
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
-                cx.entity().clone(),
                 "candidates",
                 self.delegate.match_count(),
-                move |picker, visible_range, window, cx| {
+                cx.processor(move |picker, visible_range: Range<usize>, window, cx| {
                     visible_range
                         .map(|ix| picker.render_element(window, cx, ix))
                         .collect()
-                },
+                }),
             )
             .with_sizing_behavior(sizing_behavior)
             .when_some(self.widest_item, |el, widest_item| {
@@ -777,11 +761,16 @@ impl<D: PickerDelegate> Picker<D> {
             .py_1()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
-            ElementContainer::List(state) => list(state.clone())
-                .with_sizing_behavior(sizing_behavior)
-                .flex_grow()
-                .py_2()
-                .into_any_element(),
+            ElementContainer::List(state) => list(
+                state.clone(),
+                cx.processor(|this, ix, window, cx| {
+                    this.render_element(window, cx, ix).into_any_element()
+                }),
+            )
+            .with_sizing_behavior(sizing_behavior)
+            .flex_grow()
+            .py_2()
+            .into_any_element(),
         }
     }
 
@@ -794,67 +783,6 @@ impl<D: PickerDelegate> Picker<D> {
             }
         }
     }
-
-    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.scrollbar_visibility = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !self.show_scrollbar
-            || !(self.scrollbar_visibility || self.scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("picker-scroll")
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|picker, _, window, cx| {
-                        if !picker.scrollbar_state.is_dragging()
-                            && !picker.focus_handle.contains_focused(window, cx)
-                        {
-                            picker.hide_scrollbar(cx);
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -862,8 +790,15 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let window_size = window.viewport_size();
+        let rem_size = window.rem_size();
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
+
+        let aside = self.delegate.documentation_aside(window, cx);
+
         let editor_position = self.delegate.editor_position();
-        v_flex()
+        let menu = v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
@@ -904,17 +839,22 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
-                        .on_hover(cx.listener(|this, hovered, window, cx| {
-                            if *hovered {
-                                this.scrollbar_visibility = true;
-                                this.hide_scrollbar_task.take();
-                                cx.notify();
-                            } else if !this.focus_handle.contains_focused(window, cx) {
-                                this.hide_scrollbar(cx);
-                            }
-                        }))
-                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
-                            div.child(scrollbar)
+                        .when(self.show_scrollbar, |this| {
+                            let base_scrollbar_config =
+                                Scrollbars::new(ScrollAxes::Vertical).width_sm();
+
+                            this.map(|this| match &self.element_container {
+                                ElementContainer::List(state) => this.custom_scrollbars(
+                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    window,
+                                    cx,
+                                ),
+                                ElementContainer::UniformList(state) => this.custom_scrollbars(
+                                    base_scrollbar_config.tracked_scroll_handle(state.clone()),
+                                    window,
+                                    cx,
+                                ),
+                            })
                         }),
                 )
             })
@@ -941,6 +881,47 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     }
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            })
+            });
+
+        let Some(aside) = aside else {
+            return menu;
+        };
+
+        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+            WithRemSize::new(ui_font_size)
+                .occlude()
+                .elevation_2(cx)
+                .w_full()
+                .p_2()
+                .overflow_hidden()
+                .when(is_wide_window, |this| this.max_w_96())
+                .when(!is_wide_window, |this| this.max_w_48())
+                .child((aside.render)(cx))
+        };
+
+        if is_wide_window {
+            div().relative().child(menu).child(
+                h_flex()
+                    .absolute()
+                    .when(aside.side == DocumentationSide::Left, |this| {
+                        this.right_full().mr_1()
+                    })
+                    .when(aside.side == DocumentationSide::Right, |this| {
+                        this.left_full().ml_1()
+                    })
+                    .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
+                    .when(aside.edge == DocumentationEdge::Bottom, |this| {
+                        this.bottom_0()
+                    })
+                    .child(render_aside(aside, cx)),
+            )
+        } else {
+            v_flex()
+                .w_full()
+                .gap_1()
+                .justify_end()
+                .child(render_aside(aside, cx))
+                .child(menu)
+        }
     }
 }

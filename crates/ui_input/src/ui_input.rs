@@ -7,8 +7,9 @@
 
 use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
+use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, Length, TextStyle};
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -27,9 +28,11 @@ pub struct SingleLineInput {
     ///
     /// Its position is determined by the [`FieldLabelLayout`].
     label: Option<SharedString>,
+    /// The size of the label text.
+    label_size: LabelSize,
     /// The placeholder text for the text field.
     placeholder: SharedString,
-    /// Exposes the underlying [`Model<Editor>`] to allow for customizing the editor beyond the provided API.
+    /// Exposes the underlying [`Entity<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
     /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
     pub editor: Entity<Editor>,
@@ -39,6 +42,8 @@ pub struct SingleLineInput {
     start_icon: Option<IconName>,
     /// Whether the text field is disabled.
     disabled: bool,
+    /// The minimum width of for the input
+    min_width: Length,
 }
 
 impl Focusable for SingleLineInput {
@@ -53,16 +58,18 @@ impl SingleLineInput {
 
         let editor = cx.new(|cx| {
             let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder_text.clone(), cx);
+            input.set_placeholder_text(&placeholder_text, window, cx);
             input
         });
 
         Self {
             label: None,
+            label_size: LabelSize::Small,
             placeholder: placeholder_text,
             editor,
             start_icon: None,
             disabled: false,
+            min_width: px(192.).into(),
         }
     }
 
@@ -73,6 +80,16 @@ impl SingleLineInput {
 
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    pub fn label_size(mut self, size: LabelSize) -> Self {
+        self.label_size = size;
+        self
+    }
+
+    pub fn label_min_width(mut self, width: impl Into<Length>) -> Self {
+        self.min_width = width.into();
         self
     }
 
@@ -88,6 +105,15 @@ impl SingleLineInput {
 
     pub fn editor(&self) -> &Entity<Editor> {
         &self.editor
+    }
+
+    pub fn text(&self, cx: &App) -> String {
+        self.editor().read(cx).text(cx)
+    }
+
+    pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.set_text(text, window, cx))
     }
 }
 
@@ -127,6 +153,7 @@ impl Render for SingleLineInput {
         let editor_style = EditorStyle {
             background: theme_color.ghost_element_background,
             local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
             text: text_style,
             ..Default::default()
         };
@@ -138,26 +165,27 @@ impl Render for SingleLineInput {
             .when_some(self.label.clone(), |this, label| {
                 this.child(
                     Label::new(label)
-                        .size(LabelSize::Default)
+                        .size(self.label_size)
                         .color(if self.disabled {
                             Color::Disabled
                         } else {
-                            Color::Muted
+                            Color::Default
                         }),
                 )
             })
             .child(
                 h_flex()
+                    .min_w(self.min_width)
+                    .min_h_8()
+                    .w_full()
                     .px_2()
-                    .py_1()
-                    .bg(style.background_color)
+                    .py_1p5()
+                    .flex_grow()
                     .text_color(style.text_color)
                     .rounded_md()
+                    .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)
-                    .min_w_48()
-                    .w_full()
-                    .flex_grow()
                     .when_some(self.start_icon, |this, icon| {
                         this.gap_1()
                             .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
@@ -173,16 +201,28 @@ impl Component for SingleLineInput {
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let input_1 =
-            cx.new(|cx| SingleLineInput::new(window, cx, "placeholder").label("Some Label"));
+        let input_small =
+            cx.new(|cx| SingleLineInput::new(window, cx, "placeholder").label("Small Label"));
+
+        let input_regular = cx.new(|cx| {
+            SingleLineInput::new(window, cx, "placeholder")
+                .label("Regular Label")
+                .label_size(LabelSize::Default)
+        });
 
         Some(
             v_flex()
                 .gap_6()
-                .children(vec![example_group(vec![single_example(
-                    "Default",
-                    div().child(input_1.clone()).into_any_element(),
-                )])])
+                .children(vec![example_group(vec![
+                    single_example(
+                        "Small Label (Default)",
+                        div().child(input_small).into_any_element(),
+                    ),
+                    single_example(
+                        "Regular Label",
+                        div().child(input_regular).into_any_element(),
+                    ),
+                ])])
                 .into_any_element(),
         )
     }

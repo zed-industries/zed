@@ -1,22 +1,16 @@
 use anyhow::{Context as _, Result, anyhow};
-use futures::{
-    AsyncBufReadExt, AsyncReadExt, StreamExt,
-    io::BufReader,
-    stream::{self, BoxStream},
-};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    convert::TryFrom,
-    future::{self, Future},
-};
+pub use settings::OpenAiReasoningEffort as ReasoningEffort;
+use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -56,49 +50,53 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "gpt-3.5-turbo", alias = "gpt-3.5-turbo")]
+    #[serde(rename = "gpt-3.5-turbo")]
     ThreePointFiveTurbo,
-    #[serde(rename = "gpt-4", alias = "gpt-4")]
+    #[serde(rename = "gpt-4")]
     Four,
-    #[serde(rename = "gpt-4-turbo", alias = "gpt-4-turbo")]
+    #[serde(rename = "gpt-4-turbo")]
     FourTurbo,
-    #[serde(rename = "gpt-4o", alias = "gpt-4o")]
+    #[serde(rename = "gpt-4o")]
     #[default]
     FourOmni,
-    #[serde(rename = "gpt-4o-mini", alias = "gpt-4o-mini")]
+    #[serde(rename = "gpt-4o-mini")]
     FourOmniMini,
-    #[serde(rename = "gpt-4.1", alias = "gpt-4.1")]
+    #[serde(rename = "gpt-4.1")]
     FourPointOne,
-    #[serde(rename = "gpt-4.1-mini", alias = "gpt-4.1-mini")]
+    #[serde(rename = "gpt-4.1-mini")]
     FourPointOneMini,
-    #[serde(rename = "gpt-4.1-nano", alias = "gpt-4.1-nano")]
+    #[serde(rename = "gpt-4.1-nano")]
     FourPointOneNano,
-    #[serde(rename = "o1", alias = "o1")]
+    #[serde(rename = "o1")]
     O1,
-    #[serde(rename = "o1-preview", alias = "o1-preview")]
-    O1Preview,
-    #[serde(rename = "o1-mini", alias = "o1-mini")]
-    O1Mini,
-    #[serde(rename = "o3-mini", alias = "o3-mini")]
+    #[serde(rename = "o3-mini")]
     O3Mini,
-    #[serde(rename = "o3", alias = "o3")]
+    #[serde(rename = "o3")]
     O3,
-    #[serde(rename = "o4-mini", alias = "o4-mini")]
+    #[serde(rename = "o4-mini")]
     O4Mini,
+    #[serde(rename = "gpt-5")]
+    Five,
+    #[serde(rename = "gpt-5-mini")]
+    FiveMini,
+    #[serde(rename = "gpt-5-nano")]
+    FiveNano,
 
     #[serde(rename = "custom")]
     Custom {
         name: String,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_tokens: usize,
-        max_output_tokens: Option<u32>,
-        max_completion_tokens: Option<u32>,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        max_completion_tokens: Option<u64>,
+        reasoning_effort: Option<ReasoningEffort>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
+        // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
 
@@ -113,11 +111,12 @@ impl Model {
             "gpt-4.1-mini" => Ok(Self::FourPointOneMini),
             "gpt-4.1-nano" => Ok(Self::FourPointOneNano),
             "o1" => Ok(Self::O1),
-            "o1-preview" => Ok(Self::O1Preview),
-            "o1-mini" => Ok(Self::O1Mini),
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
+            "gpt-5" => Ok(Self::Five),
+            "gpt-5-mini" => Ok(Self::FiveMini),
+            "gpt-5-nano" => Ok(Self::FiveNano),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -133,11 +132,12 @@ impl Model {
             Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
-            Self::O1Preview => "o1-preview",
-            Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::Five => "gpt-5",
+            Self::FiveMini => "gpt-5-mini",
+            Self::FiveNano => "gpt-5-nano",
             Self::Custom { name, .. } => name,
         }
     }
@@ -153,18 +153,19 @@ impl Model {
             Self::FourPointOneMini => "gpt-4.1-mini",
             Self::FourPointOneNano => "gpt-4.1-nano",
             Self::O1 => "o1",
-            Self::O1Preview => "o1-preview",
-            Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::Five => "gpt-5",
+            Self::FiveMini => "gpt-5-mini",
+            Self::FiveNano => "gpt-5-nano",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ThreePointFiveTurbo => 16_385,
             Self::Four => 8_192,
@@ -175,20 +176,44 @@ impl Model {
             Self::FourPointOneMini => 1_047_576,
             Self::FourPointOneNano => 1_047_576,
             Self::O1 => 200_000,
-            Self::O1Preview => 128_000,
-            Self::O1Mini => 128_000,
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
+            Self::Five => 272_000,
+            Self::FiveMini => 272_000,
+            Self::FiveNano => 272_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u32> {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
+            Self::ThreePointFiveTurbo => Some(4_096),
+            Self::Four => Some(8_192),
+            Self::FourTurbo => Some(4_096),
+            Self::FourOmni => Some(16_384),
+            Self::FourOmniMini => Some(16_384),
+            Self::FourPointOne => Some(32_768),
+            Self::FourPointOneMini => Some(32_768),
+            Self::FourPointOneNano => Some(32_768),
+            Self::O1 => Some(100_000),
+            Self::O3Mini => Some(100_000),
+            Self::O3 => Some(100_000),
+            Self::O4Mini => Some(100_000),
+            Self::Five => Some(128_000),
+            Self::FiveMini => Some(128_000),
+            Self::FiveNano => Some(128_000),
+        }
+    }
+
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Custom {
+                reasoning_effort, ..
+            } => reasoning_effort.to_owned(),
             _ => None,
         }
     }
@@ -205,10 +230,19 @@ impl Model {
             | Self::FourOmniMini
             | Self::FourPointOne
             | Self::FourPointOneMini
-            | Self::FourPointOneNano => true,
-            Self::O1 | Self::O1Preview | Self::O1Mini => false,
-            _ => false,
+            | Self::FourPointOneNano
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano => true,
+            Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
+    }
+
+    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    ///
+    /// If the model does not support the parameter, do not pass it up.
+    pub fn supports_prompt_cache_key(&self) -> bool {
+        true
     }
 }
 
@@ -218,7 +252,7 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     pub temperature: f32,
@@ -229,32 +263,19 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CompletionRequest {
-    pub model: String,
-    pub prompt: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction: Option<Prediction>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rewrite_speculation: Option<bool>,
-}
-
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Prediction {
-    Content { content: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
+    #[serde(untagged)]
     Other(ToolDefinition),
 }
 
@@ -391,9 +412,9 @@ pub struct FunctionChunk {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -404,204 +425,21 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub created: u32,
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<CompletionChoice>,
-    pub usage: Usage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionChoice {
-    pub text: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Response {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<Choice>,
-    pub usage: Usage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Choice {
-    pub index: u32,
-    pub message: RequestMessage,
-    pub finish_reason: Option<String>,
-}
-
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-) -> Result<Response> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
-
-    let mut request_body = request;
-    request_body.stream = false;
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response: Response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
-                "Failed to connect to OpenAI API: {}",
-                response.error.message,
-            ),
-            _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
-                response.status(),
-                body,
-            ),
-        }
-    }
-}
-
-pub async fn complete_text(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: CompletionRequest,
-) -> Result<CompletionResponse> {
-    let uri = format!("{api_url}/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct OpenAiResponse {
-            error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
-        match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
-                "Failed to connect to OpenAI API: {}",
-                response.error.message,
-            ),
-            _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
-                response.status(),
-                body,
-            ),
-        }
-    }
-}
-
-fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
-    ResponseStreamEvent {
-        created: response.created as u32,
-        model: response.model,
-        choices: response
-            .choices
-            .into_iter()
-            .map(|choice| {
-                let content = match &choice.message {
-                    RequestMessage::Assistant { content, .. } => content.as_ref(),
-                    RequestMessage::User { content } => Some(content),
-                    RequestMessage::System { content } => Some(content),
-                    RequestMessage::Tool { content, .. } => Some(content),
-                };
-
-                let mut text_content = String::new();
-                match content {
-                    Some(MessageContent::Plain(text)) => text_content.push_str(&text),
-                    Some(MessageContent::Multipart(parts)) => {
-                        for part in parts {
-                            match part {
-                                MessagePart::Text { text } => text_content.push_str(&text),
-                                MessagePart::Image { .. } => {}
-                            }
-                        }
-                    }
-                    None => {}
-                };
-
-                ChoiceDelta {
-                    index: choice.index,
-                    delta: ResponseMessageDelta {
-                        role: Some(match choice.message {
-                            RequestMessage::Assistant { .. } => Role::Assistant,
-                            RequestMessage::User { .. } => Role::User,
-                            RequestMessage::System { .. } => Role::System,
-                            RequestMessage::Tool { .. } => Role::Tool,
-                        }),
-                        content: if text_content.is_empty() {
-                            None
-                        } else {
-                            Some(text_content)
-                        },
-                        tool_calls: None,
-                    },
-                    finish_reason: choice.finish_reason,
-                }
-            })
-            .collect(),
-        usage: Some(response.usage),
-    }
 }
 
 pub async fn stream_completion(
@@ -610,18 +448,12 @@ pub async fn stream_completion(
     api_key: &str,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    if request.model.starts_with("o1") {
-        let response = complete(client, api_url, api_key, request).await;
-        let response_stream_event = response.map(adapt_response_to_stream);
-        return Ok(stream::once(future::ready(response_stream_event)).boxed());
-    }
-
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -632,16 +464,24 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
+                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
                             None
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
                                     Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
                     }
@@ -658,19 +498,16 @@ pub async fn stream_completion(
             error: OpenAiError,
         }
 
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
-        }
-
         match serde_json::from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "Failed to connect to OpenAI API: {}",
+                "API request to {} failed: {}",
+                api_url,
                 response.error.message,
             )),
 
             _ => anyhow::bail!(
-                "Failed to connect to OpenAI API: {} {}",
+                "API request to {} failed with status {}: {}",
+                api_url,
                 response.status(),
                 body,
             ),
@@ -720,7 +557,7 @@ pub fn embed<'a>(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .body(body)
         .map(|request| client.send(request));
 

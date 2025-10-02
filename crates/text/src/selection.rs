@@ -26,6 +26,7 @@ impl Default for SelectionGoal {
 }
 
 impl<T: Clone> Selection<T> {
+    /// A place where the selection had stopped at.
     pub fn head(&self) -> T {
         if self.reversed {
             self.start.clone()
@@ -34,6 +35,7 @@ impl<T: Clone> Selection<T> {
         }
     }
 
+    /// A place where selection was initiated from.
     pub fn tail(&self) -> T {
         if self.reversed {
             self.end.clone()
@@ -98,6 +100,19 @@ impl<T: Copy + Ord> Selection<T> {
                 self.reversed = true;
             }
             self.end = tail;
+        }
+        self.goal = new_goal;
+    }
+
+    pub fn set_head_tail(&mut self, head: T, tail: T, new_goal: SelectionGoal) {
+        if head < tail {
+            self.reversed = true;
+            self.start = head;
+            self.end = tail;
+        } else {
+            self.reversed = false;
+            self.start = tail;
+            self.end = head;
         }
         self.goal = new_goal;
     }

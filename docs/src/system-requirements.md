@@ -45,6 +45,10 @@ Zed requires a Vulkan 1.3 driver, and the following desktop portals:
 
 Not yet available as an official download. Can be built [from source](./development/windows.md).
 
+## FreeBSD
+
+Not yet available as an official download. Can be built [from source](./development/freebsd.md).
+
 ## Web
 
 Not supported at this time. See our [Platform Support issue](https://github.com/zed-industries/zed/issues/5391).

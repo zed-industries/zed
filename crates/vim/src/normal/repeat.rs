@@ -11,7 +11,19 @@ use editor::Editor;
 use gpui::{Action, App, Context, Window, actions};
 use workspace::Workspace;
 
-actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
+actions!(
+    vim,
+    [
+        /// Repeats the last change.
+        Repeat,
+        /// Ends the repeat recording.
+        EndRepeat,
+        /// Toggles macro recording.
+        ToggleRecord,
+        /// Replays the last recorded macro.
+        ReplayLastRecording
+    ]
+);
 
 fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
@@ -209,14 +221,14 @@ impl Vim {
             if actions.is_empty() {
                 return None;
             }
-            if globals.replayer.is_none() {
-                if let Some(recording_register) = globals.recording_register {
-                    globals
-                        .recordings
-                        .entry(recording_register)
-                        .or_default()
-                        .push(ReplayableAction::Action(Repeat.boxed_clone()));
-                }
+            if globals.replayer.is_none()
+                && let Some(recording_register) = globals.recording_register
+            {
+                globals
+                    .recordings
+                    .entry(recording_register)
+                    .or_default()
+                    .push(ReplayableAction::Action(Repeat.boxed_clone()));
             }
 
             let mut mode = None;
@@ -245,71 +257,73 @@ impl Vim {
         }) else {
             return;
         };
-        if let Some(mode) = mode {
-            self.switch_mode(mode, false, window, cx)
-        }
+        if mode != Some(self.mode) {
+            if let Some(mode) = mode {
+                self.switch_mode(mode, false, window, cx)
+            }
 
-        match selection {
-            RecordedSelection::SingleLine { cols } => {
-                if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+            match selection {
+                RecordedSelection::SingleLine { cols } => {
+                    if cols > 1 {
+                        self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    }
                 }
-            }
-            RecordedSelection::Visual { rows, cols } => {
-                self.visual_motion(
-                    Motion::Down {
-                        display_lines: false,
-                    },
-                    Some(rows as usize),
-                    window,
-                    cx,
-                );
-                self.visual_motion(
-                    Motion::StartOfLine {
-                        display_lines: false,
-                    },
-                    None,
-                    window,
-                    cx,
-                );
-                if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                RecordedSelection::Visual { rows, cols } => {
+                    self.visual_motion(
+                        Motion::Down {
+                            display_lines: false,
+                        },
+                        Some(rows as usize),
+                        window,
+                        cx,
+                    );
+                    self.visual_motion(
+                        Motion::StartOfLine {
+                            display_lines: false,
+                        },
+                        None,
+                        window,
+                        cx,
+                    );
+                    if cols > 1 {
+                        self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    }
                 }
-            }
-            RecordedSelection::VisualBlock { rows, cols } => {
-                self.visual_motion(
-                    Motion::Down {
-                        display_lines: false,
-                    },
-                    Some(rows as usize),
-                    window,
-                    cx,
-                );
-                if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx);
+                RecordedSelection::VisualBlock { rows, cols } => {
+                    self.visual_motion(
+                        Motion::Down {
+                            display_lines: false,
+                        },
+                        Some(rows as usize),
+                        window,
+                        cx,
+                    );
+                    if cols > 1 {
+                        self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx);
+                    }
                 }
+                RecordedSelection::VisualLine { rows } => {
+                    self.visual_motion(
+                        Motion::Down {
+                            display_lines: false,
+                        },
+                        Some(rows as usize),
+                        window,
+                        cx,
+                    );
+                }
+                RecordedSelection::None => {}
             }
-            RecordedSelection::VisualLine { rows } => {
-                self.visual_motion(
-                    Motion::Down {
-                        display_lines: false,
-                    },
-                    Some(rows as usize),
-                    window,
-                    cx,
-                );
-            }
-            RecordedSelection::None => {}
         }
 
         // insert internally uses repeat to handle counts
         // vim doesn't treat 3a1 as though you literally repeated a1
         // 3 times, instead it inserts the content thrice at the insert position.
         if let Some(to_repeat) = repeatable_insert(&actions[0]) {
-            if let Some(ReplayableAction::Action(action)) = actions.last() {
-                if NormalBefore.partial_eq(&**action) {
-                    actions.pop();
-                }
+            if let Some(ReplayableAction::Action(action)) = actions.last()
+                && NormalBefore.partial_eq(&**action)
+            {
+                actions.pop();
             }
 
             let mut new_actions = actions.clone();

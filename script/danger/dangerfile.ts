@@ -65,7 +65,8 @@ const PROMPT_PATHS = [
   "crates/agent/src/prompts/summarize_thread_detailed_prompt.txt",
   "crates/agent/src/prompts/summarize_thread_prompt.txt",
   "crates/assistant_tools/src/templates/create_file_prompt.hbs",
-  "crates/assistant_tools/src/templates/edit_file_prompt.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt_xml.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt_diff_fenced.hbs",
   "crates/git_ui/src/commit_message_prompt.txt",
 ];
 
@@ -90,6 +91,27 @@ for (const promptPath of modifiedPrompts) {
         "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
         `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
       ].join("\n"),
+    );
+  }
+}
+
+const FIXTURE_CHANGE_ATTESTATION = "Changes to test fixtures are intentional and necessary.";
+
+const FIXTURES_PATHS = ["crates/assistant_tools/src/edit_agent/evals/fixtures"];
+
+const modifiedFixtures = danger.git.modified_files.filter((file) =>
+  FIXTURES_PATHS.some((fixturePath) => file.includes(fixturePath)),
+);
+
+if (modifiedFixtures.length > 0) {
+  if (!body.includes(FIXTURE_CHANGE_ATTESTATION)) {
+    const modifiedFixturesStr = modifiedFixtures.map((path) => "`" + path + "`").join(", ");
+    fail(
+      [
+        `This PR modifies eval or test fixtures (${modifiedFixturesStr}), which are typically expected to remain unchanged.`,
+        "If these changes are intentional and required, please add the following attestation to your PR description: ",
+        `"${FIXTURE_CHANGE_ATTESTATION}"`,
+      ].join("\n\n"),
     );
   }
 }

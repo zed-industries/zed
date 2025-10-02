@@ -20,5 +20,8 @@ strum.workspace = true
 theme.workspace = true
 workspace-hack.workspace = true
 
+[dev-dependencies]
+documented.workspace = true
+
 [features]
 default = []

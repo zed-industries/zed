@@ -2,7 +2,11 @@
 
 set -e
 
-which minio > /dev/null || (echo "installing minio..."; brew install minio/stable/minio)
+if ! which minio > /dev/null; then
+    echo "minio not found - run script/bootstrap to install it and do other setup"
+    exit 1
+fi
+
 mkdir -p .blob_store/the-extensions-bucket
 mkdir -p .blob_store/zed-crash-reports
 

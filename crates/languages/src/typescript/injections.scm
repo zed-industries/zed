@@ -2,8 +2,8 @@
   (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
   (#set! injection.language "jsdoc"))
 
-(((comment) @reference
-  (#match? @reference "^///\\s+<reference\\s+types=\"\\S+\"\\s*/>\\s*$")) @injection.content
+(((comment) @_reference
+  (#match? @_reference "^///\\s+<reference\\s+types=\"\\S+\"\\s*/>\\s*$")) @injection.content
   (#set! injection.language "html"))
 
 ((regex) @injection.content
@@ -11,6 +11,21 @@
 
 (call_expression
   function: (identifier) @_name (#eq? @_name "css")
+  arguments: (template_string (string_fragment) @injection.content
+                              (#set! injection.language "css"))
+)
+
+(call_expression
+  function: (member_expression
+    object: (identifier) @_obj (#eq? @_obj "styled")
+    property: (property_identifier))
+  arguments: (template_string (string_fragment) @injection.content
+                              (#set! injection.language "css"))
+)
+
+(call_expression
+  function: (call_expression
+    function: (identifier) @_name (#eq? @_name "styled"))
   arguments: (template_string (string_fragment) @injection.content
                               (#set! injection.language "css"))
 )
@@ -61,6 +76,12 @@
   function: (identifier) @_name (#match? @_name "^g(raph)?ql$")
   arguments: (arguments (template_string (string_fragment) @injection.content
                               (#set! injection.language "graphql")))
+)
+
+(call_expression
+  function: (identifier) @_name(#match? @_name "^iso$")
+  arguments: (arguments (template_string (string_fragment) @injection.content
+                              (#set! injection.language "isograph")))
 )
 
 ;; Angular Component template injection

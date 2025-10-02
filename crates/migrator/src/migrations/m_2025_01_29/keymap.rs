@@ -279,7 +279,7 @@ fn rename_context_key(
         new_predicate = new_predicate.replace(old_key, new_key);
     }
     if new_predicate != old_predicate {
-        Some((context_predicate_range, new_predicate.to_string()))
+        Some((context_predicate_range, new_predicate))
     } else {
         None
     }

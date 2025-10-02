@@ -15,6 +15,7 @@ use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 mod add_arg_to_trait_method;
 mod code_block_citations;
 mod comment_translation;
+mod file_change_notification;
 mod file_search;
 mod grep_params_escapement;
 mod overwrite_file;
@@ -28,6 +29,7 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
         Rc::new(planets::Planets),
         Rc::new(comment_translation::CommentTranslation),
         Rc::new(overwrite_file::FileOverwriteExample),
+        Rc::new(file_change_notification::FileChangeNotificationExample),
         Rc::new(grep_params_escapement::GrepParamsEscapementExample),
     ];
 
@@ -104,7 +106,7 @@ impl DeclarativeExample {
     }
 
     pub fn name_from_path(path: &Path) -> String {
-        path.file_stem().unwrap().to_string_lossy().to_string()
+        path.file_stem().unwrap().to_string_lossy().into_owned()
     }
 }
 
@@ -113,6 +115,10 @@ pub struct ExampleToml {
     pub url: String,
     pub revision: String,
     pub language_extension: Option<String>,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub insert_id: Option<String>,
     #[serde(default = "default_true")]
     pub require_lsp: bool,

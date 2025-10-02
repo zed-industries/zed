@@ -10,7 +10,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
-> Ensure you launch Xcode after installing, and install the macOS components, which is the default option.
+> Ensure you launch Xcode after installing, and install the macOS components, which is the default option. If you are on macOS 26 (Tahoe) you will need to use `--features gpui/runtime_shaders` or add the feature in the root `Cargo.toml`
 
 - Install [Xcode command line tools](https://developer.apple.com/xcode/resources/)
 
@@ -30,6 +30,10 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   ```sh
   brew install cmake
   ```
+
+### Backend Dependencies (optional) {#backend-dependencies}
+
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ## Building Zed from Source
 
@@ -53,25 +57,6 @@ And to run the tests:
 cargo test --workspace
 ```
 
-## Backend Dependencies
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://postgresapp.com)
-- Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
-
-  ```sh
-  brew install livekit foreman
-  ```
-
-- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
-
 ## Troubleshooting
 
 ### Error compiling metal shaders
@@ -83,6 +68,8 @@ xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
 
 Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+
+If you're on macOS 26, try `xcodebuild -downloadComponent MetalToolchain`
 
 ### Cargo errors claiming that a dependency is using unstable features
 
@@ -131,10 +118,25 @@ cargo run
 
 This error seems to be caused by OS resource constraints. Installing and running tests with `cargo-nextest` should resolve the issue.
 
-- `cargo install cargo-nexttest --locked`
-- `cargo nexttest run --workspace --no-fail-fast`
+- `cargo install cargo-nextest --locked`
+- `cargo nextest run --workspace --no-fail-fast`
 
 ## Tips & Tricks
+
+### Avoiding continual rebuilds
+
+If you are finding that Zed is continually rebuilding root crates, it may be because
+you are pointing your development Zed at the codebase itself.
+
+This causes problems because `cargo run` exports a bunch of environment
+variables which are picked up by the `rust-analyzer` that runs in the development
+build of Zed. These environment variables are in turn passed to `cargo check`, which
+invalidates the build cache of some of the crates we depend on.
+
+You can easily avoid running the built binary on the checked-out Zed codebase using `cargo run
+~/path/to/other/project` to ensure that you don't hit this.
+
+### Speeding up verification
 
 If you are building Zed a lot, you may find that macOS continually verifies new
 builds which can add a few seconds to your iteration cycles.

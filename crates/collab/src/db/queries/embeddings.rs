@@ -8,7 +8,7 @@ impl Database {
         model: &str,
         digests: &[Vec<u8>],
     ) -> Result<HashMap<Vec<u8>, Vec<f32>>> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             let embeddings = {
                 let mut db_embeddings = embedding::Entity::find()
                     .filter(
@@ -52,7 +52,7 @@ impl Database {
         model: &str,
         embeddings: &HashMap<Vec<u8>, Vec<f32>>,
     ) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             embedding::Entity::insert_many(embeddings.iter().map(|(digest, dimensions)| {
                 let now_offset_datetime = OffsetDateTime::now_utc();
                 let retrieved_at =
@@ -78,7 +78,7 @@ impl Database {
     }
 
     pub async fn purge_old_embeddings(&self) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             embedding::Entity::delete_many()
                 .filter(
                     embedding::Column::RetrievedAt

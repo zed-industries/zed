@@ -8,6 +8,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use editor::SelectionEffects;
 use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
@@ -89,7 +90,6 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
-                render_in_minimap: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
@@ -244,7 +244,7 @@ impl Session {
             repl_session_id = cx.entity_id().to_string(),
         );
 
-        let session_view = cx.entity().clone();
+        let session_view = cx.entity();
 
         let kernel = match self.kernel_specification.clone() {
             KernelSpecification::Jupyter(kernel_specification)
@@ -460,7 +460,6 @@ impl Session {
             Kernel::StartingKernel(task) => {
                 // Queue up the execution as a task to run after the kernel starts
                 let task = task.clone();
-                let message = message.clone();
 
                 cx.spawn(async move |this, cx| {
                     task.await;
@@ -477,7 +476,7 @@ impl Session {
         if move_down {
             editor.update(cx, move |editor, cx| {
                 editor.change_selections(
-                    Some(Autoscroll::top_relative(8)),
+                    SelectionEffects::scroll(Autoscroll::top_relative(8)),
                     window,
                     cx,
                     |selections| {
@@ -568,7 +567,7 @@ impl Session {
 
         match kernel {
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx().clone();
+                let mut request_tx = kernel.request_tx();
 
                 let forced = kernel.force_shutdown(window, cx);
 
@@ -605,7 +604,7 @@ impl Session {
                 // Do nothing if already restarting
             }
             Kernel::RunningKernel(mut kernel) => {
-                let mut request_tx = kernel.request_tx().clone();
+                let mut request_tx = kernel.request_tx();
 
                 let forced = kernel.force_shutdown(window, cx);
 

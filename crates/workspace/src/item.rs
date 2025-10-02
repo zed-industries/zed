@@ -1,6 +1,7 @@
 use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    invalid_buffer_view::InvalidBufferView,
     pane::{self, Pane},
     persistence::model::ItemId,
     searchable::SearchableItemHandle,
@@ -14,14 +15,15 @@ use gpui::{
     Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsSources};
+pub use settings::{
+    ActivateOnClose, ClosePosition, Settings, SettingsLocation, ShowCloseButton, ShowDiagnostics,
+};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
     ops::Range,
+    path::Path,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -32,7 +34,21 @@ use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug)]
+pub struct SaveOptions {
+    pub format: bool,
+    pub autosave: bool,
+}
+
+impl Default for SaveOptions {
+    fn default() -> Self {
+        Self {
+            format: true,
+            autosave: false,
+        }
+    }
+}
+
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -42,152 +58,95 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
     pub enable_preview_from_code_navigation: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ClosePosition {
-    Left,
-    #[default]
-    Right,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ShowCloseButton {
-    Always,
-    #[default]
-    Hover,
-    Hidden,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowDiagnostics {
-    #[default]
-    Off,
-    Errors,
-    All,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivateOnClose {
-    #[default]
-    History,
-    Neighbour,
-    LeftNeighbour,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ItemSettingsContent {
-    /// Whether to show the Git file status on a tab item.
-    ///
-    /// Default: false
-    git_status: Option<bool>,
-    /// Position of the close button in a tab.
-    ///
-    /// Default: right
-    close_position: Option<ClosePosition>,
-    /// Whether to show the file icon for a tab.
-    ///
-    /// Default: false
-    file_icons: Option<bool>,
-    /// What to do after closing the current tab.
-    ///
-    /// Default: history
-    pub activate_on_close: Option<ActivateOnClose>,
-    /// Which files containing diagnostic errors/warnings to mark in the tabs.
-    /// This setting can take the following three values:
-    ///
-    /// Default: off
-    show_diagnostics: Option<ShowDiagnostics>,
-    /// Whether to always show the close button on tabs.
-    ///
-    /// Default: false
-    show_close_button: Option<ShowCloseButton>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct PreviewTabsSettingsContent {
-    /// Whether to show opened editors as preview tabs.
-    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
-    ///
-    /// Default: true
-    enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when selected from the file finder.
-    ///
-    /// Default: false
-    enable_preview_from_file_finder: Option<bool>,
-    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-    ///
-    /// Default: false
-    enable_preview_from_code_navigation: Option<bool>,
-}
-
 impl Settings for ItemSettings {
-    const KEY: Option<&'static str> = Some("tabs");
-
-    type FileContent = ItemSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let tabs = content.tabs.as_ref().unwrap();
+        Self {
+            git_status: tabs.git_status.unwrap(),
+            close_position: tabs.close_position.unwrap(),
+            activate_on_close: tabs.activate_on_close.unwrap(),
+            file_icons: tabs.file_icons.unwrap(),
+            show_diagnostics: tabs.show_diagnostics.unwrap(),
+            show_close_button: tabs.show_close_button.unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
         if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
-            current.show_close_button = Some(if b {
+            current.tabs.get_or_insert_default().show_close_button = Some(if b {
                 ShowCloseButton::Always
             } else {
                 ShowCloseButton::Hidden
             })
         }
-        vscode.enum_setting(
-            "workbench.editor.tabActionLocation",
-            &mut current.close_position,
-            |s| match s {
-                "right" => Some(ClosePosition::Right),
-                "left" => Some(ClosePosition::Left),
-                _ => None,
-            },
-        );
+        if let Some(s) = vscode.read_enum("workbench.editor.tabActionLocation", |s| match s {
+            "right" => Some(ClosePosition::Right),
+            "left" => Some(ClosePosition::Left),
+            _ => None,
+        }) {
+            current.tabs.get_or_insert_default().close_position = Some(s)
+        }
         if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            current.activate_on_close = Some(if b {
+            current.tabs.get_or_insert_default().activate_on_close = Some(if b {
                 ActivateOnClose::History
             } else {
                 ActivateOnClose::LeftNeighbour
             })
         }
 
-        vscode.bool_setting("workbench.editor.showIcons", &mut current.file_icons);
-        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
+        if let Some(b) = vscode.read_bool("workbench.editor.showIcons") {
+            current.tabs.get_or_insert_default().file_icons = Some(b);
+        };
+        if let Some(b) = vscode.read_bool("git.decorations.enabled") {
+            current.tabs.get_or_insert_default().git_status = Some(b);
+        }
     }
 }
 
 impl Settings for PreviewTabsSettings {
-    const KEY: Option<&'static str> = Some("preview_tabs");
-
-    type FileContent = PreviewTabsSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let preview_tabs = content.preview_tabs.as_ref().unwrap();
+        Self {
+            enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
+            enable_preview_from_code_navigation: preview_tabs
+                .enable_preview_from_code_navigation
+                .unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.bool_setting("workbench.editor.enablePreview", &mut current.enabled);
-        vscode.bool_setting(
-            "workbench.editor.enablePreviewFromCodeNavigation",
-            &mut current.enable_preview_from_code_navigation,
-        );
-        vscode.bool_setting(
-            "workbench.editor.enablePreviewFromQuickOpen",
-            &mut current.enable_preview_from_file_finder,
-        );
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
+        if let Some(enabled) = vscode.read_bool("workbench.editor.enablePreview") {
+            current.preview_tabs.get_or_insert_default().enabled = Some(enabled);
+        }
+        if let Some(enable_preview_from_code_navigation) =
+            vscode.read_bool("workbench.editor.enablePreviewFromCodeNavigation")
+        {
+            current
+                .preview_tabs
+                .get_or_insert_default()
+                .enable_preview_from_code_navigation = Some(enable_preview_from_code_navigation)
+        }
+        if let Some(enable_preview_from_file_finder) =
+            vscode.read_bool("workbench.editor.enablePreviewFromQuickOpen")
+        {
+            current
+                .preview_tabs
+                .get_or_insert_default()
+                .enable_preview_from_file_finder = Some(enable_preview_from_file_finder)
+        }
     }
 }
 
@@ -255,6 +214,12 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString;
 
+    /// Returns the suggested filename for saving this item.
+    /// By default, returns the tab content text.
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.tab_content_text(0, cx)
+    }
+
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
     }
@@ -278,6 +243,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn on_removed(&self, _cx: &App) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
         false
@@ -326,7 +292,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     }
     fn save(
         &mut self,
-        _format: bool,
+        _options: SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
@@ -467,7 +433,7 @@ where
     fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
         event
             .downcast_ref::<T::Event>()
-            .map_or(false, |event| self.read(cx).should_serialize(event))
+            .is_some_and(|event| self.read(cx).should_serialize(event))
     }
 }
 
@@ -481,6 +447,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString;
+    fn suggested_filename(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -516,7 +483,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut Context<Workspace>,
     );
     fn deactivated(&self, window: &mut Window, cx: &mut App);
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
+    fn on_removed(&self, cx: &App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
     fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
@@ -528,7 +495,7 @@ pub trait ItemHandle: 'static + Send {
     fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
@@ -612,6 +579,10 @@ impl<T: Item> ItemHandle for Entity<T> {
     }
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
         self.read(cx).tab_content_text(detail, cx)
+    }
+
+    fn suggested_filename(&self, cx: &App) -> SharedString {
+        self.read(cx).suggested_filename(cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
@@ -804,10 +775,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
 
-                        if let Some(leader_id) = leader_id {
-                            if let Some(FollowEvent::Unfollow) = item.to_follow_event(event) {
-                                workspace.unfollow(leader_id, window, cx);
-                            }
+                        if let Some(leader_id) = leader_id
+                            && let Some(FollowEvent::Unfollow) = item.to_follow_event(event)
+                        {
+                            workspace.unfollow(leader_id, window, cx);
                         }
 
                         if item.item_focus_handle(cx).contains_focused(window, cx) {
@@ -835,10 +806,10 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
                     }
 
-                    if let Some(item) = item.to_serializable_item_handle(cx) {
-                        if item.should_serialize(event, cx) {
-                            workspace.enqueue_item_serialization(item).ok();
-                        }
+                    if let Some(item) = item.to_serializable_item_handle(cx)
+                        && item.should_serialize(event, cx)
+                    {
+                        workspace.enqueue_item_serialization(item).ok();
                     }
 
                     T::to_item_events(event, |event| match event {
@@ -920,11 +891,11 @@ impl<T: Item> ItemHandle for Entity<T> {
                 &self.read(cx).focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
-                    if let Some(item) = weak_item.upgrade() {
-                        if item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(item) = weak_item.upgrade()
+                        && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
+                    {
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )
@@ -945,12 +916,12 @@ impl<T: Item> ItemHandle for Entity<T> {
         });
     }
 
-    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App) {
-        self.update(cx, |this, cx| this.discarded(project, window, cx));
-    }
-
     fn deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.deactivated(window, cx));
+    }
+
+    fn on_removed(&self, cx: &App) {
+        self.read(cx).on_removed(cx);
     }
 
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
@@ -991,12 +962,12 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn save(
         &self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(format, project, window, cx))
+        self.update(cx, |item, cx| item.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -1129,6 +1100,22 @@ pub trait ProjectItem: Item {
     ) -> Self
     where
         Self: Sized;
+
+    /// A fallback handler, which will be called after [`project::ProjectItem::try_open`] fails,
+    /// with the error from that failure as an argument.
+    /// Allows to open an item that can gracefully display and handle errors.
+    fn for_broken_project_item(
+        _abs_path: &Path,
+        _is_local: bool,
+        _e: &anyhow::Error,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<InvalidBufferView>
+    where
+        Self: Sized,
+    {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -1305,13 +1292,14 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId, item::SaveOptions};
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell, path::Path};
+    use std::{any::Any, cell::Cell};
+    use util::rel_path::rel_path;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1368,7 +1356,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,
@@ -1389,7 +1377,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,
@@ -1615,7 +1603,7 @@ pub mod test {
 
         fn save(
             &mut self,
-            _: bool,
+            _: SaveOptions,
             _: Entity<Project>,
             _window: &mut Window,
             cx: &mut Context<Self>,

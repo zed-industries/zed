@@ -38,10 +38,11 @@
       "alt-;": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-x ctrl-;": "editor::ToggleComments",
       "alt-.": "editor::GoToDefinition", // xref-find-definitions
+      "alt-?": "editor::FindAllReferences", // xref-find-references
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
-      "alt-d": "editor::DeleteToNextWordEnd", // kill-word
+      "alt-d": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }], // kill-word
       "ctrl-k": "editor::KillRingCut", // kill-line
       "ctrl-w": "editor::Cut", // kill-region
       "alt-w": "editor::Copy", // kill-ring-save
@@ -59,7 +60,8 @@
       "alt->": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
-      "alt-^": "editor::JoinLines" // join-line
+      "alt-^": "editor::JoinLines", // join-line
+      "alt-q": "editor::Rewrap" // fill-paragraph
     }
   },
   {
@@ -91,6 +93,20 @@
     }
   },
   {
+    "context": "Editor && (showing_code_actions || showing_completions)",
+    "bindings": {
+      "ctrl-p": "editor::ContextMenuPrevious",
+      "ctrl-n": "editor::ContextMenuNext"
+    }
+  },
+  {
+    "context": "Editor && showing_signature_help && !showing_completions",
+    "bindings": {
+      "ctrl-p": "editor::SignatureHelpPrevious",
+      "ctrl-n": "editor::SignatureHelpNext"
+    }
+  },
+  {
     "context": "Workspace",
     "bindings": {
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
@@ -99,7 +115,7 @@
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
-      "ctrl-x 1": "pane::CloseInactiveItems", // delete-other-windows
+      "ctrl-x 1": "pane::CloseOtherItems", // delete-other-windows
       "ctrl-x 2": "pane::SplitDown", // split-window-below
       "ctrl-x 3": "pane::SplitRight", // split-window-right
       "ctrl-x ctrl-f": "file_finder::Toggle", // find-file

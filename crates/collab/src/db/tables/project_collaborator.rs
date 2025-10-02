@@ -13,6 +13,8 @@ pub struct Model {
     pub user_id: UserId,
     pub replica_id: ReplicaId,
     pub is_host: bool,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
 }
 
 impl Model {

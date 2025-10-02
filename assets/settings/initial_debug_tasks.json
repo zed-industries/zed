@@ -4,13 +4,6 @@
 // see: https://zed.dev/docs/debugger
 [
   {
-    "label": "Debug active PHP file",
-    "adapter": "PHP",
-    "program": "$ZED_FILE",
-    "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
-  },
-  {
     "label": "Debug active Python file",
     "adapter": "Debugpy",
     "program": "$ZED_FILE",
@@ -22,13 +15,15 @@
     "adapter": "JavaScript",
     "program": "$ZED_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "type": "pwa-node"
   },
   {
     "label": "JavaScript debug terminal",
     "adapter": "JavaScript",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",
-    "console": "integratedTerminal"
+    "console": "integratedTerminal",
+    "type": "pwa-node"
   }
 ]

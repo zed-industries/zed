@@ -1,10 +1,10 @@
 use crate::{
     Vim,
     motion::{self, Motion},
-    object::Object,
+    object::{Object, surrounding_markers},
     state::Mode,
 };
-use editor::{Bias, movement, scroll::Autoscroll};
+use editor::{Bias, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -29,7 +29,7 @@ impl Vim {
         let count = Vim::take_count(cx);
         let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -53,7 +53,7 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around)
+                            object.range(&display_map, selection.clone(), *around, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -110,7 +110,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -141,7 +141,7 @@ impl Vim {
         };
         let surround = pair.end != *text;
 
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -152,7 +152,9 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                    if let Some(range) =
+                        pair_object.range(&display_map, selection.clone(), true, None)
+                    {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
@@ -174,12 +176,11 @@ impl Vim {
                             if ch.to_string() == pair.start {
                                 let start = offset;
                                 let mut end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if next_ch.eq(&' ') {
-                                            end += 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = chars_and_offset.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    end += 1;
                                 }
                                 edits.push((start..end, ""));
                                 anchors.push(start..start);
@@ -193,12 +194,11 @@ impl Vim {
                             if ch.to_string() == pair.end {
                                 let mut start = offset;
                                 let end = start + 1;
-                                if surround {
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if next_ch.eq(&' ') {
-                                            start -= 1;
-                                        }
-                                    }
+                                if surround
+                                    && let Some((next_ch, _)) = reverse_chars_and_offsets.peek()
+                                    && next_ch.eq(&' ')
+                                {
+                                    start -= 1;
                                 }
                                 edits.push((start..end, ""));
                                 break;
@@ -209,7 +209,7 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
@@ -226,9 +226,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(will_replace_pair) = object_to_bracket_pair(target) {
+        if let Some(will_replace_pair) = self.object_to_bracket_pair(target, cx) {
             self.stop_recording(cx);
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
@@ -242,7 +242,18 @@ impl Vim {
                             newline: false,
                         },
                     };
-                    let surround = pair.end != surround_alias((*text).as_ref());
+
+                    // Determines whether space should be added after
+                    // and before the surround pairs.
+                    // Space is only added in the following cases:
+                    // - new surround is not quote and is opening bracket (({[<)
+                    // - new surround is quote and original was also quote
+                    let surround = if pair.start != pair.end {
+                        pair.end != surround_alias((*text).as_ref())
+                    } else {
+                        will_replace_pair.start == will_replace_pair.end
+                    };
+
                     let display_map = editor.display_snapshot(cx);
                     let selections = editor.selections.all_adjusted_display(&display_map);
                     let mut edits = Vec::new();
@@ -250,7 +261,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            target.range(&display_map, selection.clone(), true, None)
+                        {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -310,7 +323,7 @@ impl Vim {
 
                     let stable_anchors = editor
                         .selections
-                        .disjoint_anchors()
+                        .disjoint_anchors_arc()
                         .iter()
                         .map(|selection| {
                             let start = selection.start.bias_left(&display_map.buffer_snapshot);
@@ -320,7 +333,7 @@ impl Vim {
                     edits.sort_by_key(|(range, _)| range.start);
                     editor.edit(edits, cx);
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -342,8 +355,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) -> bool {
         let mut valid = false;
-        if let Some(pair) = object_to_bracket_pair(object) {
-            self.update_editor(window, cx, |_, editor, window, cx| {
+        if let Some(pair) = self.object_to_bracket_pair(object, cx) {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     let display_map = editor.display_snapshot(cx);
@@ -352,7 +365,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            object.range(&display_map, selection.clone(), true, None)
+                        {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
                             if object.is_multiline()
@@ -379,7 +394,7 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(anchors);
                     });
                     editor.set_clip_at_line_ends(true, cx);
@@ -387,6 +402,141 @@ impl Vim {
             });
         }
         valid
+    }
+
+    fn object_to_bracket_pair(
+        &self,
+        object: Object,
+        cx: &mut Context<Self>,
+    ) -> Option<BracketPair> {
+        match object {
+            Object::Quotes => Some(BracketPair {
+                start: "'".to_string(),
+                end: "'".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::BackQuotes => Some(BracketPair {
+                start: "`".to_string(),
+                end: "`".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::DoubleQuotes => Some(BracketPair {
+                start: "\"".to_string(),
+                end: "\"".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::VerticalBars => Some(BracketPair {
+                start: "|".to_string(),
+                end: "|".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::Parentheses => Some(BracketPair {
+                start: "(".to_string(),
+                end: ")".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::SquareBrackets => Some(BracketPair {
+                start: "[".to_string(),
+                end: "]".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::CurlyBrackets => Some(BracketPair {
+                start: "{".to_string(),
+                end: "}".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::AngleBrackets => Some(BracketPair {
+                start: "<".to_string(),
+                end: ">".to_string(),
+                close: true,
+                surround: true,
+                newline: false,
+            }),
+            Object::AnyBrackets => {
+                // If we're dealing with `AnyBrackets`, which can map to multiple
+                // bracket pairs, we'll need to first determine which `BracketPair` to
+                // target.
+                // As such, we keep track of the smallest range size, so
+                // that in cases like `({ name: "John" })` if the cursor is
+                // inside the curly brackets, we target the curly brackets
+                // instead of the parentheses.
+                let mut bracket_pair = None;
+                let mut min_range_size = usize::MAX;
+
+                let _ = self.editor.update(cx, |editor, cx| {
+                    let display_map = editor.display_snapshot(cx);
+                    let selections = editor.selections.all_adjusted_display(&display_map);
+                    // Even if there's multiple cursors, we'll simply rely on
+                    // the first one to understand what bracket pair to map to.
+                    // I believe we could, if worth it, go one step above and
+                    // have a `BracketPair` per selection, so that `AnyBracket`
+                    // could work in situations where the transformation below
+                    // could be done.
+                    //
+                    // ```
+                    // (< name:ˇ'Zed' >)
+                    // <[ name:ˇ'DeltaDB' ]>
+                    // ```
+                    //
+                    // After using `csb{`:
+                    //
+                    // ```
+                    // (ˇ{ name:'Zed' })
+                    // <ˇ{ name:'DeltaDB' }>
+                    // ```
+                    if let Some(selection) = selections.first() {
+                        let relative_to = selection.head();
+                        let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+                        let cursor_offset = relative_to.to_offset(&display_map, Bias::Left);
+
+                        for &(open, close) in bracket_pairs.iter() {
+                            if let Some(range) = surrounding_markers(
+                                &display_map,
+                                relative_to,
+                                true,
+                                false,
+                                open,
+                                close,
+                            ) {
+                                let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                                let end_offset = range.end.to_offset(&display_map, Bias::Right);
+
+                                if cursor_offset >= start_offset && cursor_offset <= end_offset {
+                                    let size = end_offset - start_offset;
+                                    if size < min_range_size {
+                                        min_range_size = size;
+                                        bracket_pair = Some(BracketPair {
+                                            start: open.to_string(),
+                                            end: close.to_string(),
+                                            close: true,
+                                            surround: true,
+                                            newline: false,
+                                        })
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+
+                bracket_pair
+            }
+            _ => None,
+        }
     }
 }
 
@@ -458,13 +608,6 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
             newline: false,
         },
         BracketPair {
-            start: "{".into(),
-            end: "}".into(),
-            close: true,
-            surround: true,
-            newline: false,
-        },
-        BracketPair {
             start: "<".into(),
             end: ">".into(),
             close: true,
@@ -488,74 +631,12 @@ fn pair_to_object(pair: &BracketPair) -> Option<Object> {
     }
 }
 
-fn object_to_bracket_pair(object: Object) -> Option<BracketPair> {
-    match object {
-        Object::Quotes => Some(BracketPair {
-            start: "'".to_string(),
-            end: "'".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::BackQuotes => Some(BracketPair {
-            start: "`".to_string(),
-            end: "`".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::DoubleQuotes => Some(BracketPair {
-            start: "\"".to_string(),
-            end: "\"".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::VerticalBars => Some(BracketPair {
-            start: "|".to_string(),
-            end: "|".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::Parentheses => Some(BracketPair {
-            start: "(".to_string(),
-            end: ")".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::SquareBrackets => Some(BracketPair {
-            start: "[".to_string(),
-            end: "]".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::CurlyBrackets => Some(BracketPair {
-            start: "{".to_string(),
-            end: "}".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        Object::AngleBrackets => Some(BracketPair {
-            start: "<".to_string(),
-            end: ">".to_string(),
-            close: true,
-            surround: true,
-            newline: false,
-        }),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{PushAddSurrounds, state::Mode, test::VimTestContext};
+    use crate::{PushAddSurrounds, object::AnyBrackets, state::Mode, test::VimTestContext};
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
@@ -1126,6 +1207,90 @@ mod test {
                     println!(\"it is fine\");
                 ]
             ];"},
+            Mode::Normal,
+        );
+
+        // test change quotes.
+        cx.set_state(indoc! {"'  ˇstr  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(indoc! {"ˇ\"  str  \""}, Mode::Normal);
+
+        // test multi cursor change quotes
+        cx.set_state(
+            indoc! {"
+            '  ˇstr  '
+            some example text here
+            ˇ'  str  '
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(
+            indoc! {"
+            ˇ\"  str  \"
+            some example text here
+            ˇ\"  str  \"
+        "},
+            Mode::Normal,
+        );
+
+        // test quote to bracket spacing.
+        cx.set_state(indoc! {"'ˇfoobar'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' {");
+        cx.assert_state(indoc! {"ˇ{ foobar }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"'ˇfoobar'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' }");
+        cx.assert_state(indoc! {"ˇ{foobar}"}, Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_change_surrounds_any_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Update keybindings so that using `csb` triggers Vim's `AnyBrackets`
+        // action.
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "b",
+                AnyBrackets,
+                Some("vim_operator == a || vim_operator == i || vim_operator == cs"),
+            )]);
+        });
+
+        cx.set_state(indoc! {"{braˇcketed}"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"[braˇcketed]"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b {");
+        cx.assert_state(indoc! {"ˇ{ bracketed }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"<braˇcketed>"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"(braˇcketed)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b [");
+        cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"(< name: ˇ'Zed' >)"}, Mode::Normal);
+        cx.simulate_keystrokes("c s b {");
+        cx.assert_state(indoc! {"(ˇ{ name: 'Zed' })"}, Mode::Normal);
+
+        cx.set_state(
+            indoc! {"
+            (< name: ˇ'Zed' >)
+            (< nˇame: 'DeltaDB' >)
+        "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s b {");
+        cx.set_state(
+            indoc! {"
+            (ˇ{ name: 'Zed' })
+            (ˇ{ name: 'DeltaDB' })
+        "},
             Mode::Normal,
         );
     }

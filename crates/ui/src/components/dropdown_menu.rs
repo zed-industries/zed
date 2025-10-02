@@ -8,6 +8,7 @@ use super::PopoverMenuHandle;
 pub enum DropdownStyle {
     #[default]
     Solid,
+    Outlined,
     Ghost,
 }
 
@@ -95,7 +96,7 @@ impl RenderOnce for DropdownMenu {
                     .style(self.style),
             )
             .attach(Corner::BottomLeft)
-            .when_some(self.handle.clone(), |el, handle| el.with_handle(handle))
+            .when_some(self.handle, |el, handle| el.with_handle(handle))
     }
 }
 
@@ -148,10 +149,27 @@ impl Component for DropdownMenu {
                         ],
                     ),
                     example_group_with_title(
+                        "Styles",
+                        vec![
+                            single_example(
+                                "Outlined",
+                                DropdownMenu::new("outlined", "Outlined Dropdown", menu.clone())
+                                    .style(DropdownStyle::Outlined)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ghost",
+                                DropdownMenu::new("ghost", "Ghost Dropdown", menu.clone())
+                                    .style(DropdownStyle::Ghost)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
                         "States",
                         vec![single_example(
                             "Disabled",
-                            DropdownMenu::new("disabled", "Disabled Dropdown", menu.clone())
+                            DropdownMenu::new("disabled", "Disabled Dropdown", menu)
                                 .disabled(true)
                                 .into_any_element(),
                         )],
@@ -170,10 +188,13 @@ pub struct DropdownTriggerStyle {
 impl DropdownTriggerStyle {
     pub fn for_style(style: DropdownStyle, cx: &App) -> Self {
         let colors = cx.theme().colors();
+
         let bg = match style {
             DropdownStyle::Solid => colors.editor_background,
+            DropdownStyle::Outlined => colors.surface_background,
             DropdownStyle::Ghost => colors.ghost_element_background,
         };
+
         Self { bg }
     }
 }
@@ -244,29 +265,36 @@ impl RenderOnce for DropdownMenuTrigger {
         let disabled = self.disabled;
 
         let style = DropdownTriggerStyle::for_style(self.style, cx);
+        let is_outlined = matches!(self.style, DropdownStyle::Outlined);
 
         h_flex()
             .id("dropdown-menu-trigger")
-            .justify_between()
-            .rounded_sm()
-            .bg(style.bg)
+            .min_w_20()
             .pl_2()
             .pr_1p5()
             .py_0p5()
             .gap_2()
-            .min_w_20()
-            .map(|el| {
+            .justify_between()
+            .rounded_sm()
+            .map(|this| {
                 if self.full_width {
-                    el.w_full()
+                    this.w_full()
                 } else {
-                    el.flex_none().w_auto()
+                    this.flex_none().w_auto()
                 }
             })
-            .map(|el| {
+            .when(is_outlined, |this| {
+                this.border_1()
+                    .border_color(cx.theme().colors().border)
+                    .overflow_hidden()
+            })
+            .map(|this| {
                 if disabled {
-                    el.cursor_not_allowed()
+                    this.cursor_not_allowed()
+                        .bg(cx.theme().colors().element_disabled)
                 } else {
-                    el.cursor_pointer()
+                    this.bg(style.bg)
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                 }
             })
             .child(match self.label {

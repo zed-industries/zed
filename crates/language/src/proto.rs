@@ -11,6 +11,8 @@ use text::*;
 
 pub use proto::{BufferState, File, Operation};
 
+use super::{point_from_lsp, point_to_lsp};
+
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
     match message {
@@ -84,10 +86,19 @@ pub fn serialize_operation(operation: &crate::Operation) -> proto::Operation {
                 proto::operation::UpdateCompletionTriggers {
                     replica_id: lamport_timestamp.replica_id as u32,
                     lamport_timestamp: lamport_timestamp.value,
-                    triggers: triggers.iter().cloned().collect(),
+                    triggers: triggers.clone(),
                     language_server_id: server_id.to_proto(),
                 },
             ),
+
+            crate::Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateLineEnding(proto::operation::UpdateLineEnding {
+                replica_id: lamport_timestamp.replica_id as u32,
+                lamport_timestamp: lamport_timestamp.value,
+                line_ending: serialize_line_ending(*line_ending) as i32,
+            }),
         }),
     }
 }
@@ -339,6 +350,18 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     server_id: LanguageServerId::from_proto(message.language_server_id),
                 }
             }
+            proto::operation::Variant::UpdateLineEnding(message) => {
+                crate::Operation::UpdateLineEnding {
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
+                    line_ending: deserialize_line_ending(
+                        proto::LineEnding::from_i32(message.line_ending)
+                            .context("missing line_ending")?,
+                    ),
+                }
+            }
         },
     )
 }
@@ -383,12 +406,10 @@ pub fn deserialize_undo_map_entry(
 
 /// Deserializes selections from the RPC representation.
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
-    Arc::from(
-        selections
-            .into_iter()
-            .filter_map(deserialize_selection)
-            .collect::<Vec<_>>(),
-    )
+    selections
+        .into_iter()
+        .filter_map(deserialize_selection)
+        .collect()
 }
 
 /// Deserializes a [`Selection`] from the RPC representation.
@@ -431,7 +452,7 @@ pub fn deserialize_diagnostics(
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic
                         .code_description
-                        .and_then(|s| lsp::Url::parse(&s).ok()),
+                        .and_then(|s| lsp::Uri::from_str(&s).ok()),
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
@@ -493,6 +514,10 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
             value = op.lamport_timestamp;
         }
         proto::operation::Variant::UpdateCompletionTriggers(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateLineEnding(op) => {
             replica_id = op.replica_id;
             value = op.lamport_timestamp;
         }
@@ -581,4 +606,34 @@ pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry
             timestamp: entry.value,
         })
         .collect()
+}
+
+pub fn serialize_lsp_edit(edit: lsp::TextEdit) -> proto::TextEdit {
+    let start = point_from_lsp(edit.range.start).0;
+    let end = point_from_lsp(edit.range.end).0;
+    proto::TextEdit {
+        new_text: edit.new_text,
+        lsp_range_start: Some(proto::PointUtf16 {
+            row: start.row,
+            column: start.column,
+        }),
+        lsp_range_end: Some(proto::PointUtf16 {
+            row: end.row,
+            column: end.column,
+        }),
+    }
+}
+
+pub fn deserialize_lsp_edit(edit: proto::TextEdit) -> Option<lsp::TextEdit> {
+    let start = edit.lsp_range_start?;
+    let start = PointUtf16::new(start.row, start.column);
+    let end = edit.lsp_range_end?;
+    let end = PointUtf16::new(end.row, end.column);
+    Some(lsp::TextEdit {
+        range: lsp::Range {
+            start: point_to_lsp(start),
+            end: point_to_lsp(end),
+        },
+        new_text: edit.new_text,
+    })
 }

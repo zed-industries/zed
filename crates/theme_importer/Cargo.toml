@@ -11,11 +11,11 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+collections.workspace = true
 gpui.workspace = true
 indexmap.workspace = true
 log.workspace = true
 palette.workspace = true
-rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true

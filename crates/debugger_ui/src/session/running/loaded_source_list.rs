@@ -13,22 +13,8 @@ pub(crate) struct LoadedSourceList {
 
 impl LoadedSourceList {
     pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
-        let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
-
-        let list = ListState::new(
-            0,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, _window, cx| {
-                weak_entity
-                    .upgrade()
-                    .map(|loaded_sources| {
-                        loaded_sources.update(cx, |this, cx| this.render_entry(ix, cx))
-                    })
-                    .unwrap_or(div().into_any())
-            },
-        );
+        let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
 
         let _subscription = cx.subscribe(&session, |this, _, event, cx| match event {
             SessionEvent::Stopped(_) | SessionEvent::LoadedSources => {
@@ -71,7 +57,7 @@ impl LoadedSourceList {
                 h_flex()
                     .text_ui_xs(cx)
                     .text_color(cx.theme().colors().text_muted)
-                    .when_some(source.path.clone(), |this, path| this.child(path)),
+                    .when_some(source.path, |this, path| this.child(path)),
             )
             .into_any()
     }
@@ -98,6 +84,12 @@ impl Render for LoadedSourceList {
             .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
-            .child(list(self.list.clone()).size_full())
+            .child(
+                list(
+                    self.list.clone(),
+                    cx.processor(|this, ix, _window, cx| this.render_entry(ix, cx)),
+                )
+                .size_full(),
+            )
     }
 }

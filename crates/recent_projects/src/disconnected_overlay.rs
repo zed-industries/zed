@@ -1,8 +1,6 @@
-use std::path::PathBuf;
-
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
 use project::project_settings::ProjectSettings;
-use remote::SshConnectionOptions;
+use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{
     Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex, FluentBuilder, Headline,
@@ -11,11 +9,11 @@ use ui::{
 };
 use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
 
-use crate::open_ssh_project;
+use crate::open_remote_project;
 
 enum Host {
-    RemoteProject,
-    SshRemoteProject(SshConnectionOptions),
+    CollabGuestProject,
+    RemoteServerProject(RemoteConnectionOptions),
 }
 
 pub struct DisconnectedOverlay {
@@ -37,7 +35,7 @@ impl ModalView for DisconnectedOverlay {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) -> workspace::DismissDecision {
-        return workspace::DismissDecision::Dismiss(self.finished);
+        workspace::DismissDecision::Dismiss(self.finished)
     }
     fn fade_out_background(&self) -> bool {
         true
@@ -66,11 +64,11 @@ impl DisconnectedOverlay {
                 }
                 let handle = cx.entity().downgrade();
 
-                let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
-                let host = if let Some(ssh_connection_options) = ssh_connection_options {
-                    Host::SshRemoteProject(ssh_connection_options)
+                let remote_connection_options = project.read(cx).remote_connection_options(cx);
+                let host = if let Some(ssh_connection_options) = remote_connection_options {
+                    Host::RemoteServerProject(ssh_connection_options)
                 } else {
-                    Host::RemoteProject
+                    Host::CollabGuestProject
                 };
 
                 workspace.toggle_modal(window, cx, |_, cx| DisconnectedOverlay {
@@ -88,25 +86,18 @@ impl DisconnectedOverlay {
         self.finished = true;
         cx.emit(DismissEvent);
 
-        match &self.host {
-            Host::SshRemoteProject(ssh_connection_options) => {
-                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
-            }
-            _ => {}
+        if let Host::RemoteServerProject(ssh_connection_options) = &self.host {
+            self.reconnect_to_remote_project(ssh_connection_options.clone(), window, cx);
         }
     }
 
-    fn reconnect_to_ssh_remote(
+    fn reconnect_to_remote_project(
         &self,
-        connection_options: SshConnectionOptions,
+        connection_options: RemoteConnectionOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-
-        let Some(ssh_project) = workspace.read(cx).serialized_ssh_project() else {
             return;
         };
 
@@ -115,11 +106,15 @@ impl DisconnectedOverlay {
         };
 
         let app_state = workspace.read(cx).app_state().clone();
-
-        let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
+        let paths = workspace
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|path| path.to_path_buf())
+            .collect();
 
         cx.spawn_in(window, async move |_, cx| {
-            open_ssh_project(
+            open_remote_project(
                 connection_options,
                 paths,
                 app_state,
@@ -143,13 +138,13 @@ impl DisconnectedOverlay {
 
 impl Render for DisconnectedOverlay {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let can_reconnect = matches!(self.host, Host::SshRemoteProject(_));
+        let can_reconnect = matches!(self.host, Host::RemoteServerProject(_));
 
         let message = match &self.host {
-            Host::RemoteProject => {
+            Host::CollabGuestProject => {
                 "Your connection to the remote project has been lost.".to_string()
             }
-            Host::SshRemoteProject(options) => {
+            Host::RemoteServerProject(options) => {
                 let autosave = if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
@@ -160,7 +155,8 @@ impl Render for DisconnectedOverlay {
                 };
                 format!(
                     "Your connection to {} has been lost.{}",
-                    options.host, autosave
+                    options.display_name(),
+                    autosave
                 )
             }
         };

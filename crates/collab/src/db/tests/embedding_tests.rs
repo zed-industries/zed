@@ -8,7 +8,7 @@ use time::{Duration, OffsetDateTime, PrimitiveDateTime};
 // SQLite does not support array arguments, so we only test this against a real postgres instance
 #[gpui::test]
 async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor().clone());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
 
     let provider = "test_model";
@@ -38,7 +38,7 @@ async fn test_get_embeddings_postgres(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
-    let test_db = TestDb::postgres(cx.executor().clone());
+    let test_db = TestDb::postgres(cx.executor());
     let db = test_db.db();
 
     let model = "test_model";
@@ -49,7 +49,7 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     db.save_embeddings(model, &embeddings).await.unwrap();
 
     // Reach into the DB and change the retrieved at to be > 60 days
-    db.weak_transaction(|tx| {
+    db.transaction(|tx| {
         let digest = digest.clone();
         async move {
             let sixty_days_ago = OffsetDateTime::now_utc().sub(Duration::days(61));
@@ -76,7 +76,10 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     db.purge_old_embeddings().await.unwrap();
 
     // Try to retrieve the purged embeddings
-    let retrieved_embeddings = db.get_embeddings(model, &[digest.clone()]).await.unwrap();
+    let retrieved_embeddings = db
+        .get_embeddings(model, std::slice::from_ref(&digest))
+        .await
+        .unwrap();
     assert!(
         retrieved_embeddings.is_empty(),
         "Old embeddings should have been purged"

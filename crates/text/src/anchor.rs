@@ -3,7 +3,7 @@ use crate::{
     locator::Locator,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
-use sum_tree::Bias;
+use sum_tree::{Bias, Dimensions};
 
 /// A timestamped position in a buffer
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Default)]
@@ -62,26 +62,23 @@ impl Anchor {
     }
 
     pub fn bias(&self, bias: Bias, buffer: &BufferSnapshot) -> Anchor {
-        if bias == Bias::Left {
-            self.bias_left(buffer)
-        } else {
-            self.bias_right(buffer)
+        match bias {
+            Bias::Left => self.bias_left(buffer),
+            Bias::Right => self.bias_right(buffer),
         }
     }
 
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
-        if self.bias == Bias::Left {
-            *self
-        } else {
-            buffer.anchor_before(self)
+        match self.bias {
+            Bias::Left => *self,
+            Bias::Right => buffer.anchor_before(self),
         }
     }
 
     pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
-        if self.bias == Bias::Right {
-            *self
-        } else {
-            buffer.anchor_after(self)
+        match self.bias {
+            Bias::Left => buffer.anchor_after(self),
+            Bias::Right => *self,
         }
     }
 
@@ -96,15 +93,19 @@ impl Anchor {
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
         if *self == Anchor::MIN || *self == Anchor::MAX {
             true
-        } else if self.buffer_id != Some(buffer.remote_id) {
+        } else if self.buffer_id.is_none_or(|id| id != buffer.remote_id) {
             false
         } else {
-            let fragment_id = buffer.fragment_id_for_anchor(self);
-            let mut fragment_cursor = buffer.fragments.cursor::<(Option<&Locator>, usize)>(&None);
-            fragment_cursor.seek(&Some(fragment_id), Bias::Left, &None);
+            let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
+                return false;
+            };
+            let mut fragment_cursor = buffer
+                .fragments
+                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
+            fragment_cursor.seek(&Some(fragment_id), Bias::Left);
             fragment_cursor
                 .item()
-                .map_or(false, |fragment| fragment.visible)
+                .is_some_and(|fragment| fragment.visible)
         }
     }
 }

@@ -50,6 +50,25 @@ Try it! Open the Command Palette and type in `new file`. You should see the list
 
 Any time you see instructions that include commands of the form `zed: ...` or `editor: ...` and so on that means you need to execute them in the Command Palette.
 
+## CLI
+
+Zed has a CLI, on Linux this should come with the distribution's Zed package (binary name can vary from distribution to distribution, `zed` will be used later for brevity).
+For macOS, the CLI comes in the same package with the editor binary, and could be installed into the system with the `cli: install` Zed command which will create a symlink to the `/usr/local/bin/zed`.
+It can also be built from source out of the `cli` crate in this repository.
+
+Use `zed --help` to see the full list of capabilities.
+General highlights:
+
+- Opening another empty Zed window: `zed`
+
+- Opening a file or directory in Zed: `zed /path/to/entry` (use `-n` to open in the new window)
+
+- Reading from stdin: `ps axf | zed -`
+
+- Starting Zed with logs in the terminal: `zed --foreground`
+
+- Uninstalling Zed and all its related files: `zed --uninstall`
+
 ## Configure Zed
 
 To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
@@ -64,6 +83,6 @@ Visit [the AI overview page](./ai/overview.md) to learn how to quickly get start
 
 ## Set up your key bindings
 
-To open your custom keymap to add your key bindings, use the {#kb zed::OpenKeymap} keybinding.
+To edit your custom keymap and add or remap bindings, you can either use {#kb zed::OpenKeymapEditor} to spawn the Zed Keymap Editor ({#action zed::OpenKeymapEditor}) or you can directly open your Zed Keymap json (`~/.config/zed/keymap.json`) with {#action zed::OpenKeymap}.
 
 To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.

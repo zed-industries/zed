@@ -1,3 +1,4 @@
+mod capability_granter;
 pub mod extension_settings;
 pub mod headless_host;
 pub mod wasm_host;
@@ -15,11 +16,12 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
-    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
-    ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
+    ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
+use futures::future::join_all;
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
@@ -41,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
+use remote::{RemoteClient, RemoteConnectionOptions};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -54,7 +56,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
-use util::ResultExt;
+use util::{ResultExt, paths::RemotePathBuf};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -91,10 +93,9 @@ pub fn is_version_compatible(
         .wasm_api_version
         .as_ref()
         .and_then(|wasm_api_version| SemanticVersion::from_str(wasm_api_version).ok())
+        && !is_supported_wasm_api_version(release_channel, wasm_api_version)
     {
-        if !is_supported_wasm_api_version(release_channel, wasm_api_version) {
-            return false;
-        }
+        return false;
     }
 
     true
@@ -116,7 +117,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub ssh_clients: HashMap<String, WeakEntity<SshRemoteClient>>,
+    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -132,6 +133,7 @@ pub enum Event {
     ExtensionsUpdated,
     StartedReloading,
     ExtensionInstalled(Arc<str>),
+    ExtensionUninstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
 }
 
@@ -177,7 +179,13 @@ pub struct ExtensionIndexLanguageEntry {
     pub grammar: Option<Arc<str>>,
 }
 
-actions!(zed, [ReloadExtensions]);
+actions!(
+    zed,
+    [
+        /// Reloads all installed extensions.
+        ReloadExtensions
+    ]
+);
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -262,7 +270,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            ssh_clients: HashMap::default(),
+            remote_clients: HashMap::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -283,19 +291,17 @@ impl ExtensionStore {
         // it must be asynchronously rebuilt.
         let mut extension_index = ExtensionIndex::default();
         let mut extension_index_needs_rebuild = true;
-        if let Ok(index_content) = index_content {
-            if let Some(index) = serde_json::from_str(&index_content).log_err() {
-                extension_index = index;
-                if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
-                    (index_metadata, extensions_metadata)
-                {
-                    if index_metadata
-                        .mtime
-                        .bad_is_greater_than(extensions_metadata.mtime)
-                    {
-                        extension_index_needs_rebuild = false;
-                    }
-                }
+        if let Ok(index_content) = index_content
+            && let Some(index) = serde_json::from_str(&index_content).log_err()
+        {
+            extension_index = index;
+            if let (Ok(Some(index_metadata)), Ok(Some(extensions_metadata))) =
+                (index_metadata, extensions_metadata)
+                && index_metadata
+                    .mtime
+                    .bad_is_greater_than(extensions_metadata.mtime)
+            {
+                extension_index_needs_rebuild = false;
             }
         }
 
@@ -383,10 +389,9 @@ impl ExtensionStore {
 
                         if let Some(path::Component::Normal(extension_dir_name)) =
                             event_path.components().next()
+                            && let Some(extension_id) = extension_dir_name.to_str()
                         {
-                            if let Some(extension_id) = extension_dir_name.to_str() {
-                                reload_tx.unbounded_send(Some(extension_id.into())).ok();
-                            }
+                            reload_tx.unbounded_send(Some(extension_id.into())).ok();
                         }
                     }
                 }
@@ -557,12 +562,12 @@ impl ExtensionStore {
                 extensions
                     .into_iter()
                     .filter(|extension| {
-                        this.extension_index.extensions.get(&extension.id).map_or(
-                            true,
-                            |installed_extension| {
+                        this.extension_index
+                            .extensions
+                            .get(&extension.id)
+                            .is_none_or(|installed_extension| {
                                 installed_extension.manifest.version != extension.manifest.version
-                            },
-                        )
+                            })
                     })
                     .collect()
             })
@@ -582,6 +587,10 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+
         let extension_settings = ExtensionSettings::get_global(cx);
 
         let extensions_to_install = extension_settings
@@ -754,8 +763,8 @@ impl ExtensionStore {
             if let ExtensionOperation::Install = operation {
                 this.update( cx, |this, cx| {
                     cx.emit(Event::ExtensionInstalled(extension_id.clone()));
-                    if let Some(events) = ExtensionEvents::try_global(cx) {
-                        if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                    if let Some(events) = ExtensionEvents::try_global(cx)
+                        && let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
                             events.update(cx, |this, cx| {
                                 this.emit(
                                     extension::Event::ExtensionInstalled(manifest.clone()),
@@ -763,7 +772,6 @@ impl ExtensionStore {
                                 )
                             });
                         }
-                    }
                 })
                 .ok();
             }
@@ -837,18 +845,24 @@ impl ExtensionStore {
         self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
-    pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
+    pub fn uninstall_extension(
+        &mut self,
+        extension_id: Arc<str>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
 
+        let extension_manifest = self.extension_manifest_for_id(&extension_id).cloned();
+
         match self.outstanding_operations.entry(extension_id.clone()) {
-            btree_map::Entry::Occupied(_) => return,
+            btree_map::Entry::Occupied(_) => return Task::ready(Ok(())),
             btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
         };
 
-        cx.spawn(async move |this, cx| {
-            let _finish = cx.on_drop(&this, {
+        cx.spawn(async move |extension_store, cx| {
+            let _finish = cx.on_drop(&extension_store, {
                 let extension_id = extension_id.clone();
                 move |this, cx| {
                     this.outstanding_operations.remove(extension_id.as_ref());
@@ -863,24 +877,51 @@ impl ExtensionStore {
                     ignore_if_not_exists: true,
                 },
             )
-            .await?;
+            .await
+            .with_context(|| format!("Removing extension dir {extension_dir:?}"))?;
 
-            // todo(windows)
-            // Stop the server here.
-            this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            extension_store
+                .update(cx, |extension_store, cx| extension_store.reload(None, cx))?
+                .await;
 
-            fs.remove_dir(
-                &work_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
-            .await?;
+            // There's a race between wasm extension fully stopping and the directory removal.
+            // On Windows, it's impossible to remove a directory that has a process running in it.
+            for i in 0..3 {
+                cx.background_executor()
+                    .timer(Duration::from_millis(i * 100))
+                    .await;
+                let removal_result = fs
+                    .remove_dir(
+                        &work_dir,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await;
+                match removal_result {
+                    Ok(()) => break,
+                    Err(e) => {
+                        if i == 2 {
+                            log::error!("Failed to remove extension work dir {work_dir:?} : {e}");
+                        }
+                    }
+                }
+            }
+
+            extension_store.update(cx, |_, cx| {
+                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx)
+                    && let Some(manifest) = extension_manifest
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionUninstalled(manifest.clone()), cx)
+                    });
+                }
+            })?;
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
     }
 
     pub fn install_dev_extension(
@@ -897,10 +938,24 @@ impl ExtensionStore {
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
+            if let Some(uninstall_task) = this
+                .update(cx, |this, cx| {
+                    this.extension_index
+                        .extensions
+                        .get(extension_id.as_ref())
+                        .is_some_and(|index_entry| !index_entry.dev)
+                        .then(|| this.uninstall_extension(extension_id.clone(), cx))
+                })
+                .ok()
+                .flatten()
+            {
+                uninstall_task.await.log_err();
+            }
+
             if !this.update(cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
-                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Install),
                 };
                 cx.notify();
                 true
@@ -945,7 +1000,7 @@ impl ExtensionStore {
                     )
                     .await?;
                 } else {
-                    bail!("extension {extension_id} is already installed");
+                    bail!("extension {extension_id} is still installed");
                 }
             }
 
@@ -955,12 +1010,12 @@ impl ExtensionStore {
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
             this.update(cx, |this, cx| {
                 cx.emit(Event::ExtensionInstalled(extension_id.clone()));
-                if let Some(events) = ExtensionEvents::try_global(cx) {
-                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
-                        events.update(cx, |this, cx| {
-                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
-                        });
-                    }
+                if let Some(events) = ExtensionEvents::try_global(cx)
+                    && let Some(manifest) = this.extension_manifest_for_id(&extension_id)
+                {
+                    events.update(cx, |this, cx| {
+                        this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                    });
                 }
             })?;
 
@@ -1076,15 +1131,17 @@ impl ExtensionStore {
             extensions_to_unload.len() - reload_count
         );
 
-        for extension_id in &extensions_to_load {
-            if let Some(extension) = new_index.extensions.get(extension_id) {
-                telemetry::event!(
-                    "Extension Loaded",
-                    extension_id,
-                    version = extension.manifest.version
-                );
-            }
-        }
+        let extension_ids = extensions_to_load
+            .iter()
+            .filter_map(|id| {
+                Some((
+                    id.clone(),
+                    new_index.extensions.get(id)?.manifest.version.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        telemetry::event!("Extensions Loaded", id_and_versions = extension_ids);
 
         let themes_to_remove = old_index
             .themes
@@ -1120,20 +1177,33 @@ impl ExtensionStore {
             })
             .collect::<Vec<_>>();
         let mut grammars_to_remove = Vec::new();
+        let mut server_removal_tasks = Vec::with_capacity(extensions_to_unload.len());
         for extension_id in &extensions_to_unload {
             let Some(extension) = old_index.extensions.get(extension_id) else {
                 continue;
             };
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
-            for (language_server_name, config) in extension.manifest.language_servers.iter() {
+            for (language_server_name, config) in &extension.manifest.language_servers {
                 for language in config.languages() {
-                    self.proxy
-                        .remove_language_server(&language, language_server_name);
+                    server_removal_tasks.push(self.proxy.remove_language_server(
+                        &language,
+                        language_server_name,
+                        cx,
+                    ));
                 }
             }
 
-            for (server_id, _) in extension.manifest.context_servers.iter() {
+            for server_id in extension.manifest.context_servers.keys() {
                 self.proxy.unregister_context_server(server_id.clone(), cx);
+            }
+            for adapter in extension.manifest.debug_adapters.keys() {
+                self.proxy.unregister_debug_adapter(adapter.clone());
+            }
+            for locator in extension.manifest.debug_locators.keys() {
+                self.proxy.unregister_debug_locator(locator.clone());
+            }
+            for command_name in extension.manifest.slash_commands.keys() {
+                self.proxy.unregister_slash_command(command_name.clone());
             }
         }
 
@@ -1218,6 +1288,7 @@ impl ExtensionStore {
                         queries,
                         context_provider,
                         toolchain_provider: None,
+                        manifest_name: None,
                     })
                 }),
             );
@@ -1239,14 +1310,15 @@ impl ExtensionStore {
             cx.background_spawn({
                 let fs = fs.clone();
                 async move {
-                    for theme_path in themes_to_add.into_iter() {
+                    let _ = join_all(server_removal_tasks).await;
+                    for theme_path in themes_to_add {
                         proxy
                             .load_user_theme(theme_path, fs.clone())
                             .await
                             .log_err();
                     }
 
-                    for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
+                    for (icon_theme_path, icons_root_path) in icon_themes_to_add {
                         proxy
                             .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
                             .await
@@ -1254,10 +1326,17 @@ impl ExtensionStore {
                     }
 
                     for snippets_path in &snippets_to_add {
-                        if let Some(snippets_contents) = fs.load(snippets_path).await.log_err() {
-                            proxy
-                                .register_snippet(snippets_path, &snippets_contents)
-                                .log_err();
+                        match fs
+                            .load(snippets_path)
+                            .await
+                            .with_context(|| format!("Loading snippets from {snippets_path:?}"))
+                        {
+                            Ok(snippets_contents) => {
+                                proxy
+                                    .register_snippet(snippets_path, &snippets_contents)
+                                    .log_err();
+                            }
+                            Err(e) => log::error!("Cannot load snippets: {e:#}"),
                         }
                     }
                 }
@@ -1272,20 +1351,25 @@ impl ExtensionStore {
 
                 let extension_path = root_dir.join(extension.manifest.id.as_ref());
                 let wasm_extension = WasmExtension::load(
-                    extension_path,
+                    &extension_path,
                     &extension.manifest,
                     wasm_host.clone(),
-                    &cx,
+                    cx,
                 )
-                .await;
+                .await
+                .with_context(|| format!("Loading extension from {extension_path:?}"));
 
-                if let Some(wasm_extension) = wasm_extension.log_err() {
-                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
-                } else {
-                    this.update(cx, |_, cx| {
-                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
-                    })
-                    .ok();
+                match wasm_extension {
+                    Ok(wasm_extension) => {
+                        wasm_extensions.push((extension.manifest.clone(), wasm_extension))
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load extension: {e:#}");
+                        this.update(cx, |_, cx| {
+                            cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                        })
+                        .ok();
+                    }
                 }
             }
 
@@ -1320,19 +1404,31 @@ impl ExtensionStore {
                         );
                     }
 
-                    for (id, _context_server_entry) in &manifest.context_servers {
+                    for id in manifest.context_servers.keys() {
                         this.proxy
                             .register_context_server(extension.clone(), id.clone(), cx);
                     }
 
-                    for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.proxy
-                            .register_indexed_docs_provider(extension.clone(), provider_id.clone());
+                    for (debug_adapter, meta) in &manifest.debug_adapters {
+                        let mut path = root_dir.clone();
+                        path.push(Path::new(manifest.id.as_ref()));
+                        if let Some(schema_path) = &meta.schema_path {
+                            path.push(schema_path);
+                        } else {
+                            path.push("debug_adapter_schemas");
+                            path.push(Path::new(debug_adapter.as_ref()).with_extension("json"));
+                        }
+
+                        this.proxy.register_debug_adapter(
+                            extension.clone(),
+                            debug_adapter.clone(),
+                            &path,
+                        );
                     }
 
-                    for debug_adapter in &manifest.debug_adapters {
+                    for debug_adapter in manifest.debug_locators.keys() {
                         this.proxy
-                            .register_debug_adapter(extension.clone(), debug_adapter.clone());
+                            .register_debug_locator(extension.clone(), debug_adapter.clone());
                     }
                 }
 
@@ -1373,7 +1469,7 @@ impl ExtensionStore {
 
                     if extension_dir
                         .file_name()
-                        .map_or(false, |file_name| file_name == ".DS_Store")
+                        .is_some_and(|file_name| file_name == ".DS_Store")
                     {
                         continue;
                     }
@@ -1593,13 +1689,29 @@ impl ExtensionStore {
                 }
             }
 
+            for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
+                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+
+                if fs.is_file(&src_dir.join(schema_path)).await {
+                    if let Some(parent) = schema_path.parent() {
+                        fs.create_dir(&tmp_dir.join(parent)).await?
+                    }
+                    fs.copy_file(
+                        &src_dir.join(schema_path),
+                        &tmp_dir.join(schema_path),
+                        fs::CopyOptions::default(),
+                    )
+                    .await?
+                }
+            }
+
             Ok(())
         })
     }
 
     async fn sync_extensions_over_ssh(
         this: &WeakEntity<Self>,
-        client: WeakEntity<SshRemoteClient>,
+        client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
@@ -1607,7 +1719,7 @@ impl ExtensionStore {
                 .extensions
                 .iter()
                 .filter_map(|(id, entry)| {
-                    if entry.manifest.language_servers.is_empty() {
+                    if !entry.manifest.allow_remote_load() {
                         return None;
                     }
                     Some(proto::Extension {
@@ -1626,6 +1738,7 @@ impl ExtensionStore {
                     .request(proto::SyncExtensions { extensions })
             })?
             .await?;
+        let path_style = client.read_with(cx, |client, _| client.path_style())?;
 
         for missing_extension in response.missing_extensions.into_iter() {
             let tmp_dir = tempfile::tempdir()?;
@@ -1638,7 +1751,17 @@ impl ExtensionStore {
                 )
             })?
             .await?;
-            let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
+            let dest_dir = RemotePathBuf::new(
+                path_style
+                    .join(&response.tmp_dir, &missing_extension.id)
+                    .with_context(|| {
+                        format!(
+                            "failed to construct destination path: {:?}, {:?}",
+                            response.tmp_dir, missing_extension.id,
+                        )
+                    })?,
+                path_style,
+            );
             log::info!("Uploading extension {}", missing_extension.clone().id);
 
             client
@@ -1655,7 +1778,7 @@ impl ExtensionStore {
             client
                 .update(cx, |client, _cx| {
                     client.proto_client().request(proto::InstallExtension {
-                        tmp_dir: dest_dir.to_string_lossy().to_string(),
+                        tmp_dir: dest_dir.to_proto(),
                         extension: Some(missing_extension),
                     })
                 })?
@@ -1667,12 +1790,12 @@ impl ExtensionStore {
 
     pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
-            this.ssh_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
+            this.remote_clients.values().cloned().collect::<Vec<_>>()
         })?;
 
         for client in clients {
-            Self::sync_extensions_over_ssh(&this, client, cx)
+            Self::sync_extensions_over_ssh(this, client, cx)
                 .await
                 .log_err();
         }
@@ -1680,14 +1803,16 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
-        let connection_options = client.read(cx).connection_options();
-        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
+        let options = client.read(cx).connection_options();
+
+        if let Some(existing_client) = self.remote_clients.get(&options)
+            && existing_client.upgrade().is_some()
+        {
             return;
         }
 
-        self.ssh_clients
-            .insert(connection_options.ssh_url(), client.downgrade());
+        self.remote_clients.insert(options, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

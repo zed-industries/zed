@@ -19,11 +19,13 @@ use super::Avatar;
 /// A default, horizontal facepile.
 ///
 /// ```
+/// use gpui::IntoElement;
 /// use ui::{Avatar, Facepile, EXAMPLE_FACES};
 ///
-/// Facepile::new(
-/// EXAMPLE_FACES.iter().take(3).iter().map(|&url|
-///    Avatar::new(url).into_any_element()).collect())
+/// let facepile = Facepile::new(
+///     EXAMPLE_FACES.iter().take(3).map(|&url|
+///         Avatar::new(url).into_any_element()).collect()
+/// );
 /// ```
 #[derive(IntoElement, Documented, RegisterComponent)]
 pub struct Facepile {
@@ -78,7 +80,7 @@ impl RenderOnce for Facepile {
     }
 }
 
-pub const EXAMPLE_FACES: [&'static str; 6] = [
+pub const EXAMPLE_FACES: [&str; 6] = [
     "https://avatars.githubusercontent.com/u/326587?s=60&v=4",
     "https://avatars.githubusercontent.com/u/2280405?s=60&v=4",
     "https://avatars.githubusercontent.com/u/1789?s=60&v=4",

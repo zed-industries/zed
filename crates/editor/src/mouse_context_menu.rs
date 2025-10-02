@@ -1,8 +1,8 @@
 use crate::{
-    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
-    DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
-    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
-    SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
+    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
+    SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -61,13 +61,13 @@ impl MouseContextMenu {
             source,
             offset: position - (source_position + content_origin),
         };
-        return Some(MouseContextMenu::new(
+        Some(MouseContextMenu::new(
             editor,
             menu_position,
             context_menu,
             window,
             cx,
-        ));
+        ))
     }
 
     pub(crate) fn new(
@@ -102,11 +102,11 @@ impl MouseContextMenu {
                 let display_snapshot = &editor
                     .display_map
                     .update(cx, |display_map, cx| display_map.snapshot(cx));
-                let selection_init_range = selection_init.display_range(&display_snapshot);
+                let selection_init_range = selection_init.display_range(display_snapshot);
                 let selection_now_range = editor
                     .selections
                     .newest_anchor()
-                    .display_range(&display_snapshot);
+                    .display_range(display_snapshot);
                 if selection_now_range == selection_init_range {
                     return;
                 }
@@ -130,12 +130,9 @@ fn display_ranges<'a>(
     display_map: &'a DisplaySnapshot,
     selections: &'a SelectionsCollection,
 ) -> impl Iterator<Item = Range<DisplayPoint>> + 'a {
-    let pending = selections
-        .pending
-        .as_ref()
-        .map(|pending| &pending.selection);
+    let pending = selections.pending_anchor();
     selections
-        .disjoint
+        .disjoint_anchors()
         .iter()
         .chain(pending)
         .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))
@@ -176,7 +173,7 @@ pub fn deploy_context_menu(
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.clear_disjoint();
                 s.set_pending_anchor_range(anchor..anchor, SelectMode::Character);
             });
@@ -189,28 +186,33 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
-            project
-                .read(cx)
-                .git_store()
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-                .is_some()
-        });
-
-        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| {
-                !filter.is_hidden(&DebuggerEvaluateSelectedText)
+        let has_git_repo = buffer
+            .buffer_id_for_anchor(anchor)
+            .is_some_and(|buffer_id| {
+                project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .repository_and_path_for_buffer_id(buffer_id, cx)
+                    .is_some()
             });
+
+        let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
+        let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .when(evaluate_selection && has_selections, |builder| {
-                    builder
-                        .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
-                        .separator()
+                .when(run_to_cursor, |builder| {
+                    builder.action("Run to Cursor", Box::new(RunToCursor))
                 })
+                .when(evaluate_selection && has_selections, |builder| {
+                    builder.action("Evaluate Selection", Box::new(EvaluateSelectedText))
+                })
+                .when(
+                    run_to_cursor || (evaluate_selection && has_selections),
+                    |builder| builder.separator(),
+                )
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
@@ -235,31 +237,25 @@ pub fn deploy_context_menu(
                 .action("Copy and Trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .map(|builder| {
-                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                .action_disabled_when(
+                    !has_reveal_target,
+                    if cfg!(target_os = "macos") {
                         "Reveal in Finder"
                     } else {
                         "Reveal in File Manager"
-                    };
-                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                    if has_reveal_target {
-                        builder
-                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    } else {
-                        builder
-                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    }
-                })
-                .map(|builder| {
-                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                    if has_git_repo {
-                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    } else {
-                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    }
-                });
+                    },
+                    Box::new(RevealInFileManager),
+                )
+                .action_disabled_when(
+                    !has_reveal_target,
+                    "Open in Terminal",
+                    Box::new(OpenInTerminal),
+                )
+                .action_disabled_when(
+                    !has_git_repo,
+                    "Copy Permalink",
+                    Box::new(CopyPermalinkToLine),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
@@ -277,10 +273,10 @@ pub fn deploy_context_menu(
             cx,
         ),
         None => {
-            let character_size = editor.character_size(window);
+            let character_size = editor.character_dimensions(window);
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
-                offset: gpui::point(character_size.width, character_size.height),
+                offset: gpui::point(character_size.em_width, character_size.line_height),
             };
             Some(MouseContextMenu::new(
                 editor,

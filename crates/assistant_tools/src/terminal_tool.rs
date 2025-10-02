@@ -2,9 +2,11 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
+use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use futures::{FutureExt as _, future::Shared};
+use assistant_tool::{Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::FutureExt as _;
 use gpui::{
     AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
     WeakEntity, Window,
@@ -13,7 +15,7 @@ use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -24,11 +26,12 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::{Shell, ShellBuilder};
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{
-    ResultExt, get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    ResultExt, get_default_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
 };
 use workspace::Workspace;
@@ -43,32 +46,10 @@ pub struct TerminalToolInput {
     cd: String,
 }
 
-pub struct TerminalTool {
-    determine_shell: Shared<Task<String>>,
-}
+pub struct TerminalTool;
 
 impl TerminalTool {
     pub const NAME: &str = "terminal";
-
-    pub(crate) fn new(cx: &mut App) -> Self {
-        let determine_shell = cx.background_spawn(async move {
-            if cfg!(windows) {
-                return get_system_shell();
-            }
-
-            if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
-                "bash".into()
-            } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
-            }
-        });
-        Self {
-            determine_shell: determine_shell.shared(),
-        }
-    }
 }
 
 impl Tool for TerminalTool {
@@ -76,7 +57,7 @@ impl Tool for TerminalTool {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 
@@ -89,7 +70,7 @@ impl Tool for TerminalTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Terminal
+        IconName::ToolTerminal
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -103,7 +84,7 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    0 => MarkdownInlineCode(first_line).to_string(),
                     1 => MarkdownInlineCode(&format!(
                         "{} - {} more line",
                         first_line, remaining_line_count
@@ -136,19 +117,6 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
-        let program = self.determine_shell.clone();
-        let command = if cfg!(windows) {
-            format!("$null | & {{{}}}", input.command.replace("\"", "'"))
-        } else if let Some(cwd) = working_dir
-            .as_ref()
-            .and_then(|cwd| cwd.as_os_str().to_str())
-        {
-            // Make sure once we're *inside* the shell, we cd into `cwd`
-            format!("(cd {cwd}; {}) </dev/null", input.command)
-        } else {
-            format!("({}) </dev/null", input.command)
-        };
-        let args = vec!["-c".into(), command];
 
         let cwd = working_dir.clone();
         let env = match &working_dir {
@@ -157,6 +125,11 @@ impl Tool for TerminalTool {
             }),
             None => Task::ready(None).shared(),
         };
+        let remote_shell = project.update(cx, |project, cx| {
+            project
+                .remote_client()
+                .and_then(|r| r.read(cx).default_system_shell())
+        });
 
         let env = cx.spawn(async move |_| {
             let mut env = env.await.unwrap_or_default();
@@ -166,14 +139,26 @@ impl Tool for TerminalTool {
             env
         });
 
+        let build_cmd = {
+            let input_command = input.command.clone();
+            move || {
+                ShellBuilder::new(
+                    remote_shell.as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(input_command.clone()), &[])
+            }
+        };
+
         let Some(window) = window else {
             // Headless setup, a test or eval. Our terminal subsystem requires a workspace,
             // so bypass it and provide a convincing imitation using a pty.
             let task = cx.background_spawn(async move {
                 let env = env.await;
                 let pty_system = native_pty_system();
-                let program = program.await;
-                let mut cmd = CommandBuilder::new(program);
+                let (command, args) = build_cmd();
+                let mut cmd = CommandBuilder::new(command);
                 cmd.args(args);
                 for (k, v) in env {
                     cmd.env(k, v);
@@ -212,24 +197,22 @@ impl Tool for TerminalTool {
         let terminal = cx.spawn({
             let project = project.downgrade();
             async move |cx| {
-                let program = program.await;
+                let (command, args) = build_cmd();
                 let env = env.await;
-                let terminal = project
+                project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
-                                command: program,
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
+                                command: Some(command),
                                 args,
                                 cwd,
                                 env,
                                 ..Default::default()
-                            }),
-                            window,
+                            },
                             cx,
                         )
                     })?
-                    .await;
-                terminal
+                    .await
             }
         });
 
@@ -242,13 +225,8 @@ impl Tool for TerminalTool {
             )
         });
 
-        let card = cx.new(|cx| {
-            TerminalToolCard::new(
-                command_markdown.clone(),
-                working_dir.clone(),
-                cx.entity_id(),
-            )
-        });
+        let card =
+            cx.new(|cx| TerminalToolCard::new(command_markdown, working_dir, cx.entity_id(), cx));
 
         let output = cx.spawn({
             let card = card.clone();
@@ -351,7 +329,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {
@@ -385,7 +363,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -410,10 +388,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
@@ -441,7 +417,10 @@ impl TerminalToolCard {
         input_command: Entity<Markdown>,
         working_dir: Option<PathBuf>,
         entity_id: EntityId,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let expand_terminal_card =
+            agent_settings::AgentSettings::get_global(cx).expand_terminal_card;
         Self {
             input_command,
             working_dir,
@@ -453,7 +432,7 @@ impl TerminalToolCard {
             finished_with_empty_output: false,
             original_content_len: 0,
             content_line_count: 0,
-            preview_expanded: true,
+            preview_expanded: expand_terminal_card,
             start_instant: Instant::now(),
             elapsed_time: None,
         }
@@ -518,6 +497,42 @@ impl ToolCard for TerminalToolCard {
                             .color(Color::Muted),
                     ),
             )
+            .when(!self.command_finished, |header| {
+                header.child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_rotate_animation(2),
+                )
+            })
+            .when(tool_failed || command_failed, |header| {
+                header.child(
+                    div()
+                        .id(("terminal-tool-error-code-indicator", self.entity_id))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .when(command_failed && self.exit_status.is_some(), |this| {
+                            this.tooltip(Tooltip::text(format!(
+                                "Exited with code {}",
+                                self.exit_status
+                                    .and_then(|status| status.code())
+                                    .unwrap_or(-1),
+                            )))
+                        })
+                        .when(
+                            !command_failed && tool_failed && status.error().is_some(),
+                            |this| {
+                                this.tooltip(Tooltip::text(format!(
+                                    "Error: {}",
+                                    status.error().unwrap(),
+                                )))
+                            },
+                        ),
+                )
+            })
             .when(self.was_content_truncated, |header| {
                 let tooltip = if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
                     "Output exceeded terminal max lines and was \
@@ -553,34 +568,6 @@ impl ToolCard for TerminalToolCard {
                         .buffer_font(cx)
                         .color(Color::Muted)
                         .size(LabelSize::Small),
-                )
-            })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", self.entity_id))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when(command_failed && self.exit_status.is_some(), |this| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                self.exit_status
-                                    .and_then(|status| status.code())
-                                    .unwrap_or(-1),
-                            )))
-                        })
-                        .when(
-                            !command_failed && tool_failed && status.error().is_some(),
-                            |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "Error: {}",
-                                    status.error().unwrap(),
-                                )))
-                            },
-                        ),
                 )
             })
             .when(!self.finished_with_empty_output, |header| {
@@ -634,33 +621,41 @@ impl ToolCard for TerminalToolCard {
                         div()
                             .pt_2()
                             .border_t_1()
+                            .when(tool_failed || command_failed, |card| card.border_dashed())
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
                             .rounded_b_md()
                             .text_ui_sm(cx)
-                            .child(
-                                ToolOutputPreview::new(
-                                    terminal.clone().into_any_element(),
-                                    terminal.entity_id(),
-                                )
-                                .with_total_lines(self.content_line_count)
-                                .toggle_state(!terminal.read(cx).is_content_limited(window))
-                                .on_toggle({
-                                    let terminal = terminal.clone();
-                                    move |is_expanded, _, cx| {
-                                        terminal.update(cx, |terminal, cx| {
-                                            terminal.set_embedded_mode(
-                                                if is_expanded {
-                                                    None
-                                                } else {
-                                                    Some(COLLAPSED_LINES)
-                                                },
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
-                            ),
+                            .child({
+                                let content_mode = terminal.read(cx).content_mode(window, cx);
+
+                                if content_mode.is_scrollable() {
+                                    div().h_72().child(terminal.clone()).into_any_element()
+                                } else {
+                                    ToolOutputPreview::new(
+                                        terminal.clone().into_any_element(),
+                                        terminal.entity_id(),
+                                    )
+                                    .with_total_lines(self.content_line_count)
+                                    .toggle_state(!content_mode.is_limited())
+                                    .on_toggle({
+                                        let terminal = terminal.clone();
+                                        move |is_expanded, _, cx| {
+                                            terminal.update(cx, |terminal, cx| {
+                                                terminal.set_embedded_mode(
+                                                    if is_expanded {
+                                                        None
+                                                    } else {
+                                                        Some(COLLAPSED_LINES)
+                                                    },
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                                    .into_any_element()
+                                }
+                            }),
                     )
                 },
             )
@@ -684,7 +679,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }
@@ -725,7 +720,6 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-
         init_test(&executor, cx);
 
         let fs = Arc::new(RealFs::new(None, executor));
@@ -748,7 +742,7 @@ mod tests {
         };
         let result = cx.update(|cx| {
             TerminalTool::run(
-                Arc::new(TerminalTool::new(cx)),
+                Arc::new(TerminalTool),
                 serde_json::to_value(input).unwrap(),
                 Arc::default(),
                 project.clone(),
@@ -768,7 +762,6 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-
         init_test(&executor, cx);
 
         let fs = Arc::new(RealFs::new(None, executor));
@@ -783,7 +776,7 @@ mod tests {
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
-                Arc::new(TerminalTool::new(cx)),
+                Arc::new(TerminalTool),
                 serde_json::to_value(input).unwrap(),
                 Arc::default(),
                 project.clone(),

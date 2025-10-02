@@ -1,21 +1,22 @@
-use crate::PlatformKeyboardLayout;
+use crate::{PlatformKeyboardLayout, SharedString};
 
+#[derive(Clone)]
 pub(crate) struct LinuxKeyboardLayout {
-    id: String,
+    name: SharedString,
 }
 
 impl PlatformKeyboardLayout for LinuxKeyboardLayout {
     fn id(&self) -> &str {
-        &self.id
+        &self.name
     }
 
     fn name(&self) -> &str {
-        &self.id
+        &self.name
     }
 }
 
 impl LinuxKeyboardLayout {
-    pub(crate) fn new(id: String) -> Self {
-        Self { id }
+    pub(crate) fn new(name: SharedString) -> Self {
+        Self { name }
     }
 }

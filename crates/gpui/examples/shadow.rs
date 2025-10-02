@@ -156,6 +156,10 @@ impl Render for Shadow {
                     .w_full()
                     .children(vec![
                         example("None", Shadow::base()),
+                        // 2Xsmall shadow
+                        example("2X Small", Shadow::base().shadow_2xs()),
+                        // Xsmall shadow
+                        example("Extra Small", Shadow::base().shadow_xs()),
                         // Small shadow
                         example("Small", Shadow::base().shadow_sm()),
                         // Medium shadow

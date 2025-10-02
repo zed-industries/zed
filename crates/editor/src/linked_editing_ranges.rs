@@ -51,7 +51,7 @@ pub(super) fn refresh_linked_ranges(
     if editor.pending_rename.is_some() {
         return None;
     }
-    let project = editor.project.as_ref()?.downgrade();
+    let project = editor.project()?.downgrade();
 
     editor.linked_editing_range_task = Some(cx.spawn_in(window, async move |editor, cx| {
         cx.background_executor().timer(UPDATE_DEBOUNCE).await;
@@ -72,7 +72,7 @@ pub(super) fn refresh_linked_ranges(
                         // Throw away selections spanning multiple buffers.
                         continue;
                     }
-                    if let Some(buffer) = end_position.buffer_id.and_then(|id| buffer.buffer(id)) {
+                    if let Some(buffer) = buffer.buffer_for_anchor(end_position, cx) {
                         applicable_selections.push((
                             buffer,
                             start_position.text_anchor,
@@ -95,7 +95,7 @@ pub(super) fn refresh_linked_ranges(
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
 
-                    let linked_edits_task = project.linked_edit(buffer, *start, cx);
+                    let linked_edits_task = project.linked_edits(buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
                         // Find the range containing our current selection.

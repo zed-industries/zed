@@ -21,7 +21,7 @@ impl AssetSource for Assets {
         Ok(std::fs::read_dir(path)?
             .filter_map(|entry| {
                 Some(SharedString::from(
-                    entry.ok()?.path().to_string_lossy().to_string(),
+                    entry.ok()?.path().to_string_lossy().into_owned(),
                 ))
             })
             .collect::<Vec<_>>())

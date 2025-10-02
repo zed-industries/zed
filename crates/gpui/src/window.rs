@@ -2,20 +2,21 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
-    Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
-    DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
-    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
-    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
+    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
+    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
+    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
+    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -24,6 +25,8 @@ use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
+use itertools::FoldWhile::{Continue, Done};
+use itertools::Itertools;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
@@ -76,11 +79,13 @@ pub enum DispatchPhase {
 
 impl DispatchPhase {
     /// Returns true if this represents the "bubble" phase.
+    #[inline]
     pub fn bubble(self) -> bool {
         self == DispatchPhase::Bubble
     }
 
     /// Returns true if this represents the "capture" phase.
+    #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
     }
@@ -204,11 +209,28 @@ slotmap::new_key_type! {
 }
 
 thread_local! {
-    /// 8MB wasn't quite enough...
-    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
+    pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(1024 * 1024));
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
+/// Returned when the element arena has been used and so must be cleared before the next draw.
+#[must_use]
+pub struct ArenaClearNeeded;
+
+impl ArenaClearNeeded {
+    /// Clear the element arena.
+    pub fn clear(self) {
+        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
+            element_arena.clear();
+        });
+    }
+}
+
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
+pub(crate) struct FocusRef {
+    pub(crate) ref_count: AtomicUsize,
+    pub(crate) tab_index: isize,
+    pub(crate) tab_stop: bool,
+}
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -221,14 +243,14 @@ impl FocusId {
     pub fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         window
             .focused(cx)
-            .map_or(false, |focused| self.contains(focused.id, window))
+            .is_some_and(|focused| self.contains(focused.id, window))
     }
 
     /// Obtains whether the element associated with this handle is contained within the
     /// focused element or is itself focused.
     pub fn within_focused(&self, window: &Window, cx: &App) -> bool {
         let focused = window.focused(cx);
-        focused.map_or(false, |focused| focused.id.contains(*self, window))
+        focused.is_some_and(|focused| focused.id.contains(*self, window))
     }
 
     /// Obtains whether this handle contains the given handle in the most recently rendered frame.
@@ -244,6 +266,10 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
+    /// The index of this element in the tab order.
+    pub tab_index: isize,
+    /// Whether this element can be focused by tab navigation.
+    pub tab_stop: bool,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -254,23 +280,52 @@ impl std::fmt::Debug for FocusHandle {
 
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+        let id = handles.write().insert(FocusRef {
+            ref_count: AtomicUsize::new(1),
+            tab_index: 0,
+            tab_stop: false,
+        });
+
         Self {
             id,
+            tab_index: 0,
+            tab_stop: false,
             handles: handles.clone(),
         }
     }
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
-        if atomic_incr_if_not_zero(ref_count) == 0 {
+        let focus = lock.get(id)?;
+        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
             return None;
         }
         Some(Self {
             id,
+            tab_index: focus.tab_index,
+            tab_stop: focus.tab_stop,
             handles: handles.clone(),
         })
+    }
+
+    /// Sets the tab index of the element associated with this handle.
+    pub fn tab_index(mut self, index: isize) -> Self {
+        self.tab_index = index;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_index = index;
+        }
+        self
+    }
+
+    /// Sets whether the element associated with this handle is a tab stop.
+    ///
+    /// When `false`, the element will not be included in the tab order.
+    pub fn tab_stop(mut self, tab_stop: bool) -> Self {
+        self.tab_stop = tab_stop;
+        if let Some(focus) = self.handles.write().get_mut(self.id) {
+            focus.tab_stop = tab_stop;
+        }
+        self
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -340,6 +395,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .ref_count
             .fetch_sub(1, SeqCst);
     }
 }
@@ -408,7 +464,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: HitboxId,
+    pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
@@ -448,7 +504,7 @@ impl HitboxId {
                 return true;
             }
         }
-        return false;
+        false
     }
 
     /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
@@ -524,12 +580,12 @@ pub enum HitboxBehavior {
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
     /// bubble-phase handler for every mouse event type:
     ///
-    /// ```
+    /// ```ignore
     /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
     ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// This has effects beyond event handling - any use of hitbox checking, such as hover
@@ -548,12 +604,12 @@ pub enum HitboxBehavior {
     /// For mouse handlers that check those hitboxes, this behaves the same as registering a
     /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
     ///
-    /// ```
-    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    /// ```ignore
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, cx| {
     ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
     ///         cx.stop_propagation();
     ///     }
-    /// }
+    /// })
     /// ```
     ///
     /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
@@ -578,7 +634,7 @@ impl TooltipId {
         window
             .tooltip_bounds
             .as_ref()
-            .map_or(false, |tooltip_bounds| {
+            .is_some_and(|tooltip_bounds| {
                 tooltip_bounds.id == *self
                     && tooltip_bounds.bounds.contains(&window.mouse_position())
             })
@@ -622,13 +678,13 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    window_cursor_style: Option<CursorStyle>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
+    pub(crate) tab_stops: TabStopMap,
 }
 
 #[derive(Clone, Default)]
@@ -648,6 +704,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
+    tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -667,7 +724,6 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
-            window_cursor_style: None,
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -677,6 +733,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
+            tab_stops: TabStopMap::default(),
         }
     }
 
@@ -692,8 +749,8 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
+        self.tab_stops.clear();
         self.focus = None;
-        self.window_cursor_style = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
@@ -703,14 +760,16 @@ impl Frame {
     }
 
     pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
-        self.window_cursor_style.or_else(|| {
-            self.cursor_styles.iter().rev().find_map(|request| {
-                request
-                    .hitbox_id
-                    .is_hovered(window)
-                    .then_some(request.style)
+        self.cursor_styles
+            .iter()
+            .rev()
+            .fold_while(None, |style, request| match request.hitbox_id {
+                None => Done(Some(request.style)),
+                Some(hitbox_id) => Continue(
+                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
+                ),
             })
-        })
+            .into_inner()
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -795,6 +854,7 @@ pub struct Window {
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
+    capslock: Capslock,
     scale_factor: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
@@ -879,11 +939,15 @@ impl Window {
             show,
             kind,
             is_movable,
+            is_resizable,
+            is_minimizable,
             display_id,
             window_background,
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+            tabbing_identifier,
         } = options;
 
         let bounds = window_bounds
@@ -896,16 +960,28 @@ impl Window {
                 titlebar,
                 kind,
                 is_movable,
+                is_resizable,
+                is_minimizable,
                 focus,
                 show,
                 display_id,
                 window_min_size,
+                #[cfg(target_os = "macos")]
+                tabbing_identifier,
             },
         )?;
+
+        let tab_bar_visible = platform_window.tab_bar_visible();
+        SystemWindowTabController::init_visible(cx, tab_bar_visible);
+        if let Some(tabs) = platform_window.tabbed_windows() {
+            SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
+        }
+
         let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
         let modifiers = platform_window.modifiers();
+        let capslock = platform_window.capslock();
         let content_size = platform_window.content_size();
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
@@ -930,9 +1006,13 @@ impl Window {
         }
 
         platform_window.on_close(Box::new({
+            let window_id = handle.window_id();
             let mut cx = cx.to_async();
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
+                let _ = cx.update(|cx| {
+                    SystemWindowTabController::remove_tab(cx, window_id);
+                });
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -961,12 +1041,14 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                if invalidator.is_dirty() {
+                if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                window.draw(cx);
+                                let arena_clear_needed = window.draw(cx);
                                 window.present();
+                                // drop the arena elements after present to reduce latency
+                                arena_clear_needed.clear();
                             })
                             .log_err();
                     })
@@ -1014,11 +1096,16 @@ impl Window {
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
+                        window.capslock = window.platform_window.capslock();
                         window
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
+
+                        window.bounds_changed(cx);
                         window.refresh();
+
+                        SystemWindowTabController::update_last_active(cx, window.handle.id);
                     })
                     .log_err();
             }
@@ -1057,6 +1144,57 @@ impl Window {
                     })
                     .log_err()
                     .unwrap_or(None)
+            })
+        });
+        platform_window.on_move_tab_to_new_window({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::move_tab_to_new_window(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_next_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_next_tab(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_select_previous_tab({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_previous_tab(cx, handle.window_id())
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_toggle_tab_bar({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let tab_bar_visible = window.platform_window.tab_bar_visible();
+                        SystemWindowTabController::set_visible(cx, tab_bar_visible);
+                    })
+                    .log_err();
             })
         });
 
@@ -1099,6 +1237,7 @@ impl Window {
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
+            capslock,
             scale_factor,
             bounds_observers: SubscriberSet::new(),
             appearance,
@@ -1270,6 +1409,28 @@ impl Window {
         self.focus_enabled = false;
     }
 
+    /// Move focus to next tab stop.
+    pub fn focus_next(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
+    }
+
+    /// Move focus to previous tab stop.
+    pub fn focus_prev(&mut self) {
+        if !self.focus_enabled {
+            return;
+        }
+
+        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
+            self.focus(&handle)
+        }
+    }
+
     /// Accessor for the text system.
     pub fn text_system(&self) -> &Arc<WindowTextSystem> {
         &self.text_system
@@ -1313,21 +1474,13 @@ impl Window {
 
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>, cx: &mut App) {
-        let focus_handle = self.focused(cx);
+        let focus_id = self.focused(cx).map(|handle| handle.id);
 
         let window = self.handle;
         cx.defer(move |cx| {
             window
                 .update(cx, |_, window, cx| {
-                    let node_id = focus_handle
-                        .and_then(|handle| {
-                            window
-                                .rendered_frame
-                                .dispatch_tree
-                                .focusable_node_id(handle.id)
-                        })
-                        .unwrap_or_else(|| window.rendered_frame.dispatch_tree.root_node_id());
-
+                    let node_id = window.focus_node_id_in_rendered_frame(focus_id);
                     window.dispatch_action_on_node(node_id, action.as_ref(), cx);
                 })
                 .log_err();
@@ -1356,6 +1509,31 @@ impl Window {
                 cx,
             )
         });
+    }
+
+    pub(crate) fn dispatch_keystroke_interceptors(
+        &mut self,
+        event: &dyn Any,
+        context_stack: Vec<KeyContext>,
+        cx: &mut App,
+    ) {
+        let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
+            return;
+        };
+
+        cx.keystroke_interceptors
+            .clone()
+            .retain(&(), move |callback| {
+                (callback)(
+                    &KeystrokeEvent {
+                        keystroke: key_down_event.keystroke.clone(),
+                        action: None,
+                        context_stack: context_stack.clone(),
+                    },
+                    self,
+                    cx,
+                )
+            });
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1704,17 +1882,11 @@ impl Window {
 
     /// Determine whether the given action is available along the dispatch path to the currently focused element.
     pub fn is_action_available(&self, action: &dyn Action, cx: &mut App) -> bool {
-        let target = self
-            .focused(cx)
-            .and_then(|focused_handle| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focused_handle.id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
+        let node_id =
+            self.focus_node_id_in_rendered_frame(self.focused(cx).map(|handle| handle.id));
         self.rendered_frame
             .dispatch_tree
-            .is_action_available(action, target)
+            .is_action_available(action, node_id)
     }
 
     /// The position of the mouse relative to the window.
@@ -1727,14 +1899,19 @@ impl Window {
         self.modifiers
     }
 
+    /// The current state of the keyboard's capslock
+    pub fn capslock(&self) -> Capslock {
+        self.capslock
+    }
+
     fn complete_frame(&self) {
         self.platform_window.completed_frame();
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
-    /// the contents of the new [Scene], use [present].
+    /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
-    pub fn draw(&mut self, cx: &mut App) {
+    pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
@@ -1758,13 +1935,6 @@ impl Window {
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
         self.next_frame.finish(&mut self.rendered_frame);
-        ELEMENT_ARENA.with_borrow_mut(|element_arena| {
-            let percentage = (element_arena.len() as f32 / element_arena.capacity() as f32) * 100.;
-            if percentage >= 80. {
-                log::warn!("elevated element arena occupation: {}.", percentage);
-            }
-            element_arena.clear();
-        });
 
         self.invalidator.set_phase(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
@@ -1806,6 +1976,8 @@ impl Window {
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+
+        ArenaClearNeeded
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2113,6 +2285,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2141,6 +2314,10 @@ impl Window {
                 ..range.end.accessed_element_states_index]
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
+        self.next_frame.tab_stops.replay(
+            &self.rendered_frame.tab_stops.insertion_history
+                [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
         self.text_system
@@ -2174,7 +2351,7 @@ impl Window {
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.id,
+            hitbox_id: Some(hitbox.id),
             style,
         });
     }
@@ -2185,7 +2362,10 @@ impl Window {
     /// phase of element drawing.
     pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
         self.invalidator.debug_assert_paint();
-        self.next_frame.window_cursor_style = Some(style);
+        self.next_frame.cursor_styles.push(CursorStyleRequest {
+            hitbox_id: None,
+            style,
+        })
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -2269,7 +2449,7 @@ impl Window {
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
-    /// element offset and prepaint again. See [`List`] for an example. This method should only be
+    /// element offset and prepaint again. See [`crate::List`] for an example. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         self.invalidator.debug_assert_prepaint();
@@ -2294,9 +2474,9 @@ impl Window {
         result
     }
 
-    /// When you call this method during [`prepaint`], containing elements will attempt to
+    /// When you call this method during [`Element::prepaint`], containing elements will attempt to
     /// scroll to cause the specified bounds to become visible. When they decide to autoscroll, they will call
-    /// [`prepaint`] again with a new set of bounds. See [`List`] for an example of an element
+    /// [`Element::prepaint`] again with a new set of bounds. See [`crate::List`] for an example of an element
     /// that supports this method being called on the elements it contains. This method should only be
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
@@ -2304,8 +2484,8 @@ impl Window {
         self.requested_autoscroll = Some(bounds);
     }
 
-    /// This method can be called from a containing element such as [`List`] to support the autoscroll behavior
-    /// described in [`request_autoscroll`].
+    /// This method can be called from a containing element such as [`crate::List`] to support the autoscroll behavior
+    /// described in [`Self::request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         self.invalidator.debug_assert_prepaint();
         self.requested_autoscroll.take()
@@ -2345,7 +2525,7 @@ impl Window {
     /// time.
     pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
         let (task, _) = cx.fetch_asset::<A>(source);
-        task.clone().now_or_never()
+        task.now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -2389,6 +2569,53 @@ impl Window {
         let result = f(self);
         self.element_id_stack.pop();
         result
+    }
+
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames.
+    pub fn use_keyed_state<S: 'static>(
+        &mut self,
+        key: impl Into<ElementId>,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
+    ) -> Entity<S> {
+        let current_view = self.current_view();
+        self.with_global_id(key.into(), |global_id, window| {
+            window.with_element_state(global_id, |state: Option<Entity<S>>, window| {
+                if let Some(state) = state {
+                    (state.clone(), state)
+                } else {
+                    let new_state = cx.new(|cx| init(window, cx));
+                    cx.observe(&new_state, move |_, cx| {
+                        cx.notify(current_view);
+                    })
+                    .detach();
+                    (new_state.clone(), new_state)
+                }
+            })
+        })
+    }
+
+    /// Immediately push an element ID onto the stack. Useful for simplifying IDs in lists
+    pub fn with_id<R>(&mut self, id: impl Into<ElementId>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_global_id(id.into(), |_, window| f(window))
+    }
+
+    /// Use a piece of state that exists as long this element is being rendered in consecutive frames, without needing to specify a key
+    ///
+    /// NOTE: This method uses the location of the caller to generate an ID for this state.
+    ///       If this is not sufficient to identify your state (e.g. you're rendering a list item),
+    ///       you can provide a custom ElementID using the `use_keyed_state` method.
+    #[track_caller]
+    pub fn use_state<S: 'static>(
+        &mut self,
+        cx: &mut App,
+        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
+    ) -> Entity<S> {
+        self.use_keyed_state(
+            ElementId::CodeLocation(*core::panic::Location::caller()),
+            cx,
+            init,
+        )
     }
 
     /// Updates or initializes state for an element with the given id that lives across multiple
@@ -2505,6 +2732,19 @@ impl Window {
         }
     }
 
+    /// Executes the given closure within the context of a tab group.
+    #[inline]
+    pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if let Some(index) = index {
+            self.next_frame.tab_stops.begin_group(index);
+            let result = f(self);
+            self.next_frame.tab_stops.end_group();
+            result
+        } else {
+            f(self)
+        }
+    }
+
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
@@ -2586,7 +2826,7 @@ impl Window {
 
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
-    /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
+    /// see [`fill`], [`outline`], and [`quad`] to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     ///
@@ -2659,7 +2899,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
-            wavy: style.wavy,
+            wavy: if style.wavy { 1 } else { 0 },
         });
     }
 
@@ -2690,7 +2930,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: false,
+            wavy: 0,
         });
     }
 
@@ -2715,9 +2955,10 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+
         let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
+            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
         };
         let params = RenderGlyphParams {
             font_id,
@@ -2889,7 +3130,7 @@ impl Window {
 
         let tile = self
             .sprite_atlas
-            .get_or_insert_with(&params.clone().into(), &mut || {
+            .get_or_insert_with(&params.into(), &mut || {
                 Ok(Some((
                     data.size(frame_index),
                     Cow::Borrowed(
@@ -3246,16 +3487,16 @@ impl Window {
         let focus_id = handle.id;
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
-                if let Some(blurred_id) = event.previous_focus_path.last().copied() {
-                    if event.is_focus_out(focus_id) {
-                        let event = FocusOutEvent {
-                            blurred: WeakFocusHandle {
-                                id: blurred_id,
-                                handles: Arc::downgrade(&cx.focus_handles),
-                            },
-                        };
-                        listener(event, window, cx)
-                    }
+                if let Some(blurred_id) = event.previous_focus_path.last().copied()
+                    && event.is_focus_out(focus_id)
+                {
+                    let event = FocusOutEvent {
+                        blurred: WeakFocusHandle {
+                            id: blurred_id,
+                            handles: Arc::downgrade(&cx.focus_handles),
+                        },
+                    };
+                    listener(event, window, cx)
                 }
                 true
             }));
@@ -3289,12 +3530,12 @@ impl Window {
             return true;
         }
 
-        if let Some(input) = keystroke.key_char {
-            if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler);
-                return true;
-            }
+        if let Some(input) = keystroke.key_char
+            && let Some(mut input_handler) = self.platform_window.take_input_handler()
+        {
+            input_handler.dispatch_input(&input, self, cx);
+            self.platform_window.set_input_handler(input_handler);
+            return true;
         }
 
         false
@@ -3348,6 +3589,7 @@ impl Window {
             }
             PlatformInput::ModifiersChanged(modifiers_changed) => {
                 self.modifiers = modifiers_changed.modifiers;
+                self.capslock = modifiers_changed.capslock;
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::ScrollWheel(scroll_wheel) => {
@@ -3467,18 +3709,10 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx);
+            self.draw(cx).clear();
         }
 
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         let mut keystroke: Option<Keystroke> = None;
@@ -3521,6 +3755,13 @@ impl Window {
             return;
         };
 
+        cx.propagate_event = true;
+        self.dispatch_keystroke_interceptors(event, self.context_stack(), cx);
+        if !cx.propagate_event {
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
+            return;
+        }
+
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
             currently_pending = PendingInput::default();
@@ -3533,7 +3774,8 @@ impl Window {
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx)
+            self.replay_pending_input(match_result.to_replay, cx);
+            cx.propagate_event = true;
         }
 
         if !match_result.pending.is_empty() {
@@ -3550,6 +3792,7 @@ impl Window {
                         return;
                     };
 
+                    let node_id = window.focus_node_id_in_rendered_frame(window.focus);
                     let dispatch_path = window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
                     let to_replay = window
@@ -3568,14 +3811,13 @@ impl Window {
             return;
         }
 
-        cx.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
                 self.dispatch_keystroke_observers(
                     event,
                     Some(binding.action),
-                    match_result.context_stack.clone(),
+                    match_result.context_stack,
                     cx,
                 );
                 self.pending_input_changed(cx);
@@ -3681,15 +3923,7 @@ impl Window {
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
         'replay: for replay in replays {
@@ -3716,13 +3950,23 @@ impl Window {
             if !cx.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
-                if let Some(mut input_handler) = self.platform_window.take_input_handler() {
-                    input_handler.dispatch_input(&input, self, cx);
-                    self.platform_window.set_input_handler(input_handler)
-                }
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned()
+                && let Some(mut input_handler) = self.platform_window.take_input_handler()
+            {
+                input_handler.dispatch_input(&input, self, cx);
+                self.platform_window.set_input_handler(input_handler)
             }
         }
+    }
+
+    fn focus_node_id_in_rendered_frame(&self, focus_id: Option<FocusId>) -> DispatchNodeId {
+        focus_id
+            .and_then(|focus_id| {
+                self.rendered_frame
+                    .dispatch_tree
+                    .focusable_node_id(focus_id)
+            })
+            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id())
     }
 
     fn dispatch_action_on_node(
@@ -3864,9 +4108,7 @@ impl Window {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    window
-                        .platform_window
-                        .update_ime_position(bounds.scale(window.scale_factor()));
+                    window.platform_window.update_ime_position(bounds);
                 }
                 window.platform_window.set_input_handler(input_handler);
             }
@@ -3932,12 +4174,8 @@ impl Window {
 
     /// Returns the current context stack.
     pub fn context_stack(&self) -> Vec<KeyContext> {
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        let node_id = self
-            .focus
-            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
-            .unwrap_or_else(|| dispatch_tree.root_node_id());
-
         dispatch_tree
             .dispatch_path(node_id)
             .iter()
@@ -3947,15 +4185,7 @@ impl Window {
 
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self, cx: &App) -> Vec<Box<dyn Action>> {
-        let node_id = self
-            .focus
-            .and_then(|focus_id| {
-                self.rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.rendered_frame.dispatch_tree.root_node_id());
-
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let mut actions = self.rendered_frame.dispatch_tree.available_actions(node_id);
         for action_type in cx.global_action_listeners.keys() {
             if let Err(ix) = actions.binary_search_by_key(action_type, |a| a.as_any().type_id()) {
@@ -4103,6 +4333,25 @@ impl Window {
             .on_action(action_type, Rc::new(listener));
     }
 
+    /// Register an action listener on the window for the next frame if the condition is true.
+    /// The type of action is determined by the first parameter of the given listener.
+    /// When the next frame is rendered the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action_when(
+        &mut self,
+        condition: bool,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        if condition {
+            self.next_frame
+                .dispatch_tree
+                .on_action(action_type, Rc::new(listener));
+        }
+    }
+
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
@@ -4110,9 +4359,52 @@ impl Window {
     }
 
     /// Perform titlebar double-click action.
-    /// This is MacOS specific.
+    /// This is macOS specific.
     pub fn titlebar_double_click(&self) {
         self.platform_window.titlebar_double_click();
+    }
+
+    /// Gets the window's title at the platform level.
+    /// This is macOS specific.
+    pub fn window_title(&self) -> String {
+        self.platform_window.get_title()
+    }
+
+    /// Returns a list of all tabbed windows and their titles.
+    /// This is macOS specific.
+    pub fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
+        self.platform_window.tabbed_windows()
+    }
+
+    /// Returns the tab bar visibility.
+    /// This is macOS specific.
+    pub fn tab_bar_visible(&self) -> bool {
+        self.platform_window.tab_bar_visible()
+    }
+
+    /// Merges all open windows into a single tabbed window.
+    /// This is macOS specific.
+    pub fn merge_all_windows(&self) {
+        self.platform_window.merge_all_windows()
+    }
+
+    /// Moves the tab to a new containing window.
+    /// This is macOS specific.
+    pub fn move_tab_to_new_window(&self) {
+        self.platform_window.move_tab_to_new_window()
+    }
+
+    /// Shows or hides the window tab overview.
+    /// This is macOS specific.
+    pub fn toggle_window_tab_overview(&self) {
+        self.platform_window.toggle_window_tab_overview()
+    }
+
+    /// Sets the tabbing identifier for the window.
+    /// This is macOS specific.
+    pub fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
+        self.platform_window
+            .set_tabbing_identifier(tabbing_identifier)
     }
 
     /// Toggles the inspector mode on this window.
@@ -4144,15 +4436,15 @@ impl Window {
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
-        if let Some(inspector_id) = _inspector_id {
-            if let Some(inspector) = &self.inspector {
-                let inspector = inspector.clone();
-                let active_element_id = inspector.read(cx).active_element_id();
-                if Some(inspector_id) == active_element_id {
-                    return inspector.update(cx, |inspector, _cx| {
-                        inspector.with_active_element_state(self, f)
-                    });
-                }
+        if let Some(inspector_id) = _inspector_id
+            && let Some(inspector) = &self.inspector
+        {
+            let inspector = inspector.clone();
+            let active_element_id = inspector.read(cx).active_element_id();
+            if Some(inspector_id) == active_element_id {
+                return inspector.update(cx, |inspector, _cx| {
+                    inspector.with_active_element_state(self, f)
+                });
             }
         }
         f(&mut None, self)
@@ -4224,15 +4516,13 @@ impl Window {
         if let Some(inspector) = self.inspector.as_ref() {
             let inspector = inspector.read(cx);
             if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
-            {
-                if let Some(hitbox) = self
+                && let Some(hitbox) = self
                     .next_frame
                     .hitboxes
                     .iter()
                     .find(|hitbox| hitbox.id == hitbox_id)
-                {
-                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
-                }
+            {
+                self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
             }
         }
     }
@@ -4279,7 +4569,7 @@ impl Window {
                         if let Some((_, inspector_id)) =
                             self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
                         {
-                            inspector.set_active_element_id(inspector_id.clone(), self);
+                            inspector.set_active_element_id(inspector_id, self);
                         }
                     }
                 });
@@ -4303,7 +4593,14 @@ impl Window {
                 }
             }
         }
-        return None;
+        None
+    }
+
+    /// For testing: set the current modifier keys state.
+    /// This does not generate any events.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
     }
 }
 
@@ -4420,7 +4717,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: AppContext,
     {
-        cx.read_window(self, |root_view, _cx| root_view.clone())
+        cx.read_window(self, |root_view, _cx| root_view)
     }
 
     /// Check if this window is 'active'.
@@ -4534,7 +4831,7 @@ impl HasDisplayHandle for Window {
     }
 }
 
-/// An identifier for an [`Element`](crate::Element).
+/// An identifier for an [`Element`].
 ///
 /// Can be constructed with a string, a number, or both, as well
 /// as other internal representations.
@@ -4554,6 +4851,10 @@ pub enum ElementId {
     NamedInteger(SharedString, u64),
     /// A path.
     Path(Arc<std::path::Path>),
+    /// A code location.
+    CodeLocation(core::panic::Location<'static>),
+    /// A labeled child of an element.
+    NamedChild(Box<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4573,6 +4874,8 @@ impl Display for ElementId {
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
+            ElementId::CodeLocation(location) => write!(f, "{}", location)?,
+            ElementId::NamedChild(id, name) => write!(f, "{}-{}", id, name)?,
         }
 
         Ok(())
@@ -4660,6 +4963,18 @@ impl From<Uuid> for ElementId {
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id.into())
+    }
+}
+
+impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
+    fn from((id, name): (ElementId, T)) -> Self {
+        ElementId::NamedChild(Box::new(id), name.into())
+    }
+}
+
+impl From<&'static core::panic::Location<'static>> for ElementId {
+    fn from(location: &'static core::panic::Location<'static>) -> Self {
+        ElementId::CodeLocation(*location)
     }
 }
 

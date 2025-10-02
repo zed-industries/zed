@@ -1,8 +1,10 @@
 use dap::{DapRegistry, DebugRequest};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render};
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render, Task};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
+use project::Project;
+use rpc::proto;
 use task::ZedDebugConfig;
 use util::debug_panic;
 
@@ -56,29 +58,28 @@ impl AttachModal {
     pub fn new(
         definition: ZedDebugConfig,
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut processes: Box<[_]> = System::new_all()
-            .processes()
-            .values()
-            .map(|process| {
-                let name = process.name().to_string_lossy().into_owned();
-                Candidate {
-                    name: name.into(),
-                    pid: process.pid().as_u32(),
-                    command: process
-                        .cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .collect::<Vec<_>>(),
-                }
-            })
-            .collect();
-        processes.sort_by_key(|k| k.name.clone());
-        let processes = processes.into_iter().collect();
-        Self::with_processes(workspace, definition, processes, modal, window, cx)
+        let processes_task = get_processes_for_project(&project, cx);
+
+        let modal = Self::with_processes(workspace, definition, Arc::new([]), modal, window, cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let processes = processes_task.await;
+            this.update_in(cx, |modal, window, cx| {
+                modal.picker.update(cx, |picker, cx| {
+                    picker.delegate.candidates = processes;
+                    picker.refresh(window, cx);
+                });
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        modal
     }
 
     pub(super) fn with_processes(
@@ -183,6 +184,7 @@ impl PickerDelegate for AttachModalDelegate {
                     .collect::<Vec<_>>(),
                 &query,
                 true,
+                true,
                 100,
                 &Default::default(),
                 cx.background_executor().clone(),
@@ -205,7 +207,7 @@ impl PickerDelegate for AttachModalDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let candidate = self
             .matches
             .get(self.selected_index())
@@ -228,26 +230,50 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
-            registry
-                .adapter(&self.definition.adapter)
-                .and_then(|adapter| adapter.config_from_zed_format(self.definition.clone()).ok())
+        let workspace = self.workspace.clone();
+        let Some(panel) = workspace
+            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+
+        if secondary {
+            // let Some(id) = worktree_id else { return };
+            // cx.spawn_in(window, async move |_, cx| {
+            //     panel
+            //         .update_in(cx, |debug_panel, window, cx| {
+            //             debug_panel.save_scenario(&debug_scenario, id, window, cx)
+            //         })?
+            //         .await?;
+            //     anyhow::Ok(())
+            // })
+            // .detach_and_log_err(cx);
+        }
+        let Some(adapter) = cx.read_global::<DapRegistry, _>(|registry, _| {
+            registry.adapter(&self.definition.adapter)
         }) else {
             return;
         };
 
-        let panel = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
-            .ok()
-            .flatten();
-        if let Some(panel) = panel {
-            panel.update(cx, |panel, cx| {
-                panel.start_session(scenario, Default::default(), None, None, window, cx);
-            });
-        }
+        let definition = self.definition.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(scenario) = adapter.config_from_zed_format(definition).await else {
+                return;
+            };
 
-        cx.emit(DismissEvent);
+            panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.start_session(scenario, Default::default(), None, None, window, cx);
+                })
+                .ok();
+            this.update(cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -263,7 +289,7 @@ impl PickerDelegate for AttachModalDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let candidate = self.candidates.get(hit.candidate_id)?;
 
         Some(
@@ -304,6 +330,57 @@ impl PickerDelegate for AttachModalDelegate {
                         ),
                 ),
         )
+    }
+}
+
+fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Arc<[Candidate]>> {
+    let project = project.read(cx);
+
+    if let Some(remote_client) = project.remote_client() {
+        let proto_client = remote_client.read(cx).proto_client();
+        cx.spawn(async move |_cx| {
+            let response = proto_client
+                .request(proto::GetProcesses {
+                    project_id: proto::REMOTE_SERVER_PROJECT_ID,
+                })
+                .await
+                .unwrap_or_else(|_| proto::GetProcessesResponse {
+                    processes: Vec::new(),
+                });
+
+            let mut processes: Vec<Candidate> = response
+                .processes
+                .into_iter()
+                .map(|p| Candidate {
+                    pid: p.pid,
+                    name: p.name.into(),
+                    command: p.command,
+                })
+                .collect();
+
+            processes.sort_by_key(|k| k.name.clone());
+            Arc::from(processes.into_boxed_slice())
+        })
+    } else {
+        let mut processes: Box<[_]> = System::new_all()
+            .processes()
+            .values()
+            .map(|process| {
+                let name = process.name().to_string_lossy().into_owned();
+                Candidate {
+                    name: name.into(),
+                    pid: process.pid().as_u32(),
+                    command: process
+                        .cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .collect::<Vec<_>>(),
+                }
+            })
+            .collect();
+        processes.sort_by_key(|k| k.name.clone());
+        let processes = processes.into_iter().collect();
+        Task::ready(processes)
     }
 }
 

@@ -19,7 +19,10 @@ pub use derive_refineable::Refineable;
 ///
 /// ## Example
 ///
-/// ```rust
+/// ```
+/// use derive_refineable::Refineable as _;
+/// use refineable::Refineable;
+///
 /// #[derive(Refineable, Clone, Default)]
 /// struct Example {
 ///     color: String,
@@ -36,7 +39,7 @@ pub use derive_refineable::Refineable;
 ///
 ///
 /// fn example() {
-///     let mut example = Example::default();
+///     let mut base_style = Example::default();
 ///     let refinement = ExampleRefinement {
 ///         color: Some("red".to_string()),
 ///         font_size: None,

@@ -40,7 +40,10 @@ impl IconThemeSelector {
 
 impl Render for IconThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("IconThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -177,8 +180,8 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_icon_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_icon_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector
@@ -244,6 +247,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,
@@ -283,7 +287,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let theme_match = &self.matches[ix];
+        let theme_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -314,7 +318,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     Button::new("docs", "View Icon Theme Docs")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(|_event, _window, cx| {
                             cx.open_url("https://zed.dev/docs/icon-themes");
@@ -326,6 +330,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                    id: None,
                                 }),
                                 cx,
                             );

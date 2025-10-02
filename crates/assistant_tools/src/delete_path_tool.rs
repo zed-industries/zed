@@ -1,6 +1,7 @@
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -33,8 +34,8 @@ impl Tool for DeletePathTool {
         "delete_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        false
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
+        true
     }
 
     fn may_perform_edits(&self) -> bool {
@@ -46,7 +47,7 @@ impl Tool for DeletePathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::FileDelete
+        IconName::ToolDeleteFile
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

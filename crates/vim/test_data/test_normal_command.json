@@ -1,0 +1,64 @@
+{"Put":{"state":"The quick\nbrown« fox\njumpsˇ» over\nthe lazy dog\n"}}
+{"Key":":"}
+{"Key":"n"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"m"}
+{"Key":"space"}
+{"Key":"w"}
+{"Key":"C"}
+{"Key":"w"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"d"}
+{"Key":"enter"}
+{"Get":{"state":"The quick\nbrown word\njumps worˇd\nthe lazy dog\n","mode":"Normal"}}
+{"Key":":"}
+{"Key":"n"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"m"}
+{"Key":"space"}
+{"Key":"_"}
+{"Key":"w"}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"w"}
+{"Key":"t"}
+{"Key":"e"}
+{"Key":"s"}
+{"Key":"t"}
+{"Key":"enter"}
+{"Get":{"state":"The quick\nbrown word\njumps tesˇt\nthe lazy dog\n","mode":"Normal"}}
+{"Key":"_"}
+{"Key":"l"}
+{"Key":"v"}
+{"Key":"l"}
+{"Key":":"}
+{"Key":"n"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"m"}
+{"Key":"space"}
+{"Key":"s"}
+{"Key":"l"}
+{"Key":"a"}
+{"Key":"enter"}
+{"Get":{"state":"The quick\nbrown word\nlˇaumps test\nthe lazy dog\n","mode":"Normal"}}
+{"Put":{"state":"ˇThe quick\nbrown fox\njumps over\nthe lazy dog\n"}}
+{"Key":"c"}
+{"Key":"i"}
+{"Key":"w"}
+{"Key":"M"}
+{"Key":"y"}
+{"Key":"escape"}
+{"Get":{"state":"Mˇy quick\nbrown fox\njumps over\nthe lazy dog\n","mode":"Normal"}}
+{"Key":":"}
+{"Key":"n"}
+{"Key":"o"}
+{"Key":"r"}
+{"Key":"m"}
+{"Key":"space"}
+{"Key":"u"}
+{"Key":"enter"}
+{"Get":{"state":"ˇThe quick\nbrown fox\njumps over\nthe lazy dog\n","mode":"Normal"}}

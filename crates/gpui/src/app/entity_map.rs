@@ -1,4 +1,4 @@
-use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
+use crate::{App, AppContext, GpuiBorrow, VisualContext, Window, seal::Sealed};
 use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
@@ -105,7 +105,7 @@ impl EntityMap {
 
     /// Move an entity to the stack.
     #[track_caller]
-    pub fn lease<'a, T>(&mut self, pointer: &'a Entity<T>) -> Lease<'a, T> {
+    pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
         let mut accessed_entities = self.accessed_entities.borrow_mut();
         accessed_entities.insert(pointer.entity_id);
@@ -117,15 +117,14 @@ impl EntityMap {
         );
         Lease {
             entity,
-            pointer,
+            id: pointer.entity_id,
             entity_type: PhantomData,
         }
     }
 
     /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
-        self.entities
-            .insert(lease.pointer.entity_id, lease.entity.take().unwrap());
+        self.entities.insert(lease.id, lease.entity.take().unwrap());
     }
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
@@ -187,13 +186,13 @@ fn double_lease_panic<T>(operation: &str) -> ! {
     )
 }
 
-pub(crate) struct Lease<'a, T> {
+pub(crate) struct Lease<T> {
     entity: Option<Box<dyn Any>>,
-    pub pointer: &'a Entity<T>,
+    pub id: EntityId,
     entity_type: PhantomData<T>,
 }
 
-impl<T: 'static> core::ops::Deref for Lease<'_, T> {
+impl<T: 'static> core::ops::Deref for Lease<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -201,13 +200,13 @@ impl<T: 'static> core::ops::Deref for Lease<'_, T> {
     }
 }
 
-impl<T: 'static> core::ops::DerefMut for Lease<'_, T> {
+impl<T: 'static> core::ops::DerefMut for Lease<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.entity.as_mut().unwrap().downcast_mut().unwrap()
     }
 }
 
-impl<T> Drop for Lease<'_, T> {
+impl<T> Drop for Lease<T> {
     fn drop(&mut self) {
         if self.entity.is_some() && !panicking() {
             panic!("Leases must be ended with EntityMap::end_lease")
@@ -232,14 +231,15 @@ impl AnyEntity {
         Self {
             entity_id: id,
             entity_type,
-            entity_map: entity_map.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
             handle_id: entity_map
+                .clone()
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(id),
+            entity_map,
         }
     }
 
@@ -371,7 +371,7 @@ impl std::fmt::Debug for AnyEntity {
     }
 }
 
-/// A strong, well typed reference to a struct which is managed
+/// A strong, well-typed reference to a struct which is managed
 /// by GPUI
 #[derive(Deref, DerefMut)]
 pub struct Entity<T> {
@@ -435,6 +435,19 @@ impl<T: 'static> Entity<T> {
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> C::Result<R> {
         cx.update_entity(self, update)
+    }
+
+    /// Updates the entity referenced by this handle with the given function.
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
+        cx.as_mut(self)
+    }
+
+    /// Updates the entity referenced by this handle with the given function.
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
+        self.update(cx, |entity, cx| {
+            *entity = value;
+            cx.notify();
+        })
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -649,7 +662,7 @@ pub struct WeakEntity<T> {
 
 impl<T> std::fmt::Debug for WeakEntity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(&type_name::<Self>())
+        f.debug_struct(type_name::<Self>())
             .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
@@ -774,7 +787,7 @@ impl<T: 'static> PartialOrd for WeakEntity<T> {
 
 #[cfg(any(test, feature = "leak-detection"))]
 static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").is_ok_and(|b| !b.is_empty()));
 
 #[cfg(any(test, feature = "leak-detection"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]

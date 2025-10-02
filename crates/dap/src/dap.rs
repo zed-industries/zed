@@ -51,18 +51,26 @@ pub fn send_telemetry(scenario: &DebugScenario, location: TelemetrySpawnLocation
     let Some(adapter) = cx.global::<DapRegistry>().adapter(&scenario.adapter) else {
         return;
     };
-    let kind = adapter
-        .request_kind(&scenario.config)
-        .ok()
-        .map(serde_json::to_value)
-        .and_then(Result::ok);
     let dock = DebuggerSettings::get_global(cx).dock;
-    telemetry::event!(
-        "Debugger Session Started",
-        spawn_location = location,
-        with_build_task = scenario.build.is_some(),
-        kind = kind,
-        adapter = scenario.adapter.as_ref(),
-        dock_position = dock,
-    );
+    let config = scenario.config.clone();
+    let with_build_task = scenario.build.is_some();
+    let adapter_name = scenario.adapter.clone();
+    cx.spawn(async move |_| {
+        let kind = adapter
+            .request_kind(&config)
+            .await
+            .ok()
+            .map(serde_json::to_value)
+            .and_then(Result::ok);
+
+        telemetry::event!(
+            "Debugger Session Started",
+            spawn_location = location,
+            with_build_task = with_build_task,
+            kind = kind,
+            adapter = adapter_name,
+            dock_position = dock,
+        );
+    })
+    .detach();
 }

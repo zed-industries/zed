@@ -324,20 +324,8 @@
     <body>
         <h1 id="current-filename">Thread Explorer</h1>
         <div class="view-switcher">
-            <button
-                id="full-view"
-                class="view-button active"
-                onclick="switchView('full')"
-            >
-                Full View
-            </button>
-            <button
-                id="compact-view"
-                class="view-button"
-                onclick="switchView('compact')"
-            >
-                Compact View
-            </button>
+            <button id="full-view" class="view-button active" onclick="switchView('full')">Full View</button>
+            <button id="compact-view" class="view-button" onclick="switchView('compact')">Compact View</button>
             <button
                 id="export-button"
                 class="view-button"
@@ -347,11 +335,7 @@
                 Export
             </button>
             <div class="theme-switcher">
-                <button
-                    id="theme-toggle"
-                    class="theme-button"
-                    onclick="toggleTheme()"
-                >
+                <button id="theme-toggle" class="theme-button" onclick="toggleTheme()">
                     <span id="theme-icon" class="theme-icon">☀️</span>
                     <span id="theme-text">Light</span>
                 </button>
@@ -368,8 +352,7 @@
                 &larr; Previous
             </button>
             <div class="thread-indicator">
-                Thread <span id="current-thread-index">1</span> of
-                <span id="total-threads">1</span>:
+                Thread <span id="current-thread-index">1</span> of <span id="total-threads">1</span>:
                 <span id="thread-id">Default Thread</span>
             </div>
             <button
@@ -423,9 +406,7 @@
             function toggleTheme() {
                 // If currently system or light, switch to dark
                 if (themeMode === "system") {
-                    const systemDark = window.matchMedia(
-                        "(prefers-color-scheme: dark)",
-                    ).matches;
+                    const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
                     themeMode = systemDark ? "light" : "dark";
                 } else {
                     themeMode = themeMode === "light" ? "dark" : "light";
@@ -442,19 +423,15 @@
             function initTheme() {
                 if (themeMode === "system") {
                     // Use system preference
-                    const systemDark = window.matchMedia(
-                        "(prefers-color-scheme: dark)",
-                    ).matches;
+                    const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
                     applyTheme(systemDark ? "dark" : "light");
 
                     // Listen for system theme changes
-                    window
-                        .matchMedia("(prefers-color-scheme: dark)")
-                        .addEventListener("change", (e) => {
-                            if (themeMode === "system") {
-                                applyTheme(e.matches ? "dark" : "light");
-                            }
-                        });
+                    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+                        if (themeMode === "system") {
+                            applyTheme(e.matches ? "dark" : "light");
+                        }
+                    });
                 } else {
                     // Use saved preference
                     applyTheme(themeMode);
@@ -466,49 +443,38 @@
                 viewMode = mode;
 
                 // Update button states
-                document
-                    .getElementById("full-view")
-                    .classList.toggle("active", mode === "full");
-                document
-                    .getElementById("compact-view")
-                    .classList.toggle("active", mode === "compact");
+                document.getElementById("full-view").classList.toggle("active", mode === "full");
+                document.getElementById("compact-view").classList.toggle("active", mode === "compact");
 
                 // Add or remove compact-mode class on the body
-                document.body.classList.toggle(
-                    "compact-mode",
-                    mode === "compact",
-                );
+                document.body.classList.toggle("compact-mode", mode === "compact");
 
                 // Re-render the thread with the new view mode
                 renderThread();
             }
-            
+
             // Function to export the current thread as a JSON file
             function exportThreadAsJson() {
                 // Clone the thread to avoid modifying the original
                 const threadToExport = JSON.parse(JSON.stringify(thread));
-                
+
                 // Create a Blob with the JSON data
-                const blob = new Blob(
-                    [JSON.stringify(threadToExport, null, 2)],
-                    { type: "application/json" }
-                );
-                
+                const blob = new Blob([JSON.stringify(threadToExport, null, 2)], { type: "application/json" });
+
                 // Create a download link
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                
+
                 // Generate filename based on thread ID or index
-                const filename = threadToExport.thread_id || 
-                                threadToExport.filename || 
-                                `thread-${currentThreadIndex + 1}.json`;
+                const filename =
+                    threadToExport.thread_id || threadToExport.filename || `thread-${currentThreadIndex + 1}.json`;
                 a.download = filename.endsWith(".json") ? filename : `${filename}.json`;
-                
+
                 // Trigger the download
                 document.body.appendChild(a);
                 a.click();
-                
+
                 // Clean up
                 setTimeout(() => {
                     document.body.removeChild(a);
@@ -524,9 +490,7 @@
                     },
                     {
                         role: "user",
-                        content: [
-                            { Text: "Fix the bug: kwargs not passed..." },
-                        ],
+                        content: [{ Text: "Fix the bug: kwargs not passed..." }],
                     },
                     {
                         role: "assistant",
@@ -593,12 +557,9 @@
                                     name: "edit_file",
                                     input: {
                                         path: "fastmcp/core.py",
-                                        old_string:
-                                            "def start_server(app):\n    anyio.run(app)",
-                                        new_string:
-                                            "def start_server(app, **kwargs):\n    anyio.run(app, **kwargs)",
-                                        display_description:
-                                            "Fix kwargs passing to anyio.run",
+                                        old_string: "def start_server(app):\n    anyio.run(app)",
+                                        new_string: "def start_server(app, **kwargs):\n    anyio.run(app, **kwargs)",
+                                        display_description: "Fix kwargs passing to anyio.run",
                                     },
                                     is_input_complete: true,
                                 },
@@ -681,14 +642,10 @@
 
             // Function to update the navigation buttons state
             function updateNavigationButtons() {
-                document.getElementById("prev-thread").disabled =
-                    currentThreadIndex <= 0;
-                document.getElementById("next-thread").disabled =
-                    currentThreadIndex >= threads.length - 1;
-                document.getElementById("current-thread-index").textContent =
-                    currentThreadIndex + 1;
-                document.getElementById("total-threads").textContent =
-                    threads.length;
+                document.getElementById("prev-thread").disabled = currentThreadIndex <= 0;
+                document.getElementById("next-thread").disabled = currentThreadIndex >= threads.length - 1;
+                document.getElementById("current-thread-index").textContent = currentThreadIndex + 1;
+                document.getElementById("total-threads").textContent = threads.length;
             }
 
             function renderThread() {
@@ -696,20 +653,15 @@
                 tbody.innerHTML = ""; // Clear existing content
 
                 // Set thread name if available
-                const threadId =
-                    thread.thread_id || `Thread ${currentThreadIndex + 1}`;
+                const threadId = thread.thread_id || `Thread ${currentThreadIndex + 1}`;
                 document.getElementById("thread-id").textContent = threadId;
 
                 // Set filename in the header if available
-                const filename =
-                    thread.filename || `Thread ${currentThreadIndex + 1}`;
-                document.getElementById("current-filename").textContent =
-                    filename;
+                const filename = thread.filename || `Thread ${currentThreadIndex + 1}`;
+                document.getElementById("current-filename").textContent = filename;
 
                 // Skip system message
-                const nonSystemMessages = thread.messages.filter(
-                    (msg) => msg.role !== "system",
-                );
+                const nonSystemMessages = thread.messages.filter((msg) => msg.role !== "system");
 
                 let turnNumber = 0;
                 processMessages(nonSystemMessages, tbody, turnNumber);
@@ -737,9 +689,7 @@
                         for (const content of msg.content) {
                             if (content.hasOwnProperty("Text")) {
                                 if (assistantText) {
-                                    assistantText +=
-                                        "<br><br>" +
-                                        formatContent(content.Text);
+                                    assistantText += "<br><br>" + formatContent(content.Text);
                                 } else {
                                     assistantText = formatContent(content.Text);
                                 }
@@ -763,49 +713,33 @@
                         tbody.appendChild(row);
 
                         // Add all tool calls to the tools cell
-                        const toolsCell = document.getElementById(
-                            `tools-${turnNumber}`,
-                        );
-                        const resultsCell = document.getElementById(
-                            `results-${turnNumber}`,
-                        );
+                        const toolsCell = document.getElementById(`tools-${turnNumber}`);
+                        const resultsCell = document.getElementById(`results-${turnNumber}`);
 
                         // Process all tools and their results
                         for (let j = 0; j < toolUses.length; j++) {
                             const toolUse = toolUses[j];
-                            const toolCall = formatToolCall(
-                                toolUse.name,
-                                toolUse.input,
-                            );
+                            const toolCall = formatToolCall(toolUse.name, toolUse.input);
 
                             // Add the tool call to the tools cell
                             if (j > 0) toolsCell.innerHTML += "<hr>";
                             toolsCell.innerHTML += toolCall;
 
                             // Look for corresponding tool result
-                            if (
-                                hasMatchingToolResult(messages, i, toolUse.name)
-                            ) {
+                            if (hasMatchingToolResult(messages, i, toolUse.name)) {
                                 const resultMsg = messages[i + 1];
-                                const toolResult = findToolResult(
-                                    resultMsg,
-                                    toolUse.name,
-                                );
+                                const toolResult = findToolResult(resultMsg, toolUse.name);
 
                                 if (toolResult) {
                                     // Add the result to the results cell
                                     if (j > 0) resultsCell.innerHTML += "<hr>";
 
                                     // Create a container for the result
-                                    const resultDiv =
-                                        document.createElement("div");
+                                    const resultDiv = document.createElement("div");
                                     resultDiv.className = "tool-result";
 
                                     // Format and display the tool result
-                                    formatToolResultInline(
-                                        toolResult.content,
-                                        resultDiv,
-                                    );
+                                    formatToolResultInline(toolResult.content.Text, resultDiv);
                                     resultsCell.appendChild(resultDiv);
 
                                     // Skip the result message in the next iteration
@@ -815,10 +749,7 @@
                                 }
                             }
                         }
-                    } else if (
-                        msg.role === "user" &&
-                        msg.content.some((c) => c.hasOwnProperty("ToolResult"))
-                    ) {
+                    } else if (msg.role === "user" && msg.content.some((c) => c.hasOwnProperty("ToolResult"))) {
                         // Skip tool result messages as they are handled with their corresponding tool use
                         continue;
                     }
@@ -826,10 +757,7 @@
             }
 
             function isUserQuery(message) {
-                return (
-                    message.role === "user" &&
-                    !message.content.some((c) => c.hasOwnProperty("ToolResult"))
-                );
+                return message.role === "user" && !message.content.some((c) => c.hasOwnProperty("ToolResult"));
             }
 
             function renderUserMessage(message, turnNumber, tbody) {
@@ -848,18 +776,14 @@
                     currentIndex + 1 < messages.length &&
                     messages[currentIndex + 1].role === "user" &&
                     messages[currentIndex + 1].content.some(
-                        (c) =>
-                            c.hasOwnProperty("ToolResult") &&
-                            c.ToolResult.tool_name === toolName,
+                        (c) => c.hasOwnProperty("ToolResult") && c.ToolResult.tool_name === toolName,
                     )
                 );
             }
 
             function findToolResult(resultMessage, toolName) {
                 const toolResultContent = resultMessage.content.find(
-                    (c) =>
-                        c.hasOwnProperty("ToolResult") &&
-                        c.ToolResult.tool_name === toolName,
+                    (c) => c.hasOwnProperty("ToolResult") && c.ToolResult.tool_name === toolName,
                 );
 
                 return toolResultContent ? toolResultContent.ToolResult : null;
@@ -874,18 +798,12 @@
                     for (const [key, value] of Object.entries(input)) {
                         if (value !== null && value !== undefined) {
                             // Store full parameter for expanded view
-                            let fullValue =
-                                typeof value === "string"
-                                    ? `"${value}"`
-                                    : value;
+                            let fullValue = typeof value === "string" ? `"${value}"` : value;
                             fullParams.push([key, fullValue]);
 
                             // Abbreviated value for compact view
                             let displayValue = fullValue;
-                            if (
-                                typeof value === "string" &&
-                                value.length > 30
-                            ) {
+                            if (typeof value === "string" && value.length > 30) {
                                 displayValue = `"${value.substring(0, 30)}..."`;
                             }
                             params.push(`${key}=${displayValue}`);
@@ -903,10 +821,7 @@
                         // For the full view, use the original untruncated values
                         let result = `<span class="tool-name">${name}</span>(`;
                         const formattedParams = fullParams
-                            .map(
-                                (p) =>
-                                    `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`,
-                            )
+                            .map((p) => `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`)
                             .join(",<br/>");
                         const fullView = `${result}<br/>${formattedParams}<br/>)`;
 
@@ -925,8 +840,7 @@
                 for (const [key, value] of Object.entries(input)) {
                     if (value !== null && value !== undefined) {
                         // Format different types of values
-                        let formattedValue =
-                            typeof value === "string" ? `"${value}"` : value;
+                        let formattedValue = typeof value === "string" ? `"${value}"` : value;
                         params.push([key, formattedValue]);
                     }
                 }
@@ -938,9 +852,7 @@
                     return `${result}${params[0][1]})`;
                 } else {
                     // Format parameters
-                    const formattedParams = params
-                        .map((p) => `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`)
-                        .join(",<br/>");
+                    const formattedParams = params.map((p) => `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`).join(",<br/>");
                     return `${result}<br/>${formattedParams}<br/>)`;
                 }
             }
@@ -1013,21 +925,13 @@
             // Keyboard navigation handler
             document.addEventListener("keydown", function (event) {
                 // previous thread
-                if (
-                    (event.ctrlKey && event.key === "ArrowLeft") ||
-                    event.key === "h" ||
-                    event.key === "k"
-                ) {
+                if ((event.ctrlKey && event.key === "ArrowLeft") || event.key === "h" || event.key === "k") {
                     if (!document.getElementById("prev-thread").disabled) {
                         previousThread();
                     }
                 }
                 // next thread
-                else if (
-                    (event.ctrlKey && event.key === "ArrowRight") ||
-                    event.key === "j" ||
-                    event.key === "l"
-                ) {
+                else if ((event.ctrlKey && event.key === "ArrowRight") || event.key === "j" || event.key === "l") {
                     if (!document.getElementById("next-thread").disabled) {
                         nextThread();
                     }

@@ -12,6 +12,7 @@ dap.workspace = true
 extension.workspace = true
 gpui.workspace = true
 serde_json.workspace = true
+util.workspace = true
 task.workspace = true
 workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
 

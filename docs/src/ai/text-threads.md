@@ -16,7 +16,7 @@ To begin, type a message in a `You` block.
 
 As you type, the remaining tokens count for the selected model is updated.
 
-Inserting text from an editor is as simple as highlighting the text and running `assistant: quote selection` ({#kb assistant::QuoteSelection}); Zed will wrap it in a fenced code block if it is code.
+Inserting text from an editor is as simple as highlighting the text and running `agent: quote selection` ({#kb agent::QuoteSelection}); Zed will wrap it in a fenced code block if it is code.
 
 ![Quoting a selection](https://zed.dev/img/assistant/quoting-a-selection.png)
 
@@ -47,7 +47,7 @@ A typical workflow might involve making edits and adjustments throughout the con
 6. Add additional context to your original message.
 7. Submit the message with {#kb assistant::Assist}.
 
-Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chats to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
+Being able to edit previous messages gives you control over how tokens are used. You don't need to start up a new chat to correct a mistake or to add additional information, and you don't have to waste tokens by submitting follow-up corrections.
 
 > **Note**: The act of editing past messages is often referred to as "Rewriting History" in the context of the language models.
 
@@ -148,7 +148,7 @@ Usage: `/terminal [<number>]`
 
 The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
 
-This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}).
+This is equivalent to the `agent: quote selection` command ({#kb agent::QuoteSelection}).
 
 Usage: `/selection`
 

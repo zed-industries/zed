@@ -24,11 +24,16 @@ pub fn adapt_schema_to_format(
 fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     // `additionalProperties` defaults to `false` unless explicitly specified.
     // This prevents models from hallucinating tool parameters.
-    if let Value::Object(obj) = json {
-        if let Some(Value::String(type_str)) = obj.get("type") {
-            if type_str == "object" && !obj.contains_key("additionalProperties") {
-                obj.insert("additionalProperties".to_string(), Value::Bool(false));
-            }
+    if let Value::Object(obj) = json
+        && matches!(obj.get("type"), Some(Value::String(s)) if s == "object")
+    {
+        if !obj.contains_key("additionalProperties") {
+            obj.insert("additionalProperties".to_string(), Value::Bool(false));
+        }
+
+        // OpenAI API requires non-missing `properties`
+        if !obj.contains_key("properties") {
+            obj.insert("properties".to_string(), Value::Object(Default::default()));
         }
     }
     Ok(())
@@ -46,15 +51,19 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             );
         }
 
-        const KEYS_TO_REMOVE: [&str; 5] = [
-            "format",
-            "additionalProperties",
-            "exclusiveMinimum",
-            "exclusiveMaximum",
-            "optional",
+        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 5] = [
+            ("format", |value| value.is_string()),
+            ("additionalProperties", |value| value.is_boolean()),
+            ("exclusiveMinimum", |value| value.is_number()),
+            ("exclusiveMaximum", |value| value.is_number()),
+            ("optional", |value| value.is_boolean()),
         ];
-        for key in KEYS_TO_REMOVE {
-            obj.remove(key);
+        for (key, predicate) in KEYS_TO_REMOVE {
+            if let Some(value) = obj.get(key)
+                && predicate(value)
+            {
+                obj.remove(key);
+            }
         }
 
         // If a type is not specified for an input parameter, add a default type
@@ -68,12 +77,12 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         }
 
         // Handle oneOf -> anyOf conversion
-        if let Some(subschemas) = obj.get_mut("oneOf") {
-            if subschemas.is_array() {
-                let subschemas_clone = subschemas.clone();
-                obj.remove("oneOf");
-                obj.insert("anyOf".to_string(), subschemas_clone);
-            }
+        if let Some(subschemas) = obj.get_mut("oneOf")
+            && subschemas.is_array()
+        {
+            let subschemas_clone = subschemas.clone();
+            obj.remove("oneOf");
+            obj.insert("anyOf".to_string(), subschemas_clone);
         }
 
         // Recursively process all nested objects and arrays
@@ -151,6 +160,24 @@ mod tests {
             json!({
                 "description": "A test field",
                 "type": "integer"
+            })
+        );
+
+        // Ensure that we do not remove keys that are actually supported (e.g. "format" can just be used as another property)
+        let mut json = json!({
+            "description": "A test field",
+            "type": "integer",
+            "format": {},
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": "A test field",
+                "type": "integer",
+                "format": {},
             })
         );
     }

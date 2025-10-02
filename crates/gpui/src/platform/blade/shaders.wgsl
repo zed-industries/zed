@@ -28,6 +28,35 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
 */
 
+fn color_brightness(color: vec3<f32>) -> f32 {
+    // REC. 601 luminance coefficients for perceived brightness
+    return dot(color, vec3<f32>(0.30, 0.59, 0.11));
+}
+
+fn light_on_dark_contrast(enhancedContrast: f32, color: vec3<f32>) -> f32 {
+    let brightness = color_brightness(color);
+    let multiplier = saturate(4.0 * (0.75 - brightness));
+    return enhancedContrast * multiplier;
+}
+
+fn enhance_contrast(alpha: f32, k: f32) -> f32 {
+    return alpha * (k + 1.0) / (alpha * k + 1.0);
+}
+
+fn apply_alpha_correction(a: f32, b: f32, g: vec4<f32>) -> f32 {
+    let brightness_adjustment = g.x * b + g.y;
+    let correction = brightness_adjustment * a + (g.z * b + g.w);
+    return a + a * (1.0 - a) * correction;
+}
+
+fn apply_contrast_and_gamma_correction(sample: f32, color: vec3<f32>, enhanced_contrast_factor: f32, gamma_ratios: vec4<f32>) -> f32 {
+    let enhanced_contrast = light_on_dark_contrast(enhanced_contrast_factor, color);
+    let brightness = color_brightness(color);
+
+    let contrasted = enhance_contrast(sample, enhanced_contrast);
+    return apply_alpha_correction(contrasted, brightness, gamma_ratios);
+}
+
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
@@ -35,6 +64,8 @@ struct GlobalParams {
 }
 
 var<uniform> globals: GlobalParams;
+var<uniform> gamma_ratios: vec4<f32>;
+var<uniform> grayscale_enhanced_contrast: f32;
 var t_sprite: texture_2d<f32>;
 var s_sprite: sampler;
 
@@ -149,6 +180,13 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+fn srgb_to_linear_component(a: f32) -> f32 {
+    let cutoff = a < 0.04045;
+    let higher = pow((a + 0.055) / 1.055, 2.4);
+    let lower = a / 12.92;
+    return select(higher, lower, cutoff);
+}
+
 fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
     let cutoff = linear < vec3<f32>(0.0031308);
     let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
@@ -198,12 +236,7 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
         color.b += x;
     }
 
-    // Input colors are assumed to be in sRGB space,
-    // but blending and rendering needs to happen in linear space.
-    // The output will be converted to sRGB by either the target
-    // texture format or the swapchain color space.
-    let linear = srgb_to_linear(color);
-    return vec4<f32>(linear, a);
+    return vec4<f32>(color, a);
 }
 
 /// Convert a linear sRGB to Oklab space.
@@ -924,16 +957,19 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 
 // --- path rasterization --- //
 
-struct PathVertex {
+struct PathRasterizationVertex {
     xy_position: vec2<f32>,
     st_position: vec2<f32>,
-    content_mask: Bounds,
+    color: Background,
+    bounds: Bounds,
 }
-var<storage, read> b_path_vertices: array<PathVertex>;
+
+var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
 
 struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) st_position: vec2<f32>,
+    @location(1) vertex_id: u32,
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
 }
@@ -945,40 +981,54 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
     var out = PathRasterizationVarying();
     out.position = to_device_position_impl(v.xy_position);
     out.st_position = v.st_position;
-    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    out.vertex_id = vertex_id;
+    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.bounds);
     return out;
 }
 
 @fragment
-fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
+fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
     let dx = dpdx(input.st_position);
     let dy = dpdy(input.st_position);
     if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return 0.0;
+        return vec4<f32>(0.0);
     }
 
-    let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
-    let f = input.st_position.x * input.st_position.x - input.st_position.y;
-    let distance = f / length(gradient);
-    return saturate(0.5 - distance);
+    let v = b_path_vertices[input.vertex_id];
+    let background = v.color;
+    let bounds = v.bounds;
+
+    var alpha: f32;
+    if (length(vec2<f32>(dx.x, dy.x)) < 0.001) {
+        // If the gradient is too small, return a solid color.
+        alpha = 1.0;
+    } else {
+        let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+        let f = input.st_position.x * input.st_position.x - input.st_position.y;
+        let distance = f / length(gradient);
+        alpha = saturate(0.5 - distance);
+    }
+    let gradient_color = prepare_gradient_color(
+        background.tag,
+        background.color_space,
+        background.solid,
+        background.colors,
+    );
+    let color = gradient_color(background, input.position.xy, bounds,
+        gradient_color.solid, gradient_color.color0, gradient_color.color1);
+    return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 
 // --- paths --- //
 
 struct PathSprite {
     bounds: Bounds,
-    color: Background,
-    tile: AtlasTile,
 }
 var<storage, read> b_path_sprites: array<PathSprite>;
 
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) tile_position: vec2<f32>,
-    @location(1) @interpolate(flat) instance_id: u32,
-    @location(2) @interpolate(flat) color_solid: vec4<f32>,
-    @location(3) @interpolate(flat) color0: vec4<f32>,
-    @location(4) @interpolate(flat) color1: vec4<f32>,
+    @location(0) texture_coords: vec2<f32>,
 }
 
 @vertex
@@ -986,33 +1036,22 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_path_sprites[instance_id];
     // Don't apply content mask because it was already accounted for when rasterizing the path.
+    let device_position = to_device_position(unit_vertex, sprite.bounds);
+    // For screen-space intermediate texture, convert screen position to texture coordinates
+    let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+    let texture_coords = screen_position / globals.viewport_size;
 
     var out = PathVarying();
-    out.position = to_device_position(unit_vertex, sprite.bounds);
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.instance_id = instance_id;
+    out.position = device_position;
+    out.texture_coords = texture_coords;
 
-    let gradient = prepare_gradient_color(
-        sprite.color.tag,
-        sprite.color.color_space,
-        sprite.color.solid,
-        sprite.color.colors
-    );
-    out.color_solid = gradient.solid;
-    out.color0 = gradient.color0;
-    out.color1 = gradient.color1;
     return out;
 }
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
-    let mask = 1.0 - abs(1.0 - sample % 2.0);
-    let sprite = b_path_sprites[input.instance_id];
-    let background = sprite.color;
-    let color = gradient_color(background, input.position.xy, sprite.bounds,
-        input.color_solid, input.color0, input.color1);
-    return blend_color(color, mask);
+    let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
+    return sample;
 }
 
 // --- underlines --- //
@@ -1051,6 +1090,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
 @fragment
 fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+    const WAVE_FREQUENCY: f32 = 2.0;
+    const WAVE_HEIGHT_RATIO: f32 = 0.8;
+
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
@@ -1063,9 +1105,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let half_thickness = underline.thickness * 0.5;
+
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
-    let amplitude = 1.0 / (4.0 * underline.thickness);
+    let frequency = M_PI_F * WAVE_FREQUENCY * underline.thickness / underline.bounds.size.y;
+    let amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);
@@ -1113,11 +1157,15 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 @fragment
 fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
+    let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
-    return blend_color(input.color, sample);
+
+    // convert to srgb space as the rest of the code (output swapchain) expects that
+    return blend_color(input.color, alpha_corrected);
 }
 
 // --- polychrome sprites --- //

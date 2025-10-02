@@ -4,10 +4,10 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    Editor, RowInfo,
+    DocumentColorsRenderMode, Editor, RowInfo, SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
-        ExpandMacroRecursively, Redo, Rename, ToggleCodeActions, Undo,
+        ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
     },
     test::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
@@ -15,27 +15,23 @@ use editor::{
     },
 };
 use fs::Fs;
-use futures::StreamExt;
-use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
+use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
+use git::repository::repo_path;
+use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
-use language::{
-    FakeLspAdapter,
-    language_settings::{AllLanguageSettings, InlayHintSettings},
-};
+use language::FakeLspAdapter;
+use lsp::LSP_REQUEST_TIMEOUT;
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
-    lsp_store::{
-        lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
-        rust_analyzer_ext::RUST_ANALYZER_NAME,
-    },
-    project_settings::{InlineBlameSettings, ProjectSettings},
+    lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{InlayHintSettingsContent, InlineBlameSettings, SettingsStore};
 use std::{
-    ops::Range,
+    collections::BTreeSet,
+    ops::{Deref as _, Range},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -43,7 +39,7 @@ use std::{
     },
 };
 use text::Point;
-use util::{path, uri};
+use util::{path, rel_path::rel_path, uri};
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -102,7 +98,7 @@ async fn test_host_disconnect(
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "b.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("b.txt")), None, true, window, cx)
         })
         .unwrap()
         .await
@@ -210,7 +206,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
     // Open a buffer as client A
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
@@ -227,7 +225,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     let cx_b = cx_b.add_empty_window();
     // Open a buffer as client B
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let editor_b = cx_b
@@ -295,19 +295,28 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        completion_provider: Some(lsp::CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            resolve_provider: Some(true),
+            ..lsp::CompletionOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string()]),
-                    resolve_provider: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -330,7 +339,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
@@ -347,7 +358,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Type a completion trigger character as the guest.
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(".", window, cx);
     });
     cx_b.focus(&editor_b);
@@ -359,7 +372,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -402,7 +415,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Open the buffer on the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     cx_a.executor().run_until_parked();
@@ -460,7 +475,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Now we do a second completion, this time to ensure that documentation/snippets are
     // resolved
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([46..46]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([46..46])
+        });
         editor.handle_input("; a", window, cx);
         editor.handle_input(".", window, cx);
     });
@@ -476,7 +493,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -561,9 +578,12 @@ async fn test_collaborating_with_code_actions(
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
+    client_b.language_registry().add(rust_lang());
+    client_b
         .language_registry()
         .register_fake_lsp("Rust", FakeLspAdapter::default());
 
@@ -588,7 +608,7 @@ async fn test_collaborating_with_code_actions(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -600,7 +620,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -612,7 +632,7 @@ async fn test_collaborating_with_code_actions(
 
     // Move cursor to a location that contains code actions.
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
         });
     });
@@ -622,7 +642,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -634,7 +654,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -644,7 +664,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -706,7 +726,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -716,7 +736,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
@@ -770,19 +790,27 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -806,17 +834,21 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     // Move cursor to a location that can be renamed.
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([7..7]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..7])
+        });
         editor.rename(&Rename, window, cx).unwrap()
     });
 
@@ -862,7 +894,9 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         editor.cancel(&editor::actions::Cancel, window, cx);
     });
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([7..8]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..8])
+        });
         editor.rename(&Rename, window, cx).unwrap()
     });
 
@@ -920,14 +954,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path(path!("/dir/two.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -989,6 +1023,211 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     })
 }
 
+#[gpui::test]
+async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    let command_name = "test_command";
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        execute_command_provider: Some(lsp::ExecuteCommandOptions {
+            commands: vec![command_name.to_string()],
+            ..lsp::ExecuteCommandOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;"
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let (lsp_store_b, buffer_b) = editor_b.update(cx_b, |editor, cx| {
+        let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        (lsp_store, buffer)
+    });
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let long_request_time = LSP_REQUEST_TIMEOUT / 2;
+    let (request_started_tx, mut request_started_rx) = mpsc::unbounded();
+    let requests_started = Arc::new(AtomicUsize::new(0));
+    let requests_completed = Arc::new(AtomicUsize::new(0));
+    let _lens_requests = fake_language_server
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>({
+            let request_started_tx = request_started_tx.clone();
+            let requests_started = requests_started.clone();
+            let requests_completed = requests_completed.clone();
+            move |params, cx| {
+                let mut request_started_tx = request_started_tx.clone();
+                let requests_started = requests_started.clone();
+                let requests_completed = requests_completed.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document.uri.as_str(),
+                        uri!("file:///dir/one.rs")
+                    );
+                    requests_started.fetch_add(1, atomic::Ordering::Release);
+                    request_started_tx.send(()).await.unwrap();
+                    cx.background_executor().timer(long_request_time).await;
+                    let i = requests_completed.fetch_add(1, atomic::Ordering::Release) + 1;
+                    Ok(Some(vec![lsp::CodeLens {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 9)),
+                        command: Some(lsp::Command {
+                            title: format!("LSP Command {i}"),
+                            command: command_name.to_string(),
+                            arguments: None,
+                        }),
+                        data: None,
+                    }]))
+                }
+            }
+        });
+
+    // Move cursor to a location, this should trigger the code lens call.
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([7..7])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        1,
+        "Selection change should have initiated the first request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+    let _first_task = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store
+            .forget_code_lens_task(buffer_b.read(cx).remote_id())
+            .expect("Should have the fetch task started")
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        2,
+        "Selection change should have initiated the second request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+    let _second_task = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store
+            .forget_code_lens_task(buffer_b.read(cx).remote_id())
+            .expect("Should have the fetch task started for the 2nd time")
+    });
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([2..2])
+        });
+    });
+    let () = request_started_rx.next().await.unwrap();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        3,
+        "Selection change should have initiated the third request"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        0,
+        "Slow requests should be running still"
+    );
+
+    _first_task.await.unwrap();
+    _second_task.await.unwrap();
+    cx_b.run_until_parked();
+    assert_eq!(
+        requests_started.load(atomic::Ordering::Acquire),
+        3,
+        "No selection changes should trigger no more code lens requests"
+    );
+    assert_eq!(
+        requests_completed.load(atomic::Ordering::Acquire),
+        3,
+        "After enough time, all 3 LSP requests should have been served by the language server"
+    );
+    let resulting_lens_actions = editor_b
+        .update(cx_b, |editor, cx| {
+            let lsp_store = editor.project().unwrap().read(cx).lsp_store();
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.code_lens_actions(&buffer_b, cx)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        resulting_lens_actions.len(),
+        1,
+        "Should have fetched one code lens action, but got: {resulting_lens_actions:?}"
+    );
+    assert_eq!(
+        resulting_lens_actions.first().unwrap().lsp_action.title(),
+        "LSP Command 3",
+        "Only the final code lens action should be in the data"
+    )
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
@@ -1046,7 +1285,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1063,7 +1302,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
@@ -1080,7 +1319,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1090,7 +1329,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1169,12 +1408,12 @@ async fn test_share_project(
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
+                rel_path(".gitignore"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("ignored-dir"),
             ]
         );
     });
@@ -1182,7 +1421,10 @@ async fn test_share_project(
     project_b
         .update(cx_b, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
-            let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
+            let entry = worktree
+                .read(cx)
+                .entry_for_path(rel_path("ignored-dir"))
+                .unwrap();
             project.expand_entry(worktree_id, entry.id, cx).unwrap()
         })
         .await
@@ -1191,31 +1433,35 @@ async fn test_share_project(
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
-                Path::new("ignored-dir/c.txt"),
-                Path::new("ignored-dir/d.txt"),
+                rel_path(".gitignore"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("ignored-dir"),
+                rel_path("ignored-dir/c.txt"),
+                rel_path("ignored-dir/d.txt"),
             ]
         );
     });
 
     // Open the same file as client B and client A.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("b.txt")), cx)
+        })
         .await
         .unwrap();
 
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
 
     project_a.read_with(cx_a, |project, cx| {
-        assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
+        assert!(project.has_open_buffer((worktree_id, rel_path("b.txt")), cx))
     });
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("b.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -1323,7 +1569,9 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Open a file in an editor as the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
@@ -1340,7 +1588,7 @@ async fn test_on_input_format_from_host_to_guest(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1356,14 +1604,18 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Open the buffer on the guest and see that the formatting worked
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
 
     // Type a on type formatting trigger character as the guest.
     cx_a.focus(&editor_a);
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(">", window, cx);
     });
 
@@ -1411,18 +1663,27 @@ async fn test_on_input_format_from_guest_to_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+            first_trigger_character: ":".to_string(),
+            more_trigger_character: Some(vec![">".to_string()]),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                    first_trigger_character: ":".to_string(),
-                    more_trigger_character: Some(vec![">".to_string()]),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1445,7 +1706,9 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
@@ -1459,7 +1722,9 @@ async fn test_on_input_format_from_guest_to_host(
     // Type a on type formatting trigger character as the guest.
     cx_b.focus(&editor_b);
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input(":", window, cx);
     });
 
@@ -1470,7 +1735,7 @@ async fn test_on_input_format_from_guest_to_host(
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1489,7 +1754,9 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     executor.run_until_parked();
@@ -1542,49 +1809,59 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_value_hints: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: Some(true),
+                        show_value_hints: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
 
+    let capabilities = lsp::ServerCapabilities {
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1628,7 +1905,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1642,13 +1919,13 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
         .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_edits_made = Arc::clone(&closure_edits_made);
+            let edits_made_2 = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
-                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+                let edits_made = AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
                     position: lsp::Position::new(0, edits_made as u32),
                     label: lsp::InlayHintLabel::String(edits_made.to_string()),
@@ -1678,7 +1955,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1696,7 +1973,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_client_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13].clone()));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13].clone())
+        });
         editor.handle_input(":", window, cx);
     });
     cx_b.focus(&editor_b);
@@ -1717,7 +1996,9 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     let after_host_edit = edits_made.fetch_add(1, atomic::Ordering::Release) + 1;
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13])
+        });
         editor.handle_input("a change to increment both buffers' versions", window, cx);
     });
     cx_a.focus(&editor_a);
@@ -1780,49 +2061,59 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: false,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: false,
-                    show_parameter_hints: false,
-                    show_other_hints: false,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(false),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(false),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(false),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: true,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
 
+    let capabilities = lsp::ServerCapabilities {
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1859,7 +2150,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1868,7 +2159,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1884,7 +2175,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };
@@ -1952,6 +2243,1080 @@ async fn test_inlay_hint_refresh_is_forwarded(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let expected_color = Rgba {
+        r: 0.33,
+        g: 0.33,
+        b: 0.33,
+        a: 0.33,
+    };
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::None);
+            });
+        });
+    });
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+            });
+        });
+    });
+
+    let capabilities = lsp::ServerCapabilities {
+        color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    // Client A opens a project.
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { a }",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client B joins the project
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+
+    // The host opens a rust file.
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let requests_made = Arc::new(AtomicUsize::new(0));
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(vec![lsp::ColorInformation {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: lsp::Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    },
+                    color: lsp::Color {
+                        red: 0.33,
+                        green: 0.33,
+                        blue: 0.33,
+                        alpha: 0.33,
+                    },
+                }])
+            }
+        });
+    executor.run_until_parked();
+
+    assert_eq!(
+        0,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Host did not enable document colors, hence should query for none"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "No query colors should result in no hints"
+        );
+    });
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    color_request_handle.next().await.unwrap();
+    executor.run_until_parked();
+
+    assert_eq!(
+        1,
+        requests_made.load(atomic::Ordering::Acquire),
+        "The client opened the file and got its first colors back"
+    );
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "With document colors as inlays, color inlays should be pushed"
+        );
+    });
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([13..13].clone())
+        });
+        editor.handle_input(":", window, cx);
+    });
+    color_request_handle.next().await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        2,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After the host edits his file, the client should request the colors again"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Host has no colors still"
+        );
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(vec![expected_color], extract_color_inlays(editor, cx),);
+    });
+
+    cx_b.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Background);
+            });
+        });
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        2,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After the client have changed the colors settings, no extra queries should happen"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Host is unaffected by the client's settings changes"
+        );
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Client should have no colors hints, as in the settings"
+        );
+    });
+
+    cx_b.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+            });
+        });
+    });
+    executor.run_until_parked();
+    assert_eq!(
+        2,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After falling back to colors as inlays, no extra LSP queries are made"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Host is unaffected by the client's settings changes, again"
+        );
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Client should have its color hints back"
+        );
+    });
+
+    cx_a.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Border);
+            });
+        });
+    });
+    color_request_handle.next().await.unwrap();
+    executor.run_until_parked();
+    assert_eq!(
+        3,
+        requests_made.load(atomic::Ordering::Acquire),
+        "After the host enables document colors, another LSP query should be made"
+    );
+    editor_a.update(cx_a, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Host did not configure document colors as hints hence gets nothing"
+        );
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        assert_eq!(
+            vec![expected_color],
+            extract_color_inlays(editor, cx),
+            "Client should be unaffected by the host's settings changes"
+        );
+    });
+}
+
+async fn test_lsp_pull_diagnostics(
+    should_stream_workspace_diagnostic: bool,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let capabilities = lsp::ServerCapabilities {
+        diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+            lsp::DiagnosticOptions {
+                identifier: Some("test-pulls".to_string()),
+                inter_file_dependencies: true,
+                workspace_diagnostics: true,
+                work_done_progress_options: lsp::WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            },
+        )),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    // Client A opens a project.
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() { a }",
+                "lib.rs": "fn other() {}",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    // Client B joins the project
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    executor.start_waiting();
+
+    // The host opens a rust file.
+    let _buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let editor_a_main = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    let expected_push_diagnostic_main_message = "pushed main diagnostic";
+    let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
+    let expected_pull_diagnostic_main_message = "pulled main diagnostic";
+    let expected_pull_diagnostic_lib_message = "pulled lib diagnostic";
+    let expected_workspace_pull_diagnostics_main_message = "pulled workspace main diagnostic";
+    let expected_workspace_pull_diagnostics_lib_message = "pulled workspace lib diagnostic";
+
+    let diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<Option<String>>::new()));
+    let workspace_diagnostics_pulls_result_ids = Arc::new(Mutex::new(BTreeSet::<String>::new()));
+    let diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_diagnostics_pulls_made = diagnostics_pulls_made.clone();
+    let closure_diagnostics_pulls_result_ids = diagnostics_pulls_result_ids.clone();
+    let mut pull_diagnostics_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
+            let requests_made = closure_diagnostics_pulls_made.clone();
+            let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
+            async move {
+                let message = if lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
+                    == params.text_document.uri
+                {
+                    expected_pull_diagnostic_main_message.to_string()
+                } else if lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
+                    == params.text_document.uri
+                {
+                    expected_pull_diagnostic_lib_message.to_string()
+                } else {
+                    panic!("Unexpected document: {}", params.text_document.uri)
+                };
+                {
+                    diagnostics_pulls_result_ids
+                        .lock()
+                        .await
+                        .insert(params.previous_result_id);
+                }
+                let new_requests_count = requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                Ok(lsp::DocumentDiagnosticReportResult::Report(
+                    lsp::DocumentDiagnosticReport::Full(lsp::RelatedFullDocumentDiagnosticReport {
+                        related_documents: None,
+                        full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                            result_id: Some(format!("pull-{new_requests_count}")),
+                            items: vec![lsp::Diagnostic {
+                                range: lsp::Range {
+                                    start: lsp::Position {
+                                        line: 0,
+                                        character: 0,
+                                    },
+                                    end: lsp::Position {
+                                        line: 0,
+                                        character: 2,
+                                    },
+                                },
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message,
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                    }),
+                ))
+            }
+        });
+
+    let workspace_diagnostics_pulls_made = Arc::new(AtomicUsize::new(0));
+    let closure_workspace_diagnostics_pulls_made = workspace_diagnostics_pulls_made.clone();
+    let closure_workspace_diagnostics_pulls_result_ids =
+        workspace_diagnostics_pulls_result_ids.clone();
+    let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
+        smol::channel::bounded::<()>(1);
+    let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
+        smol::channel::bounded::<()>(1);
+    let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
+        "workspace/diagnostic-{}-1",
+        fake_language_server.server.server_id()
+    ));
+    let closure_expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
+    let mut workspace_diagnostics_pulls_handle = fake_language_server
+        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+        move |params, _| {
+            let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
+            let workspace_diagnostics_pulls_result_ids =
+                closure_workspace_diagnostics_pulls_result_ids.clone();
+            let workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
+            let workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
+            let expected_workspace_diagnostic_token =
+                closure_expected_workspace_diagnostic_token.clone();
+            async move {
+                let workspace_request_count =
+                    workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
+                {
+                    workspace_diagnostics_pulls_result_ids
+                        .lock()
+                        .await
+                        .extend(params.previous_result_ids.into_iter().map(|id| id.value));
+                }
+                if should_stream_workspace_diagnostic && !workspace_diagnostic_cancel_rx.is_closed()
+                {
+                    assert_eq!(
+                        params.partial_result_params.partial_result_token,
+                        Some(expected_workspace_diagnostic_token)
+                    );
+                    workspace_diagnostic_received_tx.send(()).await.unwrap();
+                    workspace_diagnostic_cancel_rx.recv().await.unwrap();
+                    workspace_diagnostic_cancel_rx.close();
+                    // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#partialResults
+                    // > The final response has to be empty in terms of result values.
+                    return Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                        lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                    ));
+                }
+                Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                    lsp::WorkspaceDiagnosticReport {
+                        items: vec![
+                            lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                lsp::WorkspaceFullDocumentDiagnosticReport {
+                                    uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    version: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: Some(format!(
+                                                "workspace_{workspace_request_count}"
+                                            )),
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range {
+                                                    start: lsp::Position {
+                                                        line: 0,
+                                                        character: 1,
+                                                    },
+                                                    end: lsp::Position {
+                                                        line: 0,
+                                                        character: 3,
+                                                    },
+                                                },
+                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                message:
+                                                    expected_workspace_pull_diagnostics_main_message
+                                                        .to_string(),
+                                                ..lsp::Diagnostic::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                            lsp::WorkspaceDocumentDiagnosticReport::Full(
+                                lsp::WorkspaceFullDocumentDiagnosticReport {
+                                    uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                    version: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: Some(format!(
+                                                "workspace_{workspace_request_count}"
+                                            )),
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range {
+                                                    start: lsp::Position {
+                                                        line: 0,
+                                                        character: 1,
+                                                    },
+                                                    end: lsp::Position {
+                                                        line: 0,
+                                                        character: 3,
+                                                    },
+                                                },
+                                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                                message:
+                                                    expected_workspace_pull_diagnostics_lib_message
+                                                        .to_string(),
+                                                ..lsp::Diagnostic::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ],
+                    },
+                ))
+            }
+        },
+    );
+
+    if should_stream_workspace_diagnostic {
+        workspace_diagnostic_received_rx.recv().await.unwrap();
+    } else {
+        workspace_diagnostics_pulls_handle.next().await.unwrap();
+    }
+    assert_eq!(
+        1,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Workspace diagnostics should be pulled initially on a server startup"
+    );
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        1,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Host should query pull diagnostics when the editor is opened"
+    );
+    executor.run_until_parked();
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            1,
+            "Expected single diagnostic, but got: {all_diagnostics:?}"
+        );
+        let diagnostic = &all_diagnostics[0];
+        let mut expected_messages = vec![expected_pull_diagnostic_main_message];
+        if !should_stream_workspace_diagnostic {
+            expected_messages.push(expected_workspace_pull_diagnostics_main_message);
+        }
+        assert!(
+            expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+            "Expected {expected_messages:?} on the host, but got: {}",
+            diagnostic.diagnostic.message
+        );
+    });
+
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        &lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 3,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                },
+                severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                message: expected_push_diagnostic_main_message.to_string(),
+                ..lsp::Diagnostic::default()
+            }],
+            version: None,
+        },
+    );
+    fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
+        &lsp::PublishDiagnosticsParams {
+            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
+            diagnostics: vec![lsp::Diagnostic {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 3,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                },
+                severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                message: expected_push_diagnostic_lib_message.to_string(),
+                ..lsp::Diagnostic::default()
+            }],
+            version: None,
+        },
+    );
+
+    if should_stream_workspace_diagnostic {
+        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+            token: expected_workspace_diagnostic_token.clone(),
+            value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
+                lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
+                    items: vec![
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
+                                version: None,
+                                full_document_diagnostic_report:
+                                    lsp::FullDocumentDiagnosticReport {
+                                        result_id: Some(format!(
+                                            "workspace_{}",
+                                            workspace_diagnostics_pulls_made
+                                                .fetch_add(1, atomic::Ordering::Release)
+                                                + 1
+                                        )),
+                                        items: vec![lsp::Diagnostic {
+                                            range: lsp::Range {
+                                                start: lsp::Position {
+                                                    line: 0,
+                                                    character: 1,
+                                                },
+                                                end: lsp::Position {
+                                                    line: 0,
+                                                    character: 2,
+                                                },
+                                            },
+                                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                            message:
+                                                expected_workspace_pull_diagnostics_main_message
+                                                    .to_string(),
+                                            ..lsp::Diagnostic::default()
+                                        }],
+                                    },
+                            },
+                        ),
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                version: None,
+                                full_document_diagnostic_report:
+                                    lsp::FullDocumentDiagnosticReport {
+                                        result_id: Some(format!(
+                                            "workspace_{}",
+                                            workspace_diagnostics_pulls_made
+                                                .fetch_add(1, atomic::Ordering::Release)
+                                                + 1
+                                        )),
+                                        items: Vec::new(),
+                                    },
+                            },
+                        ),
+                    ],
+                }),
+            ),
+        });
+    };
+
+    let mut workspace_diagnostic_start_count =
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire);
+
+    executor.run_until_parked();
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
+        );
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Expected push and pull messages on the host: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b_main = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx_b.run_until_parked();
+
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        2,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client should query pull diagnostics when its editor is opened"
+    );
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_diagnostic_start_count,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Workspace diagnostics should not be changed as the remote client does not initialize the workspace diagnostics pull"
+    );
+    editor_b_main.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            all_diagnostics.len(),
+            2,
+            "Expected pull and push diagnostics, but got: {all_diagnostics:?}"
+        );
+
+        // Despite the workspace diagnostics not re-initialized for the remote client, we can still expect its message synced from the host.
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+
+    let editor_b_lib = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("lib.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        3,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client should query pull diagnostics when its another editor is opened"
+    );
+    executor.run_until_parked();
+    assert_eq!(
+        workspace_diagnostic_start_count,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "The remote client still did not anything to trigger the workspace diagnostics pull"
+    );
+    editor_b_lib.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        let expected_messages = [
+            expected_pull_diagnostic_lib_message,
+            // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
+            // expected_push_diagnostic_lib_message,
+        ];
+        assert_eq!(
+            all_diagnostics.len(),
+            1,
+            "Expected pull diagnostics, but got: {all_diagnostics:?}"
+        );
+        for diagnostic in all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                diagnostic.diagnostic.message
+            );
+        }
+    });
+
+    if should_stream_workspace_diagnostic {
+        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+            token: expected_workspace_diagnostic_token.clone(),
+            value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
+                lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
+                    items: vec![lsp::WorkspaceDocumentDiagnosticReport::Full(
+                        lsp::WorkspaceFullDocumentDiagnosticReport {
+                            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
+                            version: None,
+                            full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                                result_id: Some(format!(
+                                    "workspace_{}",
+                                    workspace_diagnostics_pulls_made
+                                        .fetch_add(1, atomic::Ordering::Release)
+                                        + 1
+                                )),
+                                items: vec![lsp::Diagnostic {
+                                    range: lsp::Range {
+                                        start: lsp::Position {
+                                            line: 0,
+                                            character: 1,
+                                        },
+                                        end: lsp::Position {
+                                            line: 0,
+                                            character: 2,
+                                        },
+                                    },
+                                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                    message: expected_workspace_pull_diagnostics_lib_message
+                                        .to_string(),
+                                    ..lsp::Diagnostic::default()
+                                }],
+                            },
+                        },
+                    )],
+                }),
+            ),
+        });
+        workspace_diagnostic_start_count =
+            workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire);
+        workspace_diagnostic_cancel_tx.send(()).await.unwrap();
+        workspace_diagnostics_pulls_handle.next().await.unwrap();
+        executor.run_until_parked();
+        editor_b_lib.update(cx_b, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let all_diagnostics = snapshot
+                .diagnostics_in_range(0..snapshot.len())
+                .collect::<Vec<_>>();
+            let expected_messages = [
+                expected_workspace_pull_diagnostics_lib_message,
+                // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
+                // expected_push_diagnostic_lib_message,
+            ];
+            assert_eq!(
+                all_diagnostics.len(),
+                1,
+                "Expected pull diagnostics, but got: {all_diagnostics:?}"
+            );
+            for diagnostic in all_diagnostics {
+                assert!(
+                    expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                    "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                    diagnostic.diagnostic.message
+                );
+            }
+        });
+    };
+
+    {
+        assert!(
+            !diagnostics_pulls_result_ids.lock().await.is_empty(),
+            "Initial diagnostics pulls should report None at least"
+        );
+        assert_eq!(
+            0,
+            workspace_diagnostics_pulls_result_ids
+                .lock()
+                .await
+                .deref()
+                .len(),
+            "After the initial workspace request, opening files should not reuse any result ids"
+        );
+    }
+
+    editor_b_lib.update_in(cx_b, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        4,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client lib.rs edits should trigger another diagnostics pull for a buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        workspace_diagnostic_start_count + 1,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After client lib.rs edits, the workspace diagnostics request should follow"
+    );
+    executor.run_until_parked();
+
+    editor_b_main.update_in(cx_b, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        6,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Client main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        workspace_diagnostic_start_count + 2,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After client main.rs edits, the workspace diagnostics pull should follow"
+    );
+    executor.run_until_parked();
+
+    editor_a_main.update_in(cx_a, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input(":", window, cx);
+    });
+    pull_diagnostics_handle.next().await.unwrap();
+    pull_diagnostics_handle.next().await.unwrap();
+    assert_eq!(
+        8,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Host main.rs edits should trigger another diagnostics pull by both client and host as they share the buffer"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        workspace_diagnostic_start_count + 3,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "After host main.rs edits, the workspace diagnostics pull should follow"
+    );
+    executor.run_until_parked();
+    let diagnostic_pulls_result_ids = diagnostics_pulls_result_ids.lock().await.len();
+    let workspace_pulls_result_ids = workspace_diagnostics_pulls_result_ids.lock().await.len();
+    {
+        assert!(
+            diagnostic_pulls_result_ids > 1,
+            "Should have sent result ids when pulling diagnostics"
+        );
+        assert!(
+            workspace_pulls_result_ids > 1,
+            "Should have sent result ids when pulling workspace diagnostics"
+        );
+    }
+
+    fake_language_server
+        .request::<lsp::request::WorkspaceDiagnosticRefresh>(())
+        .await
+        .into_response()
+        .expect("workspace diagnostics refresh request failed");
+    assert_eq!(
+        8,
+        diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "No single file pulls should happen after the diagnostics refresh server request"
+    );
+    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    assert_eq!(
+        workspace_diagnostic_start_count + 4,
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
+        "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
+    );
+    {
+        assert!(
+            diagnostics_pulls_result_ids.lock().await.len() == diagnostic_pulls_result_ids,
+            "Pulls should not happen hence no extra ids should appear"
+        );
+        assert!(
+            workspace_diagnostics_pulls_result_ids.lock().await.len() > workspace_pulls_result_ids,
+            "More workspace diagnostics should be pulled"
+        );
+    }
+    editor_b_lib.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_lib_message,
+            expected_pull_diagnostic_lib_message,
+            expected_push_diagnostic_lib_message,
+        ];
+        assert_eq!(all_diagnostics.len(), 1);
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
+    });
+    editor_b_main.update(cx_b, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(all_diagnostics.len(), 2);
+
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
+    });
+    editor_a_main.update(cx_a, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let all_diagnostics = snapshot
+            .diagnostics_in_range(0..snapshot.len())
+            .collect::<Vec<_>>();
+        assert_eq!(all_diagnostics.len(), 2);
+        let expected_messages = [
+            expected_workspace_pull_diagnostics_main_message,
+            expected_pull_diagnostic_main_message,
+            expected_push_diagnostic_main_message,
+        ];
+        for diagnostic in &all_diagnostics {
+            assert!(
+                expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                "Unexpected diagnostics: {all_diagnostics:?}"
+            );
+        }
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_non_streamed_lsp_pull_diagnostics(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    test_lsp_pull_diagnostics(false, cx_a, cx_b).await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_streamed_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    test_lsp_pull_diagnostics(true, cx_a, cx_b).await;
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1965,22 +3330,20 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     cx_b.update(editor::init);
     // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
     let inline_blame_off_settings = Some(InlineBlameSettings {
-        enabled: false,
-        delay_ms: None,
-        min_column: None,
-        show_commit_summary: false,
+        enabled: Some(false),
+        ..Default::default()
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });
@@ -2016,7 +3379,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
-        vec![("file.txt".into(), blame)],
+        vec![(repo_path("file.txt"), blame)],
     );
 
     let (project_a, worktree_id) = client_a.build_local_project(path!("/my-repo"), cx_a).await;
@@ -2029,7 +3392,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "file.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2041,7 +3404,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "file.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2086,16 +3449,16 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         assert_eq!(
             entries,
             vec![
-                Some(blame_entry("1b1b1b", 0..1)),
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("1b1b1b", 0..1))),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
 
         blame.update(cx, |blame, _| {
-            for (idx, entry) in entries.iter().flatten().enumerate() {
-                let details = blame.details_for_entry(entry).unwrap();
+            for (idx, (buffer, entry)) in entries.iter().flatten().enumerate() {
+                let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
@@ -2135,9 +3498,9 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             entries,
             vec![
                 None,
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
@@ -2172,8 +3535,8 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             vec![
                 None,
                 None,
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
@@ -2219,13 +3582,13 @@ async fn test_collaborating_with_editorconfig(
         .unwrap();
     let main_buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_buffer((worktree_id, "src/main.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
         })
         .await
         .unwrap();
     let other_buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/other.rs")), cx)
         })
         .await
         .unwrap();
@@ -2253,13 +3616,13 @@ async fn test_collaborating_with_editorconfig(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let main_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/main.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
         })
         .await
         .unwrap();
     let other_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/other.rs")), cx)
         })
         .await
         .unwrap();
@@ -2378,7 +3741,7 @@ fn main() { let foo = other::foo(); }"};
 
     let editorconfig_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/.editorconfig"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/.editorconfig")), cx)
         })
         .await
         .unwrap();
@@ -2455,12 +3818,12 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let project_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new(&"test.txt")),
+        path: rel_path(&"test.txt").into(),
     };
     let abs_path = project_a.read_with(cx_a, |project, cx| {
         project
             .absolute_path(&project_path, cx)
-            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .map(Arc::from)
             .unwrap()
     });
 
@@ -2514,20 +3877,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -2547,20 +3906,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -2580,20 +3935,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(1, breakpoints_a.len());
@@ -2613,20 +3964,16 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
             .breakpoint_store()
-            .clone()
             .unwrap()
             .read(cx)
             .all_source_breakpoints(cx)
-            .clone()
     });
 
     assert_eq!(0, breakpoints_a.len());
@@ -2648,11 +3995,18 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_b.update(editor::init);
 
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            name: RUST_ANALYZER_NAME,
+            name: "rust-analyzer",
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
             ..FakeLspAdapter::default()
         },
     );
@@ -2687,7 +4041,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2696,7 +4050,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2710,9 +4064,9 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            assert_eq!(params.position, lsp::Position::new(0, 0));
             Ok(Some(ExpandedMacro {
                 name: "test_macro_name".to_string(),
                 expansion: "test_macro_expansion on the host".to_string(),
@@ -2745,9 +4099,13 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            assert_eq!(
+                params.position,
+                lsp::Position::new(0, 12),
+                "editor_b has selected the entire text and should query for a different position"
+            );
             Ok(Some(ExpandedMacro {
                 name: "test_macro_name".to_string(),
                 expansion: "test_macro_expansion on the client".to_string(),
@@ -2756,6 +4114,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     );
 
     editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
         expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
     });
     expand_request_b.next().await.unwrap();
@@ -2827,6 +4186,16 @@ fn extract_hint_labels(editor: &Editor) -> Vec<String> {
         }
     }
     labels
+}
+
+#[track_caller]
+fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
+    editor
+        .all_inlays(cx)
+        .into_iter()
+        .filter_map(|inlay| inlay.get_color())
+        .map(Rgba::from)
+        .collect()
 }
 
 fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {
