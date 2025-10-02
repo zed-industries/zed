@@ -631,7 +631,7 @@ impl TextThreadEditor {
                         let snapshot = editor.snapshot(window, cx);
                         let cursor_point = scroll_position.cursor.to_display_point(&snapshot);
                         let scroll_top =
-                            cursor_point.row().as_f32() - scroll_position.offset_before_cursor.y;
+                            cursor_point.row().as_f64() - scroll_position.offset_before_cursor.y;
                         editor.set_scroll_position(
                             point(scroll_position.offset_before_cursor.x, scroll_top),
                             window,
@@ -979,7 +979,7 @@ impl TextThreadEditor {
             let cursor_row = cursor
                 .to_display_point(&snapshot.display_snapshot)
                 .row()
-                .as_f32();
+                .as_f64();
             let scroll_position = editor
                 .scroll_manager
                 .anchor()
