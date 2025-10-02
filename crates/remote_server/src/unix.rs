@@ -1,6 +1,7 @@
 use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
+use base64::prelude::{BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use client::{ProxySettings, telemetry};
 
@@ -14,7 +15,7 @@ use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use iroh::endpoint::Connection;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, Watcher};
+use iroh::{Endpoint, SecretKey, Watcher};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -52,6 +53,7 @@ use std::{
 };
 use telemetry_events::LocationData;
 use thiserror::Error;
+use tokio::io::AsyncWriteExt as _;
 use tokio_util::codec::LengthDelimitedCodec;
 use util::ResultExt;
 
@@ -748,7 +750,7 @@ enum Im {
     },
 }
 
-pub(crate) fn execute_p2p() -> Result<()> {
+pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Result<()> {
     init_logging_p2p();
 
     // Known bugs
@@ -779,6 +781,12 @@ pub(crate) fn execute_p2p() -> Result<()> {
     // let log_file = "/tmp/p2p.log"; // TODO: what?
     // let log_rx = init_logging_server(log_file.into())?;
 
+    if persist && persist_at.is_none() {
+        let mut secret_path = paths::config_dir().clone();
+        secret_path.push("zedIrohNode.key");
+        persist_at = Some(secret_path);
+    }
+
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
         settings::init(cx);
@@ -789,6 +797,7 @@ pub(crate) fn execute_p2p() -> Result<()> {
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
+        log::debug!("Persist at: [{:?}]", persist_at);
 
         client::init_settings(cx);
 
@@ -802,7 +811,7 @@ pub(crate) fn execute_p2p() -> Result<()> {
         let (s, mut r) = mpsc::unbounded::<Im>();
 
         gpui_tokio::Tokio::spawn(cx, async move {
-            let iroh = match IrohZedListener::accept(s).await {
+            let iroh = match IrohZedListener::accept(s, persist_at.as_ref()).await {
                 Ok(iroh) => iroh,
                 Err(error) => {
                     log::error!("failed to start iroh {error:?}");
@@ -934,8 +943,10 @@ impl IrohZedListener {
         }
     }
 
-    async fn accept(tx: mpsc::UnboundedSender<Im>) -> Result<Self> {
+    async fn accept(tx: mpsc::UnboundedSender<Im>, persist_at: Option<&PathBuf>) -> Result<Self> {
+        let iroh_zed_node = IrohZedNode::create(persist_at).await;
         let endpoint = Endpoint::builder()
+            .secret_key(iroh_zed_node.secret().clone())
             .discovery_n0()
             .alpns(vec![ZED_ALPN.to_vec()])
             .bind()
@@ -1069,6 +1080,84 @@ impl ProtocolHandler for IrohZedProtocolHandler {
 
         Ok(())
     }
+}
+
+struct IrohZedNode(SecretKey);
+
+impl IrohZedNode {
+    async fn create(persist: Option<&PathBuf>) -> Self {
+        if let Some(node_path) = persist {
+            match Self::read(&node_path).await {
+                Ok(Some(result)) => return result,
+                Ok(None) => {}
+                Err(error) => {
+                    log::error!("Error reading persisted Iroh Zed node: [{}]", error);
+                }
+            }
+        }
+        let iroh_zed_node = Self::generate();
+        if let Some(node_path) = persist {
+            if let Err(error) = Self::write(&node_path, &iroh_zed_node).await {
+                log::error!(
+                    "Could not persist Iroh Zed node: {:?}: {}",
+                    &node_path,
+                    error
+                );
+            }
+        }
+        iroh_zed_node
+    }
+
+    async fn read(key_path: &PathBuf) -> Result<Option<Self>> {
+        if !key_path.exists() {
+            log::debug!("Secret key not found: {:?}", &key_path);
+            return Ok(None);
+        }
+        let key_base64 = tokio::fs::read_to_string(key_path.clone()).await?;
+        let key_base64 = key_base64.trim();
+        let key_bytes = BASE64_STANDARD.decode(&key_base64)?;
+        if key_bytes.len() < 32 {
+            return Err(anyhow!("Not enough bytes in secret key"));
+        }
+        let secret = SecretKey::try_from(&key_bytes[0..32])?;
+
+        Ok(Some(IrohZedNode(secret)))
+    }
+
+    fn generate() -> Self {
+        let secret = SecretKey::generate(rand_core::OsRng);
+        IrohZedNode(secret)
+    }
+
+    async fn write(key_path: &PathBuf, iroh_zed_node: &IrohZedNode) -> Result<()> {
+        let secret = iroh_zed_node.secret();
+        let mut secret_base64 = BASE64_STANDARD.encode(secret.to_bytes());
+        secret_base64.push('\n');
+        let mut open_options = tokio::fs::OpenOptions::new();
+        open_options.mode(0o400);
+        create_file(open_options, &key_path, &secret_base64)
+            .await
+            .context(format!("Key file: [{:?}]", key_path))?;
+        Ok(())
+    }
+
+    fn secret(&self) -> &SecretKey {
+        &self.0
+    }
+}
+
+async fn create_file(
+    mut open_options: tokio::fs::OpenOptions,
+    file: &PathBuf,
+    content: &str,
+) -> Result<()> {
+    let mut open_file = open_options
+        .create(true)
+        .write(true)
+        .open(file.clone())
+        .await?;
+    open_file.write_all(content.as_bytes()).await?;
+    Ok(())
 }
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
