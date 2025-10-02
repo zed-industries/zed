@@ -2841,7 +2841,7 @@ impl Session {
                         Ok(status) => {
                             if status.success() {
                                 console_output
-                                    .send(format!("Companion process exited normally"))
+                                    .send("Companion process exited normally".into())
                                     .await
                                     .ok();
                             } else {
@@ -2880,7 +2880,7 @@ impl Session {
                 Ok(response) => {
                     if !response.status().is_success() {
                         console_output
-                            .send(format!("Launch request to companion failed"))
+                            .send("Launch request to companion failed".into())
                             .await
                             .ok();
                         return Err(anyhow!("launch request failed"));
@@ -2888,7 +2888,7 @@ impl Session {
                 }
                 Err(e) => {
                     console_output
-                        .send(format!("Failed to read response from companion"))
+                        .send("Failed to read response from companion".into())
                         .await
                         .ok();
                     return Err(e);
