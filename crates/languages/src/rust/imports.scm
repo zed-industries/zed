@@ -12,4 +12,6 @@
 
 (use_declaration (identifier) @name)
 
-(use_declaration (use_list) @list)
+(use_wildcard
+    (_)? @path
+    "*" @wildcard)

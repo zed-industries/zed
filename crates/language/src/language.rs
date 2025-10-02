@@ -1321,7 +1321,8 @@ pub struct ImportsConfig {
     pub import_statement_ix: u32,
     pub name_ix: u32,
     pub path_ix: u32,
-    pub list_ix: u32,
+    pub list_ix: Option<u32>,
+    pub wildcard_ix: Option<u32>,
 }
 
 impl Language {
@@ -1617,7 +1618,8 @@ impl Language {
         let mut import_statement_ix = 0;
         let mut name_ix = 0;
         let mut path_ix = 0;
-        let mut list_ix = 0;
+        let mut list_ix = None;
+        let mut wildcard_ix = None;
         if populate_capture_indices(
             &query,
             &self.config.name,
@@ -1628,7 +1630,8 @@ impl Language {
                 Capture::Required("import_statement", &mut import_statement_ix),
                 Capture::Required("name", &mut name_ix),
                 Capture::Required("path", &mut path_ix),
-                Capture::Required("list", &mut list_ix),
+                Capture::Optional("list", &mut list_ix),
+                Capture::Optional("wildcard", &mut wildcard_ix),
             ],
         ) {
             self.grammar_mut()?.imports_config = Some(ImportsConfig {
@@ -1637,6 +1640,7 @@ impl Language {
                 name_ix,
                 path_ix,
                 list_ix,
+                wildcard_ix,
             });
         }
         return Ok(self);

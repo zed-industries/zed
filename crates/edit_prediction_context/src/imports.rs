@@ -12,6 +12,12 @@ use util::paths::PathStyle;
 
 use crate::Identifier;
 
+// todo!
+//
+// `self` from rust imports
+//
+// rename suffix to "content"?
+
 // Future improvements:
 //
 // * Support for aliases?
@@ -31,6 +37,8 @@ pub struct Imports {
     // TODO: this is not so meaningful when imports come from anywhere in the file
     pub all_imports_range: Range<usize>,
     pub identifier_namespaces: HashMap<Identifier, Vec<Namespace>>,
+    // todo!
+    pub wildcard_namespaces: Vec<Namespace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,26 +55,28 @@ impl Imports {
 
         let mut detached_nodes: Vec<DetachedNode> = Vec::new();
         let mut identifier_namespaces = HashMap::default();
+        let mut wildcard_namespaces = Vec::new();
         let mut all_imports_range: Option<Range<usize>> = None;
         let mut import_range = None;
 
         while let Some(query_match) = matches.peek() {
             let language_id = query_match.language.id();
             let ImportsConfig {
+                query: _,
                 import_statement_ix,
                 name_ix,
                 path_ix,
                 list_ix,
-                ..
+                wildcard_ix,
             } = matches.grammars()[query_match.grammar_index]
                 .imports_config()
                 .unwrap();
 
-            let mut name_range = None;
             let mut path_range = None;
-            let mut list_range = None;
+            let mut suffix: Option<(Range<usize>, NodeKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
+
                 if capture.index == *import_statement_ix {
                     import_range = Some(capture_range.clone());
                     all_imports_range
@@ -76,54 +86,50 @@ impl Imports {
                         &detached_nodes,
                         &snapshot,
                         &mut identifier_namespaces,
+                        &mut wildcard_namespaces,
                     );
                     detached_nodes.clear();
                 } else if import_range
                     .as_ref()
                     .is_some_and(|import_range| import_range.contains_inclusive(&capture_range))
                 {
-                    if capture.index == *name_ix {
-                        name_range = Some(capture_range);
-                    } else if capture.index == *path_ix {
+                    let mut found_suffix = None;
+                    if capture.index == *path_ix {
                         path_range = Some(capture_range);
-                    } else if capture.index == *list_ix {
-                        list_range = Some(capture_range);
+                    } else if capture.index == *name_ix {
+                        found_suffix = Some((capture_range, NodeKind::Name));
+                    } else if Some(capture.index) == *list_ix {
+                        found_suffix = Some((capture_range, NodeKind::List));
+                    } else if Some(capture.index) == *wildcard_ix {
+                        found_suffix = Some((capture_range, NodeKind::Wildcard));
+                    }
+                    if let Some((found_suffix_range, found_kind)) = found_suffix {
+                        if let Some((_, old_kind)) = suffix {
+                            let point = found_suffix_range.to_point(snapshot);
+                            log::warn!(
+                                "bug in {} imports query: unexpected multiple captures of {} and {} ({}:{}:{})",
+                                query_match.language.name(),
+                                old_kind.capture_name(),
+                                found_kind.capture_name(),
+                                snapshot
+                                    .file()
+                                    .map(|p| p.path().display(PathStyle::Posix))
+                                    .unwrap_or_default(),
+                                point.start.row + 1,
+                                point.start.column + 1
+                            );
+                        }
+                        suffix = Some((found_suffix_range, found_kind));
                     }
                 }
             }
 
-            if let Some(path_range) = path_range {
-                if let Some(name_range) = name_range {
-                    if let Some(list_range) = list_range {
-                        let point = list_range.to_point(snapshot);
-                        log::warn!(
-                            "bug in {} imports query: unexpected capture of both list and name ({}:{}:{})",
-                            query_match.language.name(),
-                            snapshot
-                                .file()
-                                .map(|p| p.path().display(PathStyle::Posix))
-                                .unwrap_or_default(),
-                            point.start.row + 1,
-                            point.start.column + 1
-                        );
-                    }
-                    detached_nodes.push(DetachedNode {
-                        path: path_range,
-                        suffix: name_range,
-                        language_id,
-                    });
-                } else if let Some(list_range) = list_range {
-                    detached_nodes.push(DetachedNode {
-                        path: path_range,
-                        suffix: list_range.clone(),
-                        language_id,
-                    });
-                }
-            } else if let Some(name_range) = name_range {
+            if let Some((suffix, kind)) = suffix {
                 detached_nodes.push(DetachedNode {
-                    path: 0..0,
-                    suffix: name_range.clone(),
+                    path: path_range.unwrap_or(0..0),
+                    suffix: suffix.clone(),
                     language_id,
+                    kind,
                 });
             }
 
@@ -134,11 +140,17 @@ impl Imports {
             return Err(anyhow!("No imports"));
         };
 
-        Self::collect_from_import_statement(&detached_nodes, &snapshot, &mut identifier_namespaces);
+        Self::collect_from_import_statement(
+            &detached_nodes,
+            &snapshot,
+            &mut identifier_namespaces,
+            &mut wildcard_namespaces,
+        );
 
         Ok(Imports {
             all_imports_range: import_range,
             identifier_namespaces,
+            wildcard_namespaces,
         })
     }
 
@@ -146,6 +158,7 @@ impl Imports {
         detached_nodes: &[DetachedNode],
         snapshot: &BufferSnapshot,
         identifier_namespaces: &mut HashMap<Identifier, Vec<Namespace>>,
+        wildcard_namespaces: &mut Vec<Namespace>,
     ) {
         let mut trees = Vec::new();
 
@@ -157,7 +170,13 @@ impl Imports {
 
         for tree in &trees {
             let mut namespace = Namespace::default();
-            Self::collect_from_tree(tree, snapshot, &mut namespace, identifier_namespaces);
+            Self::collect_from_tree(
+                tree,
+                snapshot,
+                &mut namespace,
+                identifier_namespaces,
+                wildcard_namespaces,
+            );
         }
     }
 
@@ -185,6 +204,7 @@ impl Imports {
         snapshot: &BufferSnapshot,
         namespace: &mut Namespace,
         identifier_namespaces: &mut HashMap<Identifier, Vec<Namespace>>,
+        wildcard_namespaces: &mut Vec<Namespace>,
     ) {
         let mut pop_count = 0;
 
@@ -200,16 +220,27 @@ impl Imports {
         };
 
         if tree.suffix_children.is_empty() {
-            identifier_namespaces
-                .entry(Identifier {
-                    language_id: tree.language_id,
-                    name: range_text(snapshot, &tree.suffix).as_ref().into(),
-                })
-                .or_default()
-                .push(namespace.clone());
+            match tree.kind {
+                NodeKind::Name | NodeKind::List => {
+                    identifier_namespaces
+                        .entry(Identifier {
+                            language_id: tree.language_id,
+                            name: range_text(snapshot, &tree.suffix).as_ref().into(),
+                        })
+                        .or_default()
+                        .push(namespace.clone());
+                }
+                NodeKind::Wildcard => wildcard_namespaces.push(namespace.clone()),
+            }
         } else {
             for child in &tree.suffix_children {
-                Self::collect_from_tree(child, snapshot, namespace, identifier_namespaces);
+                Self::collect_from_tree(
+                    child,
+                    snapshot,
+                    namespace,
+                    identifier_namespaces,
+                    wildcard_namespaces,
+                );
             }
         }
 
@@ -256,6 +287,24 @@ struct DetachedNode {
     path: Range<usize>,
     suffix: Range<usize>,
     language_id: LanguageId,
+    kind: NodeKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NodeKind {
+    Name,
+    Wildcard,
+    List,
+}
+
+impl NodeKind {
+    fn capture_name(&self) -> &'static str {
+        match self {
+            NodeKind::Name => "name",
+            NodeKind::Wildcard => "wildcard",
+            NodeKind::List => "list",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -265,6 +314,7 @@ struct ImportTree {
     suffix: Range<usize>,
     suffix_children: Vec<ImportTree>,
     language_id: LanguageId,
+    kind: NodeKind,
 }
 
 impl ImportTree {
@@ -289,6 +339,7 @@ impl From<&DetachedNode> for ImportTree {
             suffix: value.suffix.clone(),
             suffix_children: Vec::new(),
             language_id: value.language_id,
+            kind: value.kind,
         }
     }
 }
@@ -409,6 +460,18 @@ mod test {
                 "},
                 vec!["std::collections::HashSet", "std::any::TypeId"],
             ),
+            ("use prelude::*;", vec!["prelude::*"]),
+            ("use zed::prelude::*;", vec!["zed::prelude::*"]),
+            ("use prelude::{*};", vec!["prelude::*"]),
+            ("use prelude::{Foo, *};", vec!["prelude::Foo", "prelude::*"]),
+            (
+                "use gpui::{prelude::*, App};",
+                vec!["gpui::prelude::*", "gpui::App"],
+            ),
+            (
+                "use zed::prelude::{Foo, *};",
+                vec!["zed::prelude::Foo", "zed::prelude::*"],
+            ),
         ];
         let language = Arc::new(rust_lang());
         let mut failures = Vec::new();
@@ -431,15 +494,16 @@ mod test {
                 .identifier_namespaces
                 .iter()
                 .flat_map(|(identifier, namespaces)| {
-                    namespaces.iter().map(|namespace| {
-                        namespace
-                            .0
-                            .iter()
-                            .map(|chunk| chunk.to_string())
-                            .chain(std::iter::once(identifier.name.to_string()))
-                            .collect::<Vec<_>>()
-                    })
+                    namespaces
+                        .iter()
+                        .map(|namespace| namespace.to_identifier_parts(identifier.name.as_ref()))
                 })
+                .chain(
+                    imports
+                        .wildcard_namespaces
+                        .iter()
+                        .map(|namespace| namespace.to_identifier_parts("*")),
+                )
                 .collect::<Vec<_>>();
             let mut expected_symbols = expected
                 .iter()
@@ -542,6 +606,16 @@ mod test {
                 Tree:\n{}",
                 self.expected_symbols, self.actual_symbols, self.tree,
             )
+        }
+    }
+
+    impl Namespace {
+        fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
+            self.0
+                .iter()
+                .map(|chunk| chunk.to_string())
+                .chain(std::iter::once(identifier.to_string()))
+                .collect::<Vec<_>>()
         }
     }
 }
