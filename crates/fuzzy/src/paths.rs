@@ -21,6 +21,7 @@ pub struct PathMatchCandidate<'a> {
 #[derive(Clone, Debug)]
 pub struct PathMatch {
     pub score: f64,
+    /// Guarenteed to be sorted
     pub positions: Vec<usize>,
     pub worktree_id: usize,
     pub path: Arc<RelPath>,
@@ -62,17 +63,55 @@ impl PartialOrd for PathMatch {
 
 impl Ord for PathMatch {
     fn cmp(&self, other: &Self) -> Ordering {
+        dbg!(&self.path, &other.path);
         self.score
-            .partial_cmp(&other.score)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| self.worktree_id.cmp(&other.worktree_id))
+            .total_cmp(&other.score)
+            .reverse()
+            .then_with(|| dbg!(self.worktree_id.cmp(&other.worktree_id)))
             .then_with(|| {
-                other
-                    .distance_to_relative_ancestor
-                    .cmp(&self.distance_to_relative_ancestor)
+                dbg!(
+                    other
+                        .distance_to_relative_ancestor
+                        .cmp(&self.distance_to_relative_ancestor)
+                )
             })
-            .then_with(|| self.path.cmp(&other.path))
+            .then_with(|| {
+                dbg!(
+                    self.path
+                        .as_unix_str()
+                        .chars()
+                        .count()
+                        .cmp(&other.path.as_unix_str().chars().count())
+                        .reverse()
+                )
+            })
+            .then_with(|| dbg!(self.path.cmp(&other.path)))
     }
+    // fn cmp(&self, other: &Self) -> Ordering {
+    //     dbg!(&self.path, &other.path);
+    //     self.score
+    //         .total_cmp(&other.score)
+    //         .reverse()
+    //         .then_with(|| dbg!(self.worktree_id.cmp(&other.worktree_id)))
+    //         .then_with(|| {
+    //             dbg!(
+    //                 other
+    //                     .distance_to_relative_ancestor
+    //                     .cmp(&self.distance_to_relative_ancestor)
+    //             )
+    //         })
+    //         .then_with(|| {
+    //             dbg!(
+    //                 self.path
+    //                     .as_unix_str()
+    //                     .chars()
+    //                     .count()
+    //                     .cmp(&other.path.as_unix_str().chars().count())
+    //                     .reverse()
+    //             )
+    //         })
+    //         .then_with(|| dbg!(self.path.cmp(&other.path)))
+    // }
 }
 
 pub fn match_fixed_path_set(
@@ -116,9 +155,48 @@ pub fn match_fixed_path_set(
     }
     matcher::return_matcher(matcher);
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    for r in &mut results {
+        r.positions.sort();
+    }
+    dbg!(results.iter().take(5).collect::<Vec<_>>());
     results
 }
 
+// pub fn path_match_helper<'a>(
+//     matcher: &mut nucleo::Matcher,
+//     pattern: &Pattern,
+//     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
+//     worktree_id: usize,
+//     relative_to: &Option<Arc<RelPath>>,
+//     results: &mut Vec<PathMatch>,
+// ) {
+//     for c in candidates {
+//         let mut indices = Vec::new();
+//         let mut buf = Vec::new();
+//         if let Some(score) = pattern.indices(
+//             nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
+//             matcher,
+//             &mut indices,
+//         ) {
+//             results.push(PathMatch {
+//                 score: score as f64,
+//                 worktree_id,
+//                 positions: indices.into_iter().map(|n| n as usize).collect(),
+//                 is_dir: c.is_dir,
+//                 path: c.path.into(),
+//                 path_prefix: RelPath::empty().into(),
+//                 distance_to_relative_ancestor: relative_to
+//                     .as_ref()
+//                     .map_or(usize::MAX, |relative_to| {
+//                         distance_between_paths(c.path, relative_to.as_ref())
+//                     }),
+//             })
+//         };
+//     }
+// }
+
+/// Query should contain spaces if you want it to be matched out of order
+/// for example: 'audio Cargo' matching 'audio/Cargo.toml'
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
@@ -243,6 +321,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    for r in &mut results {
+        r.positions.sort();
+    }
+
     results
 }
 
@@ -313,26 +395,11 @@ mod tests {
         }
     }
 
-    // perf
-    #[gpui::test]
-    async fn test_dir_paths(cx: &mut TestAppContext) {
-        let mut candidates = [
-            "crates/audio/src/audio.rs",
-            "crates/gpui/src/editor.rs",
-            "scripts/install_linux",
-            "Cargo.toml",
-            "crates/theme/Cargo.toml",
-        ];
-    }
-
-    // perf
-    #[gpui::test]
-    async fn test_path_matcher(cx: &mut TestAppContext) {
-        let candidates = [
-            "blue", "red", "purple", "pink", "green", "yellow", "magenta", "orange", "ocean",
-            "navy", "brown",
-        ];
-
+    async fn path_matches(
+        cx: &mut TestAppContext,
+        candidates: &'static [&'static str],
+        query: &'static str,
+    ) -> Vec<String> {
         let set = TestCandidateSet {
             prefix: RelPath::unix("a/b").unwrap().into(),
             candidates: candidates
@@ -349,7 +416,6 @@ mod tests {
 
         let cancellation_flag = AtomicBool::new(false);
         let executor = cx.background_executor.clone();
-        let query = "bl";
         let matches = cx
             .foreground_executor
             .spawn(async move {
@@ -366,12 +432,79 @@ mod tests {
             })
             .await;
 
+        matches
+            .iter()
+            .map(|s| s.path.as_unix_str().to_string())
+            .collect::<Vec<_>>()
+    }
+
+    #[gpui::test]
+    async fn test_dir_paths(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &[
+            "gpui_even_more/Cargo.toml",
+            "gpui_more/Cargo.toml",
+            "gpui/Cargo.toml",
+        ];
+
         assert_eq!(
-            matches
-                .iter()
-                .map(|s| s.path.as_unix_str())
-                .collect::<Vec<_>>(),
-            ["blue"]
+            path_matches(cx, CANDIDATES, "toml gpui").await,
+            [
+                "gpui/Cargo.toml",
+                "gpui_more/Cargo.toml",
+                "gpui_even_more/Cargo.toml",
+            ]
+        );
+
+        assert_eq!(
+            path_matches(cx, CANDIDATES, "gpui more").await,
+            ["gpui_more/Cargo.toml", "gpui_even_more/Cargo.toml",]
         );
     }
+    #[gpui::test]
+    async fn test_more_dir_paths(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &[
+            "crates/gpui_macros/Cargo.toml",
+            "crates/gpui_tokio/Cargo.toml",
+            "crates/gpui/Cargo.toml",
+        ];
+
+        assert_eq!(
+            path_matches(cx, CANDIDATES, "toml gpui").await,
+            [
+                "crates/gpui/Cargo.toml",
+                "crates/gpui_tokio/Cargo.toml",
+                "crates/gpui_macros/Cargo.toml"
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn dot_should_not_change_order(cx: &mut TestAppContext) {
+        // TODO FIXME or should it?
+        const CANDIDATES: &'static [&'static str] = &[
+            "crates/gpui_macros/Cargo.toml",
+            "crates/gpui_tokio/Cargo.toml",
+            "crates/gpui/Cargo.toml",
+        ];
+
+        assert_eq!(
+            path_matches(cx, CANDIDATES, "toml gpui.").await,
+            [
+                "crates/gpui/Cargo.toml",
+                "crates/gpui_tokio/Cargo.toml",
+                "crates/gpui_macros/Cargo.toml"
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_path_matcher(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &[
+            "blue", "red", "purple", "pink", "green", "yellow", "magenta", "orange", "ocean",
+            "navy", "brown",
+        ];
+        assert_eq!(path_matches(cx, CANDIDATES, "bl").await, ["blue"]);
+    }
+
+    // TODO: add perf test on zed repo
 }

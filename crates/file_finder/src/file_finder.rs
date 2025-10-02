@@ -1316,7 +1316,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1776,7 +1775,7 @@ impl<'a> PathComponentSlice<'a> {
 
     fn elision_range(&self, budget: usize, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
-            assert!(matches.windows(2).all(|w| w[0] <= w[1]));
+            assert!(matches.is_sorted());
             let mut matches = matches.iter().copied().peekable();
             let mut longest: Option<Range<usize>> = None;
             let mut cur = 0..0;

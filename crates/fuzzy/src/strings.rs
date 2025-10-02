@@ -115,6 +115,7 @@ where
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
+    // FIXME should support fzf syntax with Pattern::parse
     let pattern = Pattern::new(
         query,
         if smart_case {
