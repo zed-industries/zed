@@ -33,6 +33,7 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+use task::Shell;
 
 use crate::{
     agent_server_store::{AgentServerStore, AllAgentServersSettings},
@@ -1894,11 +1895,12 @@ impl Project {
 
     pub fn directory_environment(
         &self,
+        shell: &Shell,
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment(abs_path, cx)
+            environment.get_directory_environment_for_shell(shell, abs_path, cx)
         })
     }
 

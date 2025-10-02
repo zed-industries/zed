@@ -3,6 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 
+use ::terminal::terminal_settings::TerminalSettings;
 use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
@@ -1961,11 +1962,11 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                project.directory_environment(dir.as_path().into(), cx)
+                let shell = TerminalSettings::get_global(cx).shell.clone();
+                project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
         };
-
         let env = cx.spawn(async move |_, _| {
             let mut env = env.await.unwrap_or_default();
             // Disables paging for `git` and hopefully other commands

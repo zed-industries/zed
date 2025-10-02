@@ -16,7 +16,7 @@ use task::{Shell, ShellBuilder, ShellKind, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, terminal_settings::TerminalSettings,
 };
-use util::{get_default_system_shell, get_system_shell, maybe, rel_path::RelPath};
+use util::{get_default_system_shell, maybe, rel_path::RelPath};
 
 use crate::{Project, ProjectPath};
 
@@ -98,15 +98,7 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => match &settings.shell {
-                Shell::Program(program) => program.clone(),
-                Shell::WithArguments {
-                    program,
-                    args: _,
-                    title_override: _,
-                } => program.clone(),
-                Shell::System => get_system_shell(),
-            },
+            None => settings.shell.program(),
         };
 
         let project_path_contexts = self
@@ -332,15 +324,7 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => match &settings.shell {
-                Shell::Program(program) => program.clone(),
-                Shell::WithArguments {
-                    program,
-                    args: _,
-                    title_override: _,
-                } => program.clone(),
-                Shell::System => get_system_shell(),
-            },
+            None => settings.shell.program(),
         });
 
         let lang_registry = self.languages.clone();
