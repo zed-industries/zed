@@ -105,7 +105,7 @@ impl Render for ImageLoadingExample {
                 div()
                     .flex()
                     .bg(gpui::white())
-                    .size(Length::Definite(Pixels(300.0).into()))
+                    .size(Length::Definite(px(300.0).into()))
                     .justify_center()
                     .items_center()
                     .child({
@@ -199,7 +199,7 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                     None,
-                    size(px(300.), Pixels(300.)),
+                    size(px(300.), px(300.)),
                     cx,
                 ))),
                 ..Default::default()
