@@ -5,111 +5,17 @@ use html5ever::{
 use markup5ever_rcdom::{Node, NodeData, RcDom};
 use std::{cell::RefCell, io, rc::Rc, str};
 
-/// Defines the minify trait.
-#[allow(dead_code)]
-pub(crate) trait Minify {
-    /// Minifies the source returning the minified HTML5.
-    ///
-    /// # Errors
-    ///
-    /// Will return `Err` if unable to read from the input reader or unable to
-    /// write to the output writer.
-    fn minify(&self) -> Result<Vec<u8>, io::Error>;
+#[derive(Default)]
+pub(crate) struct MinifierOptions {
+    pub omit_doctype: bool,
+    pub preserve_comments: bool,
+    pub collapse_whitespace: bool,
 }
 
-/// Minifies the HTML input to the destination writer.
-/// Outputs HTML5; non-HTML5 input will be transformed to HTML5.
-///
-/// # Errors
-///
-/// Will return `Err` if unable to read from the input reader or unable to write
-/// to the output writer.
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn minify<R: io::Read, W: io::Write>(mut r: &mut R, w: &mut W) -> io::Result<()> {
-    Minifier::new(w).minify(&mut r)
-}
-
-impl<T> Minify for T
-where
-    T: AsRef<[u8]>,
-{
-    #[inline]
-    fn minify(&self) -> Result<Vec<u8>, io::Error> {
-        let mut minified = vec![];
-
-        minify(&mut self.as_ref(), &mut minified)?;
-
-        Ok(minified)
-    }
-}
-
-/// Minifier implementation for `io::Write`.
-#[allow(clippy::struct_excessive_bools)]
-pub struct Minifier<'a, W: io::Write> {
+pub(crate) struct Minifier<'a, W: io::Write> {
     w: &'a mut W,
-    omit_doctype: bool,
-    collapse_whitespace: bool,
-    preserve_comments: bool,
+    options: MinifierOptions,
     preceding_whitespace: bool,
-}
-
-/// Holds node positional context.
-struct Context<'a> {
-    parent: &'a Node,
-    parent_context: Option<&'a Context<'a>>,
-    left: Option<&'a [Rc<Node>]>,
-    right: Option<&'a [Rc<Node>]>,
-}
-
-impl<'a> Context<'a> {
-    /// Determine whether to trim whitespace.
-    /// Uses naive HTML5 whitespace collapsing rules.
-    fn trim(&self, preceding_whitespace: bool) -> (bool, bool) {
-        (preceding_whitespace || self.trim_left(), self.trim_right())
-    }
-
-    fn trim_left(&self) -> bool {
-        self.left.map_or_else(
-            || is_block_element(self.parent) || self.parent_trim_left(),
-            |siblings| {
-                siblings
-                    .iter()
-                    .rev()
-                    .find_map(Self::is_block_element)
-                    .unwrap_or_else(|| self.parent_trim_left())
-            },
-        )
-    }
-
-    fn parent_trim_left(&self) -> bool {
-        self.parent_context.map_or(true, Context::trim_left)
-    }
-
-    fn trim_right(&self) -> bool {
-        self.right.map_or(true, |siblings| {
-            siblings
-                .iter()
-                .find_map(Self::is_block_element)
-                .unwrap_or(true)
-        })
-    }
-
-    fn next_element(&self) -> Option<&Rc<Node>> {
-        self.right.and_then(|siblings| {
-            siblings
-                .iter()
-                .find(|node| matches!(node.data, NodeData::Element { .. }))
-        })
-    }
-
-    fn is_block_element(node: &Rc<Node>) -> Option<bool> {
-        if let NodeData::Element { name, .. } = &node.data {
-            Some(is_block_element_name(name.local.as_ref()))
-        } else {
-            None
-        }
-    }
 }
 
 impl<'a, W> Minifier<'a, W>
@@ -118,41 +24,12 @@ where
 {
     /// Creates a new `Minifier` instance.
     #[inline]
-    pub fn new(w: &'a mut W) -> Self {
+    pub fn new(w: &'a mut W, options: MinifierOptions) -> Self {
         Self {
             w,
-            omit_doctype: false,
-            collapse_whitespace: true,
-            preserve_comments: false,
+            options,
             preceding_whitespace: false,
         }
-    }
-
-    /// Collapse whitespace between elements and in text when whitespace isn't preserved by default.
-    /// Enabled by default.
-    #[inline]
-    #[allow(dead_code)]
-    pub fn collapse_whitespace(&mut self, collapse: bool) -> &mut Self {
-        self.collapse_whitespace = collapse;
-        self
-    }
-
-    /// Omit writing the HTML5 doctype.
-    /// Disabled by default.
-    #[inline]
-    #[allow(dead_code)]
-    pub fn omit_doctype(&mut self, omit: bool) -> &mut Self {
-        self.omit_doctype = omit;
-        self
-    }
-
-    /// Preserve HTML comments.
-    /// Disabled by default.
-    #[inline]
-    #[allow(dead_code)]
-    pub fn preserve_comments(&mut self, preserve: bool) -> &mut Self {
-        self.preserve_comments = preserve;
-        self
     }
 
     /// Minifies the given reader input.
@@ -161,13 +38,12 @@ where
     ///
     /// Will return `Err` if unable to write to the output writer.
     #[inline]
-    #[allow(dead_code)]
     pub fn minify<R: io::Read>(&mut self, mut r: &mut R) -> io::Result<()> {
         let dom = parse_document(RcDom::default(), ParseOpts::default())
             .from_utf8()
             .read_from(&mut r)?;
 
-        if !self.omit_doctype {
+        if !self.options.omit_doctype {
             self.w.write_all(b"<!doctype html>")?;
         }
 
@@ -181,7 +57,7 @@ where
                 let contents = contents.borrow();
                 let contents = contents.as_ref();
 
-                if !self.collapse_whitespace {
+                if !self.options.collapse_whitespace {
                     return self.w.write_all(contents.as_bytes());
                 }
 
@@ -242,7 +118,7 @@ where
                 Ok(())
             }
 
-            NodeData::Comment { contents } if self.preserve_comments => {
+            NodeData::Comment { contents } if self.options.preserve_comments => {
                 self.w.write_all(b"<!--")?;
                 self.w.write_all(contents.as_bytes())?;
                 self.w.write_all(b"-->")
@@ -285,21 +161,21 @@ where
         v.into_iter()
             .find_map(|node| match &node.data {
                 NodeData::Text { contents } => {
-                    if self.collapse_whitespace && is_whitespace(contents) {
+                    if self.options.collapse_whitespace && is_whitespace(contents) {
                         // Blocks of whitespace are skipped
                         None
                     } else {
                         Some(false)
                     }
                 }
-                NodeData::Comment { .. } => Some(self.preserve_comments),
+                NodeData::Comment { .. } => Some(self.options.preserve_comments),
                 _ => Some(false),
             })
             .unwrap_or(false)
     }
 
     fn is_whitespace(&self, s: &RefCell<Tendril<UTF8>>) -> Option<bool> {
-        if self.collapse_whitespace && is_whitespace(s) {
+        if self.options.collapse_whitespace && is_whitespace(s) {
             None
         } else {
             Some(
@@ -340,7 +216,7 @@ where
                         .find_map(|node| match &node.data {
                             NodeData::Text { contents } => self.is_whitespace(contents),
                             NodeData::Comment { .. } => {
-                                if self.preserve_comments {
+                                if self.options.preserve_comments {
                                     Some(false)
                                 } else {
                                     None
@@ -361,7 +237,7 @@ where
                             NodeData::Text { contents } => self.is_whitespace(contents),
                             NodeData::Element { .. } => Some(true),
                             NodeData::Comment { .. } => {
-                                if self.preserve_comments {
+                                if self.options.preserve_comments {
                                     Some(false)
                                 } else {
                                     None
@@ -386,7 +262,7 @@ where
                                 Some(!matches!(name.local.as_ref(), "script" | "style"))
                             }
                             NodeData::Comment { .. } => {
-                                if self.preserve_comments {
+                                if self.options.preserve_comments {
                                     Some(false)
                                 } else {
                                     None
@@ -502,7 +378,7 @@ where
         self.write_qualified_name(&attr.name)?;
 
         let value = attr.value.as_ref();
-        let value = if self.collapse_whitespace {
+        let value = if self.options.collapse_whitespace {
             value.trim_matches(is_ascii_whitespace)
         } else {
             value
@@ -544,7 +420,7 @@ where
 
         let b = v.as_ref();
 
-        if self.collapse_whitespace {
+        if self.options.collapse_whitespace {
             self.write_collapse_whitespace(b, f, Some(false))
         } else {
             self.w.write_all(b)
@@ -610,6 +486,63 @@ where
 
                 Ok(())
             })
+    }
+}
+
+struct Context<'a> {
+    parent: &'a Node,
+    parent_context: Option<&'a Context<'a>>,
+    left: Option<&'a [Rc<Node>]>,
+    right: Option<&'a [Rc<Node>]>,
+}
+
+impl<'a> Context<'a> {
+    /// Determine whether to trim whitespace.
+    /// Uses naive HTML5 whitespace collapsing rules.
+    fn trim(&self, preceding_whitespace: bool) -> (bool, bool) {
+        (preceding_whitespace || self.trim_left(), self.trim_right())
+    }
+
+    fn trim_left(&self) -> bool {
+        self.left.map_or_else(
+            || is_block_element(self.parent) || self.parent_trim_left(),
+            |siblings| {
+                siblings
+                    .iter()
+                    .rev()
+                    .find_map(Self::is_block_element)
+                    .unwrap_or_else(|| self.parent_trim_left())
+            },
+        )
+    }
+
+    fn parent_trim_left(&self) -> bool {
+        self.parent_context.map_or(true, Context::trim_left)
+    }
+
+    fn trim_right(&self) -> bool {
+        self.right.map_or(true, |siblings| {
+            siblings
+                .iter()
+                .find_map(Self::is_block_element)
+                .unwrap_or(true)
+        })
+    }
+
+    fn next_element(&self) -> Option<&Rc<Node>> {
+        self.right.and_then(|siblings| {
+            siblings
+                .iter()
+                .find(|node| matches!(node.data, NodeData::Element { .. }))
+        })
+    }
+
+    fn is_block_element(node: &Rc<Node>) -> Option<bool> {
+        if let NodeData::Element { name, .. } = &node.data {
+            Some(is_block_element_name(name.local.as_ref()))
+        } else {
+            None
+        }
     }
 }
 
@@ -770,8 +703,8 @@ mod tests {
             (" x   \n  \t \n   y  ", " x y ", false),
             (" x   \n  \t \n   y  ", "x y ", true),
         ] {
-            let mut w = vec![];
-            let mut minifier = Minifier::new(&mut w);
+            let mut w = Vec::new();
+            let mut minifier = Minifier::new(&mut w, MinifierOptions::default());
             minifier.preceding_whitespace = preceding_whitespace;
             minifier
                 .write_collapse_whitespace(
@@ -877,12 +810,15 @@ mod tests {
                 false,
             ),
         ] {
-            let mut w = vec![];
-            let mut minifier = Minifier::new(&mut w);
-            minifier
-                .omit_doctype(true)
-                .collapse_whitespace(collapse_whitespace)
-                .preserve_comments(preserve_comments);
+            let mut w = Vec::new();
+            let mut minifier = Minifier::new(
+                &mut w,
+                MinifierOptions {
+                    omit_doctype: true,
+                    preserve_comments,
+                    collapse_whitespace,
+                },
+            );
             minifier.minify(&mut input.as_bytes()).unwrap();
 
             let s = str::from_utf8(&w).unwrap();

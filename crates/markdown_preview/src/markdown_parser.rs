@@ -1,4 +1,7 @@
-use crate::markdown_elements::*;
+use crate::{
+    markdown_elements::*,
+    markdown_minifier::{Minifier, MinifierOptions},
+};
 use async_recursion::async_recursion;
 use collections::FxHashMap;
 use gpui::{DefiniteLength, FontWeight, px, relative};
@@ -29,12 +32,17 @@ pub async fn parse_markdown(
 }
 
 fn cleanup_html(source: &str) -> Vec<u8> {
-    let mut w = std::io::Cursor::new(vec![]);
-    let mut r = std::io::Cursor::new(source);
-    let mut minify = crate::markdown_minifier::Minifier::new(&mut w);
-    minify.omit_doctype(true);
-    if let Ok(()) = minify.minify(&mut r) {
-        w.into_inner()
+    let mut writer = std::io::Cursor::new(Vec::new());
+    let mut reader = std::io::Cursor::new(source);
+    let mut minify = Minifier::new(
+        &mut writer,
+        MinifierOptions {
+            omit_doctype: true,
+            ..Default::default()
+        },
+    );
+    if let Ok(()) = minify.minify(&mut reader) {
+        writer.into_inner()
     } else {
         source.bytes().collect()
     }
