@@ -544,7 +544,6 @@ impl std::fmt::Debug for dyn GitRepository {
 }
 
 pub struct RealGitRepository {
-    // FIXME unpub?
     pub repository: Arc<Mutex<git2::Repository>>,
     pub system_git_binary_path: Option<PathBuf>,
     pub any_git_binary_path: PathBuf,
