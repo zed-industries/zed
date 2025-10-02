@@ -685,7 +685,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let output = new_std_command("git")
+                let output = new_smol_command("git")
                     .current_dir(&working_directory)
                     .args([
                         "--no-pager",
@@ -697,7 +697,9 @@ impl GitRepository for RealGitRepository {
                         &max_size.to_string(),
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
                     ])
-                    .output()?;
+                    .output()
+                    .await
+                    .context("starting git log process")?;
 
                 let output = std::str::from_utf8(&output.stdout)?
                     .trim()
