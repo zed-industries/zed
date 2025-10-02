@@ -113,7 +113,7 @@ pub fn scored_declarations(
                 index.declarations_for_identifier::<MAX_IDENTIFIER_DECLARATION_COUNT>(&identifier);
             let declaration_count = declarations.len();
             let import_namespace_occurrences = imports
-                .map(|imports| imports.symbols.get(&identifier))
+                .map(|imports| imports.identifier_namespaces.get(&identifier))
                 .unwrap_or_default()
                 .into_iter()
                 .flat_map(|import_namespaces| {

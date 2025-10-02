@@ -6,7 +6,9 @@ use language::ImportsConfig;
 use language::LanguageId;
 use std::rc::Rc;
 use std::{borrow::Cow, ops::Range};
+use text::OffsetRangeExt;
 use util::RangeExt;
+use util::paths::PathStyle;
 
 use crate::Identifier;
 
@@ -22,16 +24,13 @@ use crate::Identifier;
 //
 // * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
 //
-// Initial goals:
-//
-// * Get region that has top-of-file imports
-//
-// * symbol -> (namespace, count)
+// * Only use the top syntax layer?
 
 #[derive(Debug, Clone)]
 pub struct Imports {
-    pub range: Range<usize>,
-    pub symbols: HashMap<Identifier, Vec<Namespace>>,
+    // TODO: this is not so meaningful when imports come from anywhere in the file
+    pub all_imports_range: Range<usize>,
+    pub identifier_namespaces: HashMap<Identifier, Vec<Namespace>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -39,8 +38,6 @@ pub struct Namespace(pub Vec<Rc<str>>);
 
 impl Imports {
     pub fn collect(snapshot: &BufferSnapshot) -> Result<Self> {
-        // TODO: Should this only work for the outer syntax layer?
-
         // Query to match different import patterns
         let mut matches = snapshot
             .syntax
@@ -48,11 +45,11 @@ impl Imports {
                 grammar.imports_config().map(|imports| &imports.query)
             });
 
-        let mut import_range: Option<Range<usize>> = None;
-        let mut namespace_appends: Vec<NamespaceAppend> = Vec::new();
-        let mut symbols: Vec<Range<usize>> = Vec::new();
-
+        let mut all_imports_range: Option<Range<usize>> = None;
+        let mut detached_nodes: Vec<DetachedNode> = Vec::new();
+        let mut identifier_namespaces = HashMap::default();
         while let Some(query_match) = matches.peek() {
+            let language_id = query_match.language.id();
             let ImportsConfig {
                 import_statement_ix,
                 name_ix,
@@ -69,14 +66,17 @@ impl Imports {
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
                 if capture.index == *import_statement_ix {
-                    if let Some(import_range) = import_range.as_mut() {
+                    if let Some(import_range) = all_imports_range.as_mut() {
                         import_range.end = capture_range.end;
                     } else {
-                        import_range = Some(capture_range.clone());
+                        all_imports_range = Some(capture_range.clone());
                     }
-                    name_range.take();
-                    path_range.take();
-                    list_range.take();
+                    Self::collect_from_import_statement(
+                        &detached_nodes,
+                        &snapshot,
+                        &mut identifier_namespaces,
+                    );
+                    detached_nodes.clear();
                 } else if capture.index == *name_ix {
                     name_range = Some(capture_range);
                 } else if capture.index == *path_ix {
@@ -88,72 +88,180 @@ impl Imports {
 
             if let Some(path_range) = path_range {
                 if let Some(name_range) = name_range {
-                    if list_range.is_some() {
-                        // todo! improve
-                        log::error!("Unexpected match of both list and name");
+                    if let Some(list_range) = list_range {
+                        let point = list_range.to_point(snapshot);
+                        log::warn!(
+                            "bug in {} imports query: unexpected capture of both list and name ({}:{}:{})",
+                            query_match.language.name(),
+                            snapshot
+                                .file()
+                                .map(|p| p.path().display(PathStyle::Posix))
+                                .unwrap_or_default(),
+                            point.start.row + 1,
+                            point.start.column + 1
+                        );
                     }
-                    namespace_appends.push(NamespaceAppend {
+                    detached_nodes.push(DetachedNode {
                         path: path_range,
                         suffix: name_range,
+                        language_id,
                     });
                 } else if let Some(list_range) = list_range {
-                    namespace_appends.push(NamespaceAppend {
+                    detached_nodes.push(DetachedNode {
                         path: path_range,
                         suffix: list_range.clone(),
+                        language_id,
                     });
                 }
             } else if let Some(name_range) = name_range {
-                symbols.push(name_range);
+                detached_nodes.push(DetachedNode {
+                    path: 0..0,
+                    suffix: name_range.clone(),
+                    language_id,
+                });
             }
 
             matches.advance();
         }
 
-        let Some(import_range) = import_range else {
+        let Some(import_range) = all_imports_range else {
             return Err(anyhow!("No imports"));
         };
 
-        let mut nodes = Vec::new();
-        for append in namespace_appends {
-            if !append.add_to_nodes(&mut nodes) {
-                nodes.push(Node {
-                    path: append.path.clone(),
-                    path_children: Vec::new(),
-                    suffix: append.suffix.clone(),
-                    suffix_children: Vec::new(),
-                });
-            }
-        }
-
-        for symbol in symbols {
-            if !add_symbol_to_nodes(&mut nodes, &symbol) {
-                // todo!
-                log::error!("bug: parent for symbol not found");
-            }
-        }
-
-        let mut import_symbols = HashMap::default();
-        for node in &nodes {
-            let mut namespace = Namespace::default();
-            node.add_to_symbols(&mut namespace, &mut import_symbols, snapshot);
-        }
+        Self::collect_from_import_statement(&detached_nodes, &snapshot, &mut identifier_namespaces);
 
         Ok(Imports {
-            range: import_range,
-            symbols: import_symbols,
+            all_imports_range: import_range,
+            identifier_namespaces,
         })
+    }
+
+    fn collect_from_import_statement(
+        detached_nodes: &[DetachedNode],
+        snapshot: &BufferSnapshot,
+        identifier_namespaces: &mut HashMap<Identifier, Vec<Namespace>>,
+    ) {
+        let mut trees = Vec::new();
+
+        for detached_node in detached_nodes {
+            if !Self::attach_node(&detached_node, &mut trees) {
+                trees.push(detached_node.into());
+            }
+        }
+
+        for tree in &trees {
+            let mut namespace = Namespace::default();
+            Self::collect_from_tree(tree, snapshot, &mut namespace, identifier_namespaces);
+        }
+    }
+
+    fn attach_node(detached_node: &DetachedNode, trees: &mut Vec<ImportTree>) -> bool {
+        for tree in trees {
+            if detached_node.path.contains_inclusive(&tree.range()) {
+                let mut new_parent = detached_node.into();
+                std::mem::swap(tree, &mut new_parent);
+                let old_tree = new_parent;
+                tree.path_children.push(old_tree);
+                return true;
+            } else if tree.suffix.contains_inclusive(&detached_node.suffix) {
+                if Self::attach_node(detached_node, &mut tree.suffix_children) {
+                    return true;
+                }
+                tree.suffix_children.push(detached_node.into());
+                return true;
+            }
+        }
+        false
+    }
+
+    fn collect_from_tree(
+        tree: &ImportTree,
+        snapshot: &BufferSnapshot,
+        namespace: &mut Namespace,
+        identifier_namespaces: &mut HashMap<Identifier, Vec<Namespace>>,
+    ) {
+        let mut pop_count = 0;
+
+        if tree.path_children.is_empty() {
+            if !tree.path.is_empty() {
+                namespace.0.push(range_text(snapshot, &tree.path));
+                pop_count += 1;
+            }
+        } else {
+            for child in &tree.path_children {
+                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+            }
+        };
+
+        if tree.suffix_children.is_empty() {
+            identifier_namespaces
+                .entry(Identifier {
+                    language_id: tree.language_id,
+                    name: range_text(snapshot, &tree.suffix).as_ref().into(),
+                })
+                .or_default()
+                .push(namespace.clone());
+        } else {
+            for child in &tree.suffix_children {
+                Self::collect_from_tree(child, snapshot, namespace, identifier_namespaces);
+            }
+        }
+
+        namespace.0.drain(namespace.0.len() - pop_count..);
+    }
+
+    fn extend_namespace_from_tree(
+        tree: &ImportTree,
+        namespace: &mut Namespace,
+        snapshot: &BufferSnapshot,
+    ) -> usize {
+        let mut pop_count = 0;
+        if tree.path_children.is_empty() {
+            if !tree.path.is_empty() {
+                namespace.0.push(range_text(snapshot, &tree.path));
+                pop_count += 1;
+            }
+        } else {
+            for child in &tree.path_children {
+                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+            }
+        }
+        if tree.suffix_children.is_empty() {
+            namespace.0.push(range_text(snapshot, &tree.suffix));
+            pop_count += 1;
+        } else {
+            for child in &tree.suffix_children {
+                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+            }
+        }
+        pop_count
     }
 }
 
-#[derive(Default, Debug)]
-struct Node {
-    path: Range<usize>,
-    path_children: Vec<Node>,
-    suffix: Range<usize>,
-    suffix_children: Vec<Node>,
+fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Rc<str> {
+    snapshot
+        .text_for_range(range.clone())
+        .collect::<Cow<str>>()
+        .into()
 }
 
-impl Node {
+#[derive(Debug)]
+struct DetachedNode {
+    path: Range<usize>,
+    suffix: Range<usize>,
+    language_id: LanguageId,
+}
+
+#[derive(Debug)]
+struct ImportTree {
+    path: Range<usize>,
+    path_children: Vec<ImportTree>,
+    suffix: Range<usize>,
+    suffix_children: Vec<ImportTree>,
+    language_id: LanguageId,
+}
+
+impl ImportTree {
     fn range(&self) -> Range<usize> {
         self.path.start..self.suffix.end
     }
@@ -161,176 +269,61 @@ impl Node {
     #[allow(dead_code)]
     fn debug<'a>(&'a self, snapshot: &'a BufferSnapshot) -> NodeDebug<'a> {
         NodeDebug {
-            node: self,
+            tree: self,
             snapshot,
         }
     }
-
-    fn add_to_symbols(
-        &self,
-        namespace: &mut Namespace,
-        symbols: &mut HashMap<Identifier, Vec<Namespace>>,
-        snapshot: &BufferSnapshot,
-    ) {
-        let mut pop_count = 0;
-
-        if self.path_children.is_empty() {
-            if !self.path.is_empty() {
-                namespace.0.push(Self::range_text(snapshot, &self.path));
-                pop_count += 1;
-            }
-        } else {
-            for child in &self.path_children {
-                pop_count += child.add_path_to_namespace(namespace, snapshot);
-            }
-        };
-
-        if self.suffix_children.is_empty() {
-            // todo! language id
-            symbols
-                .entry(Identifier {
-                    language_id: LanguageId::new(),
-                    name: Self::range_text(snapshot, &self.suffix).as_ref().into(),
-                })
-                .or_default()
-                .push(namespace.clone());
-        } else {
-            for child in &self.suffix_children {
-                child.add_to_symbols(namespace, symbols, snapshot);
-            }
-        }
-
-        namespace.0.drain(namespace.0.len() - pop_count..);
-    }
-
-    fn add_path_to_namespace(&self, namespace: &mut Namespace, snapshot: &BufferSnapshot) -> usize {
-        let mut pop_count = 0;
-        if self.path_children.is_empty() {
-            if !self.path.is_empty() {
-                namespace.0.push(Self::range_text(snapshot, &self.path));
-                pop_count += 1;
-            }
-        } else {
-            for child in &self.path_children {
-                pop_count += child.add_path_to_namespace(namespace, snapshot);
-            }
-        }
-        if self.suffix_children.is_empty() {
-            namespace.0.push(Self::range_text(snapshot, &self.suffix));
-            pop_count += 1;
-        } else {
-            for child in &self.suffix_children {
-                pop_count += child.add_path_to_namespace(namespace, snapshot);
-            }
-        }
-        pop_count
-    }
-
-    fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Rc<str> {
-        snapshot
-            .text_for_range(range.clone())
-            .collect::<Cow<str>>()
-            .into()
-    }
 }
 
-#[derive(Debug)]
-struct NamespaceAppend {
-    path: Range<usize>,
-    suffix: Range<usize>,
-}
-
-impl NamespaceAppend {
-    fn range(&self) -> Range<usize> {
-        self.path.start..self.suffix.end
-    }
-
-    fn add_to_nodes(&self, nodes: &mut Vec<Node>) -> bool {
-        for node in nodes {
-            if self.path.contains_inclusive(&node.range()) {
-                // TODO: Consider whether this should recurse?
-                let mut new_parent = Node {
-                    path: self.path.clone(),
-                    path_children: Vec::new(),
-                    suffix: self.suffix.clone(),
-                    suffix_children: Vec::new(),
-                };
-                std::mem::swap(node, &mut new_parent);
-                let old_node = new_parent;
-                node.path_children.push(old_node);
-                return true;
-            } else if node.suffix.contains_inclusive(&self.range()) {
-                if self.add_to_nodes(&mut node.suffix_children) {
-                    return true;
-                }
-                node.suffix_children.push(Node {
-                    path: self.path.clone(),
-                    path_children: Vec::new(),
-                    suffix: self.suffix.clone(),
-                    suffix_children: Vec::new(),
-                });
-                return true;
-            }
-        }
-        false
-    }
-}
-
-fn add_symbol_to_nodes(nodes: &mut Vec<Node>, symbol: &Range<usize>) -> bool {
-    for node in nodes {
-        if node.suffix.contains_inclusive(symbol) {
-            if add_symbol_to_nodes(&mut node.suffix_children, symbol) {
-                return true;
-            }
-            node.suffix_children.push(Node {
-                path: 0..0,
-                path_children: vec![],
-                suffix: symbol.clone(),
-                suffix_children: vec![],
-            });
-            return true;
+impl From<&DetachedNode> for ImportTree {
+    fn from(value: &DetachedNode) -> Self {
+        ImportTree {
+            path: value.path.clone(),
+            path_children: Vec::new(),
+            suffix: value.suffix.clone(),
+            suffix_children: Vec::new(),
+            language_id: value.language_id,
         }
     }
-    false
 }
 
 struct NodeDebug<'a> {
-    node: &'a Node,
+    tree: &'a ImportTree,
     snapshot: &'a BufferSnapshot,
 }
 
 impl std::fmt::Debug for NodeDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Node")
-            .field("path_range", &self.node.path)
+            .field("path_range", &self.tree.path)
             .field(
                 "path_text",
                 &self
                     .snapshot
-                    .text_for_range(self.node.path.clone())
+                    .text_for_range(self.tree.path.clone())
                     .collect::<String>(),
             )
             .field(
                 "path_children",
                 &self
-                    .node
+                    .tree
                     .path_children
                     .iter()
                     .map(|child| child.debug(&self.snapshot))
                     .collect::<Vec<Self>>(),
             )
-            .field("suffix_range", &self.node.suffix)
+            .field("suffix_range", &self.tree.suffix)
             .field(
                 "suffix_text",
                 &self
                     .snapshot
-                    .text_for_range(self.node.suffix.clone())
+                    .text_for_range(self.tree.suffix.clone())
                     .collect::<String>(),
             )
             .field(
                 "suffix_children",
                 &self
-                    .node
+                    .tree
                     .suffix_children
                     .iter()
                     .map(|child| child.debug(&self.snapshot))
@@ -416,7 +409,7 @@ mod test {
                 source
             ));
             let mut actual_symbols = imports
-                .symbols
+                .identifier_namespaces
                 .iter()
                 .flat_map(|(identifier, namespaces)| {
                     namespaces.iter().map(|namespace| {
@@ -513,14 +506,6 @@ mod test {
         )
         .with_imports_query(include_str!("../../languages/src/rust/imports.scm"))
         .unwrap()
-    }
-
-    fn to_rust_qualified_identifier(namespace: &Namespace, identifier: &Identifier) -> String {
-        format!(
-            "{}::{}",
-            namespace.0.iter().map(|s| s.to_string()).join("::"),
-            identifier.name.to_string()
-        )
     }
 
     struct ImportsFailure {
