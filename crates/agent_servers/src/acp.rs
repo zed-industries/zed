@@ -48,6 +48,10 @@ pub struct AcpSession {
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
 }
 
+fn is_auth_required(err: &acp::Error) -> bool {
+    err.code == ErrorCode::AUTH_REQUIRED.code
+}
+
 pub async fn connect(
     server_name: SharedString,
     command: AgentServerCommand,
@@ -251,10 +255,10 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest { mcp_servers, cwd, meta: None })
                 .await
                 .map_err(|err| {
-                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == ErrorCode::AUTH_REQUIRED.code {
                         let mut error = AuthRequired::new();
 
-                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
+                        if err.message != ErrorCode::AUTH_REQUIRED.message {
                             error = error.with_description(err.message);
                         }
 
@@ -382,29 +386,15 @@ impl AgentConnection for AcpConnection {
                 Err(err) => {
                     if err.code != ErrorCode::INTERNAL_ERROR.code {
                         // Intercept Unauthorized to trigger auth UI instead of retrying
-                        if let Some(data) = &err.data {
-                            #[derive(Deserialize)]
-                            #[serde(deny_unknown_fields)]
-                            struct ErrorDetails {
-                                details: Box<str>,
-                            }
-                            if let Ok(ErrorDetails { details }) =
-                                serde_json::from_value::<ErrorDetails>(data.clone())
-                            {
-                                if details.contains("401") || details.contains("Unauthorized") {
-                                    return Err(anyhow!(acp_thread::AuthRequired::new()));
-                                }
-                            }
-                        }
-                        if err.message.contains("401") || err.message.contains("Unauthorized") {
+                        if is_auth_required(&err) {
                             return Err(anyhow!(acp::Error::auth_required()));
                         }
                         anyhow::bail!(err)
                     }
 
                     let Some(data) = &err.data else {
-                        // INTERNAL_ERROR without data but Unauthorized in the message
-                        if err.message.contains("401") || err.message.contains("Unauthorized") {
+                        // INTERNAL_ERROR without data
+                        if is_auth_required(&err) {
                             return Err(anyhow!(acp::Error::auth_required()));
                         } else {
                             anyhow::bail!(err)
@@ -430,15 +420,14 @@ impl AgentConnection for AcpConnection {
                                     stop_reason: acp::StopReason::Cancelled,
                                     meta: None,
                                 })
-                            } else if details.contains("401") || details.contains("Unauthorized") {
+                            } else if err.code == ErrorCode::AUTH_REQUIRED.code {
                                 Err(anyhow!(acp::Error::auth_required()))
                             } else {
                                 Err(anyhow!(details))
                             }
                         }
                         Err(_) => {
-                            let msg = err.message.as_str();
-                            if msg.contains("401") || msg.contains("Unauthorized") {
+                            if is_auth_required(&err) {
                                 Err(anyhow!(acp_thread::AuthRequired::new()))
                             } else {
                                 Err(anyhow!(err))
