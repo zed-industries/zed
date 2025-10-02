@@ -99,7 +99,7 @@ pub fn match_fixed_path_set(
         let mut indices = Vec::new();
         let mut buf = Vec::new();
         if let Some(score) = pattern.indices(
-            nucleo::Utf32Str::new(&c.path.as_str(), &mut buf),
+            nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
             &mut matcher,
             &mut indices,
         ) {
@@ -180,7 +180,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                     'outer: for candidate_set in candidate_sets {
                         let tree_end = tree_start + candidate_set.len();
 
-                        if (segment_start..segment_end).contains(&tree_start) {
+                        if tree_start < segment_end && segment_start < tree_end {
                             let start = cmp::max(tree_start, segment_start) - tree_start;
                             let end = cmp::min(tree_end, segment_end) - tree_start;
                             let candidates = candidate_set.candidates(start).take(end - start);
@@ -201,7 +201,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                                 let mut indices = Vec::new();
                                 let mut buf = Vec::new();
                                 if let Some(score) = pattern.indices(
-                                    nucleo::Utf32Str::new(&c.path.as_str(), &mut buf),
+                                    nucleo::Utf32Str::new(&c.path.as_unix_str(), &mut buf),
                                     matcher,
                                     &mut indices,
                                 ) {
@@ -263,14 +263,10 @@ fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        iter,
-        sync::{Arc, atomic::AtomicBool},
-    };
+    use std::sync::{Arc, atomic::AtomicBool};
 
     use gpui::TestAppContext;
     use util::{paths::PathStyle, rel_path::RelPath};
-    use util_macros::perf;
 
     use crate::{CharBag, PathMatchCandidate, PathMatchCandidateSet};
 
@@ -306,29 +302,44 @@ mod tests {
             self.prefix.clone()
         }
         fn candidates(&self, start: usize) -> Self::Candidates {
-            self.candidates[start..].iter().cloned()
+            self.candidates[start..]
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
         }
         fn path_style(&self) -> PathStyle {
             self.path_style
         }
     }
 
-    #[perf]
+    // perf
+    #[gpui::test]
+    async fn test_dir_paths(cx: &mut TestAppContext) {
+        let mut candidates = [
+            "crates/audio/src/audio.rs",
+            "crates/gpui/src/editor.rs",
+            "scripts/install_linux",
+            "Cargo.toml",
+            "crates/theme/Cargo.toml",
+        ];
+    }
+
+    // perf
     #[gpui::test]
     async fn test_path_matcher(cx: &mut TestAppContext) {
-        let mut candidates = [
+        let candidates = [
             "blue", "red", "purple", "pink", "green", "yellow", "magenta", "orange", "ocean",
             "navy", "brown",
         ];
+
         let set = TestCandidateSet {
-            prefix: RelPath::new("a/b").unwrap(),
-            candidates,
-                .take(1_000_000)
-                .collect::<Vec<&str>>()
+            prefix: RelPath::unix("a/b").unwrap().into(),
+            candidates: candidates
                 .into_iter()
                 .map(|s| PathMatchCandidate {
                     is_dir: false,
-                    path: RelPath::new(s).unwrap().into(),
+                    path: RelPath::unix(s).unwrap().into(),
                     char_bag: CharBag::from_iter(s.to_lowercase().chars()),
                 })
                 .collect(),
@@ -355,12 +366,12 @@ mod tests {
             })
             .await;
 
-        assert!(
+        assert_eq!(
             matches
                 .iter()
-                .map(|s| s.path.as_str())
-                .collect::<Vec<_>>()
-                .contains(&"blue"),
+                .map(|s| s.path.as_unix_str())
+                .collect::<Vec<_>>(),
+            ["blue"]
         );
     }
 }
