@@ -872,53 +872,8 @@ impl<'a> MarkdownParser<'a> {
                         }));
                     }
                 } else if local_name!("table") == name.local {
-                    let mut header_columns = Vec::new();
-                    let mut body_rows = Vec::new();
-
-                    // node should be a thead or tbody element
-                    for node in node.children.borrow().iter() {
-                        match &node.data {
-                            markup5ever_rcdom::NodeData::Element { name, .. } => {
-                                if local_name!("thead") == name.local {
-                                    // node should be a tr element
-                                    for node in node.children.borrow().iter() {
-                                        let mut paragraph = MarkdownParagraph::new();
-                                        self.consume_paragraph(
-                                            source_range.clone(),
-                                            node,
-                                            &mut paragraph,
-                                        );
-
-                                        for paragraph in paragraph.into_iter() {
-                                            header_columns.push(vec![paragraph]);
-                                        }
-                                    }
-                                } else if local_name!("tbody") == name.local {
-                                    // node should be a tr element
-                                    for node in node.children.borrow().iter() {
-                                        let mut row = MarkdownParagraph::new();
-                                        self.consume_paragraph(
-                                            source_range.clone(),
-                                            node,
-                                            &mut row,
-                                        );
-                                        body_rows.push(ParsedMarkdownTableRow::with_children(
-                                            row.into_iter().map(|column| vec![column]).collect(),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    if !header_columns.is_empty() || !body_rows.is_empty() {
-                        elements.push(ParsedMarkdownElement::Table(ParsedMarkdownTable {
-                            source_range,
-                            header: ParsedMarkdownTableRow::with_children(header_columns),
-                            body: body_rows,
-                            column_alignments: Vec::default(),
-                        }));
+                    if let Some(table) = self.extract_html_table(node, source_range) {
+                        elements.push(ParsedMarkdownElement::Table(table));
                     }
                 } else {
                     self.consume_children(source_range, node, elements);
@@ -1036,6 +991,55 @@ impl<'a> MarkdownParser<'a> {
         }
 
         Some(image)
+    }
+
+    fn extract_html_table(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownTable> {
+        let mut header_columns = Vec::new();
+        let mut body_rows = Vec::new();
+
+        // node should be a thead or tbody element
+        for node in node.children.borrow().iter() {
+            match &node.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("thead") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut paragraph = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                            for paragraph in paragraph.into_iter() {
+                                header_columns.push(vec![paragraph]);
+                            }
+                        }
+                    } else if local_name!("tbody") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut row = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut row);
+                            body_rows.push(ParsedMarkdownTableRow::with_children(
+                                row.into_iter().map(|column| vec![column]).collect(),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !header_columns.is_empty() || !body_rows.is_empty() {
+            Some(ParsedMarkdownTable {
+                source_range,
+                body: body_rows,
+                column_alignments: Vec::default(),
+                header: ParsedMarkdownTableRow::with_children(header_columns),
+            })
+        } else {
+            None
+        }
     }
 
     /// Parses the width/height attribute value of an html element (e.g. img element)
