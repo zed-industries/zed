@@ -864,10 +864,13 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
+
         div()
             .flex()
             .flex_row()
             .size_full()
+            .font(ui_font)
             .bg(cx.theme().colors().background)
             .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx))
