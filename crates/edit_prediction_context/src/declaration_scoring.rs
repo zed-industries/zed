@@ -72,7 +72,7 @@ impl ScoredDeclaration {
             // TODO: use declaration_line_distance_rank
             2.0 / self.components.same_file_declaration_count as f32
         } else {
-            self.components.import_similarity / self.components.declaration_count as f32
+            self.components.normalized_import_similarity / self.components.declaration_count as f32
         }
     }
 
