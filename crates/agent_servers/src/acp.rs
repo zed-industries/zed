@@ -255,7 +255,7 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest { mcp_servers, cwd, meta: None })
                 .await
                 .map_err(|err| {
-                    if err.code == ErrorCode::AUTH_REQUIRED.code {
+                    if is_auth_required(&err) {
                         let mut error = AuthRequired::new();
 
                         if err.message != ErrorCode::AUTH_REQUIRED.message {
@@ -384,21 +384,16 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
+                    if is_auth_required(&err) {
+                        return Err(anyhow!(acp::Error::auth_required()));
+                    }
+
                     if err.code != ErrorCode::INTERNAL_ERROR.code {
-                        // Intercept Unauthorized to trigger auth UI instead of retrying
-                        if is_auth_required(&err) {
-                            return Err(anyhow!(acp::Error::auth_required()));
-                        }
                         anyhow::bail!(err)
                     }
 
                     let Some(data) = &err.data else {
-                        // INTERNAL_ERROR without data
-                        if is_auth_required(&err) {
-                            return Err(anyhow!(acp::Error::auth_required()));
-                        } else {
-                            anyhow::bail!(err)
-                        }
+                        anyhow::bail!(err)
                     };
 
                     // Temporary workaround until the following PR is generally available:
@@ -420,19 +415,11 @@ impl AgentConnection for AcpConnection {
                                     stop_reason: acp::StopReason::Cancelled,
                                     meta: None,
                                 })
-                            } else if err.code == ErrorCode::AUTH_REQUIRED.code {
-                                Err(anyhow!(acp::Error::auth_required()))
                             } else {
                                 Err(anyhow!(details))
                             }
                         }
-                        Err(_) => {
-                            if is_auth_required(&err) {
-                                Err(anyhow!(acp_thread::AuthRequired::new()))
-                            } else {
-                                Err(anyhow!(err))
-                            }
-                        }
+                        Err(_) => Err(anyhow!(err)),
                     }
                 }
             }
