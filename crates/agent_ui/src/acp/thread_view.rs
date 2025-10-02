@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -1606,31 +1606,20 @@ impl AcpThreadView {
             return Task::ready(Ok(()));
         };
         let project = workspace.read(cx).project().clone();
-        let cwd = project.read(cx).first_project_directory(cx);
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
+            task.shell = task::Shell::WithArguments {
+                program: task.command.take().expect("login command should be set"),
+                args: std::mem::take(&mut task.args),
+                title_override: None
+            };
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
             task.use_new_terminal = true;
             task.allow_concurrent_runs = true;
             task.hide = task::HideStrategy::Always;
-            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&task, window, cx)

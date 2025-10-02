@@ -54,8 +54,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
-    /// Status bar related settings
-    pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -191,20 +189,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
-}
-
-// Status bar related settings
-#[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct StatusBarContent {
-    /// Whether to display the active language button in the status bar.
-    ///
-    /// Default: true
-    pub active_language_button: Option<bool>,
-    /// Whether to show the cursor position button in the status bar.
-    ///
-    /// Default: true
-    pub cursor_position_button: Option<bool>,
 }
 
 // Toolbar related settings
