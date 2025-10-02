@@ -766,52 +766,26 @@ impl SettingsWindow {
                             .map(|ix| {
                                 let entry = &this.navbar_entries[ix];
 
-                                h_flex()
-                                    .id(("settings-ui-section", ix))
-                                    .w_full()
-                                    .pl_2p5()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border_transparent)
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .when(this.is_navbar_entry_selected(ix), |this| {
-                                        this.text_color(cx.theme().colors().text)
-                                            .bg(cx.theme().colors().element_selected.opacity(0.2))
-                                            .border_color(cx.theme().colors().border)
+                                TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
+                                    .root_item(entry.is_root)
+                                    .toggle_state(this.is_navbar_entry_selected(ix))
+                                    .when(entry.is_root, |item| {
+                                        item.toggle(
+                                            this.pages[this.page_index_from_navbar_index(ix)]
+                                                .expanded,
+                                        )
+                                        .on_toggle(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.toggle_navbar_entry(ix);
+                                                cx.notify();
+                                            }),
+                                        )
                                     })
-                                    .child(
-                                        ListItem::new(("settings-ui-navbar-entry", ix))
-                                            .selectable(true)
-                                            .inset(true)
-                                            .indent_step_size(px(1.))
-                                            .indent_level(if entry.is_root { 1 } else { 3 })
-                                            .when(entry.is_root, |item| {
-                                                item.toggle(
-                                                    this.pages
-                                                        [this.page_index_from_navbar_index(ix)]
-                                                    .expanded,
-                                                )
-                                                .always_show_disclosure_icon(true)
-                                                .on_toggle(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_navbar_entry(ix);
-                                                    cx.notify();
-                                                }))
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .text_ui(cx)
-                                                    .truncate()
-                                                    .hover(|s| {
-                                                        s.bg(cx.theme().colors().element_hover)
-                                                    })
-                                                    .child(entry.title),
-                                            ),
-                                    )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.navbar_entry = ix;
                                         cx.notify();
                                     }))
+                                    .into_any_element()
                             })
                             .collect()
                     }),
