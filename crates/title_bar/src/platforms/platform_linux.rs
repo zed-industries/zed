@@ -1,17 +1,21 @@
-use crate::title_bar_settings::TitleBarSettings;
+use crate::WindowControlsPosition;
 use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
-use settings::{Settings, WindowControlsPosition};
 use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
     close_window_action: Box<dyn Action>,
+    window_controls_position: WindowControlsPosition,
 }
 
 impl LinuxWindowControls {
-    pub fn new(close_window_action: Box<dyn Action>) -> Self {
+    pub fn new(
+        close_window_action: Box<dyn Action>,
+        window_controls_position: WindowControlsPosition,
+    ) -> Self {
         Self {
             close_window_action,
+            window_controls_position,
         }
     }
 }
@@ -19,9 +23,9 @@ impl LinuxWindowControls {
 impl LinuxWindowControls {
     /// Builds the window controls based on the position setting.
     fn build_controls(
-        position: WindowControlsPosition,
         window: &Window,
         close_action: Box<dyn Action>,
+        window_controls_position: WindowControlsPosition,
         cx: &mut App,
     ) -> Vec<WindowControl> {
         let maximize_type = if window.is_maximized() {
@@ -30,7 +34,7 @@ impl LinuxWindowControls {
             WindowControlType::Maximize
         };
 
-        match position {
+        match window_controls_position {
             WindowControlsPosition::Left => {
                 // Left side: Close, Minimize, Maximize (left to right)
                 vec![
@@ -53,11 +57,10 @@ impl LinuxWindowControls {
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let title_bar_settings = TitleBarSettings::get(None, cx);
         let controls = Self::build_controls(
-            title_bar_settings.window_controls_position,
             window,
             self.close_window_action,
+            self.window_controls_position,
             cx,
         );
 
