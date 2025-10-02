@@ -2,19 +2,19 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba};
+use gpui::{Hsla, Rgba, ShapedLine, TextRun};
 use itertools::Itertools;
 use language::point_from_lsp;
-use multi_buffer::Anchor;
+use multi_buffer::{Anchor, AnchorRangeExt};
 use project::{DocumentColor, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
-use ui::{App, Context, Window};
+use ui::{App, Context, SharedString, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
-    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle, InlayId, InlaySplice,
+    RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
 #[derive(Debug)]
@@ -116,7 +116,12 @@ impl LspColorData {
     pub fn editor_display_highlights(
         &self,
         snapshot: &EditorSnapshot,
-    ) -> (DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>) {
+        style: &EditorStyle,
+        window: &Window,
+    ) -> (
+        DocumentColorsRenderMode,
+        Vec<(Range<DisplayPoint>, Hsla, ShapedLine)>,
+    ) {
         let render_mode = self.render_mode;
         let highlights = if render_mode == DocumentColorsRenderMode::None
             || render_mode == DocumentColorsRenderMode::Inlay
@@ -127,6 +132,12 @@ impl LspColorData {
                 .iter()
                 .flat_map(|(_, buffer_colors)| &buffer_colors.colors)
                 .map(|(range, color, _)| {
+                    let buffer = &snapshot.buffer_snapshot;
+                    let display_text: SharedString = buffer
+                        .text_for_range(range.to_offset(&buffer))
+                        .collect::<String>()
+                        .into();
+
                     let display_range = range.clone().to_display_points(snapshot);
                     let color = Hsla::from(Rgba {
                         r: color.color.red,
@@ -134,7 +145,27 @@ impl LspColorData {
                         b: color.color.blue,
                         a: color.color.alpha,
                     });
-                    (display_range, color)
+
+                    let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+                    let text_run = TextRun {
+                        len: display_text.len(),
+                        color: if color.l > 0.5 {
+                            gpui::black()
+                        } else {
+                            gpui::white()
+                        },
+                        background_color: None,
+                        font: style.text.font(),
+                        underline: None,
+                        strikethrough: None,
+                    };
+
+                    let shape_line =
+                        window
+                            .text_system()
+                            .shape_line(display_text, font_size, &[text_run], None);
+
+                    (display_range, color, shape_line)
                 })
                 .collect()
         };
