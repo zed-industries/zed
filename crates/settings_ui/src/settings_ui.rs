@@ -370,8 +370,13 @@ impl SettingsPageItem {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
-                .gap_0p5()
-                .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
+                .gap_1()
+                .child(
+                    Label::new(SharedString::new_static(header))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
                 .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
