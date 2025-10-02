@@ -148,11 +148,11 @@ impl LspColorData {
                     });
 
                     // Blend the color with the background color to avoid alpha.
-                    let soild_color = style.background.blend(color);
+                    let solid_color = style.background.blend(color);
                     let font_size = style.text.font_size.to_pixels(window.rem_size());
                     let text_run = TextRun {
                         len: display_text.len(),
-                        color: if soild_color.l >= 0.5 {
+                        color: if solid_color.l >= 0.5 {
                             gpui::black()
                         } else {
                             gpui::white()
