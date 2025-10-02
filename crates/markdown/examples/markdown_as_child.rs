@@ -97,7 +97,7 @@ impl Render for HelloWorld {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
-            .size(Length::Definite(Pixels(700.0).into()))
+            .size(Length::Definite(px(700.0).into()))
             .justify_center()
             .items_center()
             .shadow_lg()

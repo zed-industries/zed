@@ -421,7 +421,7 @@ impl TerminalBuilder {
                 #[cfg(target_os = "windows")]
                 {
                     Some(ShellParams::new(
-                        util::get_windows_system_shell(),
+                        util::shell::get_windows_system_shell(),
                         None,
                         None,
                     ))

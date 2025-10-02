@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use client::Client;
 use collections::HashMap;
+use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
@@ -124,6 +125,7 @@ enum AgentServerStoreState {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
+    _feature_flag_subscription: Option<gpui::Subscription>,
 }
 
 pub struct AgentServersUpdated;
@@ -254,6 +256,13 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
+        let this_handle = cx.weak_entity();
+        let feature_flags_subscription =
+            cx.observe_flag::<feature_flags::CodexAcpFeatureFlag, _>(move |_enabled, cx| {
+                let _ = this_handle.update(cx, |this, cx| {
+                    this.agent_servers_settings_changed(cx);
+                });
+            });
         let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
@@ -264,6 +273,7 @@ impl AgentServerStore {
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
+            _feature_flag_subscription: Some(feature_flags_subscription),
         };
         this.agent_servers_settings_changed(cx);
         this
@@ -308,6 +318,7 @@ impl AgentServerStore {
                 upstream_client,
             },
             external_agents,
+            _feature_flag_subscription: None,
         }
     }
 
@@ -315,6 +326,7 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
+            _feature_flag_subscription: None,
         }
     }
 

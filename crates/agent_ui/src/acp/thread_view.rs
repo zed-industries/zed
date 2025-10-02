@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -1607,31 +1607,20 @@ impl AcpThreadView {
             return Task::ready(Ok(()));
         };
         let project = workspace.read(cx).project().clone();
-        let cwd = project.read(cx).first_project_directory(cx);
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
+            task.shell = task::Shell::WithArguments {
+                program: task.command.take().expect("login command should be set"),
+                args: std::mem::take(&mut task.args),
+                title_override: None
+            };
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
             task.use_new_terminal = true;
             task.allow_concurrent_runs = true;
             task.hide = task::HideStrategy::Always;
-            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&task, window, cx)
@@ -5571,23 +5560,23 @@ fn default_markdown_style(
         }),
         code_block: StyleRefinement {
             padding: EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
             },
             margin: EdgesRefinement {
-                top: Some(Length::Definite(Pixels(8.).into())),
-                left: Some(Length::Definite(Pixels(0.).into())),
-                right: Some(Length::Definite(Pixels(0.).into())),
-                bottom: Some(Length::Definite(Pixels(12.).into())),
+                top: Some(Length::Definite(px(8.).into())),
+                left: Some(Length::Definite(px(0.).into())),
+                right: Some(Length::Definite(px(0.).into())),
+                bottom: Some(Length::Definite(px(12.).into())),
             },
             border_style: Some(BorderStyle::Solid),
             border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                top: Some(AbsoluteLength::Pixels(px(1.))),
+                left: Some(AbsoluteLength::Pixels(px(1.))),
+                right: Some(AbsoluteLength::Pixels(px(1.))),
+                bottom: Some(AbsoluteLength::Pixels(px(1.))),
             },
             border_color: Some(colors.border_variant),
             background: Some(colors.editor_background.into()),

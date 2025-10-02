@@ -1571,6 +1571,10 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
 
+**Options**
+
+`integer` values representing milliseconds
+
 ## Features
 
 - Description: Features that can be globally enabled or disabled
