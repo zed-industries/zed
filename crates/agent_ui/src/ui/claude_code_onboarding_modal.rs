@@ -154,7 +154,7 @@ impl Render for ClaudeCodeOnboardingModal {
                     .child(illustration_element(IconName::Stop, None, 0.15))
                     .child(illustration_element(
                         IconName::AiGemini,
-                        Some("New Gemini CLI Thread".into()),
+                        Some("Gemini CLI".into()),
                         0.3,
                     ))
                     .child(
@@ -172,7 +172,7 @@ impl Render for ClaudeCodeOnboardingModal {
                                     .size(IconSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(Label::new("New Claude Code Thread").size(LabelSize::Small)),
+                            .child(Label::new("Claude Code").size(LabelSize::Small)),
                     )
                     .child(illustration_element(
                         IconName::Stop,

@@ -1872,7 +1872,6 @@ impl AgentPanel {
                     Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                         menu
                             .context(focus_handle.clone())
-                            .header("Zed Agent")
                             .when_some(active_thread, |this, active_thread| {
                                 let thread = active_thread.read(cx);
 
@@ -1896,9 +1895,9 @@ impl AgentPanel {
                                 }
                             })
                             .item(
-                                ContextMenuEntry::new("New Thread")
+                                ContextMenuEntry::new("Zed Agent")
                                     .action(NewThread::default().boxed_clone())
-                                    .icon(IconName::Thread)
+                                    .icon(IconName::ZedAgent)
                                     .icon_color(Color::Muted)
                                     .handler({
                                         let workspace = workspace.clone();
@@ -1922,7 +1921,7 @@ impl AgentPanel {
                                     }),
                             )
                             .item(
-                                ContextMenuEntry::new("New Text Thread")
+                                ContextMenuEntry::new("Text Thread")
                                     .icon(IconName::TextThread)
                                     .icon_color(Color::Muted)
                                     .action(NewTextThread.boxed_clone())
@@ -1950,7 +1949,7 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("New Claude Code Thread")
+                                ContextMenuEntry::new("Claude Code")
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
                                     .icon_color(Color::Muted)
@@ -1975,9 +1974,35 @@ impl AgentPanel {
                                         }
                                     }),
                             )
+                            .item(
+                                ContextMenuEntry::new("Gemini CLI")
+                                    .icon(IconName::AiGemini)
+                                    .icon_color(Color::Muted)
+                                    .disabled(is_via_collab)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::Gemini,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
                             .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
                                 this.item(
-                                    ContextMenuEntry::new("New Codex Thread")
+                                    ContextMenuEntry::new("Codex")
                                         .icon(IconName::AiOpenAi)
                                         .disabled(is_via_collab)
                                         .icon_color(Color::Muted)
@@ -2003,32 +2028,6 @@ impl AgentPanel {
                                         }),
                                 )
                             })
-                            .item(
-                                ContextMenuEntry::new("New Gemini CLI Thread")
-                                    .icon(IconName::AiGemini)
-                                    .icon_color(Color::Muted)
-                                    .disabled(is_via_collab)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                AgentType::Gemini,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }),
-                            )
                             .map(|mut menu| {
                                 let agent_names = agent_server_store
                                     .read(cx)
@@ -2041,7 +2040,7 @@ impl AgentPanel {
                                 let custom_settings = cx.global::<SettingsStore>().get::<AllAgentServersSettings>(None).custom.clone();
                                 for agent_name in agent_names {
                                     menu = menu.item(
-                                        ContextMenuEntry::new(format!("New {} Thread", agent_name))
+                                        ContextMenuEntry::new(agent_name.clone())
                                             .icon(IconName::Terminal)
                                             .icon_color(Color::Muted)
                                             .disabled(is_via_collab)
