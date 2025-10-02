@@ -15,17 +15,19 @@ pub fn print_env() {
 /// Capture all environment variables from the login shell in the given directory.
 pub async fn capture(
     shell_path: impl AsRef<Path>,
+    args: &[String],
     directory: impl AsRef<Path>,
 ) -> Result<collections::HashMap<String, String>> {
     #[cfg(windows)]
-    return capture_windows(shell_path.as_ref(), directory.as_ref()).await;
+    return capture_windows(shell_path.as_ref(), args, directory.as_ref()).await;
     #[cfg(unix)]
-    return capture_unix(shell_path.as_ref(), directory.as_ref()).await;
+    return capture_unix(shell_path.as_ref(), args, directory.as_ref()).await;
 }
 
 #[cfg(unix)]
 async fn capture_unix(
     shell_path: &Path,
+    args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use crate::shell::ShellKind;
@@ -37,6 +39,7 @@ async fn capture_unix(
 
     let mut command_string = String::new();
     let mut command = std::process::Command::new(shell_path);
+    command.args(args);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
@@ -52,7 +55,6 @@ async fn capture_unix(
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
-    let mut command_prefix = String::new();
     match shell_kind {
         ShellKind::Csh | ShellKind::Tcsh => {
             // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
@@ -63,20 +65,16 @@ async fn capture_unix(
             command_string.push_str("emit fish_prompt;");
             command.arg("-l");
         }
-        ShellKind::Nushell => {
-            // nu needs special handling for -- options.
-            command_prefix = String::from("^");
-        }
         _ => {
             command.arg("-l");
         }
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!(
-        "{}{} --printenv {}",
-        command_prefix, zed_path, redir
-    ));
+    if let Some(prefix) = shell_kind.command_prefix() {
+        command_string.push(prefix);
+    }
+    command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);
@@ -124,6 +122,7 @@ async fn spawn_and_read_fd(
 #[cfg(windows)]
 async fn capture_windows(
     shell_path: &Path,
+    _args: &[String],
     directory: &Path,
 ) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;

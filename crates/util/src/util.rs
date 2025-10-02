@@ -368,7 +368,7 @@ pub async fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(get_system_shell(), paths::home_dir()).await? {
+    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir()).await? {
         unsafe { env::set_var(&name, &value) };
     }
 

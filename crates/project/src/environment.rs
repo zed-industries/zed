@@ -1,7 +1,8 @@
 use futures::{FutureExt, future::Shared};
 use language::Buffer;
 use std::{path::Path, sync::Arc};
-use util::{ResultExt, get_system_shell};
+use task::Shell;
+use util::ResultExt;
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -16,6 +17,8 @@ use crate::{
 pub struct ProjectEnvironment {
     cli_environment: Option<HashMap<String, String>>,
     environments: HashMap<Arc<Path>, Shared<Task<Option<HashMap<String, String>>>>>,
+    shell_based_environments:
+        HashMap<(Shell, Arc<Path>), Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
 }
 
@@ -30,6 +33,7 @@ impl ProjectEnvironment {
         Self {
             cli_environment,
             environments: Default::default(),
+            shell_based_environments: Default::default(),
             environment_error_messages: Default::default(),
         }
     }
@@ -135,8 +139,21 @@ impl ProjectEnvironment {
         self.environments
             .entry(abs_path.clone())
             .or_insert_with(|| {
-                get_directory_env_impl(get_system_shell().as_ref(), abs_path.clone(), cx).shared()
+                get_directory_env_impl(&Shell::System, abs_path.clone(), cx).shared()
             })
+            .clone()
+    }
+
+    /// Returns the project environment, if possible, with the given shell.
+    pub fn get_directory_environment_for_shell(
+        &mut self,
+        shell: &Shell,
+        abs_path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.shell_based_environments
+            .entry((shell.clone(), abs_path.clone()))
+            .or_insert_with(|| get_directory_env_impl(shell, abs_path.clone(), cx).shared())
             .clone()
     }
 }
@@ -178,7 +195,7 @@ impl EnvironmentErrorMessage {
 }
 
 async fn load_directory_shell_environment(
-    shell_path: &Path,
+    shell: &Shell,
     abs_path: &Path,
     load_direnv: &DirenvSettings,
 ) -> (
@@ -201,7 +218,7 @@ async fn load_directory_shell_environment(
                 );
             };
 
-            load_shell_environment(shell_path, dir, load_direnv).await
+            load_shell_environment(shell, dir, load_direnv).await
         }
         Err(err) => (
             None,
@@ -215,7 +232,7 @@ async fn load_directory_shell_environment(
 }
 
 async fn load_shell_environment(
-    shell_path: &Path,
+    shell: &Shell,
     dir: &Path,
     load_direnv: &DirenvSettings,
 ) -> (
@@ -231,7 +248,8 @@ async fn load_shell_environment(
             .collect();
         (Some(fake_env), None)
     } else if cfg!(target_os = "windows",) {
-        let envs = match shell_env::capture(shell_path, dir).await {
+        let (shell, args) = shell.program_and_args();
+        let envs = match shell_env::capture(shell, args, dir).await {
             Ok(envs) => envs,
             Err(err) => {
                 util::log_err(&err);
@@ -250,7 +268,8 @@ async fn load_shell_environment(
         (Some(envs), None)
     } else {
         let dir_ = dir.to_owned();
-        let mut envs = match shell_env::capture(shell_path, &dir_).await {
+        let (shell, args) = shell.program_and_args();
+        let mut envs = match shell_env::capture(shell, args, &dir_).await {
             Ok(envs) => envs,
             Err(err) => {
                 util::log_err(&err);
@@ -289,19 +308,19 @@ async fn load_shell_environment(
 }
 
 fn get_directory_env_impl(
-    shell_path: &Path,
+    shell: &Shell,
     abs_path: Arc<Path>,
     cx: &Context<ProjectEnvironment>,
 ) -> Task<Option<HashMap<String, String>>> {
     let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
-    let shell_path = shell_path.to_owned();
+    let shell = shell.clone();
     cx.spawn(async move |this, cx| {
         let (mut shell_env, error_message) = cx
             .background_spawn({
                 let abs_path = abs_path.clone();
                 async move {
-                    load_directory_shell_environment(&shell_path, &abs_path, &load_direnv).await
+                    load_directory_shell_environment(&shell, &abs_path, &load_direnv).await
                 }
             })
             .await;
