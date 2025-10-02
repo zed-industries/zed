@@ -1,7 +1,7 @@
-use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
-use ui::prelude::*;
-use settings::{Settings, WindowControlsPosition};
 use crate::title_bar_settings::TitleBarSettings;
+use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
+use settings::{Settings, WindowControlsPosition};
+use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
