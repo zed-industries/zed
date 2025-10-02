@@ -4,9 +4,8 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
-    point, px, size, uniform_list,
+    App, Div, Entity, Global, ReadGlobal as _, Task, TitlebarOptions, UniformListScrollHandle,
+    Window, WindowHandle, WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{CursorShape, SaturatingBool, SettingsContent, SettingsStore};
@@ -18,7 +17,10 @@ use std::{
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
 };
-use ui::{Divider, DropdownMenu, ListItem, Switch, prelude::*};
+use ui::{
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
+    prelude::*,
+};
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -925,9 +927,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
     let toggle_state = if value.into() {
-        ui::ToggleState::Selected
+        ToggleState::Selected
     } else {
-        ui::ToggleState::Unselected
+        ToggleState::Unselected
     };
 
     Switch::new("toggle_button", toggle_state)
@@ -942,6 +944,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 });
             }
         })
+        .color(SwitchColor::Accent)
         .into_any_element()
 }
 
@@ -966,7 +969,7 @@ where
     DropdownMenu::new(
         "dropdown",
         current_value_label,
-        ui::ContextMenu::build(window, cx, move |mut menu, _, _| {
+        ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (value, label) in variants()
                 .into_iter()
                 .copied()
@@ -975,7 +978,7 @@ where
                 menu = menu.toggleable_entry(
                     label,
                     value == current_value,
-                    ui::IconPosition::Start,
+                    IconPosition::Start,
                     None,
                     move |_, cx| {
                         if value == current_value {
@@ -995,6 +998,7 @@ where
             menu
         }),
     )
+    .style(DropdownStyle::Outlined)
     .into_any_element()
 }
 
