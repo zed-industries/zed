@@ -220,7 +220,18 @@ impl UserSettingsContent {
 ///
 /// Default: VSCode
 #[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]

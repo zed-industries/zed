@@ -399,12 +399,56 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 //     metadata: None,
                 // }),
                 SettingsPageItem::SectionHeader("Keymap"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Base Keymap",
+                    description: "The name of a base set of key bindings to use",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.base_keymap,
+                        pick_mut: |settings_content| &mut settings_content.base_keymap,
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
+                // behavior to have them both enabled at the same time
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Vim Mode",
+                    description: "Whether to enable vim modes and key bindings",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.vim_mode,
+                        pick_mut: |settings_content| &mut settings_content.vim_mode,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Helix Mode",
+                    description: "Whether to enable helix modes and key bindings",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.helix_mode,
+                        pick_mut: |settings_content| &mut settings_content.helix_mode,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Multi Cursor Modifier",
+                    description: "Modifier key for adding multiple cursors",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.multi_cursor_modifier,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.multi_cursor_modifier
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Cursor"),
-                SettingsPageItem::SectionHeader("Highlighting"),
-                SettingsPageItem::SectionHeader("Guides"),
-                SettingsPageItem::SectionHeader("Whitespace"),
-                SettingsPageItem::SectionHeader("Window"),
-                SettingsPageItem::SectionHeader("Layout"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Blink",
+                    description: "Whether the cursor blinks in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.cursor_blink,
+                        pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
                     description: "Cursor shape for the editor",
@@ -414,13 +458,133 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Window"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Title Bar",
-                    description: "Whether to show the title bar",
+                    title: "Hide Mouse",
+                    description: "When to hide the mouse cursor",
                     field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                        pick: |settings_content| &settings_content.editor.hide_mouse,
+                        pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Highlighting"),
+                // todo(settings_ui): numeric stepper and validator is needed for this
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Unnecessary Code Fade",
+                //     description: "How much to fade out unused code (0.0 - 0.9)",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
+                //         pick_mut: |settings_content| &mut settings_content.theme.unnecessary_code_fade,
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Current Line Highlight",
+                    description: "How to highlight the current line",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.current_line_highlight,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.current_line_highlight
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Selection Highlight",
+                    description: "Whether to highlight all occurrences of selected text",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.selection_highlight,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.selection_highlight
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Rounded Selection",
+                    description: "Whether the text selection should have rounded corners",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.rounded_selection,
+                        pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Guides"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Wrap Guides",
+                    description: "Whether to show wrap guides (vertical rulers)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_wrap_guides
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_wrap_guides
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): This needs a custom component
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Wrap Guides",
+                //     description: "Character counts at which to show wrap guides",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             &settings_content
+                //                 .project
+                //                 .all_languages
+                //                 .defaults
+                //                 .wrap_guides
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .project
+                //                 .all_languages
+                //                 .defaults
+                //                 .wrap_guides
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Whitespace"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Whitespace",
+                    description: "Whether to show tabs and spaces",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_whitespaces
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_whitespaces
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Window"),
+                // todo(settings_ui): Should we filter by platform?
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Window Tabs",
+                    description: "Whether to allow windows to tab together (macOS only)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_window_tabs
+                        },
                     }),
                     metadata: None,
                 }),
@@ -434,7 +598,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo!("Implement SettingItem to render these padding settings as it needs to be almost like a float counter.")
+                // todo(settings_ui): Needs numeric stepper
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
                 //     description: "Left padding for cenetered layout",
@@ -512,26 +676,100 @@ fn user_settings_data() -> Vec<SettingsPage> {
 // Derive Macro, on the new ProjectSettings struct
 
 fn project_settings_data() -> Vec<SettingsPage> {
-    vec![SettingsPage {
-        title: "Project",
-        expanded: true,
-        items: vec![
-            SettingsPageItem::SectionHeader("Worktree Settings Content"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Project Name",
-                description: "The displayed name of this project. If not set, the root directory name",
-                field: Box::new(SettingField {
-                    pick: |settings_content| &settings_content.project.worktree.project_name,
-                    pick_mut: |settings_content| {
-                        &mut settings_content.project.worktree.project_name
-                    },
+    vec![
+        SettingsPage {
+            title: "Project",
+            expanded: true,
+            items: vec![
+                SettingsPageItem::SectionHeader("Worktree Settings Content"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Name",
+                    description: "The displayed name of this project. If not set, the root directory name",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.project.worktree.project_name,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project.worktree.project_name
+                        },
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("A new name"),
+                    })),
                 }),
-                metadata: Some(Box::new(SettingsFieldMetadata {
-                    placeholder: Some("A new name"),
-                })),
-            }),
-        ],
-    }]
+            ],
+        },
+        SettingsPage {
+            title: "Appearance & Behavior",
+            expanded: true,
+            items: vec![
+                SettingsPageItem::SectionHeader("Guides"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Wrap Guides",
+                    description: "Whether to show wrap guides (vertical rulers)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_wrap_guides
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_wrap_guides
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): This needs a custom component
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Wrap Guides",
+                //     description: "Character counts at which to show wrap guides",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             &settings_content
+                //                 .project
+                //                 .all_languages
+                //                 .defaults
+                //                 .wrap_guides
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .project
+                //                 .all_languages
+                //                 .defaults
+                //                 .wrap_guides
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Whitespace"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Whitespace",
+                    description: "Whether to show tabs and spaces",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_whitespaces
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .show_whitespaces
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+    ]
 }
 
 pub struct SettingsUiFeatureFlag;
@@ -609,7 +847,23 @@ fn init_renderers(cx: &mut App) {
             // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
             // right now there's a manual impl of strum::VariantArray
             render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::BaseKeymapContent>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MultiCursorModifier>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::HideMouseMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::CurrentLineHighlight>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowWhitespaceSetting>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
         });
+
     // todo!( Figure out how we want to handle discriminant unions)
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
