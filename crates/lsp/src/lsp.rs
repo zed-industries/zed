@@ -1699,7 +1699,7 @@ impl LanguageServer {
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.server.notify::<T>(params).ok();
+        self.server.notify::<T>(params).detach();
     }
 
     /// See [`LanguageServer::request`].
@@ -1807,7 +1807,7 @@ impl FakeLanguageServer {
         .await
         .into_response()
         .unwrap();
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1815,7 +1815,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(&ProgressParams {
+        self.notify::<notification::Progress>(ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1892,11 +1892,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
             uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
