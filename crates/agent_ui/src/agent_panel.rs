@@ -242,7 +242,7 @@ impl AgentType {
             Self::Zed | Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
-            Self::Codex => Some(IconName::Ai),
+            Self::Codex => Some(IconName::AiOpenAi),
             Self::Custom { .. } => Some(IconName::Terminal),
         }
     }
@@ -2006,7 +2006,7 @@ impl AgentPanel {
                             .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
                                 this.item(
                                     ContextMenuEntry::new("New Codex Thread")
-                                        .icon(IconName::Ai)
+                                        .icon(IconName::AiOpenAi)
                                         .disabled(is_via_collab)
                                         .icon_color(Color::Muted)
                                         .handler({
