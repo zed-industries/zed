@@ -6276,7 +6276,7 @@ impl EditorElement {
 
                     // paint text above the background color
                     let row_range = &layout.visible_display_row_range;
-                    if range.start.row() >= row_range.start && range.end.row() < row_range.end {
+                    if row_range.start <= range.start.row() && range.end.row() < row_range.end {
                         let row = range.start.row().max(row_range.start).min(row_range.end);
                         let line_height = layout.position_map.line_height;
                         let start_y = layout.content_origin.y + row.as_f32() * line_height
