@@ -108,10 +108,9 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
-        /// Represents the character that originated the `target` object.
-        /// Necessary in order to correctly determine how to handle whitespace
-        /// when running the change surround command.
-        character: Option<String>,
+        /// Represents whether the opening bracket was used for the target
+        /// object.
+        opening: bool,
     },
     DeleteSurrounds,
     Mark,

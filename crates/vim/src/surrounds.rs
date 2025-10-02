@@ -221,7 +221,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: Object,
-        target_text: Option<String>,
+        opening: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -251,10 +251,10 @@ impl Vim {
                     // Space should be preserved if either the surrounding
                     // characters being updated are quotes
                     // (will_replace_pair.start == will_replace_pair.end) or if
-                    // the bracket used in the command is the opening bracket.
-                    // original text is a quote.
-                    let preserve_space = will_replace_pair.start == will_replace_pair.end
-                        || !target_text.is_some_and(|s| s == will_replace_pair.start);
+                    // the bracket used in the command is not an opening
+                    // bracket.
+                    let preserve_space =
+                        will_replace_pair.start == will_replace_pair.end || !opening;
 
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
