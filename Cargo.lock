@@ -4581,6 +4581,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "dconf"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da771d9d4213b31eaa27f8e1c91d99f6f549612b71b285bd61e1dd6b00078140"
+dependencies = [
+ "dconf-sys",
+ "glib",
+ "glib-sys",
+ "gobject-sys",
+ "lazy_static",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "dconf-sys"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3f1238d8594b773da28bfacb6f11174b06fa61d2fc6d46a7ff57508f9f4576e"
+dependencies = [
+ "bindgen 0.69.5",
+ "glib",
+ "glib-sys",
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "debug_adapter_extension"
 version = "0.1.0"
 dependencies = [
@@ -6738,6 +6765,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gio-sys"
+version = "0.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2cd743ba4714d671ad6b6234e8ab2a13b42304d0e13ab7eba1dcdd78a7d6d4ef"
+dependencies = [
+ "glib-sys",
+ "gobject-sys",
+ "libc",
+ "system-deps",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "git"
 version = "0.1.0"
 dependencies = [
@@ -6864,6 +6904,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "glib"
+version = "0.19.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39650279f135469465018daae0ba53357942a5212137515777d5fdca74984a44"
+dependencies = [
+ "bitflags 2.9.0",
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-task",
+ "futures-util",
+ "gio-sys",
+ "glib-macros",
+ "glib-sys",
+ "gobject-sys",
+ "libc",
+ "memchr",
+ "smallvec",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "glib-macros"
+version = "0.19.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4429b0277a14ae9751350ad9b658b1be0abb5b54faa5bcdf6e74a3372582fad7"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
+name = "glib-sys"
+version = "0.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c2dc18d3a82b0006d470b13304fbbb3e0a9bd4884cf985a60a7ed733ac2c4a5"
+dependencies = [
+ "libc",
+ "system-deps",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6928,6 +7013,17 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-util",
+]
+
+[[package]]
+name = "gobject-sys"
+version = "0.19.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e697e252d6e0416fd1d9e169bda51c0f1c926026c39ca21fbe8b1bb5c3b8b9e"
+dependencies = [
+ "glib-sys",
+ "libc",
+ "system-deps",
 ]
 
 [[package]]
@@ -16296,6 +16392,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "db",
+ "dconf",
  "gpui",
  "notifications",
  "pretty_assertions",
