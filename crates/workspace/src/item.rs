@@ -1298,7 +1298,8 @@ pub mod test {
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell, path::Path};
+    use std::{any::Any, cell::Cell};
+    use util::rel_path::rel_path;
 
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
@@ -1355,7 +1356,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,
@@ -1376,7 +1377,7 @@ pub mod test {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
-                path: Path::new(path).into(),
+                path: rel_path(path).into(),
             });
             cx.new(|_| Self {
                 entry_id,

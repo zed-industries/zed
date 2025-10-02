@@ -51,7 +51,7 @@ impl VsCodeSettings {
                 "No settings file found, expected to find it in one of the following paths:\n{}",
                 candidate_paths
                     .into_iter()
-                    .map(|path| path.to_string_lossy().to_string())
+                    .map(|path| path.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("\n")
             ));

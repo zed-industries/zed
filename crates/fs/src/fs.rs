@@ -12,7 +12,7 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::command::{new_smol_command, new_std_command};
+use util::command::new_smol_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -47,7 +47,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use git::{
-    repository::RepoPath,
+    repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -134,8 +134,13 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
-    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>>;
+    async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
+    -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
@@ -246,7 +251,7 @@ impl From<MTime> for proto::Timestamp {
 }
 
 pub struct RealFs {
-    git_binary_path: Option<PathBuf>,
+    bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
 }
 
@@ -324,7 +329,7 @@ pub struct RealWatcher {}
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
-            git_binary_path,
+            bundled_git_binary_path: git_binary_path,
             executor,
         }
     }
@@ -827,19 +832,29 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        dotgit_path: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
-            self.git_binary_path.clone(),
+            self.bundled_git_binary_path.clone(),
+            system_git_binary_path.map(|path| path.to_path_buf()),
             self.executor.clone(),
         )?))
     }
 
-    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
-        let config = new_std_command("git")
+    async fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        fallback_branch_name: String,
+    ) -> Result<()> {
+        let config = new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
-            .output()?;
+            .output()
+            .await?;
 
         let branch_name;
 
@@ -849,11 +864,12 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_std_command("git")
+        new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
-            .output()?;
+            .output()
+            .await?;
 
         Ok(())
     }
@@ -1608,13 +1624,13 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
         })
         .unwrap();
@@ -1623,7 +1639,7 @@ impl FakeFs {
     pub fn set_head_for_repo(
         &self,
         dot_git: &Path,
-        head_state: &[(RepoPath, String)],
+        head_state: &[(&str, String)],
         sha: impl Into<String>,
     ) {
         self.with_git_state(dot_git, true, |state| {
@@ -1631,50 +1647,22 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
         .unwrap();
     }
 
-    pub fn set_git_content_for_repo(
-        &self,
-        dot_git: &Path,
-        head_state: &[(RepoPath, String, Option<String>)],
-    ) {
+    pub fn set_head_and_index_for_repo(&self, dot_git: &Path, contents_by_path: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.head_contents.clear();
             state.head_contents.extend(
-                head_state
+                contents_by_path
                     .iter()
-                    .map(|(path, head_content, _)| (path.clone(), head_content.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.clone())),
             );
-            state.index_contents.clear();
-            state.index_contents.extend(head_state.iter().map(
-                |(path, head_content, index_content)| {
-                    (
-                        path.clone(),
-                        index_content.as_ref().unwrap_or(head_content).clone(),
-                    )
-                },
-            ));
-        })
-        .unwrap();
-    }
-
-    pub fn set_head_and_index_for_repo(
-        &self,
-        dot_git: &Path,
-        contents_by_path: &[(RepoPath, String)],
-    ) {
-        self.with_git_state(dot_git, true, |state| {
-            state.head_contents.clear();
-            state.index_contents.clear();
-            state.head_contents.extend(contents_by_path.iter().cloned());
-            state
-                .index_contents
-                .extend(contents_by_path.iter().cloned());
+            state.index_contents = state.head_contents.clone();
         })
         .unwrap();
     }
@@ -1689,7 +1677,7 @@ impl FakeFs {
 
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
-    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
+    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {
         let workdir_path = dot_git.parent().unwrap();
         let workdir_contents = self.files_with_contents(workdir_path);
         self.with_git_state(dot_git, true, |state| {
@@ -1697,10 +1685,12 @@ impl FakeFs {
             state.head_contents.clear();
             state.unmerged_paths.clear();
             for (path, content) in workdir_contents {
-                let repo_path: RepoPath = path.strip_prefix(&workdir_path).unwrap().into();
+                use util::{paths::PathStyle, rel_path::RelPath};
+
+                let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
                 let status = statuses
                     .iter()
-                    .find_map(|(p, status)| (**p == *repo_path.0).then_some(status));
+                    .find_map(|(p, status)| (*p == repo_path.as_unix_str()).then_some(status));
                 let mut content = String::from_utf8_lossy(&content).to_string();
 
                 let mut index_content = None;
@@ -2444,7 +2434,11 @@ impl Fs for FakeFs {
         )
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        _system_git_binary: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         use util::ResultExt as _;
 
         self.with_git_state_and_paths(
@@ -2464,12 +2458,12 @@ impl Fs for FakeFs {
         .log_err()
     }
 
-    fn git_init(
+    async fn git_init(
         &self,
         abs_work_directory_path: &Path,
         _fallback_branch_name: String,
     ) -> Result<()> {
-        smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+        self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
     async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
@@ -2661,8 +2655,8 @@ fn atomic_replace<P: AsRef<Path>>(
 
     unsafe {
         ReplaceFileW(
-            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().into_owned()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().into_owned()),
             None,
             REPLACE_FILE_FLAGS::default(),
             None,
@@ -3096,7 +3090,7 @@ mod tests {
         // With the file handle still open, the file should be replaced
         // https://github.com/zed-industries/zed/issues/30054
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();
@@ -3114,7 +3108,7 @@ mod tests {
     #[gpui::test]
     async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();

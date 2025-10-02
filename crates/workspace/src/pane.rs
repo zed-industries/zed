@@ -50,7 +50,7 @@ use ui::{
     PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
     right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
+use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -367,6 +367,9 @@ pub struct Pane {
     max_tabs: Option<NonZeroUsize>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
+    /// This is set to true if a user scroll has occurred more recently than a system scroll
+    /// We want to suppress certain system scrolls when the user has intentionally scrolled
+    suppress_scroll: bool,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
@@ -497,6 +500,7 @@ impl Pane {
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
+            suppress_scroll: false,
             drag_split_direction: None,
             workspace,
             project: project.downgrade(),
@@ -573,6 +577,9 @@ impl Pane {
         if !self.was_focused {
             self.was_focused = true;
             self.update_history(self.active_item_index);
+            if !self.suppress_scroll && self.items.get(self.active_item_index).is_some() {
+                self.update_active_tab(self.active_item_index);
+            }
             cx.emit(Event::Focus);
             cx.notify();
         }
@@ -618,6 +625,7 @@ impl Pane {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, window, cx);
         });
+
         cx.notify();
     }
 
@@ -1124,6 +1132,7 @@ impl Pane {
             }
         } else {
             self.items.insert(insertion_index, item.clone());
+            cx.notify();
 
             if activate {
                 if insertion_index <= self.active_item_index
@@ -1134,7 +1143,6 @@ impl Pane {
 
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
-            cx.notify();
         }
 
         cx.emit(Event::AddItem { item });
@@ -1272,12 +1280,15 @@ impl Pane {
                 focus_changed: focus_item,
             });
 
-            if !self.is_tab_pinned(index) {
-                self.tab_bar_scroll_handle
-                    .scroll_to_item(index - self.pinned_tab_count);
-            }
-
+            self.update_active_tab(index);
             cx.notify();
+        }
+    }
+
+    fn update_active_tab(&mut self, index: usize) {
+        if !self.is_tab_pinned(index) {
+            self.suppress_scroll = false;
+            self.tab_bar_scroll_handle.scroll_to_item(index);
         }
     }
 
@@ -1652,11 +1663,9 @@ impl Pane {
                 if !project_item.is_dirty() {
                     return;
                 }
-                let filename = project_item.project_path(cx).and_then(|path| {
-                    path.path
-                        .file_name()
-                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
-                });
+                let filename = project_item
+                    .project_path(cx)
+                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned));
                 file_names.insert(filename.unwrap_or("untitled".to_string()));
             });
         }
@@ -1965,9 +1974,10 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx))?;
         if save_intent == SaveIntent::Skip {
             return Ok(true);
-        }
+        };
         let Some(item_ix) = pane
             .read_with(cx, |pane, _| pane.index_for_item(item))
             .ok()
@@ -2090,7 +2100,7 @@ impl Pane {
                     let answer_task = pane.update_in(cx, |pane, window, cx| {
                         if pane.save_modals_spawned.insert(item_id) {
                             pane.activate_item(item_ix, true, true, window, cx);
-                            let prompt = dirty_message_for(item.project_path(cx));
+                            let prompt = dirty_message_for(item.project_path(cx), path_style);
                             Some(window.prompt(
                                 PromptLevel::Warning,
                                 &prompt,
@@ -2184,7 +2194,7 @@ impl Pane {
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
                     let new_path = ProjectPath {
                         worktree_id,
-                        path: path.into(),
+                        path: path,
                     };
 
                     pane.update_in(cx, |pane, window, cx| {
@@ -2321,10 +2331,10 @@ impl Pane {
             .worktree_for_entry(entry, cx)?
             .read(cx);
         let entry = worktree.entry_for_id(entry)?;
-        match &entry.canonical_path {
-            Some(canonical_path) => Some(canonical_path.to_path_buf()),
-            None => worktree.absolutize(&entry.path).ok(),
-        }
+        Some(match &entry.canonical_path {
+            Some(canonical_path) => canonical_path.to_path_buf(),
+            None => worktree.absolutize(&entry.path),
+        })
     }
 
     pub fn icon_color(selected: bool) -> Color {
@@ -2866,7 +2876,7 @@ impl Pane {
                                         Some(Box::new(zed_actions::workspace::CopyPath)),
                                         window.handler_for(&pane, move |_, _, cx| {
                                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                                abs_path.to_string_lossy().to_string(),
+                                                abs_path.to_string_lossy().into_owned(),
                                             ));
                                         }),
                                     )
@@ -2875,9 +2885,14 @@ impl Pane {
                                     menu.entry(
                                         "Copy Relative Path",
                                         Some(Box::new(zed_actions::workspace::CopyRelativePath)),
-                                        window.handler_for(&pane, move |_, _, cx| {
+                                        window.handler_for(&pane, move |this, _, cx| {
+                                            let Some(project) = this.project.upgrade() else {
+                                                return;
+                                            };
+                                            let path_style = project
+                                                .update(cx, |project, cx| project.path_style(cx));
                                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                                relative_path.to_string_lossy().to_string(),
+                                                relative_path.display(path_style).to_string(),
                                             ));
                                         }),
                                     )
@@ -3024,6 +3039,9 @@ impl Pane {
                     .overflow_x_scroll()
                     .w_full()
                     .track_scroll(&self.tab_bar_scroll_handle)
+                    .on_scroll_wheel(cx.listener(|this, _, _, _| {
+                        this.suppress_scroll = true;
+                    }))
                     .children(unpinned_tabs)
                     .child(
                         div()
@@ -4007,16 +4025,15 @@ impl NavHistoryState {
     }
 }
 
-fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {
     let path = buffer_path
         .as_ref()
         .and_then(|p| {
-            p.path
-                .to_str()
-                .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            let path = p.path.display(path_style);
+            if path.is_empty() { None } else { Some(path) }
         })
-        .unwrap_or("This buffer");
-    let path = truncate_and_remove_front(path, 80);
+        .unwrap_or("This buffer".into());
+    let path = truncate_and_remove_front(&path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
@@ -4092,7 +4109,7 @@ mod tests {
 
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6305,6 +6322,42 @@ mod tests {
             assert!(!b.read(cx).is_dirty);
             assert!(!c.read(cx).is_dirty);
         });
+    }
+
+    #[gpui::test]
+    async fn test_new_tab_scrolls_into_view_completely(cx: &mut TestAppContext) {
+        // Arrange
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        cx.simulate_resize(size(px(300.), px(300.)));
+
+        add_labeled_item(&pane, "untitled", false, cx);
+        add_labeled_item(&pane, "untitled", false, cx);
+        add_labeled_item(&pane, "untitled", false, cx);
+        add_labeled_item(&pane, "untitled", false, cx);
+        // Act: this should trigger a scroll
+        add_labeled_item(&pane, "untitled", false, cx);
+        // Assert
+        let tab_bar_scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
+        assert_eq!(tab_bar_scroll_handle.children_count(), 6);
+        let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
+        let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
+        let scroll_bounds = tab_bar_scroll_handle.bounds();
+        let scroll_offset = tab_bar_scroll_handle.offset();
+        assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
+        // -39.75 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-39.75));
+        assert!(
+            !tab_bounds.intersects(&new_tab_button_bounds),
+            "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
+        );
     }
 
     #[gpui::test]

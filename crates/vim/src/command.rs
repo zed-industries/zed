@@ -1,12 +1,13 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
-    Bias, Editor, SelectionEffects, ToPoint,
+    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
-use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Window, actions};
+use futures::AsyncWriteExt as _;
+use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Task, Window, actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -15,19 +16,19 @@ use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
+use settings::{Settings, SettingsStore};
 use std::{
-    io::Write,
     iter::Peekable,
     ops::{Deref, Range},
     path::Path,
     process::Stdio,
     str::Chars,
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::Instant,
 };
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
@@ -80,6 +81,7 @@ pub enum VimOption {
     Wrap(bool),
     Number(bool),
     RelativeNumber(bool),
+    IgnoreCase(bool),
 }
 
 impl VimOption {
@@ -122,6 +124,10 @@ impl VimOption {
             (None, VimOption::RelativeNumber(false)),
             (Some("rnu"), VimOption::RelativeNumber(true)),
             (Some("nornu"), VimOption::RelativeNumber(false)),
+            (None, VimOption::IgnoreCase(true)),
+            (None, VimOption::IgnoreCase(false)),
+            (Some("ic"), VimOption::IgnoreCase(true)),
+            (Some("noic"), VimOption::IgnoreCase(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -143,6 +149,11 @@ impl VimOption {
             "norelativenumber" => Some(Self::RelativeNumber(false)),
             "nornu" => Some(Self::RelativeNumber(false)),
 
+            "ignorecase" => Some(Self::IgnoreCase(true)),
+            "ic" => Some(Self::IgnoreCase(true)),
+            "noignorecase" => Some(Self::IgnoreCase(false)),
+            "noic" => Some(Self::IgnoreCase(false)),
+
             _ => None,
         }
     }
@@ -155,6 +166,8 @@ impl VimOption {
             VimOption::Number(false) => "nonumber",
             VimOption::RelativeNumber(true) => "relativenumber",
             VimOption::RelativeNumber(false) => "norelativenumber",
+            VimOption::IgnoreCase(true) => "ignorecase",
+            VimOption::IgnoreCase(false) => "noignorecase",
         }
     }
 }
@@ -257,6 +270,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 VimOption::RelativeNumber(enabled) => {
                     editor.set_relative_line_number(Some(*enabled), cx);
                 }
+                VimOption::IgnoreCase(enabled) => {
+                    let mut settings = EditorSettings::get_global(cx).clone();
+                    settings.search.case_sensitive = !*enabled;
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    });
+                }
             });
         }
     });
@@ -305,31 +325,54 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
-            let project_path = ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+            let path_style = worktree.read(cx).path_style();
+            let Ok(project_path) =
+                RelPath::new(Path::new(&action.filename), path_style).map(|path| ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path: path.into_arc(),
+                })
+            else {
+                // TODO implement save_as with absolute path
+                Task::ready(Err::<(), _>(anyhow!(
+                    "Cannot save buffer with absolute path"
+                )))
+                .detach_and_prompt_err(
+                    "Failed to save",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+                return;
             };
 
-            if project.read(cx).entry_for_path(&project_path, cx).is_some() && action.save_intent != Some(SaveIntent::Overwrite) {
+            if project.read(cx).entry_for_path(&project_path, cx).is_some()
+                && action.save_intent != Some(SaveIntent::Overwrite)
+            {
                 let answer = window.prompt(
                     gpui::PromptLevel::Critical,
-                    &format!("{} already exists. Do you want to replace it?", project_path.path.to_string_lossy()),
+                    &format!(
+                        "{} already exists. Do you want to replace it?",
+                        project_path.path.display(path_style)
+                    ),
                     Some(
-                        "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                        "A file or folder with the same name already exists. \
+                        Replacing it will overwrite its current contents.",
                     ),
                     &["Replace", "Cancel"],
-                cx);
+                    cx,
+                );
                 cx.spawn_in(window, async move |editor, cx| {
                     if answer.await.ok() != Some(0) {
                         return;
                     }
 
-                    let _ = editor.update_in(cx, |editor, window, cx|{
+                    let _ = editor.update_in(cx, |editor, window, cx| {
                         editor
                             .save_as(project, project_path, window, cx)
                             .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
                     });
-                }).detach();
+                })
+                .detach();
             } else {
                 editor
                     .save_as(project, project_path, window, cx)
@@ -348,9 +391,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
+            let path_style = worktree.read(cx).path_style();
+            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
+                return;
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+                path: path.into_arc(),
             };
 
             let direction = if action.vertical {
@@ -442,9 +489,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
+            let path_style = worktree.read(cx).path_style();
+            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
+                return;
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+                path: path.into_arc(),
             };
 
             let _ = workspace.update(cx, |workspace, cx| {
@@ -1710,9 +1761,8 @@ impl Vim {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
-                            && let Some(str) = local.path().to_str()
                         {
-                            ret.push_str(str)
+                            ret.push_str(&local.path().display(local.path_style(cx)));
                         }
                     });
                 }
@@ -1936,7 +1986,6 @@ impl ShellExec {
             process.stdin(Stdio::null());
         };
 
-        util::set_pre_exec_to_start_new_session(&mut process);
         let is_read = self.is_read;
 
         let task = cx.spawn_in(window, async move |vim, cx| {
@@ -1954,18 +2003,16 @@ impl ShellExec {
                 let range = range.clone();
                 cx.background_spawn(async move {
                     for chunk in snapshot.text_for_range(range) {
-                        if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                        if stdin.write_all(chunk.as_bytes()).await.log_err().is_none() {
                             return;
                         }
                     }
-                    stdin.flush().log_err();
+                    stdin.flush().await.log_err();
                 })
                 .detach();
             };
 
-            let output = cx
-                .background_spawn(async move { running.wait_with_output() })
-                .await;
+            let output = cx.background_spawn(running.output()).await;
 
             let Some(output) = output.log_err() else {
                 vim.update_in(cx, |vim, window, cx| {
@@ -2018,9 +2065,10 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Editor;
+    use editor::{Editor, EditorSettings};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use settings::Settings;
     use util::path;
     use workspace::Workspace;
 
@@ -2576,6 +2624,54 @@ mod test {
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ignorecase_command(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should be `false` by default."
+            );
+        });
+        cx.simulate_keystrokes(": set space noignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space noic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noic`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ic`."
+            );
         });
     }
 }

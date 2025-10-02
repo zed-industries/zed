@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{
@@ -8,7 +8,7 @@ use gpui::{
 use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
 use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
-use util::maybe;
+use util::{maybe, rel_path::RelPath};
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 use crate::ToolchainSelector;
@@ -83,10 +83,7 @@ impl ActiveToolchain {
                 let (worktree_id, path) = active_file
                     .update(cx, |this, cx| {
                         this.file().and_then(|file| {
-                            Some((
-                                file.worktree_id(cx),
-                                Arc::<Path>::from(file.path().parent()?),
-                            ))
+                            Some((file.worktree_id(cx), file.path().parent()?.into()))
                         })
                     })
                     .ok()
@@ -142,7 +139,7 @@ impl ActiveToolchain {
     fn active_toolchain(
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
@@ -205,7 +202,7 @@ impl ActiveToolchain {
                         .set_toolchain(
                             workspace_id,
                             worktree_id,
-                            relative_path.to_string_lossy().into_owned(),
+                            relative_path.clone(),
                             toolchain.clone(),
                         )
                         .await

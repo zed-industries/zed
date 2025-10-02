@@ -84,6 +84,17 @@ pub enum EditPredictionProvider {
     Zed,
 }
 
+impl EditPredictionProvider {
+    pub fn is_zed(&self) -> bool {
+        match self {
+            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
+        }
+    }
+}
+
 /// The contents of the edit prediction settings.
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
@@ -136,7 +147,19 @@ pub enum EditPredictionsMode {
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -159,6 +182,7 @@ pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -250,7 +274,7 @@ pub struct LanguageSettingsContent {
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
     ///
     /// Default: "•" for spaces, "→" for tabs.
-    pub whitespace_map: Option<WhitespaceMap>,
+    pub whitespace_map: Option<WhitespaceMapContent>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -321,7 +345,19 @@ pub struct LanguageSettingsContent {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -343,23 +379,9 @@ pub enum ShowWhitespaceSetting {
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct WhitespaceMap {
-    pub space: Option<String>,
-    pub tab: Option<String>,
-}
-
-impl WhitespaceMap {
-    pub fn space(&self) -> SharedString {
-        self.space
-            .as_ref()
-            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
-    }
-
-    pub fn tab(&self) -> SharedString {
-        self.tab
-            .as_ref()
-            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
-    }
+pub struct WhitespaceMapContent {
+    pub space: Option<char>,
+    pub tab: Option<char>,
 }
 
 /// The behavior of `editor::Rewrap`.
@@ -780,8 +802,8 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Option<Arc<[String]>>,
     },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    /// Files should be formatted using a code action executed by language servers.
+    CodeAction(String),
 }
 
 /// The settings for indent guides.

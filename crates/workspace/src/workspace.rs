@@ -104,7 +104,12 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
+use util::{
+    ResultExt, TryFutureExt,
+    paths::{PathStyle, SanitizedPath},
+    rel_path::RelPath,
+    serde::default_true,
+};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -625,7 +630,7 @@ impl ProjectItemRegistry {
                     match project_item.await.with_context(|| {
                         format!(
                             "opening project path {:?}",
-                            entry_abs_path.as_deref().unwrap_or(&project_path.path)
+                            entry_abs_path.as_deref().unwrap_or(&project_path.path.as_std_path())
                         )
                     }) {
                         Ok(project_item) => {
@@ -1754,6 +1759,10 @@ impl Workspace {
         &self.project
     }
 
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.project.read(cx).path_style(cx)
+    }
+
     pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
         let mut history: HashMap<EntityId, usize> = HashMap::default();
 
@@ -2037,11 +2046,6 @@ impl Workspace {
 
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
-        cx.notify();
-    }
-
-    pub fn clear_titlebar_item(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.titlebar_item = None;
         cx.notify();
     }
 
@@ -2627,7 +2631,10 @@ impl Workspace {
                                     .strip_prefix(worktree_abs_path.as_ref())
                                     .ok()
                                     .and_then(|relative_path| {
-                                        worktree.entry_for_path(relative_path)
+                                        let relative_path =
+                                            RelPath::new(relative_path, PathStyle::local())
+                                                .log_err()?;
+                                        worktree.entry_for_path(&relative_path)
                                     })
                             }
                             .map(|entry| entry.id);
@@ -2673,7 +2680,7 @@ impl Workspace {
                 self.open_path(project_path, None, true, window, cx)
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
-                path,
+                PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
@@ -2762,7 +2769,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.into(),
+                    path: path,
                 },
             ))
         })
@@ -4169,7 +4176,6 @@ impl Workspace {
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
             .unwrap_or_else(|| {
                 self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
             })
@@ -4394,8 +4400,16 @@ impl Workspace {
     fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
-        self.project
-            .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+        self.project.update(cx, |project, cx| {
+            project.set_active_path(active_entry.clone(), cx)
+        });
+
+        if let Some(project_path) = &active_entry {
+            let git_store_entity = self.project.read(cx).git_store().clone();
+            git_store_entity.update(cx, |git_store, cx| {
+                git_store.set_active_repo_for_path(project_path, cx);
+            });
+        }
 
         self.update_window_title(window, cx);
     }
@@ -4404,17 +4418,17 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, worktree) in project.worktrees(cx).enumerate() {
+        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
             let name = {
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
 
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.read(cx).root_name(),
+                    None => worktree.read(cx).root_name_str(),
                 }
             };
             if i > 0 {
@@ -4428,18 +4442,14 @@ impl Workspace {
         }
 
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-            let filename = path
-                .path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .or_else(|| {
-                    Some(Cow::Borrowed(
-                        project
-                            .worktree_for_id(path.worktree_id, cx)?
-                            .read(cx)
-                            .root_name(),
-                    ))
-                });
+            let filename = path.path.file_name().or_else(|| {
+                Some(
+                    project
+                        .worktree_for_id(path.worktree_id, cx)?
+                        .read(cx)
+                        .root_name_str(),
+                )
+            });
 
             if let Some(filename) = filename {
                 title.push_str(" — ");
@@ -5551,6 +5561,13 @@ impl Workspace {
 
     fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.add_workspace_actions_listeners(div, window, cx)
+            .on_action(cx.listener(
+                |_workspace, action_sequence: &settings::ActionSequence, window, cx| {
+                    for action in &action_sequence.0 {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
@@ -8179,6 +8196,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::rel_path::rel_path;
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -8273,7 +8291,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8288,7 +8306,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("two.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8304,7 +8322,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -10670,7 +10688,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10684,7 +10702,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "two.ipynb");
+                    let project_path = (worktree_id, rel_path("two.ipynb"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10697,7 +10715,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10732,7 +10750,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10746,7 +10764,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10760,7 +10778,7 @@ mod tests {
             .flat_map(|item| {
                 item.project_paths(cx)
                     .into_iter()
-                    .map(|path| path.path.to_string_lossy().to_string())
+                    .map(|path| path.path.display(PathStyle::local()).into_owned())
             })
             .collect()
     }

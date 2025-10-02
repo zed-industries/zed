@@ -401,10 +401,10 @@ impl AiPrivacyTooltip {
 }
 
 impl Render for AiPrivacyTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const DESCRIPTION: &str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
-        tooltip_container(window, cx, move |this, _, _| {
+        tooltip_container(cx, move |this, _| {
             this.child(
                 h_flex()
                     .gap_1()

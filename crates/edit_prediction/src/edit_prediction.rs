@@ -3,7 +3,6 @@ use std::ops::Range;
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
-use project::Project;
 
 // TODO: Find a better home for `Direction`.
 //
@@ -16,11 +15,19 @@ pub enum Direction {
 }
 
 #[derive(Clone)]
-pub struct EditPrediction {
-    /// The ID of the completion, if it has one.
-    pub id: Option<SharedString>,
-    pub edits: Vec<(Range<language::Anchor>, String)>,
-    pub edit_preview: Option<language::EditPreview>,
+pub enum EditPrediction {
+    /// Edits within the buffer that requested the prediction
+    Local {
+        id: Option<SharedString>,
+        edits: Vec<(Range<language::Anchor>, String)>,
+        edit_preview: Option<language::EditPreview>,
+    },
+    /// Jump to a different file from the one that requested the prediction
+    Jump {
+        id: Option<SharedString>,
+        snapshot: language::BufferSnapshot,
+        target: language::Anchor,
+    },
 }
 
 pub enum DataCollectionState {
@@ -83,7 +90,6 @@ pub trait EditPredictionProvider: 'static + Sized {
     fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -124,7 +130,6 @@ pub trait EditPredictionProviderHandle {
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -198,14 +203,13 @@ where
 
     fn refresh(
         &self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(project, buffer, cursor_position, debounce, cx)
+            this.refresh(buffer, cursor_position, debounce, cx)
         })
     }
 

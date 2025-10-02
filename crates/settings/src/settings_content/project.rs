@@ -50,10 +50,10 @@ pub struct ProjectSettingsContent {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set, the root directory name
+    /// The displayed name of this project. If not set or empty, the root directory name
     /// will be displayed.
     ///
-    /// Default: none
+    /// Default: ""
     pub project_name: Option<String>,
 
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
@@ -256,6 +256,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Git blame settings.
+    pub blame: Option<BlameSettings>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -266,7 +268,19 @@ pub struct GitSettings {
     pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
@@ -306,7 +320,17 @@ pub struct InlineBlameSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct BlameSettings {
+    /// Whether to show the avatar of the author of the commit.
+    ///
+    /// Default: true
+    pub show_avatar: Option<bool>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
     /// Whether to show author name as part of the commit information.
@@ -315,7 +339,19 @@ pub struct BranchPickerSettingsContent {
     pub show_author_name: Option<bool>,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHunkStyleSetting {
     /// Show unstaged hunks with a filled background and staged hunks hollow.
@@ -326,7 +362,7 @@ pub enum GitHunkStyleSetting {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DiagnosticsSettingsContent {
     /// Whether to show the project diagnostics button in the status bar.
     pub button: Option<bool>,
@@ -342,7 +378,9 @@ pub struct DiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 pub struct LspPullDiagnosticsSettingsContent {
     /// Whether to pull for diagnostics or not.
     ///
@@ -356,7 +394,9 @@ pub struct LspPullDiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Eq)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Eq,
+)]
 pub struct InlineDiagnosticsSettingsContent {
     /// Whether or not to show inline diagnostics
     ///
@@ -415,6 +455,8 @@ pub enum DirenvSettings {
     Deserialize,
     JsonSchema,
     MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverityContent {

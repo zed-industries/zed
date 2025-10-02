@@ -13,7 +13,7 @@ use paths::{
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto},
+    proto::{self, REMOTE_SERVER_PROJECT_ID},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,13 +23,9 @@ use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsStore, parse_json_with_comments, watch_config_file,
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
-use util::{ResultExt, serde::default_true};
+use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
@@ -311,6 +307,8 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: InlineBlameSettings,
+    /// Git blame settings.
+    pub blame: BlameSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -346,6 +344,14 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BlameSettings {
+    /// Whether to show the avatar of the author of the commit.
+    ///
+    /// Default: true
+    pub show_avatar: bool,
 }
 
 impl GitSettings {
@@ -449,6 +455,12 @@ impl Settings for ProjectSettings {
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            blame: {
+                let blame = git.blame.unwrap();
+                BlameSettings {
+                    show_avatar: blame.show_avatar.unwrap(),
                 }
             },
             branch_picker: {
@@ -742,6 +754,7 @@ impl SettingsObserver {
                 .with_context(|| format!("unknown kind {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
+        let path = RelPath::from_proto(&envelope.payload.path)?;
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             let Some(worktree) = this
@@ -755,7 +768,7 @@ impl SettingsObserver {
             this.update_settings(
                 worktree,
                 [(
-                    Arc::<Path>::from_proto(envelope.payload.path.clone()),
+                    path,
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
@@ -808,61 +821,61 @@ impl SettingsObserver {
         let mut settings_contents = Vec::new();
         for (path, _, change) in changes.iter() {
             let (settings_dir, kind) = if path.ends_with(local_settings_file_relative_path()) {
-                let settings_dir = Arc::<Path>::from(
-                    path.ancestors()
-                        .nth(local_settings_file_relative_path().components().count())
-                        .unwrap(),
-                );
+                let settings_dir = path
+                    .ancestors()
+                    .nth(local_settings_file_relative_path().components().count())
+                    .unwrap()
+                    .into();
                 (settings_dir, LocalSettingsKind::Settings)
             } else if path.ends_with(local_tasks_file_relative_path()) {
-                let settings_dir = Arc::<Path>::from(
-                    path.ancestors()
-                        .nth(
-                            local_tasks_file_relative_path()
-                                .components()
-                                .count()
-                                .saturating_sub(1),
-                        )
-                        .unwrap(),
-                );
+                let settings_dir = path
+                    .ancestors()
+                    .nth(
+                        local_tasks_file_relative_path()
+                            .components()
+                            .count()
+                            .saturating_sub(1),
+                    )
+                    .unwrap()
+                    .into();
                 (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
-                let settings_dir = Arc::<Path>::from(
-                    path.ancestors()
-                        .nth(
-                            local_vscode_tasks_file_relative_path()
-                                .components()
-                                .count()
-                                .saturating_sub(1),
-                        )
-                        .unwrap(),
-                );
+                let settings_dir = path
+                    .ancestors()
+                    .nth(
+                        local_vscode_tasks_file_relative_path()
+                            .components()
+                            .count()
+                            .saturating_sub(1),
+                    )
+                    .unwrap()
+                    .into();
                 (settings_dir, LocalSettingsKind::Tasks)
             } else if path.ends_with(local_debug_file_relative_path()) {
-                let settings_dir = Arc::<Path>::from(
-                    path.ancestors()
-                        .nth(
-                            local_debug_file_relative_path()
-                                .components()
-                                .count()
-                                .saturating_sub(1),
-                        )
-                        .unwrap(),
-                );
+                let settings_dir = path
+                    .ancestors()
+                    .nth(
+                        local_debug_file_relative_path()
+                            .components()
+                            .count()
+                            .saturating_sub(1),
+                    )
+                    .unwrap()
+                    .into();
                 (settings_dir, LocalSettingsKind::Debug)
             } else if path.ends_with(local_vscode_launch_file_relative_path()) {
-                let settings_dir = Arc::<Path>::from(
-                    path.ancestors()
-                        .nth(
-                            local_vscode_tasks_file_relative_path()
-                                .components()
-                                .count()
-                                .saturating_sub(1),
-                        )
-                        .unwrap(),
-                );
+                let settings_dir = path
+                    .ancestors()
+                    .nth(
+                        local_vscode_tasks_file_relative_path()
+                            .components()
+                            .count()
+                            .saturating_sub(1),
+                    )
+                    .unwrap()
+                    .into();
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(EDITORCONFIG_NAME) {
+            } else if path.ends_with(RelPath::unix(EDITORCONFIG_NAME).unwrap()) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
@@ -873,13 +886,7 @@ impl SettingsObserver {
 
             let removed = change == &PathChange::Removed;
             let fs = fs.clone();
-            let abs_path = match worktree.read(cx).absolutize(path) {
-                Ok(abs_path) => abs_path,
-                Err(e) => {
-                    log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
-                    continue;
-                }
-            };
+            let abs_path = worktree.read(cx).absolutize(path);
             settings_contents.push(async move {
                 (
                     settings_dir,
@@ -890,7 +897,7 @@ impl SettingsObserver {
                         Some(
                             async move {
                                 let content = fs.load(&abs_path).await?;
-                                if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+                                if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeTaskFile>(&content)
                                             .with_context(|| {
@@ -907,7 +914,7 @@ impl SettingsObserver {
                                             "serializing Zed tasks into JSON, file {abs_path:?}"
                                         )
                                     })
-                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeDebugTaskFile>(&content)
                                             .with_context(|| {
@@ -941,7 +948,7 @@ impl SettingsObserver {
 
         let worktree = worktree.clone();
         cx.spawn(async move |this, cx| {
-            let settings_contents: Vec<(Arc<Path>, _, _)> =
+            let settings_contents: Vec<(Arc<RelPath>, _, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -961,7 +968,7 @@ impl SettingsObserver {
     fn update_settings(
         &mut self,
         worktree: Entity<Worktree>,
-        settings_contents: impl IntoIterator<Item = (Arc<Path>, LocalSettingsKind, Option<String>)>,
+        settings_contents: impl IntoIterator<Item = (Arc<RelPath>, LocalSettingsKind, Option<String>)>,
         cx: &mut Context<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
@@ -991,9 +998,9 @@ impl SettingsObserver {
                                 log::error!("Failed to set local settings: {e}");
                             }
                             Ok(()) => {
-                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(
-                                    directory.join(local_settings_file_relative_path())
-                                )));
+                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
+                                    .as_std_path()
+                                    .join(local_settings_file_relative_path().as_std_path()))));
                             }
                         }
                     }),
@@ -1020,9 +1027,9 @@ impl SettingsObserver {
                             log::error!("Failed to set local tasks: {e}");
                         }
                         Ok(()) => {
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
-                                directory.join(task_file_name())
-                            )));
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
+                                .as_std_path()
+                                .join(task_file_name()))));
                         }
                     }
                 }
@@ -1051,9 +1058,9 @@ impl SettingsObserver {
                             log::error!("Failed to set local tasks: {e}");
                         }
                         Ok(()) => {
-                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(
-                                directory.join(task_file_name())
-                            )));
+                            cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
+                                .as_std_path()
+                                .join(task_file_name()))));
                         }
                     }
                 }

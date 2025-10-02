@@ -104,7 +104,7 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
         ReadFile(pipe, Some(&mut buffer), None, None)?;
     }
     let message = std::ffi::CStr::from_bytes_until_nul(&buffer)?;
-    Ok(message.to_string_lossy().to_string())
+    Ok(message.to_string_lossy().into_owned())
 }
 
 // This part of code is mostly from crates/cli/src/main.rs
@@ -124,7 +124,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         let mut diff_paths = vec![];
         for path in args.paths_or_urls.iter() {
             match std::fs::canonicalize(&path) {
-                Ok(path) => paths.push(path.to_string_lossy().to_string()),
+                Ok(path) => paths.push(path.to_string_lossy().into_owned()),
                 Err(error) => {
                     if path.starts_with("zed://")
                         || path.starts_with("http://")
@@ -145,8 +145,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             let new = std::fs::canonicalize(&path[1]).log_err();
             if let Some((old, new)) = old.zip(new) {
                 diff_paths.push([
-                    old.to_string_lossy().to_string(),
-                    new.to_string_lossy().to_string(),
+                    old.to_string_lossy().into_owned(),
+                    new.to_string_lossy().into_owned(),
                 ]);
             }
         }

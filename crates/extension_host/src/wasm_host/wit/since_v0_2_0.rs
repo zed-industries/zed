@@ -30,6 +30,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
 }
 

@@ -261,7 +261,7 @@ impl<'a> MarkdownParser<'a> {
                             code: false,
                             link: Some(link),
                         });
-                        style.underline = true;
+                        style.link = true;
                         prev_len
                     } else {
                         // Manually scan for links
@@ -329,7 +329,7 @@ impl<'a> MarkdownParser<'a> {
                         highlights.push((
                             prev_len..text.len(),
                             MarkdownHighlight::Style(MarkdownHighlightStyle {
-                                underline: true,
+                                link: true,
                                 ..Default::default()
                             }),
                         ));
@@ -826,11 +826,72 @@ impl<'a> MarkdownParser<'a> {
                     if let Some(image) = self.extract_image(source_range, attrs) {
                         elements.push(ParsedMarkdownElement::Image(image));
                     }
+                } else if matches!(
+                    name.local,
+                    local_name!("h1")
+                        | local_name!("h2")
+                        | local_name!("h3")
+                        | local_name!("h4")
+                        | local_name!("h5")
+                        | local_name!("h6")
+                ) {
+                    let mut paragraph = MarkdownParagraph::new();
+                    self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                    if !paragraph.is_empty() {
+                        elements.push(ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                            source_range,
+                            level: match name.local {
+                                local_name!("h1") => HeadingLevel::H1,
+                                local_name!("h2") => HeadingLevel::H2,
+                                local_name!("h3") => HeadingLevel::H3,
+                                local_name!("h4") => HeadingLevel::H4,
+                                local_name!("h5") => HeadingLevel::H5,
+                                local_name!("h6") => HeadingLevel::H6,
+                                _ => unreachable!(),
+                            },
+                            contents: paragraph,
+                        }));
+                    }
                 } else {
                     self.consume_children(source_range, node, elements);
                 }
             }
             markup5ever_rcdom::NodeData::ProcessingInstruction { .. } => {}
+        }
+    }
+
+    fn parse_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        match &node.data {
+            markup5ever_rcdom::NodeData::Text { contents } => {
+                paragraph.push(MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range,
+                    regions: Vec::default(),
+                    contents: contents.borrow().to_string(),
+                    region_ranges: Vec::default(),
+                    highlights: Vec::default(),
+                }));
+            }
+            markup5ever_rcdom::NodeData::Element { .. } => {
+                self.consume_paragraph(source_range, node, paragraph);
+            }
+            _ => {}
+        }
+    }
+
+    fn consume_paragraph(
+        &self,
+        source_range: Range<usize>,
+        node: &Rc<markup5ever_rcdom::Node>,
+        paragraph: &mut MarkdownParagraph,
+    ) {
+        for node in node.children.borrow().iter() {
+            self.parse_paragraph(source_range.clone(), node, paragraph);
         }
     }
 
@@ -1266,6 +1327,85 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_heading_tags() {
+        let parsed = parse("<h1>Heading</h1><h2>Heading</h2><h3>Heading</h3><h4>Heading</h4><h5>Heading</h5><h6>Heading</h6>").await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H1,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H2,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H3,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H4,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H5,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                    ParsedMarkdownElement::Heading(ParsedMarkdownHeading {
+                        level: HeadingLevel::H6,
+                        source_range: 0..96,
+                        contents: vec![MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                            source_range: 0..96,
+                            contents: "Heading".into(),
+                            highlights: Vec::default(),
+                            region_ranges: Vec::default(),
+                            regions: Vec::default()
+                        })],
+                    }),
+                ],
+            },
+            parsed
         );
     }
 

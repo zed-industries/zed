@@ -16,7 +16,7 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset, ToPoint};
+use multi_buffer::{ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{borrow::Cow, cell::RefCell};
@@ -371,7 +371,7 @@ fn show_hover(
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
                 let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic,
+                    diagnostic: local_diagnostic.diagnostic.to_owned(),
                     range: snapshot
                         .buffer_snapshot
                         .anchor_before(local_diagnostic.range.start)
@@ -477,13 +477,8 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        match snapshot.syntax_ancestor(anchor..anchor)?.1 {
-                            MultiOrSingleBufferOffsetRange::Multi(range) => Some(
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_after(range.end),
-                            ),
-                            MultiOrSingleBufferOffsetRange::Single(_) => None,
-                        }
+                        let range = snapshot.syntax_ancestor(anchor..anchor)?.1;
+                        Some(snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end))
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
@@ -1790,7 +1785,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len()..": ".len() + new_type_label.len(),
                 }),
                 "Popover range should match the new type label part"
@@ -1845,7 +1840,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len() + new_type_label.len() + "<".len()
                         ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
                 }),

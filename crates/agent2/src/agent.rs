@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
+use util::rel_path::RelPath;
 
 const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
@@ -56,7 +57,7 @@ struct Session {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<acp_thread::AgentModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<acp::ModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -132,10 +133,7 @@ impl LanguageModels {
         self.refresh_models_rx.clone()
     }
 
-    pub fn model_from_id(
-        &self,
-        model_id: &acp_thread::AgentModelId,
-    ) -> Option<Arc<dyn LanguageModel>> {
+    pub fn model_from_id(&self, model_id: &acp::ModelId) -> Option<Arc<dyn LanguageModel>> {
         self.models.get(model_id).cloned()
     }
 
@@ -146,12 +144,13 @@ impl LanguageModels {
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
+            description: None,
             icon: Some(provider.icon()),
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::AgentModelId {
-        acp_thread::AgentModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
+    fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
+        acp::ModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -436,7 +435,7 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
-        let root_name = tree.root_name().into();
+        let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
 
         let mut context = WorktreeContext {
@@ -476,7 +475,7 @@ impl NativeAgent {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(name)
+                    .entry_for_path(RelPath::unix(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -560,7 +559,7 @@ impl NativeAgent {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == Path::new(name))
+                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
                 }) {
                     self.project_context_needs_refresh.send(()).ok();
                 }
@@ -836,10 +835,15 @@ impl NativeAgentConnection {
     }
 }
 
-impl AgentModelSelector for NativeAgentConnection {
+struct NativeAgentModelSelector {
+    session_id: acp::SessionId,
+    connection: NativeAgentConnection,
+}
+
+impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
         log::debug!("NativeAgentConnection::list_models called");
-        let list = self.0.read(cx).models.model_list.clone();
+        let list = self.connection.0.read(cx).models.model_list.clone();
         Task::ready(if list.is_empty() {
             Err(anyhow::anyhow!("No models available"))
         } else {
@@ -847,24 +851,24 @@ impl AgentModelSelector for NativeAgentConnection {
         })
     }
 
-    fn select_model(
-        &self,
-        session_id: acp::SessionId,
-        model_id: acp_thread::AgentModelId,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        log::debug!("Setting model for session {}: {}", session_id, model_id);
+    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
+        log::debug!(
+            "Setting model for session {}: {}",
+            self.session_id,
+            model_id
+        );
         let Some(thread) = self
+            .connection
             .0
             .read(cx)
             .sessions
-            .get(&session_id)
+            .get(&self.session_id)
             .map(|session| session.thread.clone())
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
 
-        let Some(model) = self.0.read(cx).models.model_from_id(&model_id) else {
+        let Some(model) = self.connection.0.read(cx).models.model_from_id(&model_id) else {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
@@ -872,33 +876,32 @@ impl AgentModelSelector for NativeAgentConnection {
             thread.set_model(model.clone(), cx);
         });
 
-        update_settings_file(self.0.read(cx).fs.clone(), cx, move |settings, _cx| {
-            let provider = model.provider_id().0.to_string();
-            let model = model.id().0.to_string();
-            settings
-                .agent
-                .get_or_insert_default()
-                .set_model(LanguageModelSelection {
-                    provider: provider.into(),
-                    model,
-                });
-        });
+        update_settings_file(
+            self.connection.0.read(cx).fs.clone(),
+            cx,
+            move |settings, _cx| {
+                let provider = model.provider_id().0.to_string();
+                let model = model.id().0.to_string();
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .set_model(LanguageModelSelection {
+                        provider: provider.into(),
+                        model,
+                    });
+            },
+        );
 
         Task::ready(Ok(()))
     }
 
-    fn selected_model(
-        &self,
-        session_id: &acp::SessionId,
-        cx: &mut App,
-    ) -> Task<Result<acp_thread::AgentModelInfo>> {
-        let session_id = session_id.clone();
-
+    fn selected_model(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
         let Some(thread) = self
+            .connection
             .0
             .read(cx)
             .sessions
-            .get(&session_id)
+            .get(&self.session_id)
             .map(|session| session.thread.clone())
         else {
             return Task::ready(Err(anyhow!("Session not found")));
@@ -915,8 +918,8 @@ impl AgentModelSelector for NativeAgentConnection {
         )))
     }
 
-    fn watch(&self, cx: &mut App) -> watch::Receiver<()> {
-        self.0.read(cx).models.watch()
+    fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.connection.0.read(cx).models.watch())
     }
 }
 
@@ -972,8 +975,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Task::ready(Ok(()))
     }
 
-    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
-        Some(Rc::new(self.clone()) as Rc<dyn AgentModelSelector>)
+    fn model_selector(&self, session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
+        Some(Rc::new(NativeAgentModelSelector {
+            session_id: session_id.clone(),
+            connection: self.clone(),
+        }) as Rc<dyn AgentModelSelector>)
     }
 
     fn prompt(
@@ -1196,16 +1202,14 @@ mod tests {
     use crate::HistoryEntryId;
 
     use super::*;
-    use acp_thread::{
-        AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo, MentionUri,
-    };
+    use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use indoc::indoc;
+    use indoc::formatdoc;
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -1255,14 +1259,17 @@ mod tests {
         fs.insert_file("/a/.rules", Vec::new()).await;
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
-            let rules_entry = worktree.read(cx).entry_for_path(".rules").unwrap();
+            let rules_entry = worktree
+                .read(cx)
+                .entry_for_path(rel_path(".rules"))
+                .unwrap();
             assert_eq!(
                 agent.project_context.read(cx).worktrees,
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
                     rules_file: Some(RulesFileContext {
-                        path_in_worktree: Path::new(".rules").into(),
+                        path_in_worktree: rel_path(".rules").into(),
                         text: "".into(),
                         project_entry_id: rules_entry.id.to_usize()
                     })
@@ -1292,7 +1299,25 @@ mod tests {
             .unwrap(),
         );
 
-        let models = cx.update(|cx| connection.list_models(cx)).await.unwrap();
+        // Create a thread/session
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        let models = cx
+            .update(|cx| {
+                connection
+                    .model_selector(&session_id)
+                    .unwrap()
+                    .list_models(cx)
+            })
+            .await
+            .unwrap();
 
         let acp_thread::AgentModelList::Grouped(models) = models else {
             panic!("Unexpected model group");
@@ -1302,8 +1327,9 @@ mod tests {
             IndexMap::from_iter([(
                 AgentModelGroupName("Fake".into()),
                 vec![AgentModelInfo {
-                    id: AgentModelId("fake/fake".into()),
+                    id: acp::ModelId("fake/fake".into()),
                     name: "Fake".into(),
+                    description: None,
                     icon: Some(ui::IconName::ZedAssistant),
                 }]
             )])
@@ -1360,8 +1386,9 @@ mod tests {
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
 
         // Select a model
-        let model_id = AgentModelId("fake/fake".into());
-        cx.update(|cx| connection.select_model(session_id.clone(), model_id.clone(), cx))
+        let selector = connection.model_selector(&session_id).unwrap();
+        let model_id = acp::ModelId("fake/fake".into());
+        cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
 
@@ -1475,13 +1502,17 @@ mod tests {
         summary_model.end_last_completion_stream();
 
         send.await.unwrap();
+        let uri = MentionUri::File {
+            abs_path: path!("/a/b.md").into(),
+        }
+        .to_uri();
         acp_thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
-                indoc! {"
+                formatdoc! {"
                     ## User
 
-                    What does [@b.md](file:///a/b.md) mean?
+                    What does [@b.md]({uri}) mean?
 
                     ## Assistant
 
@@ -1517,10 +1548,10 @@ mod tests {
         acp_thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
-                indoc! {"
+                formatdoc! {"
                     ## User
 
-                    What does [@b.md](file:///a/b.md) mean?
+                    What does [@b.md]({uri}) mean?
 
                     ## Assistant
 

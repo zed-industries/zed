@@ -39,7 +39,7 @@ jobs:
           content: ${{ steps.get-content.outputs.string }}
 
   send_release_notes_email:
-    if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
+    if: false && github.repository_owner == 'zed-industries' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

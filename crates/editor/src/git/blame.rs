@@ -38,29 +38,27 @@ pub struct GitBlameEntrySummary {
 impl sum_tree::Item for GitBlameEntry {
     type Summary = GitBlameEntrySummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         GitBlameEntrySummary { rows: self.rows }
     }
 }
 
-impl sum_tree::Summary for GitBlameEntrySummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for GitBlameEntrySummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _cx: &()) {
+    fn add_summary(&mut self, summary: &Self) {
         self.rows += summary.rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a GitBlameEntrySummary, _cx: &()) {
+    fn add_summary(&mut self, summary: &'a GitBlameEntrySummary, _cx: ()) {
         *self += summary.rows;
     }
 }
@@ -97,6 +95,7 @@ pub trait BlameRenderer {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        window: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -144,6 +143,7 @@ impl BlameRenderer for () {
         _: Entity<Editor>,
         _: usize,
         _: Hsla,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None
@@ -298,7 +298,7 @@ impl GitBlame {
             self.sync(cx, buffer_id);
 
             let buffer_row = info.buffer_row?;
-            let mut cursor = self.buffers.get(&buffer_id)?.entries.cursor::<u32>(&());
+            let mut cursor = self.buffers.get(&buffer_id)?.entries.cursor::<u32>(());
             cursor.seek_forward(&buffer_row, Bias::Right);
             Some((buffer_id, cursor.item()?.blame.clone()?))
         })
@@ -406,7 +406,7 @@ impl GitBlame {
             .peekable();
 
         let mut new_entries = SumTree::default();
-        let mut cursor = blame_buffer.entries.cursor::<u32>(&());
+        let mut cursor = blame_buffer.entries.cursor::<u32>(());
 
         while let Some(mut edit) = row_edits.next() {
             while let Some(next_edit) = row_edits.peek() {
@@ -419,7 +419,7 @@ impl GitBlame {
                 }
             }
 
-            new_entries.append(cursor.slice(&edit.old.start, Bias::Right), &());
+            new_entries.append(cursor.slice(&edit.old.start, Bias::Right), ());
 
             if edit.new.start > new_entries.summary().rows {
                 new_entries.push(
@@ -427,7 +427,7 @@ impl GitBlame {
                         rows: edit.new.start - new_entries.summary().rows,
                         blame: cursor.item().and_then(|entry| entry.blame.clone()),
                     },
-                    &(),
+                    (),
                 );
             }
 
@@ -438,7 +438,7 @@ impl GitBlame {
                         rows: edit.new.len() as u32,
                         blame: None,
                     },
-                    &(),
+                    (),
                 );
             }
 
@@ -454,14 +454,14 @@ impl GitBlame {
                             rows: cursor.end() - edit.old.end,
                             blame: entry.blame.clone(),
                         },
-                        &(),
+                        (),
                     );
                 }
 
                 cursor.next();
             }
         }
-        new_entries.append(cursor.suffix(), &());
+        new_entries.append(cursor.suffix(), ());
         drop(cursor);
 
         blame_buffer.buffer_snapshot = new_snapshot;
@@ -632,7 +632,7 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
             current_row = entry.range.end;
             entries
         }),
-        &(),
+        (),
     );
 
     if max_row >= current_row {
@@ -641,7 +641,7 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
                 rows: (max_row + 1) - current_row,
                 blame: None,
             },
-            &(),
+            (),
         );
     }
 
@@ -675,8 +675,8 @@ async fn parse_commit_messages(
             .as_ref()
             .map(|(provider, remote)| GitRemote {
                 host: provider.clone(),
-                owner: remote.owner.to_string(),
-                repo: remote.repo.to_string(),
+                owner: remote.owner.clone().into(),
+                repo: remote.repo.clone().into(),
             });
 
         let pull_request = parsed_remote_url
@@ -700,6 +700,7 @@ async fn parse_commit_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git::repository::repo_path;
     use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
@@ -852,7 +853,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -969,7 +970,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -1137,7 +1138,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -1180,7 +1181,7 @@ mod tests {
                     fs.set_blame_for_repo(
                         Path::new(path!("/my-repo/.git")),
                         vec![(
-                            "file.txt".into(),
+                            repo_path("file.txt"),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()

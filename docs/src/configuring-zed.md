@@ -66,13 +66,13 @@ Non-negative `float` values
 
 ## Bottom Dock Layout
 
-- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Description: Control the layout of the bottom dock, relative to the left and right docks.
 - Setting: `bottom_dock_layout`
 - Default: `"contained"`
 
 **Options**
 
-1. Contain the bottom dock, giving the full height of the window to the left and right docks
+1. Contain the bottom dock, giving the full height of the window to the left and right docks.
 
 ```json
 {
@@ -80,7 +80,7 @@ Non-negative `float` values
 }
 ```
 
-2. Give the bottom dock the full width of the window, truncating the left and right docks
+2. Give the bottom dock the full width of the window, truncating the left and right docks.
 
 ```json
 {
@@ -88,7 +88,7 @@ Non-negative `float` values
 }
 ```
 
-3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window.
 
 ```json
 {
@@ -96,7 +96,7 @@ Non-negative `float` values
 }
 ```
 
-3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+4. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
 
 ```json
 {
@@ -410,7 +410,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values from `6` to `100` pixels (inclusive)
+A font size from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -1570,18 +1570,6 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
-
-## Global LSP Settings
-
-- Description: Common language server settings.
-- Setting: `global_lsp_settings`
-- Default:
-
-```json
-"global_lsp_settings": {
-  "button": true
-}
-```
 
 **Options**
 
@@ -3536,7 +3524,7 @@ List of `integer` column numbers
     "button": true,
     "shell": "system",
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     "working_directory": "current_project_directory",
     "scrollbar": {
@@ -3791,11 +3779,11 @@ See Buffer Font Features
 
 - Description: Set the terminal's line height.
 - Setting: `line_height`
-- Default: `comfortable`
+- Default: `standard`
 
 **Options**
 
-1. Use a line height that's `comfortable` for reading, 1.618. (default)
+1. Use a line height that's `comfortable` for reading, 1.618.
 
 ```json
 {
@@ -3805,7 +3793,7 @@ See Buffer Font Features
 }
 ```
 
-2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters. (default)
 
 ```json
 {
@@ -3957,7 +3945,7 @@ Disable with:
 {
   "terminal": {
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     }
   }
 }
@@ -4140,7 +4128,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
-  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,

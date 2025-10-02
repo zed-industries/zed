@@ -1431,10 +1431,14 @@ impl TextThreadEditor {
             else {
                 continue;
             };
-            let worktree_root_name = worktree.read(cx).root_name().to_string();
-            let mut full_path = PathBuf::from(worktree_root_name.clone());
-            full_path.push(&project_path.path);
-            file_slash_command_args.push(full_path.to_string_lossy().to_string());
+            let path_style = worktree.read(cx).path_style();
+            let full_path = worktree
+                .read(cx)
+                .root_name()
+                .join(&project_path.path)
+                .display(path_style)
+                .into_owned();
+            file_slash_command_args.push(full_path);
         }
 
         let cmd_name = FileSlashCommand.name();

@@ -1,5 +1,5 @@
 use std::{fmt::Debug, ops::Add};
-use sum_tree::{Dimension, Edit, Item, KeyedItem, SumTree, Summary};
+use sum_tree::{ContextLessSummary, Dimension, Edit, Item, KeyedItem, SumTree};
 
 pub trait Operation: Clone + Debug {
     fn lamport_timestamp(&self) -> clock::Lamport;
@@ -52,7 +52,7 @@ impl<T: Operation> OperationQueue<T> {
             ops.into_iter()
                 .map(|op| Edit::Insert(OperationItem(op)))
                 .collect(),
-            &(),
+            (),
         );
     }
 
@@ -67,14 +67,12 @@ impl<T: Operation> OperationQueue<T> {
     }
 }
 
-impl Summary for OperationSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl ContextLessSummary for OperationSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, _: &()) {
+    fn add_summary(&mut self, other: &Self) {
         assert!(self.key < other.key);
         self.key = other.key;
         self.len += other.len;
@@ -94,11 +92,11 @@ impl Add<&Self> for OperationSummary {
 }
 
 impl Dimension<'_, OperationSummary> for OperationKey {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &OperationSummary, _: &()) {
+    fn add_summary(&mut self, summary: &OperationSummary, _: ()) {
         assert!(*self <= summary.key);
         *self = summary.key;
     }
@@ -107,7 +105,7 @@ impl Dimension<'_, OperationSummary> for OperationKey {
 impl<T: Operation> Item for OperationItem<T> {
     type Summary = OperationSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         OperationSummary {
             key: OperationKey::new(self.0.lamport_timestamp()),
             len: 1,
