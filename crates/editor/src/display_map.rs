@@ -1920,7 +1920,7 @@ pub mod tests {
 
             // Re-wrap on font size changes
             map.update(cx, |map, cx| {
-                map.set_font(font("Helvetica"), font_size + 3., cx)
+                map.set_font(font("Helvetica"), font_size + Pixels::from(3.), cx)
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
