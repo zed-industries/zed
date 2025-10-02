@@ -237,7 +237,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
-                // todo!("Implement another setting item type that just shows an edit in settings.json")
+                // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Preview Channel",
                 //     description: "Which settings should be activated only in Preview build of Zed",
@@ -317,7 +317,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 // }),
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Icon Theme",
-                //     // todo!(settings_ui)
+                //     // todo(settings_ui)
                 //     // This description is misleading because the icon theme is used in more places than the file explorer)
                 //     description: "Choose the icon theme for file explorer",
                 //     field: Box::new(SettingField {
@@ -2706,7 +2706,7 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         });
 
-    // todo!( Figure out how we want to handle discriminant unions)
+    // todo(settings_ui): Figure out how we want to handle discriminant unions
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
