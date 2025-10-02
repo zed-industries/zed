@@ -253,7 +253,9 @@ pub enum BaseKeymapContent {
 /// Valid values: "left" or "right"
 /// - "left": Window controls on the left side (macOS style)
 /// - "right": Window controls on the right side (Windows style)
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowControlsPosition {
     /// Window controls on the left side (macOS style)

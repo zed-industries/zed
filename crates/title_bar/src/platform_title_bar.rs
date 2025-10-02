@@ -1,12 +1,12 @@
+use crate::title_bar_settings::TitleBarSettings;
 use gpui::{
     AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
 };
+use settings::{Settings, WindowControlsPosition};
 use smallvec::SmallVec;
 use std::mem;
 use ui::prelude::*;
-use settings::{Settings, WindowControlsPosition};
-use crate::title_bar_settings::TitleBarSettings;
 
 use crate::{
     platforms::{platform_linux, platform_mac, platform_windows},
@@ -153,13 +153,17 @@ impl Render for PlatformTitleBar {
                                     h_flex()
                                         .w_full()
                                         .bg(titlebar_color)
-                                        .child(platform_linux::LinuxWindowControls::new(close_action))
+                                        .child(platform_linux::LinuxWindowControls::new(
+                                            close_action,
+                                        ))
                                         .child(title_bar)
                                         .when(supported_controls.window_menu, |titlebar| {
-                                            titlebar
-                                                .on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                            titlebar.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |ev, window, _| {
                                                     window.show_window_menu(ev.position)
-                                                })
+                                                },
+                                            )
                                         })
                                         .on_mouse_move(cx.listener(move |this, _ev, window, _| {
                                             if this.should_move {
@@ -167,9 +171,11 @@ impl Render for PlatformTitleBar {
                                                 window.start_window_move();
                                             }
                                         }))
-                                        .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                            this.should_move = false;
-                                        }))
+                                        .on_mouse_down_out(cx.listener(
+                                            move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            },
+                                        ))
                                         .on_mouse_up(
                                             MouseButton::Left,
                                             cx.listener(move |this, _ev, _window, _cx| {
@@ -186,12 +192,16 @@ impl Render for PlatformTitleBar {
                                 WindowControlsPosition::Right => {
                                     // Windows style: controls at the end of the titlebar
                                     title_bar
-                                        .child(platform_linux::LinuxWindowControls::new(close_action))
+                                        .child(platform_linux::LinuxWindowControls::new(
+                                            close_action,
+                                        ))
                                         .when(supported_controls.window_menu, |titlebar| {
-                                            titlebar
-                                                .on_mouse_down(MouseButton::Right, move |ev, window, _| {
+                                            titlebar.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |ev, window, _| {
                                                     window.show_window_menu(ev.position)
-                                                })
+                                                },
+                                            )
                                         })
                                         .on_mouse_move(cx.listener(move |this, _ev, window, _| {
                                             if this.should_move {
@@ -199,9 +209,11 @@ impl Render for PlatformTitleBar {
                                                 window.start_window_move();
                                             }
                                         }))
-                                        .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                            this.should_move = false;
-                                        }))
+                                        .on_mouse_down_out(cx.listener(
+                                            move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            },
+                                        ))
                                         .on_mouse_up(
                                             MouseButton::Left,
                                             cx.listener(move |this, _ev, _window, _cx| {
