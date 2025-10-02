@@ -5,7 +5,6 @@ use client::{Client, UserStore};
 use collections::HashSet;
 use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
-use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod api_key;
 pub mod provider;
@@ -16,7 +15,9 @@ use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
+use crate::provider::deepseek::DeepSeekLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
+use crate::provider::glm::GlmLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
@@ -131,6 +132,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        GlmLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
