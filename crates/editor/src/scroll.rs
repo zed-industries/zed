@@ -309,8 +309,8 @@ impl ScrollManager {
                         item_id,
                         workspace_id,
                         top_row,
-                        anchor.offset.x as f32,
-                        anchor.offset.y as f32,
+                        anchor.offset.x,
+                        anchor.offset.y,
                     )
                     .await
                     .log_err()
@@ -776,7 +776,7 @@ impl Editor {
                 .snapshot(cx)
                 .anchor_before(Point::new(top_row, 0));
             let scroll_anchor = ScrollAnchor {
-                offset: gpui::Point::new(x as f64, y as f64),
+                offset: gpui::Point::new(x, y),
                 anchor: top_anchor,
             };
             self.set_scroll_anchor(scroll_anchor, window, cx);
