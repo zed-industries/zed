@@ -112,7 +112,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
@@ -506,6 +507,7 @@ pub fn init_settings(cx: &mut App) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
+    StatusBarSettings::register(cx);
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
@@ -1745,6 +1747,10 @@ impl Workspace {
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
+    }
+
+    pub fn status_bar_visible(&self, cx: &App) -> bool {
+        StatusBarSettings::get_global(cx).show
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -6729,7 +6735,9 @@ impl Render for Workspace {
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
-                        .child(self.status_bar.clone())
+                        .when(self.status_bar_visible(cx), |parent| {
+                            parent.child(self.status_bar.clone())
+                        })
                         .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
@@ -10770,6 +10778,46 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_visibility(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, _cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Test with status bar shown (default)
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible by default");
+        });
+
+        // Test with status bar hidden
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(false);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(!visible, "Status bar should be hidden when show is false");
+        });
+
+        // Test with status bar shown explicitly
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(true);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible when show is true");
+        });
     }
 
     fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
