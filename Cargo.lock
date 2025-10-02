@@ -19689,7 +19689,6 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "cranelift-codegen",
- "crc32fast",
  "crossbeam-channel",
  "crossbeam-epoch",
  "crossbeam-utils",
