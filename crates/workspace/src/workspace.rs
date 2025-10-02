@@ -5989,7 +5989,7 @@ impl Workspace {
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
-                .unwrap_or(Pixels(0.0));
+                .unwrap_or(Pixels::ZERO);
             if left_dock_size + size > self.bounds.right() {
                 size = self.bounds.right() - left_dock_size
             }

@@ -119,8 +119,8 @@ impl LanguageModelImage {
                         image_size,
                     );
                     let resized_image = dynamic_image.resize(
-                        new_bounds.size.width.0 as u32,
-                        new_bounds.size.height.0 as u32,
+                        new_bounds.size.width.into(),
+                        new_bounds.size.height.into(),
                         image::imageops::FilterType::Triangle,
                     );
 

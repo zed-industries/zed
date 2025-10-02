@@ -5,7 +5,7 @@ use crate::{
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
-    scroll::ScrollAnchor,
+    scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -1338,7 +1338,7 @@ struct EditorRestorationData {
 
 #[derive(Default, Debug)]
 pub struct RestorationData {
-    pub scroll_position: (BufferRow, gpui::Point<f32>),
+    pub scroll_position: (BufferRow, gpui::Point<ScrollOffset>),
     pub folds: Vec<Range<Point>>,
     pub selections: Vec<Range<Point>>,
 }
