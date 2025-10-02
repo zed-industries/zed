@@ -4602,7 +4602,8 @@ impl Repository {
             let search_paths = environment.get("PATH").map(|val| val.to_owned());
             let backend = cx
                 .background_spawn(async move {
-                    let system_git_binary_path = search_paths.and_then(|search_paths| which::which_in("git", Some(search_paths), &work_directory_abs_path).ok());
+                    let system_git_binary_path = search_paths.and_then(|search_paths| which::which_in("git", Some(search_paths), &work_directory_abs_path).ok())
+                        .or_else(|| which::which("git").ok());
                     fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
                         .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
                 })
