@@ -122,23 +122,24 @@ pub trait WithScrollbar: Sized {
     where
         T: ScrollableHandle;
 
-    #[track_caller]
-    fn horizontal_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
-        self.custom_scrollbars(
-            Scrollbars::new(ScrollAxes::Horizontal).ensure_id(core::panic::Location::caller()),
-            window,
-            cx,
-        )
-    }
+    /// TODO: account for these cases properly
+    // #[track_caller]
+    // fn horizontal_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
+    //     self.custom_scrollbars(
+    //         Scrollbars::new(ScrollAxes::Horizontal).ensure_id(core::panic::Location::caller()),
+    //         window,
+    //         cx,
+    //     )
+    // }
 
-    #[track_caller]
-    fn vertical_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
-        self.custom_scrollbars(
-            Scrollbars::new(ScrollAxes::Vertical).ensure_id(core::panic::Location::caller()),
-            window,
-            cx,
-        )
-    }
+    // #[track_caller]
+    // fn vertical_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
+    //     self.custom_scrollbars(
+    //         Scrollbars::new(ScrollAxes::Vertical).ensure_id(core::panic::Location::caller()),
+    //         window,
+    //         cx,
+    //     )
+    // }
 
     #[track_caller]
     fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle>(
