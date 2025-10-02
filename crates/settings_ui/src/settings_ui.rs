@@ -1502,6 +1502,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     };
 
     Switch::new("toggle_button", toggle_state)
+        .color(ui::SwitchColor::Accent)
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
@@ -1566,6 +1567,7 @@ where
             menu
         }),
     )
+    .style(ui::DropdownStyle::Outlined)
     .into_any_element()
 }
 
