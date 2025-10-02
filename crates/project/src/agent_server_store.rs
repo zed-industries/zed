@@ -1099,7 +1099,6 @@ impl ExternalAgentServer for LocalCodex {
 /// Example output:
 /// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
 fn codex_release_url(version: &str) -> Option<String> {
-    // Determine arch
     let arch = if cfg!(target_arch = "x86_64") {
         "x86_64"
     } else if cfg!(target_arch = "aarch64") {
@@ -1108,7 +1107,6 @@ fn codex_release_url(version: &str) -> Option<String> {
         return None;
     };
 
-    // Determine platform triple part
     let platform = if cfg!(target_os = "macos") {
         "apple-darwin"
     } else if cfg!(target_os = "windows") {
@@ -1119,18 +1117,18 @@ fn codex_release_url(version: &str) -> Option<String> {
         return None;
     };
 
-    // Determine extension: only Windows x86_64 uses .zip per release assets
+    // Only Windows x86_64 uses .zip in release assets
     let ext = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
         "zip"
     } else {
         "tar.gz"
     };
 
-    let prefix = "https://github.com/zed-industries/codex-acp/releases/download/";
-    let tag = format!("v{}", version);
-    let filename = format!("codex-acp-{}-{}-{}.{}", version, arch, platform, ext);
+    let prefix = "https://github.com/zed-industries/codex-acp/releases/download";
 
-    Some(format!("{prefix}{tag}/{filename}"))
+    Some(format!(
+        "{prefix}/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}"
+    ))
 }
 
 struct LocalCustomAgent {
