@@ -1178,6 +1178,13 @@ mod tests {
     fn assembles_codex_release_url_for_current_target() {
         let version_number = "0.1.0";
 
+        // This test fails the build if we are building a version of Zed
+        // which does not have a known build of codex-acp, to prevent us
+        // from accidentally doing a release on a new target without
+        // realizing that codex-acp support will not work on that target!
+        //
+        // Additionally, it verifies that our logic for assembling URLs
+        // correctly resolves to a known-good URL on each of our targets.
         let allowed = [
             "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-apple-darwin.tar.gz",
             "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-pc-windows-msvc.tar.gz",
