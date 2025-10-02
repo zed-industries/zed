@@ -14,8 +14,6 @@ use crate::Identifier;
 
 // todo!
 //
-// `self` from rust imports
-//
 // rename suffix to "content"?
 
 // Future improvements:
@@ -31,6 +29,9 @@ use crate::Identifier;
 // * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
 //
 // * Only use the top syntax layer?
+//
+// * Support for importing namespaces (`self` in Rust, etc). Requires parsing of identifier
+// qualification.
 
 #[derive(Debug, Clone)]
 pub struct Imports {

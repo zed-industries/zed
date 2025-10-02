@@ -71,8 +71,11 @@ impl ScoredDeclaration {
         if self.components.is_same_file {
             // TODO: use declaration_line_distance_rank
             2.0 / self.components.same_file_declaration_count as f32
-        } else {
+        } else if self.components.normalized_import_similarity > 0.0 {
             self.components.normalized_import_similarity / self.components.declaration_count as f32
+        } else {
+            0.5 * self.components.normalized_wildcard_import_similarity
+                / self.components.declaration_count as f32
         }
     }
 
@@ -106,6 +109,16 @@ pub fn scored_declarations(
 ) -> Vec<ScoredDeclaration> {
     let cursor_point = cursor_offset.to_point(&current_buffer);
 
+    let wildcard_imports_ocurrences = imports
+        .iter()
+        .flat_map(|imports| {
+            imports
+                .wildcard_namespaces
+                .iter()
+                .map(|namespace| Occurrences::from_identifiers(&namespace.0))
+        })
+        .collect::<Vec<_>>();
+
     let mut declarations = identifier_to_references
         .into_iter()
         .flat_map(|(identifier, references)| {
@@ -122,6 +135,9 @@ pub fn scored_declarations(
                         .map(|namespace| Occurrences::from_identifiers(&namespace.0))
                 })
                 .collect::<Vec<_>>();
+
+            let mut max_import_similarity = 0.0;
+            let mut max_wildcard_import_similarity = 0.0;
 
             let mut scored_declarations_for_identifier = declarations
                 .into_iter()
@@ -176,7 +192,7 @@ pub fn scored_declarations(
                     )| {
                         let same_file_declaration_count = index.file_declaration_count(declaration);
 
-                        score_declaration(
+                        let declaration = score_declaration(
                             &identifier,
                             &references,
                             declaration.clone(),
@@ -188,24 +204,38 @@ pub fn scored_declarations(
                             &excerpt_occurrences,
                             &adjacent_occurrences,
                             &import_namespace_occurrences,
+                            &wildcard_imports_ocurrences,
                             cursor_point,
                             current_buffer,
-                        )
+                        );
+
+                        if declaration.components.import_similarity > max_import_similarity {
+                            max_import_similarity = declaration.components.import_similarity;
+                        }
+
+                        if declaration.components.wildcard_import_similarity
+                            > max_wildcard_import_similarity
+                        {
+                            max_wildcard_import_similarity =
+                                declaration.components.wildcard_import_similarity;
+                        }
+
+                        declaration
                     },
                 )
                 .collect::<Vec<_>>();
 
-            let max_import_similarity = scored_declarations_for_identifier
-                .iter()
-                .map(|decl| OrderedFloat(decl.components.import_similarity))
-                .max()
-                .unwrap_or_default()
-                .into_inner();
-
-            if max_import_similarity > 0.0 {
+            if max_import_similarity > 0.0 || max_wildcard_import_similarity > 0.0 {
                 for declaration in scored_declarations_for_identifier.iter_mut() {
-                    declaration.components.normalized_import_similarity =
-                        declaration.components.import_similarity / max_import_similarity;
+                    if max_import_similarity > 0.0 {
+                        declaration.components.normalized_import_similarity =
+                            declaration.components.import_similarity / max_import_similarity;
+                    }
+                    if max_wildcard_import_similarity > 0.0 {
+                        declaration.components.normalized_wildcard_import_similarity =
+                            declaration.components.wildcard_import_similarity
+                                / max_wildcard_import_similarity;
+                    }
                 }
             }
 
@@ -245,6 +275,7 @@ fn score_declaration(
     excerpt_occurrences: &Occurrences,
     adjacent_occurrences: &Occurrences,
     import_namespace_occurrences: &[Occurrences],
+    wildcard_imports_occurrences: &[Occurrences],
     cursor: Point,
     current_buffer: &BufferSnapshot,
 ) -> ScoredDeclaration {
@@ -307,6 +338,18 @@ fn score_declaration(
         .map(|similarity| similarity.into_inner())
         .unwrap_or_default();
 
+    // TODO: Consider skipping if import_similarity is high
+    //
+    // TODO: Consider something other than max
+    let wildcard_import_similarity = wildcard_imports_occurrences
+        .iter()
+        .map(|namespace_occurrences| {
+            OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
+        })
+        .max()
+        .map(|similarity| similarity.into_inner())
+        .unwrap_or_default();
+
     // TODO: Consider adding declaration_file_count
     let score_components = DeclarationScoreComponents {
         is_same_file,
@@ -328,6 +371,8 @@ fn score_declaration(
         adjacent_vs_signature_weighted_overlap,
         import_similarity,
         normalized_import_similarity: 0.0,
+        wildcard_import_similarity,
+        normalized_wildcard_import_similarity: 0.0,
     };
 
     ScoredDeclaration {
