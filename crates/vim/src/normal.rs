@@ -450,6 +450,7 @@ impl Vim {
         &mut self,
         object: Object,
         times: Option<usize>,
+        is_opening: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -524,6 +525,7 @@ impl Vim {
                 if self.check_and_move_to_valid_bracket_pair(object, window, cx) {
                     waiting_operator = Some(Operator::ChangeSurrounds {
                         target: Some(object),
+                        is_opening,
                     });
                 }
             }

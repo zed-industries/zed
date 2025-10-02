@@ -302,7 +302,7 @@ struct MiddleOfLine {
     display_lines: bool,
 }
 
-/// Finds the next unmatched bracket or delimiter.
+/// Finds the next unmatch
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]

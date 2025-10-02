@@ -109,6 +109,7 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
+        is_opening: bool,
     },
     DeleteSurrounds,
     Mark,
