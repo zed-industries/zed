@@ -323,6 +323,38 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                SettingsPageItem::SectionHeader("Layout"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Bottom Dock Layout",
+                    description: "Layout mode for the bottom dock",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.bottom_dock_layout
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Zoomed Padding",
+                    description: "Whether to show padding for zoomed panels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Window Tabs",
+                    description: "Whether to allow windows to tab together based on the user's tabbing preference (macOS only)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_window_tabs
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Fonts"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Family",
@@ -707,6 +739,87 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content.project.all_languages.defaults.soft_wrap
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Search"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Wrap",
+                    description: "Whether the editor search results will loop",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.search_wrap,
+                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Seed Search Query From Cursor",
+                    description: "When to populate a new search's query based on the text under the cursor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.seed_search_query_from_cursor
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.seed_search_query_from_cursor
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Smartcase Search",
+                    description: "Whether to use smartcase search",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.use_smartcase_search
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Editor Behavior"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Redact Private Values",
+                    description: "Hide the values of variables in private files",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.redact_private_values,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.redact_private_values
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Middle Click Paste",
+                    description: "Whether to enable middle-click paste on Linux",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.middle_click_paste,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.middle_click_paste
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Double Click In Multibuffer",
+                    description: "What to do when multibuffer is double clicked in some of its excerpts",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.double_click_in_multibuffer
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.double_click_in_multibuffer
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Go To Definition Fallback",
+                    description: "Whether to follow-up empty go to definition responses from the language server",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.go_to_definition_fallback
                         },
                     }),
                     metadata: None,
@@ -1305,6 +1418,44 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Terminal"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Terminal Button",
+                    description: "Whether to show the terminal button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Navigation History Buttons",
+                    description: "Whether or not to show the navigation history buttons in the tab bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show_nav_history_buttons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tab_bar
+                                .get_or_insert_default()
+                                .show_nav_history_buttons
+                        },
+                    }),
+                    metadata: None,
+                }),
             ],
         },
         SettingsPage {
@@ -1384,6 +1535,128 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Tab Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Activate On Close",
+                    description: "What to do after closing the current tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.activate_on_close
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .activate_on_close
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Show Diagnostics",
+                    description: "Which files containing diagnostic errors/warnings to mark in the tabs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.show_diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .show_diagnostics
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Close Button",
+                    description: "Controls the appearance behavior of the tab's close button",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.show_close_button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .show_close_button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Preview Tabs"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Preview Tabs Enabled",
+                    description: "Whether to show opened editors as preview tabs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enabled
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From File Finder",
+                    description: "Whether to open tabs in preview mode when selected from the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enable_preview_from_file_finder
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_file_finder
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From Code Navigation",
+                    description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enable_preview_from_code_navigation
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_code_navigation
                         },
                     }),
                     metadata: None,
@@ -2408,7 +2681,27 @@ fn init_renderers(cx: &mut App) {
             |settings_field, file, _, window, cx| {
                 render_dropdown(*settings_field, file, window, cx)
             },
-        );
+        )
+        .add_renderer::<settings::SeedQuerySetting>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::DoubleClickInMultibuffer>(
+            |settings_field, file, _, window, cx| {
+                render_dropdown(*settings_field, file, window, cx)
+            },
+        )
+        .add_renderer::<settings::GoToDefinitionFallback>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ActivateOnClose>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowDiagnostics>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        });
 
     // todo!( Figure out how we want to handle discriminant unions)
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
