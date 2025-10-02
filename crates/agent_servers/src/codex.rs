@@ -5,6 +5,7 @@ use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
 use gpui::{App, SharedString, Task};
+use project::agent_server_store::CODEX_NAME;
 
 #[derive(Clone)]
 pub struct Codex;
@@ -39,7 +40,7 @@ impl AgentServer for Codex {
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
-                        .get_external_agent(&"codex".into())
+                        .get_external_agent(&CODEX_NAME.into())
                         .context("Codex is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
