@@ -127,7 +127,17 @@ pub struct Request {
     pub response_format: Option<ResponseFormat>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
+    // #[serde(default, skip_serializing_if = "Option::is_none")]
+    // pub thinking: Option<ThinkingOption>,
+    // todo: thinking
 }
+
+// #[derive(Debug, Serialize, Deserialize)]
+// #[serde(rename_all = "snake_case")]
+// pub struct ThinkingOption {
+//
+//     pub r#type: bool
+// }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,7 +204,7 @@ pub struct FunctionContent {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
-    pub request_id: String,
+    // pub request_id: String,
     pub created: u64,
     pub model: String,
     pub choices: Vec<Choice>,
@@ -224,7 +234,7 @@ pub struct Choice {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StreamResponse {
     pub id: String,
-    pub request_id: String,
+    // pub request_id: String,
     pub created: u64,
     pub model: String,
     pub choices: Vec<StreamChoice>,
