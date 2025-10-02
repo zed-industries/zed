@@ -1236,9 +1236,11 @@ pub fn handle_settings_file_changes(
                                  store: &mut SettingsStore,
                                  cx: &mut App|
           -> bool {
+        let id = NotificationId::Named("failed-to-migrate-settings".into());
         // Apply migrations to both user and global settings
         let (processed_content, content_migrated) = match migrate_settings(&content) {
             Ok(result) => {
+                dismiss_app_notification(&id, cx);
                 if let Some(migrated_content) = result {
                     (migrated_content, true)
                 } else {
@@ -1246,26 +1248,17 @@ pub fn handle_settings_file_changes(
                 }
             }
             Err(err) => {
-                // todo! markdown content
-                // todo! show path to failed setting in migration
-                show_app_notification(
-                    NotificationId::Named("failed-to-migrate-settings".into()),
-                    cx,
-                    move |cx| {
-                        cx.new(|cx| {
-                            MessageNotification::new(
-                                format!("Failed to migrate settings\n{err}"),
-                                cx,
-                            )
+                show_app_notification(id, cx, move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("Failed to migrate settings\n{err}"), cx)
                             .primary_message("Open Settings File")
                             .primary_icon(IconName::Settings)
                             .primary_on_click(|window, cx| {
                                 window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                                 cx.emit(DismissEvent);
                             })
-                        })
-                    },
-                );
+                    })
+                });
                 // notify user here
                 (content, false)
             }
