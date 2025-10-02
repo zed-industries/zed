@@ -194,17 +194,20 @@ impl AgentServerStore {
                 )
             }));
 
-        self.external_agents.insert(
-            CODEX_NAME.into(),
-            Box::new(LocalCodex {
-                fs: fs.clone(),
-                project_environment: project_environment.clone(),
-                custom_command: new_settings
-                    .codex
-                    .clone()
-                    .and_then(|settings| settings.custom_command()),
-            }),
-        );
+        use feature_flags::FeatureFlagAppExt as _;
+        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() || new_settings.codex.is_some() {
+            self.external_agents.insert(
+                CODEX_NAME.into(),
+                Box::new(LocalCodex {
+                    fs: fs.clone(),
+                    project_environment: project_environment.clone(),
+                    custom_command: new_settings
+                        .codex
+                        .clone()
+                        .and_then(|settings| settings.custom_command()),
+                }),
+            );
+        }
 
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
