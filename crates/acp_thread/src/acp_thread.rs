@@ -2361,12 +2361,10 @@ mod tests {
         });
 
         // After Created, buffered Output should have been flushed into the renderer
-        let content = thread
-            .read_with(cx, |thread, cx| {
-                let term = thread.terminal(terminal_id.clone()).unwrap();
-                term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
-            })
-            .unwrap();
+        let content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminal(terminal_id.clone()).unwrap();
+            term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
+        });
 
         assert!(
             content.contains("hello buffered"),
@@ -2442,12 +2440,10 @@ mod tests {
         });
 
         // Output should be present after Created (flushed from buffer)
-        let content = thread
-            .read_with(cx, |thread, cx| {
-                let term = thread.terminal(terminal_id.clone()).unwrap();
-                term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
-            })
-            .unwrap();
+        let content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminal(terminal_id.clone()).unwrap();
+            term.read_with(cx, |t, cx| t.inner().read(cx).get_content())
+        });
 
         assert!(
             content.contains("pre-exit data"),
