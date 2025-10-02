@@ -45,9 +45,11 @@ impl Imports {
                 grammar.imports_config().map(|imports| &imports.query)
             });
 
-        let mut all_imports_range: Option<Range<usize>> = None;
         let mut detached_nodes: Vec<DetachedNode> = Vec::new();
         let mut identifier_namespaces = HashMap::default();
+        let mut all_imports_range: Option<Range<usize>> = None;
+        let mut import_range = None;
+
         while let Some(query_match) = matches.peek() {
             let language_id = query_match.language.id();
             let ImportsConfig {
@@ -66,23 +68,27 @@ impl Imports {
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
                 if capture.index == *import_statement_ix {
-                    if let Some(import_range) = all_imports_range.as_mut() {
-                        import_range.end = capture_range.end;
-                    } else {
-                        all_imports_range = Some(capture_range.clone());
-                    }
+                    import_range = Some(capture_range.clone());
+                    all_imports_range
+                        .get_or_insert_with(|| capture_range.clone())
+                        .end = capture_range.end;
                     Self::collect_from_import_statement(
                         &detached_nodes,
                         &snapshot,
                         &mut identifier_namespaces,
                     );
                     detached_nodes.clear();
-                } else if capture.index == *name_ix {
-                    name_range = Some(capture_range);
-                } else if capture.index == *path_ix {
-                    path_range = Some(capture_range);
-                } else if capture.index == *list_ix {
-                    list_range = Some(capture_range);
+                } else if import_range
+                    .as_ref()
+                    .is_some_and(|import_range| import_range.contains_inclusive(&capture_range))
+                {
+                    if capture.index == *name_ix {
+                        name_range = Some(capture_range);
+                    } else if capture.index == *path_ix {
+                        path_range = Some(capture_range);
+                    } else if capture.index == *list_ix {
+                        list_range = Some(capture_range);
+                    }
                 }
             }
 
@@ -389,6 +395,19 @@ mod test {
                     "std::any::TypeId",
                     "std::any::Any",
                 ],
+            ),
+            (
+                indoc! {"
+                    use std::collections::HashSet;
+
+                    fn main() {
+                        let unqualified = HashSet::new();
+                        let qualified = std::collections::HashMap::new();
+                    }
+
+                    use std::any::TypeId;
+                "},
+                vec!["std::collections::HashSet", "std::any::TypeId"],
             ),
         ];
         let language = Arc::new(rust_lang());
