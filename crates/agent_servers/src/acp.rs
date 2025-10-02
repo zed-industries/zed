@@ -251,10 +251,10 @@ impl AgentConnection for AcpConnection {
                 .new_session(acp::NewSessionRequest { mcp_servers, cwd, meta: None })
                 .await
                 .map_err(|err| {
-                    if err.code == ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
                         let mut error = AuthRequired::new();
 
-                        if err.message != ErrorCode::AUTH_REQUIRED.message {
+                        if err.message != acp::ErrorCode::AUTH_REQUIRED.message {
                             error = error.with_description(err.message);
                         }
 
@@ -380,7 +380,7 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
-                    if err.code == ErrorCode::AUTH_REQUIRED.code {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
                         return Err(anyhow!(acp::Error::auth_required()));
                     }
 
