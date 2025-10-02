@@ -1124,7 +1124,8 @@ pub struct BracketPair {
 pub struct LanguageId(usize);
 
 impl LanguageId {
-    pub(crate) fn new() -> Self {
+    // todo! put back pub(crate)
+    pub fn new() -> Self {
         Self(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst))
     }
 }
@@ -1318,9 +1319,9 @@ pub struct DebugVariablesConfig {
 pub struct ImportsConfig {
     pub query: Query,
     pub import_statement_ix: u32,
-    pub import_prefix_ix: u32,
-    pub prefixed_contents_ix: u32,
-    pub import_ix: u32,
+    pub name_ix: u32,
+    pub path_ix: u32,
+    pub list_ix: u32,
 }
 
 impl Language {
@@ -1437,7 +1438,6 @@ impl Language {
                 .with_debug_variables_query(query.as_ref())
                 .context("Error loading debug variables query")?;
         }
-
         if let Some(query) = queries.imports {
             self = self
                 .with_imports_query(query.as_ref())
@@ -1620,9 +1620,9 @@ impl Language {
         let import_ix = query.capture_index_for_name("import");
 
         let mut import_statement_ix = 0;
-        let mut import_prefix_ix = 0;
-        let mut prefixed_contents_ix = 0;
-        let mut import_ix = 0;
+        let mut name_ix = 0;
+        let mut path_ix = 0;
+        let mut list_ix = 0;
         if populate_capture_indices(
             &query,
             &self.config.name,
@@ -1631,17 +1631,17 @@ impl Language {
             &mut [
                 // todo! make some optional
                 Capture::Required("import_statement", &mut import_statement_ix),
-                Capture::Required("import_prefix", &mut import_prefix_ix),
-                Capture::Required("prefixed_contents", &mut prefixed_contents_ix),
-                Capture::Required("import", &mut import_ix),
+                Capture::Required("name", &mut name_ix),
+                Capture::Required("path", &mut path_ix),
+                Capture::Required("list", &mut list_ix),
             ],
         ) {
             self.grammar_mut()?.imports_config = Some(ImportsConfig {
                 query,
                 import_statement_ix,
-                import_prefix_ix,
-                prefixed_contents_ix,
-                import_ix,
+                name_ix,
+                path_ix,
+                list_ix,
             });
         }
         return Ok(self);
