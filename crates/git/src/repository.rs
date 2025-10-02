@@ -706,7 +706,7 @@ impl GitRepository for RealGitRepository {
                     .trim_end_matches('\0');
                 let parts: Vec<&str> = output.split('\0').map(|value| value.trim()).collect();
 
-                if parts.len() % 5 != 0 {
+                if !parts.len().is_multiple_of(5) {
                     bail!("unexpected git log output length: {}", parts.len());
                 }
 

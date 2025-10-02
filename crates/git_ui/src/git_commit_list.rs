@@ -97,7 +97,7 @@ impl GitCommitList {
 
     // We probably have a next page if the length of all pages matches the per page amount
     fn has_next_page(&self) -> bool {
-        self.commits.len() % (COMMITS_PER_PAGE as usize) == 0
+        self.commits.len().is_multiple_of(COMMITS_PER_PAGE as usize)
     }
 
     fn load_next_history_page(&self, window: &mut Window, cx: &mut Context<Self>) {
