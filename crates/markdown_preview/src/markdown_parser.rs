@@ -38,6 +38,7 @@ fn cleanup_html(source: &str) -> Vec<u8> {
         &mut writer,
         MinifierOptions {
             omit_doctype: true,
+            collapse_whitespace: true,
             ..Default::default()
         },
     );
