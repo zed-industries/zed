@@ -360,7 +360,13 @@ impl std::fmt::Debug for SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn render(&self, file: SettingsUiFile, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(
+        &self,
+        file: SettingsUiFile,
+        is_last: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
@@ -379,6 +385,11 @@ impl SettingsPageItem {
                     .gap_2()
                     .flex_wrap()
                     .justify_between()
+                    .when(!is_last, |this| {
+                        this.pb_4()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
                     .child(
                         v_flex()
                             .max_w_1_2()
@@ -809,10 +820,15 @@ impl SettingsWindow {
     }
 
     fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        v_flex().gap_4().children(
-            self.page_items()
-                .map(|item| item.render(self.current_file.clone(), window, cx)),
-        )
+        let items: Vec<_> = self.page_items().collect();
+        let items_len = items.len();
+
+        v_flex()
+            .gap_4()
+            .children(items.into_iter().enumerate().map(|(index, item)| {
+                let is_last = index == items_len - 1;
+                item.render(self.current_file.clone(), is_last, window, cx)
+            }))
     }
 
     fn current_page_index(&self) -> usize {
