@@ -10,6 +10,7 @@ use text::{Point, ToPoint};
 
 use crate::{
     Declaration, EditPredictionExcerpt, Identifier,
+    imports::Imports,
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
     text_similarity::{Occurrences, jaccard_similarity, weighted_overlap_coefficient},
@@ -21,8 +22,7 @@ const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
 pub struct ScoredDeclaration {
     pub identifier: Identifier,
     pub declaration: Declaration,
-    pub score_components: DeclarationScoreComponents,
-    pub scores: DeclarationScores,
+    pub components: DeclarationScoreComponents,
 }
 
 #[derive(EnumIter, Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -31,12 +31,48 @@ pub enum DeclarationStyle {
     Declaration,
 }
 
+#[derive(Clone, Debug, Serialize, Default)]
+pub struct DeclarationScores {
+    pub signature: f32,
+    pub declaration: f32,
+    pub retrieval: f32,
+}
+
 impl ScoredDeclaration {
     /// Returns the score for this declaration with the specified style.
     pub fn score(&self, style: DeclarationStyle) -> f32 {
+        // TODO: handle truncation
+
+        // Score related to how likely this is the correct declaration, range 0 to 1
+        let retrieval = self.retrieval_score();
+
+        // Score related to the distance between the reference and cursor, range 0 to 1
+        let distance_score = if self.components.is_referenced_nearby {
+            1.0 / (1.0 + self.components.reference_line_distance as f32 / 10.0).powf(2.0)
+        } else {
+            // same score as ~14 lines away, rationale is to not overly penalize references from parent signatures
+            0.5
+        };
+
+        // For now instead of linear combination, the scores are just multiplied together.
+        let combined_score = 10.0 * retrieval * distance_score;
+
         match style {
-            DeclarationStyle::Signature => self.scores.signature,
-            DeclarationStyle::Declaration => self.scores.declaration,
+            DeclarationStyle::Signature => {
+                combined_score * self.components.excerpt_vs_signature_weighted_overlap
+            }
+            DeclarationStyle::Declaration => {
+                2.0 * combined_score * self.components.excerpt_vs_item_weighted_overlap
+            }
+        }
+    }
+
+    pub fn retrieval_score(&self) -> f32 {
+        if self.components.is_same_file {
+            // TODO: use declaration_line_distance_rank
+            2.0 / self.components.same_file_declaration_count as f32
+        } else {
+            self.components.import_similarity / self.components.declaration_count as f32
         }
     }
 
@@ -54,7 +90,7 @@ impl ScoredDeclaration {
     }
 
     pub fn score_density(&self, style: DeclarationStyle) -> f32 {
-        self.score(style) / (self.size(style)) as f32
+        self.score(style) / self.size(style) as f32
     }
 }
 
@@ -63,6 +99,7 @@ pub fn scored_declarations(
     excerpt: &EditPredictionExcerpt,
     excerpt_occurrences: &Occurrences,
     adjacent_occurrences: &Occurrences,
+    imports: Option<&Imports>,
     identifier_to_references: HashMap<Identifier, Vec<Reference>>,
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
@@ -75,8 +112,18 @@ pub fn scored_declarations(
             let declarations =
                 index.declarations_for_identifier::<MAX_IDENTIFIER_DECLARATION_COUNT>(&identifier);
             let declaration_count = declarations.len();
+            let import_namespace_occurrences = imports
+                .map(|imports| imports.symbols.get(&identifier))
+                .unwrap_or_default()
+                .into_iter()
+                .flat_map(|import_namespaces| {
+                    import_namespaces
+                        .iter()
+                        .map(|namespace| Occurrences::from_identifiers(&namespace.0))
+                })
+                .collect::<Vec<_>>();
 
-            declarations
+            let mut scored_declarations_for_identifier = declarations
                 .into_iter()
                 .filter_map(|(declaration_id, declaration)| match declaration {
                     Declaration::Buffer {
@@ -140,14 +187,30 @@ pub fn scored_declarations(
                             declaration_count,
                             &excerpt_occurrences,
                             &adjacent_occurrences,
+                            &import_namespace_occurrences,
                             cursor_point,
                             current_buffer,
                         )
                     },
                 )
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            let max_import_similarity = scored_declarations_for_identifier
+                .iter()
+                .map(|decl| OrderedFloat(decl.components.import_similarity))
+                .max()
+                .unwrap_or_default()
+                .into_inner();
+
+            if max_import_similarity > 0.0 {
+                for declaration in scored_declarations_for_identifier.iter_mut() {
+                    declaration.components.normalized_import_similarity =
+                        declaration.components.import_similarity / max_import_similarity;
+                }
+            }
+
+            scored_declarations_for_identifier
         })
-        .flatten()
         .collect::<Vec<_>>();
 
     declarations.sort_unstable_by_key(|declaration| {
@@ -181,9 +244,10 @@ fn score_declaration(
     declaration_count: usize,
     excerpt_occurrences: &Occurrences,
     adjacent_occurrences: &Occurrences,
+    import_namespace_occurrences: &[Occurrences],
     cursor: Point,
     current_buffer: &BufferSnapshot,
-) -> Option<ScoredDeclaration> {
+) -> ScoredDeclaration {
     let is_referenced_nearby = references
         .iter()
         .any(|r| r.region == ReferenceRegion::Nearby);
@@ -219,6 +283,30 @@ fn score_declaration(
     let adjacent_vs_signature_weighted_overlap =
         weighted_overlap_coefficient(adjacent_occurrences, &item_signature_occurrences);
 
+    // TODO: Consider directly caching this instead
+    //
+    // TODO: Handle special cases like lib.rs as the last component
+    let declaration_path = declaration.cached_full_path();
+    let last_component = declaration_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy());
+    let mut path_components = declaration_path.components();
+    path_components.next_back();
+    let path_occurrences = Occurrences::from_identifiers(
+        path_components
+            .map(|component| component.as_os_str().to_string_lossy())
+            .chain(last_component),
+    );
+
+    let import_similarity = import_namespace_occurrences
+        .iter()
+        .map(|namespace_occurrences| {
+            OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
+        })
+        .max()
+        .map(|similarity| similarity.into_inner())
+        .unwrap_or_default();
+
     // TODO: Consider adding declaration_file_count
     let score_components = DeclarationScoreComponents {
         is_same_file,
@@ -238,52 +326,13 @@ fn score_declaration(
         excerpt_vs_signature_weighted_overlap,
         adjacent_vs_item_weighted_overlap,
         adjacent_vs_signature_weighted_overlap,
+        import_similarity,
+        normalized_import_similarity: 0.0,
     };
 
-    Some(ScoredDeclaration {
+    ScoredDeclaration {
         identifier: identifier.clone(),
         declaration: declaration,
-        scores: DeclarationScores::score(&score_components),
-        score_components,
-    })
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct DeclarationScores {
-    pub signature: f32,
-    pub declaration: f32,
-    pub retrieval: f32,
-}
-
-impl DeclarationScores {
-    fn score(components: &DeclarationScoreComponents) -> DeclarationScores {
-        // TODO: handle truncation
-
-        // Score related to how likely this is the correct declaration, range 0 to 1
-        let retrieval = if components.is_same_file {
-            // TODO: use declaration_line_distance_rank
-            1.0 / components.same_file_declaration_count as f32
-        } else {
-            1.0 / components.declaration_count as f32
-        };
-
-        // Score related to the distance between the reference and cursor, range 0 to 1
-        let distance_score = if components.is_referenced_nearby {
-            1.0 / (1.0 + components.reference_line_distance as f32 / 10.0).powf(2.0)
-        } else {
-            // same score as ~14 lines away, rationale is to not overly penalize references from parent signatures
-            0.5
-        };
-
-        // For now instead of linear combination, the scores are just multiplied together.
-        let combined_score = 10.0 * retrieval * distance_score;
-
-        DeclarationScores {
-            signature: combined_score * components.excerpt_vs_signature_weighted_overlap,
-            // declaration score gets boosted both by being multiplied by 2 and by there being more
-            // weighted overlap.
-            declaration: 2.0 * combined_score * components.excerpt_vs_item_weighted_overlap,
-            retrieval,
-        }
+        components: score_components,
     }
 }

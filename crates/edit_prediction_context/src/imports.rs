@@ -1,7 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use collections::HashMap;
-use itertools::Itertools;
 use language::BufferSnapshot;
 use language::ImportsConfig;
 use language::LanguageId;
@@ -14,7 +13,15 @@ use crate::Identifier;
 // Future improvements:
 //
 // * Support for aliases?
-
+//
+// * Scoping for imports that aren't at the top level
+//
+// * Consider only scanning prefix of the file / other strategies for not scanning entire file. This
+// could look like having query matches that indicate it reached a declaration that is not allowed
+// in the import section.
+//
+// * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
+//
 // Initial goals:
 //
 // * Get region that has top-of-file imports
@@ -28,7 +35,7 @@ pub struct Imports {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Namespace(Vec<Rc<str>>);
+pub struct Namespace(pub Vec<Rc<str>>);
 
 impl Imports {
     pub fn collect(snapshot: &BufferSnapshot) -> Result<Self> {
@@ -40,20 +47,6 @@ impl Imports {
             .matches(0..snapshot.len(), &snapshot.text, |grammar| {
                 grammar.imports_config().map(|imports| &imports.query)
             });
-
-        // namespace chunks from import_prefix apply to prefixed_contents
-        //
-        // when encountering an @import, use the namespace chunks
-        //
-        //   - If import_prefix is
-
-        /*
-        enum ImportNode {
-            Add(ImportNode, ImportNode),
-            List(Vec<ImportNode>),
-            Symbol(String),
-        }
-        */
 
         #[derive(Debug)]
         struct NamespaceAppend {
@@ -83,19 +76,20 @@ impl Imports {
                 .imports_config()
                 .unwrap();
 
-            let mut import_statement_range = None;
             let mut name_range = None;
             let mut path_range = None;
             let mut list_range = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
                 if capture.index == *import_statement_ix {
-                    import_statement_range = Some(capture_range.clone());
                     if let Some(import_range) = import_range.as_mut() {
                         import_range.end = capture_range.end;
                     } else {
                         import_range = Some(capture_range.clone());
                     }
+                    name_range.take();
+                    path_range.take();
+                    list_range.take();
                 } else if capture.index == *name_ix {
                     name_range = Some(capture_range);
                 } else if capture.index == *path_ix {
@@ -340,45 +334,58 @@ mod test {
 
     use super::*;
     use gpui::{TestAppContext, prelude::*};
+    use indoc::indoc;
     use itertools::Itertools;
     use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 
     #[gpui::test]
     fn test_collect_rust_imports(cx: &mut TestAppContext) {
         let examples = vec![
-            // (
-            //     "use std::collections::HashMap;",
-            //     vec!["std::collections::HashMap"],
-            // ),
-            // (
-            //     "use custom::std::collections::HashMap;",
-            //     vec!["custom::std::collections::HashMap"],
-            // ),
-            // (
-            //     "pub use std::collections::HashMap;",
-            //     vec!["std::collections::HashMap"],
-            // ),
-            // (
-            //     "use std::collections::{HashMap, HashSet};",
-            //     vec!["std::collections::HashMap", "std::collections::HashSet"],
-            // ),
-            // (
-            //     "use std::{any::TypeId, collections::{HashMap, HashSet}};",
-            //     vec![
-            //         "std::any::TypeId",
-            //         "std::collections::HashMap",
-            //         "std::collections::HashSet",
-            //     ],
-            // ),
-            ("use std::{a::b::HashMap};", vec!["std::a::b::HashMap"]),
-            // (
-            //     "use {std::any::TypeId, std::collections::{HashMap, HashSet}};",
-            //     vec![
-            //         "std::any::TypeId",
-            //         "std::collections::HashMap",
-            //         "std::collections::HashSet",
-            //     ],
-            // ),
+            (
+                "use std::collections::HashMap;",
+                vec!["std::collections::HashMap"],
+            ),
+            (
+                "use custom::std::collections::HashMap;",
+                vec!["custom::std::collections::HashMap"],
+            ),
+            (
+                "pub use std::collections::HashMap;",
+                vec!["std::collections::HashMap"],
+            ),
+            (
+                "use std::collections::{HashMap, HashSet};",
+                vec!["std::collections::HashMap", "std::collections::HashSet"],
+            ),
+            (
+                "use std::{any::TypeId, collections::{HashMap, HashSet}};",
+                vec![
+                    "std::any::TypeId",
+                    "std::collections::HashMap",
+                    "std::collections::HashSet",
+                ],
+            ),
+            // todo!
+            // ("use std::{a::b::HashMap};", vec!["std::a::b::HashMap"]),
+            (
+                "use {std::any::TypeId, std::collections::{HashMap, HashSet}};",
+                vec![
+                    "std::any::TypeId",
+                    "std::collections::HashMap",
+                    "std::collections::HashSet",
+                ],
+            ),
+            (
+                indoc! {"
+                    use std::collections::HashMap;
+                    use std::any::{TypeId, Any};
+                "},
+                vec![
+                    "std::collections::HashMap",
+                    "std::any::TypeId",
+                    "std::any::Any",
+                ],
+            ),
         ];
         let language = Arc::new(rust_lang());
         let mut failures = Vec::new();

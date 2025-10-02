@@ -136,6 +136,8 @@ pub struct DeclarationScoreComponents {
     pub excerpt_vs_signature_weighted_overlap: f32,
     pub adjacent_vs_item_weighted_overlap: f32,
     pub adjacent_vs_signature_weighted_overlap: f32,
+    pub import_similarity: f32,
+    pub normalized_import_similarity: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

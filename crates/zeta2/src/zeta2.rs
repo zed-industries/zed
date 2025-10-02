@@ -7,8 +7,8 @@ use cloud_llm_client::{
 };
 use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use edit_prediction_context::{
-    DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
-    SyntaxIndexState,
+    DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionExcerptOptions,
+    SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
@@ -893,9 +893,9 @@ fn make_cloud_request(
             text_is_truncated,
             signature_range: snippet.declaration.signature_range_in_item_text(),
             parent_index,
-            score_components: snippet.score_components,
-            signature_score: snippet.scores.signature,
-            declaration_score: snippet.scores.declaration,
+            signature_score: snippet.score(DeclarationStyle::Signature),
+            declaration_score: snippet.score(DeclarationStyle::Declaration),
+            score_components: snippet.components,
         });
     }
 

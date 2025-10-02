@@ -4,8 +4,8 @@ use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction_context::{
-    Declaration, EditPredictionContext, EditPredictionExcerptOptions, Identifier, ReferenceRegion,
-    SyntaxIndex, references_in_range,
+    Declaration, DeclarationStyle, EditPredictionContext, EditPredictionExcerptOptions, Identifier,
+    ReferenceRegion, SyntaxIndex, references_in_range,
 };
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
@@ -434,6 +434,7 @@ pub async fn retrieval_stats(
                     Declaration::File {
                         project_entry_id,
                         declaration,
+                        ..
                     } => {
                         let Some(path) = worktree.read_with(cx, |worktree, _cx| {
                             worktree
@@ -456,8 +457,8 @@ pub async fn retrieval_stats(
                             path,
                             rope.offset_to_point(declaration.item_range.start)
                                 ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.scores.declaration,
-                            scored_declaration.scores.retrieval,
+                            scored_declaration.score(DeclarationStyle::Declaration),
+                            scored_declaration.retrieval_score(),
                         ));
                     }
                     Declaration::Buffer {
@@ -479,8 +480,8 @@ pub async fn retrieval_stats(
                             path,
                             rope.offset_to_point(declaration.item_range.start)
                                 ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.scores.declaration,
-                            scored_declaration.scores.retrieval,
+                            scored_declaration.score(DeclarationStyle::Declaration),
+                            scored_declaration.retrieval_score(),
                         ));
                     }
                 }

@@ -1614,11 +1614,6 @@ impl Language {
     pub fn with_imports_query(mut self, source: &str) -> Result<Self> {
         let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
-        let import_statement_ix = query.capture_index_for_name("import_statement").unwrap();
-        let import_prefix_ix = query.capture_index_for_name("import_prefix");
-        let prefixed_contents_ix = query.capture_index_for_name("prefixed_contents");
-        let import_ix = query.capture_index_for_name("import");
-
         let mut import_statement_ix = 0;
         let mut name_ix = 0;
         let mut path_ix = 0;

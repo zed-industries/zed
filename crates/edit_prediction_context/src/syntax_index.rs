@@ -5,6 +5,7 @@ use futures::lock::Mutex;
 use futures::{FutureExt as _, StreamExt, future};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
+use language::File;
 use language::{Buffer, BufferEvent};
 use postage::stream::Stream as _;
 use project::buffer_store::{BufferStore, BufferStoreEvent};
@@ -13,6 +14,7 @@ use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
 use std::iter;
 use std::ops::{DerefMut, Range};
+use std::path::Path;
 use std::sync::Arc;
 use text::BufferId;
 use util::{RangeExt as _, debug_panic, some_or_debug_panic};
@@ -369,8 +371,12 @@ impl SyntaxIndex {
             return;
         }
 
-        let Some(project_entry_id) =
-            project::File::from_dyn(buffer.file()).and_then(|f| f.project_entry_id(cx))
+        let Some((project_entry_id, cached_full_path)) = project::File::from_dyn(buffer.file())
+            .and_then(|f| {
+                let project_entry_id = f.project_entry_id(cx)?;
+                let cached_full_path: Arc<Path> = f.full_path(cx).into();
+                Some((project_entry_id, cached_full_path))
+            })
         else {
             return;
         };
@@ -434,6 +440,7 @@ impl SyntaxIndex {
                     buffer_id,
                     declaration,
                     project_entry_id,
+                    cached_full_path: cached_full_path.clone(),
                 });
                 new_ids.push(declaration_id);
 
@@ -516,14 +523,22 @@ impl SyntaxIndex {
                     parse_status.changed().await?;
                 }
 
-                buffer.read_with(cx, |buffer, _cx| buffer.snapshot())
+                buffer.read_with(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot();
+                    let cached_full_path: Arc<Path> = buffer
+                        .file()
+                        .map(|p| p.full_path(cx))
+                        .unwrap_or_default()
+                        .into();
+                    (snapshot, cached_full_path)
+                })
             })
         });
 
         let state = Arc::downgrade(&self.state);
         cx.background_spawn(async move {
             // TODO: How to handle errors?
-            let Ok(snapshot) = snapshot_task.await else {
+            let Ok((snapshot, cached_full_path)) = snapshot_task.await else {
                 return;
             };
             let rope = snapshot.as_rope();
@@ -561,6 +576,7 @@ impl SyntaxIndex {
                 let declaration_id = state.declarations.insert(Declaration::File {
                     project_entry_id: entry_id,
                     declaration,
+                    cached_full_path: cached_full_path.clone(),
                 });
                 new_ids.push(declaration_id);
 
@@ -915,6 +931,7 @@ mod tests {
         if let Declaration::File {
             declaration,
             project_entry_id: file,
+            ..
         } = declaration
         {
             assert_eq!(

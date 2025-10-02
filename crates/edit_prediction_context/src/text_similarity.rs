@@ -45,13 +45,13 @@ impl Occurrences {
         )
     }
 
-    pub fn from_identifiers<'a>(identifiers: impl IntoIterator<Item = &'a str>) -> Self {
+    pub fn from_identifiers(identifiers: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         let mut this = Self::default();
         // TODO: Score matches that match case higher?
         //
         // TODO: Also include unsplit identifier?
         for identifier in identifiers {
-            for identifier_part in split_identifier(identifier) {
+            for identifier_part in split_identifier(identifier.as_ref()) {
                 this.add_hash(fx_hash(&identifier_part.to_lowercase()));
             }
         }

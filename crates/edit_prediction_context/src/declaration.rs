@@ -1,8 +1,8 @@
 use language::LanguageId;
 use project::ProjectEntryId;
-use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
+use std::{borrow::Cow, path::Path};
 use text::{Bias, BufferId, Rope};
 
 use crate::outline::OutlineDeclaration;
@@ -22,12 +22,14 @@ pub enum Declaration {
     File {
         project_entry_id: ProjectEntryId,
         declaration: FileDeclaration,
+        cached_full_path: Arc<Path>,
     },
     Buffer {
         project_entry_id: ProjectEntryId,
         buffer_id: BufferId,
         rope: Rope,
         declaration: BufferDeclaration,
+        cached_full_path: Arc<Path>,
     },
 }
 
@@ -70,6 +72,17 @@ impl Declaration {
             Declaration::Buffer {
                 project_entry_id, ..
             } => *project_entry_id,
+        }
+    }
+
+    pub fn cached_full_path(&self) -> &Arc<Path> {
+        match self {
+            Declaration::File {
+                cached_full_path, ..
+            } => cached_full_path,
+            Declaration::Buffer {
+                cached_full_path, ..
+            } => cached_full_path,
         }
     }
 

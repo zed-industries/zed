@@ -19,6 +19,9 @@ pub use declaration_scoring::*;
 pub use excerpt::*;
 pub use reference::*;
 pub use syntax_index::*;
+use util::ResultExt as _;
+
+use crate::imports::Imports;
 
 #[derive(Clone, Debug)]
 pub struct EditPredictionContext {
@@ -94,6 +97,8 @@ impl EditPredictionContext {
                 .collect::<String>(),
         );
 
+        let imports = Imports::collect(&buffer).log_err();
+
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub
         let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
@@ -106,6 +111,7 @@ impl EditPredictionContext {
                 &excerpt,
                 &excerpt_occurrences,
                 &adjacent_occurrences,
+                imports.as_ref(),
                 references,
                 cursor_offset_in_file,
                 buffer,
