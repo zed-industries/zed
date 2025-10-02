@@ -1024,7 +1024,7 @@ impl ExternalAgentServer for LocalCodex {
                     let tag = release.tag_name.clone();
                     let version_number = tag.trim_start_matches('v');
                     let asset_name = asset_name(version_number)
-                        .context("codex acp is not supported for this achitecture")?;
+                        .context("codex acp is not supported for this architecture")?;
                     let asset = release
                         .assets
                         .into_iter()
