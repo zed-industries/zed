@@ -3069,7 +3069,7 @@ async fn test_lsp_pull_diagnostics(
     });
 
     if should_stream_workspace_diagnostic {
-        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+        fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
             token: expected_workspace_diagnostic_token.clone(),
             value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
