@@ -149,7 +149,7 @@ impl Render for PlatformTitleBar {
                             let title_bar_settings = TitleBarSettings::get(None, cx);
                             match title_bar_settings.window_controls_position {
                                 WindowControlsPosition::Left => {
-                                    // macOS style: controles no início da title bar
+                                    // macOS style: controls at the beginning of the title bar
                                     h_flex()
                                         .w_full()
                                         .bg(titlebar_color)
@@ -184,7 +184,7 @@ impl Render for PlatformTitleBar {
                                         )
                                 }
                                 WindowControlsPosition::Right => {
-                                    // Windows style: controles no final da title bar
+                                    // Windows style: controls at the end of the titlebar
                                     title_bar
                                         .child(platform_linux::LinuxWindowControls::new(close_action))
                                         .when(supported_controls.window_menu, |titlebar| {
