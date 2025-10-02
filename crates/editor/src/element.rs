@@ -2725,7 +2725,7 @@ impl EditorElement {
                         );
 
                         let start_y = Pixels::from(
-                            ScrollOffset::from(content_origin.y + offset_y)
+                            ScrollOffset::from(content_origin.y) + offset_y
                                 - scroll_pixel_position.y,
                         );
 
@@ -2782,7 +2782,7 @@ impl EditorElement {
         row_range: Range<MultiBufferRow>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
-    ) -> (gpui::Pixels, gpui::Pixels) {
+    ) -> (f64, gpui::Pixels) {
         let start_point = Point::new(row_range.start.0, 0);
         let end_point = Point::new(row_range.end.0, 0);
 
@@ -2797,7 +2797,7 @@ impl EditorElement {
         cons_line.row += 1;
         let cons_line = cons_line.to_display_point(snapshot).row();
 
-        let mut offset_y = row_range.start.0 as f32 * line_height;
+        let mut offset_y = row_range.start.as_f64() * f64::from(line_height);
         let mut length = (cons_line.0.saturating_sub(row_range.start.0)) as f32 * line_height;
 
         // If we are at the end of the buffer, ensure that the indent guide extends to the end of the line.
@@ -2822,7 +2822,7 @@ impl EditorElement {
             block_height += block.height();
         }
         if !found_excerpt_header {
-            offset_y -= block_offset as f32 * line_height;
+            offset_y -= block_offset as f64 * f64::from(line_height);
             length += block_height as f32 * line_height;
         }
 
