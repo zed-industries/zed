@@ -65,14 +65,40 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
-fn run_migrations(
-    text: &str,
-    migrations: &[(MigrationPatterns, &Query)],
-) -> Result<Option<String>> {
+fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
-    for (patterns, query) in migrations.iter() {
-        if let Some(migrated_text) = migrate(&current_text, patterns, query)? {
+    for migration in migrations.iter() {
+        let migrated_text = match migration {
+            MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
+            MigrationType::Json(callback) => {
+                let old_content: serde_json_lenient::Value =
+                    settings::parse_json_with_comments(&current_text)?;
+                let old_value = serde_json::to_value(&old_content).unwrap();
+                let mut new_value = old_value.clone();
+                callback(&mut new_value);
+                if new_value != old_value {
+                    let mut current = current_text.clone();
+                    let mut edits = vec![];
+                    settings::update_value_in_json_text(
+                        &mut current,
+                        &mut vec![],
+                        2,
+                        &old_value,
+                        &new_value,
+                        &mut edits,
+                    );
+                    let mut migrated_text = current_text.clone();
+                    for (range, replacement) in edits.into_iter() {
+                        migrated_text.replace_range(range, &replacement);
+                    }
+                    Some(migrated_text)
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(migrated_text) = migrated_text {
             current_text = migrated_text.clone();
             result = Some(migrated_text);
         }
@@ -81,24 +107,24 @@ fn run_migrations(
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
-    let migrations: &[(MigrationPatterns, &Query)] = &[
-        (
+    let migrations: &[MigrationType] = &[
+        MigrationType::TreeSitter(
             migrations::m_2025_01_29::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_01_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_30::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_01_30,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_03::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_03,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_06::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_06,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_15::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_04_15,
         ),
@@ -106,65 +132,71 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
     run_migrations(text, migrations)
 }
 
+enum MigrationType<'a> {
+    TreeSitter(MigrationPatterns, &'a Query),
+    #[allow(unused)]
+    Json(fn(&mut serde_json::Value)),
+}
+
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
-    let migrations: &[(MigrationPatterns, &Query)] = &[
-        (
+    let migrations: &[MigrationType] = &[
+        MigrationType::TreeSitter(
             migrations::m_2025_01_02::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_02,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_01_30::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_30,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_03_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_03_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_15,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_21::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_21,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_04_23::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_23,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_05::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_05,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_08,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_05_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_29,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_16,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_25::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_25,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_06_27::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_06_27,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_07_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_07_08,
         ),
-        (
+        MigrationType::TreeSitter(
             migrations::m_2025_10_01::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_01,
         ),
@@ -323,7 +355,7 @@ mod tests {
     }
 
     fn assert_migrate_settings_with_migrations(
-        migrations: &[(MigrationPatterns, &Query)],
+        migrations: &[MigrationType],
         input: &str,
         output: Option<&str>,
     ) {
@@ -919,7 +951,7 @@ mod tests {
     #[test]
     fn test_mcp_settings_migration() {
         assert_migrate_settings_with_migrations(
-            &[(
+            &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
             )],
@@ -1108,7 +1140,7 @@ mod tests {
     }
 }"#;
         assert_migrate_settings_with_migrations(
-            &[(
+            &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
             )],
