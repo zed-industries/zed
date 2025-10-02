@@ -1,29 +1,51 @@
-#![cfg_attr(not(unix), allow(unused))]
+use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 
-/// Capture all environment variables from the login shell.
+pub fn print_env() {
+    let env_vars: HashMap<String, String> = std::env::vars().collect();
+    let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
+        eprintln!("Error serializing environment variables: {}", err);
+        std::process::exit(1);
+    });
+    println!("{}", json);
+}
+
+/// Capture all environment variables from the login shell in the given directory.
+pub async fn capture(
+    shell_path: impl AsRef<Path>,
+    directory: impl AsRef<Path>,
+) -> Result<collections::HashMap<String, String>> {
+    #[cfg(windows)]
+    return capture_windows(shell_path.as_ref(), directory.as_ref()).await;
+    #[cfg(unix)]
+    return capture_unix(shell_path.as_ref(), directory.as_ref()).await;
+}
+
 #[cfg(unix)]
-pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+async fn capture_unix(
+    shell_path: &Path,
+    directory: &Path,
+) -> Result<collections::HashMap<String, String>> {
+    use crate::shell::ShellKind;
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
     let zed_path = super::get_shell_safe_zed_path()?;
-    let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
-    let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
+    let shell_kind = ShellKind::new(shell_path);
 
     let mut command_string = String::new();
-    let mut command = std::process::Command::new(&shell_path);
+    let mut command = std::process::Command::new(shell_path);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
     const FD_STDIN: std::os::fd::RawFd = 0;
     const FD_STDOUT: std::os::fd::RawFd = 1;
 
-    let (fd_num, redir) = match shell_name {
-        Some("rc") => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
-        Some("nu") | Some("tcsh") => (FD_STDOUT, "".to_string()),
+    let (fd_num, redir) = match shell_kind {
+        ShellKind::Rc => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
+        ShellKind::Nushell | ShellKind::Tcsh => (FD_STDOUT, "".to_string()),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
     command.stdin(Stdio::null());
@@ -31,17 +53,17 @@ pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap
     command.stderr(Stdio::piped());
 
     let mut command_prefix = String::new();
-    match shell_name {
-        Some("tcsh" | "csh") => {
+    match shell_kind {
+        ShellKind::Csh | ShellKind::Tcsh => {
             // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
             command.arg0("-");
         }
-        Some("fish") => {
+        ShellKind::Fish => {
             // in fish, asdf, direnv attach to the `fish_prompt` event
             command_string.push_str("emit fish_prompt;");
             command.arg("-l");
         }
-        Some("nu") => {
+        ShellKind::Nushell => {
             // nu needs special handling for -- options.
             command_prefix = String::from("^");
         }
@@ -99,16 +121,18 @@ async fn spawn_and_read_fd(
     Ok((buffer, process.output().await?))
 }
 
-/// Capture all environment variables from the shell on Windows.
 #[cfg(windows)]
-pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+async fn capture_windows(
+    shell_path: &Path,
+    directory: &Path,
+) -> Result<collections::HashMap<String, String>> {
     use std::process::Stdio;
 
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    // Use PowerShell to get environment variables in the directory context
-    let output = crate::command::new_smol_command(crate::get_windows_system_shell())
+    // todo(lw): handle non powershell shells
+    let output = crate::command::new_smol_command(shell_path)
         .args([
             "-NonInteractive",
             "-NoProfile",
@@ -139,14 +163,4 @@ pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap
     let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
         .with_context(|| "Failed to deserialize environment variables from json")?;
     Ok(env_map)
-}
-
-pub fn print_env() {
-    let env_vars: HashMap<String, String> = std::env::vars().collect();
-    let json = serde_json::to_string_pretty(&env_vars).unwrap_or_else(|err| {
-        eprintln!("Error serializing environment variables: {}", err);
-        std::process::exit(1);
-    });
-    println!("{}", json);
-    std::process::exit(0);
 }

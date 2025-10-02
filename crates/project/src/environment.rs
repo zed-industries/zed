@@ -1,7 +1,7 @@
 use futures::{FutureExt, future::Shared};
 use language::Buffer;
 use std::{path::Path, sync::Arc};
-use util::ResultExt;
+use util::{ResultExt, get_system_shell};
 use worktree::Worktree;
 
 use collections::HashMap;
@@ -134,7 +134,9 @@ impl ProjectEnvironment {
 
         self.environments
             .entry(abs_path.clone())
-            .or_insert_with(|| get_directory_env_impl(abs_path.clone(), cx).shared())
+            .or_insert_with(|| {
+                get_directory_env_impl(get_system_shell().as_ref(), abs_path.clone(), cx).shared()
+            })
             .clone()
     }
 }
@@ -176,6 +178,7 @@ impl EnvironmentErrorMessage {
 }
 
 async fn load_directory_shell_environment(
+    shell_path: &Path,
     abs_path: &Path,
     load_direnv: &DirenvSettings,
 ) -> (
@@ -198,7 +201,7 @@ async fn load_directory_shell_environment(
                 );
             };
 
-            load_shell_environment(dir, load_direnv).await
+            load_shell_environment(shell_path, dir, load_direnv).await
         }
         Err(err) => (
             None,
@@ -211,51 +214,8 @@ async fn load_directory_shell_environment(
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
 async fn load_shell_environment(
-    _dir: &Path,
-    _load_direnv: &DirenvSettings,
-) -> (
-    Option<HashMap<String, String>>,
-    Option<EnvironmentErrorMessage>,
-) {
-    let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
-        .into_iter()
-        .collect();
-    (Some(fake_env), None)
-}
-
-#[cfg(all(target_os = "windows", not(any(test, feature = "test-support"))))]
-async fn load_shell_environment(
-    dir: &Path,
-    _load_direnv: &DirenvSettings,
-) -> (
-    Option<HashMap<String, String>>,
-    Option<EnvironmentErrorMessage>,
-) {
-    use util::shell_env;
-
-    let envs = match shell_env::capture(dir).await {
-        Ok(envs) => envs,
-        Err(err) => {
-            util::log_err(&err);
-            return (
-                None,
-                Some(EnvironmentErrorMessage(format!(
-                    "Failed to load environment variables: {}",
-                    err
-                ))),
-            );
-        }
-    };
-
-    // Note: direnv is not available on Windows, so we skip direnv processing
-    // and just return the shell environment
-    (Some(envs), None)
-}
-
-#[cfg(not(any(target_os = "windows", test, feature = "test-support")))]
-async fn load_shell_environment(
+    shell_path: &Path,
     dir: &Path,
     load_direnv: &DirenvSettings,
 ) -> (
@@ -265,55 +225,84 @@ async fn load_shell_environment(
     use crate::direnv::load_direnv_environment;
     use util::shell_env;
 
-    let dir_ = dir.to_owned();
-    let mut envs = match shell_env::capture(&dir_).await {
-        Ok(envs) => envs,
-        Err(err) => {
-            util::log_err(&err);
-            return (
-                None,
-                Some(EnvironmentErrorMessage::from_str(
-                    "Failed to load environment variables. See log for details",
-                )),
-            );
-        }
-    };
+    if cfg!(any(test, feature = "test-support")) {
+        let fake_env = [("ZED_FAKE_TEST_ENV".into(), "true".into())]
+            .into_iter()
+            .collect();
+        (Some(fake_env), None)
+    } else if cfg!(target_os = "windows",) {
+        let envs = match shell_env::capture(shell_path, dir).await {
+            Ok(envs) => envs,
+            Err(err) => {
+                util::log_err(&err);
+                return (
+                    None,
+                    Some(EnvironmentErrorMessage(format!(
+                        "Failed to load environment variables: {}",
+                        err
+                    ))),
+                );
+            }
+        };
 
-    // If the user selects `Direct` for direnv, it would set an environment
-    // variable that later uses to know that it should not run the hook.
-    // We would include in `.envs` call so it is okay to run the hook
-    // even if direnv direct mode is enabled.
-    let (direnv_environment, direnv_error) = match load_direnv {
-        DirenvSettings::ShellHook => (None, None),
-        DirenvSettings::Direct => match load_direnv_environment(&envs, dir).await {
-            Ok(env) => (Some(env), None),
-            Err(err) => (None, err.into()),
-        },
-    };
-    if let Some(direnv_environment) = direnv_environment {
-        for (key, value) in direnv_environment {
-            if let Some(value) = value {
-                envs.insert(key, value);
-            } else {
-                envs.remove(&key);
+        // Note: direnv is not available on Windows, so we skip direnv processing
+        // and just return the shell environment
+        (Some(envs), None)
+    } else {
+        let dir_ = dir.to_owned();
+        let mut envs = match shell_env::capture(shell_path, &dir_).await {
+            Ok(envs) => envs,
+            Err(err) => {
+                util::log_err(&err);
+                return (
+                    None,
+                    Some(EnvironmentErrorMessage::from_str(
+                        "Failed to load environment variables. See log for details",
+                    )),
+                );
+            }
+        };
+
+        // If the user selects `Direct` for direnv, it would set an environment
+        // variable that later uses to know that it should not run the hook.
+        // We would include in `.envs` call so it is okay to run the hook
+        // even if direnv direct mode is enabled.
+        let (direnv_environment, direnv_error) = match load_direnv {
+            DirenvSettings::ShellHook => (None, None),
+            DirenvSettings::Direct => match load_direnv_environment(&envs, dir).await {
+                Ok(env) => (Some(env), None),
+                Err(err) => (None, err.into()),
+            },
+        };
+        if let Some(direnv_environment) = direnv_environment {
+            for (key, value) in direnv_environment {
+                if let Some(value) = value {
+                    envs.insert(key, value);
+                } else {
+                    envs.remove(&key);
+                }
             }
         }
-    }
 
-    (Some(envs), direnv_error)
+        (Some(envs), direnv_error)
+    }
 }
 
 fn get_directory_env_impl(
+    shell_path: &Path,
     abs_path: Arc<Path>,
     cx: &Context<ProjectEnvironment>,
 ) -> Task<Option<HashMap<String, String>>> {
     let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
+    let shell_path = shell_path.to_owned();
     cx.spawn(async move |this, cx| {
         let (mut shell_env, error_message) = cx
             .background_spawn({
                 let abs_path = abs_path.clone();
-                async move { load_directory_shell_environment(&abs_path, &load_direnv).await }
+                async move {
+                    load_directory_shell_environment(&shell_path, &abs_path, &load_direnv).await
+                }
             })
             .await;
 
