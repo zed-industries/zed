@@ -136,6 +136,7 @@ impl LspColorData {
                     let display_text: SharedString = buffer
                         .text_for_range(range.to_offset(&buffer))
                         .collect::<String>()
+                        .replace("\n", "")
                         .into();
 
                     let display_range = range.clone().to_display_points(snapshot);
@@ -146,10 +147,12 @@ impl LspColorData {
                         a: color.color.alpha,
                     });
 
-                    let font_size = window.text_style().font_size.to_pixels(window.rem_size());
+                    // Blend the color with the background color to avoid alpha.
+                    let soild_color = style.background.blend(color);
+                    let font_size = style.text.font_size.to_pixels(window.rem_size());
                     let text_run = TextRun {
                         len: display_text.len(),
-                        color: if color.l > 0.5 {
+                        color: if soild_color.l >= 0.5 {
                             gpui::black()
                         } else {
                             gpui::white()
