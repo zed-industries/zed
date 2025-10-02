@@ -19,7 +19,6 @@ impl AgentServer for Codex {
     }
 
     fn logo(&self) -> ui::IconName {
-        // No dedicated Codex icon yet; use the generic AI icon.
         ui::IconName::AiOpenAi
     }
 
@@ -34,16 +33,9 @@ impl AgentServer for Codex {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
         let extra_env = load_proxy_env(cx);
-        // No modes for Codex (yet).
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
-            // Look up the external agent registered under the "codex" name.
-            // The AgentServerStore is responsible for:
-            // - Downloading the correct GitHub release tar.gz for the OS/arch
-            // - Extracting the binary
-            // - Returning an AgentServerCommand to launch the binary
-            // - Always reporting "no updates" for now
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
