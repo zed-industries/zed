@@ -273,18 +273,18 @@ If you wish to use alternate models or customize the API endpoint, you can do so
 
 ```json
 {
-   "language_models": {
-      "google": {
-         "available_models": [
-            {
-               "name": "glm-4.5-x",
-               "display_name": "GLM-4.5-x",
-               "max_tokens": 128000,
-               "max_output_tokens": 96000
-            }
-         ]
-      }
-   }
+  "language_models": {
+    "google": {
+      "available_models": [
+        {
+          "name": "glm-4.5-x",
+          "display_name": "GLM-4.5-x",
+          "max_tokens": 128000,
+          "max_output_tokens": 96000
+        }
+      ]
+    }
+  }
 }
 ```
 
