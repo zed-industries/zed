@@ -930,6 +930,114 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_history_items_uniqueness_for_multiple_worktree(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repo1"),
+            json!({
+                "package.json": r#"{"name": "repo1"}"#,
+                "src": {
+                    "index.js": "// Repo 1 index",
+                }
+            }),
+        )
+        .await;
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/repo2"),
+            json!({
+                "package.json": r#"{"name": "repo2"}"#,
+                "src": {
+                    "index.js": "// Repo 2 index",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(
+        app_state.fs.clone(),
+        [path!("/repo1").as_ref(), path!("/repo2").as_ref()],
+        cx,
+    )
+    .await;
+
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+    let (worktree_id1, worktree_id2) = cx.read(|cx| {
+        let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+    });
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                ProjectPath {
+                    worktree_id: worktree_id1,
+                    path: rel_path("package.json").into(),
+                },
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    cx.dispatch_action(workspace::CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
+
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("package.json");
+
+    picker.update(cx, |finder, _| {
+        let matches = &finder.delegate.matches.matches;
+
+        assert_eq!(
+            matches.len(),
+            2,
+            "Expected 1 history match + 1 search matches, but got {} matches: {:?}",
+            matches.len(),
+            matches
+        );
+
+        assert_matches!(matches[0], Match::History { .. });
+
+        let search_matches = collect_search_matches(finder);
+        assert_eq!(
+            search_matches.history.len(),
+            1,
+            "Should have exactly 1 history match"
+        );
+        assert_eq!(
+            search_matches.search.len(),
+            1,
+            "Should have exactly 1 search match (the other package.json)"
+        );
+
+        if let Match::History { path, .. } = &matches[0] {
+            assert_eq!(path.project.worktree_id, worktree_id1);
+            assert_eq!(path.project.path.as_ref(), rel_path("package.json"));
+        }
+
+        if let Match::Search(path_match) = &matches[1] {
+            assert_eq!(
+                WorktreeId::from_usize(path_match.0.worktree_id),
+                worktree_id2
+            );
+            assert_eq!(path_match.0.path.as_ref(), rel_path("package.json"));
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
     app_state
