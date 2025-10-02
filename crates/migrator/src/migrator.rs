@@ -76,7 +76,7 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
                     settings::parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
                 let mut new_value = old_value.clone();
-                callback(&mut new_value);
+                callback(&mut new_value)?;
                 if new_value != old_value {
                     let mut current = current_text.clone();
                     let mut edits = vec![];
@@ -134,8 +134,7 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 
 enum MigrationType<'a> {
     TreeSitter(MigrationPatterns, &'a Query),
-    #[allow(unused)]
-    Json(fn(&mut serde_json::Value)),
+    Json(fn(&mut serde_json::Value) -> Result<()>),
 }
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
@@ -200,6 +199,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_10_01::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_10_01,
         ),
+        MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
     ];
     run_migrations(text, migrations)
 }
