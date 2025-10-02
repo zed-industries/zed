@@ -378,6 +378,14 @@ impl<'a> Iterator for InlayChunks<'a> {
                             renderer = Some(ChunkRenderer {
                                 id: ChunkRendererId::Inlay(inlay.id),
                                 render: Arc::new(move |cx| {
+                                    let is_light = cx.theme().appearance().is_light();
+                                    let border_color = Hsla {
+                                        h: color.h,
+                                        s: color.s,
+                                        l: if is_light { 0.25 } else { 0.75 },
+                                        a: 1.0,
+                                    };
+
                                     div()
                                         .relative()
                                         .size_3p5()
@@ -387,7 +395,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                                                 .right_1()
                                                 .size_3()
                                                 .border_1()
-                                                .border_color(cx.theme().colors().border)
+                                                .border_color(border_color)
                                                 .bg(color),
                                         )
                                         .into_any_element()
