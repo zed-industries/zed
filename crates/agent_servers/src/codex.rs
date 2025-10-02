@@ -45,8 +45,8 @@ impl AgentServer for Codex {
                         root_dir.as_deref(),
                         extra_env,
                         delegate.status_tx,
-                        // For now, Codex should report that there are no updates.
-                        // The LocalCodex implementation in AgentServerStore should not send any updates.
+                        // For now, report that there are no updates.
+                        // (A future PR will use the GitHub Releases API to fetch them.)
                         delegate.new_version_available,
                         &mut cx.to_async(),
                     ))
