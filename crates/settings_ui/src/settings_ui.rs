@@ -153,15 +153,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.auto_update,
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
                     description: "Whether to restore previous session when opening Zed",
                     field: Box::new(SettingField {
@@ -1400,6 +1391,507 @@ fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Version Control",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Git"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Gutter",
+                    description: "Control whether the git gutter is shown",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.git_gutter
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().git_gutter
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Gutter Debounce",
+                //     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(git) = &settings_content.git {
+                //                 &git.gutter_debounce
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content.git.get_or_insert_default().gutter_debounce
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Enabled",
+                    description: "Whether or not to show git blame data inline in the currently focused line",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Commit Summary",
+                    description: "Whether to show commit summary as part of the inline blame",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.show_commit_summary
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .show_commit_summary
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Avatar",
+                    description: "Whether to show the avatar of the author of the commit",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(blame) = &git.blame {
+                                    &blame.show_avatar
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .blame
+                                .get_or_insert_default()
+                                .show_avatar
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Author Name In Branch Picker",
+                    description: "Whether to show author name as part of the commit information in branch picker",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(branch_picker) = &git.branch_picker {
+                                    &branch_picker.show_author_name
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .branch_picker
+                                .get_or_insert_default()
+                                .show_author_name
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hunk Style",
+                    description: "How git hunks are displayed visually in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.hunk_style
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().hunk_style
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "System & Network",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Network"),
+                // todo(settings_ui): Proxy needs a default
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Proxy",
+                //     description: "The proxy to use for network requests",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.proxy,
+                //         pick_mut: |settings_content| &mut settings_content.proxy,
+                //     }),
+                //     metadata: Some(Box::new(SettingsFieldMetadata {
+                //         placeholder: Some("socks5h://localhost:10808"),
+                //     })),
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Server URL",
+                    description: "The URL of the Zed server to connect to",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.server_url,
+                        pick_mut: |settings_content| &mut settings_content.server_url,
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("https://zed.dev"),
+                    })),
+                }),
+                SettingsPageItem::SectionHeader("System"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Whether or not to automatically check for updates",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Diagnostics & Errors",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Display"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Diagnostics Button",
+                    description: "Whether to show the project diagnostics button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                &diagnostics.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.diagnostics.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Filtering"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Severity",
+                    description: "Which level to use to filter out diagnostics displayed in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.diagnostics_max_severity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.diagnostics_max_severity
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Warnings",
+                    description: "Whether to show warnings or not by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                &diagnostics.include_warnings
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .include_warnings
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Inline"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Diagnostics Enabled",
+                    description: "Whether to show diagnostics inline or not",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Inline Update Debounce",
+                //     description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(diagnostics) = &settings_content.diagnostics {
+                //                 if let Some(inline) = &diagnostics.inline {
+                //                     &inline.update_debounce_ms
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .diagnostics
+                //                 .get_or_insert_default()
+                //                 .inline
+                //                 .get_or_insert_default()
+                //                 .update_debounce_ms
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Inline Padding",
+                //     description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(diagnostics) = &settings_content.diagnostics {
+                //                 if let Some(inline) = &diagnostics.inline {
+                //                     &inline.padding
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .diagnostics
+                //                 .get_or_insert_default()
+                //                 .inline
+                //                 .get_or_insert_default()
+                //                 .padding
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Inline Min Column",
+                //     description: "The minimum column to display inline diagnostics",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(diagnostics) = &settings_content.diagnostics {
+                //                 if let Some(inline) = &diagnostics.inline {
+                //                     &inline.min_column
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .diagnostics
+                //                 .get_or_insert_default()
+                //                 .inline
+                //                 .get_or_insert_default()
+                //                 .min_column
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SectionHeader("Performance"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "LSP Pull Diagnostics Enabled",
+                    description: "Whether to pull for diagnostics or not",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
+                                    &lsp_pull.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .lsp_pull_diagnostics
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // todo(settings_ui): Needs numeric stepper
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "LSP Pull Debounce",
+                //     description: "Minimum time to wait before pulling diagnostics from the language server(s)",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(diagnostics) = &settings_content.diagnostics {
+                //                 if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
+                //                     &lsp_pull.debounce_ms
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .diagnostics
+                //                 .get_or_insert_default()
+                //                 .lsp_pull_diagnostics
+                //                 .get_or_insert_default()
+                //                 .debounce_ms
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+            ],
+        },
+        SettingsPage {
+            title: "Collaboration",
+            expanded: false,
+            items: vec![
+                SettingsPageItem::SectionHeader("Calls"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Mute On Join",
+                    description: "Whether the microphone should be muted when joining a channel or a call",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(calls) = &settings_content.calls {
+                                &calls.mute_on_join
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.calls.get_or_insert_default().mute_on_join
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Share On Join",
+                    description: "Whether your current project should be shared when joining an empty channel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(calls) = &settings_content.calls {
+                                &calls.share_on_join
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.calls.get_or_insert_default().share_on_join
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Button",
+                    description: "Whether to show the collaboration panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collab) = &settings_content.collaboration_panel {
+                                &collab.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Experimental"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Rodio Audio",
+                    description: "Opt into the new audio system",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.rodio_audio
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.audio.get_or_insert_default().rodio_audio
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
             title: "AI",
             expanded: false,
             items: vec![
@@ -1905,7 +2397,18 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<settings::TerminalDockPosition>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
-        });
+        })
+        .add_renderer::<settings::GitGutterSetting>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::GitHunkStyleSetting>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::DiagnosticSeverityContent>(
+            |settings_field, file, _, window, cx| {
+                render_dropdown(*settings_field, file, window, cx)
+            },
+        );
 
     // todo!( Figure out how we want to handle discriminant unions)
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
