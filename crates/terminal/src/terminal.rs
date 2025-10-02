@@ -121,7 +121,7 @@ const DEBUG_CELL_WIDTH: Pixels = px(5.);
 const DEBUG_LINE_HEIGHT: Pixels = px(5.);
 
 ///Upward flowing events, for changing the title and such
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     TitleChanged,
     BreadcrumbsChanged,
@@ -134,7 +134,7 @@ pub enum Event {
     Open(MaybeNavigationTarget),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PathLikeTarget {
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
@@ -144,7 +144,7 @@ pub struct PathLikeTarget {
 }
 
 /// A string inside terminal, potentially useful as a URI that can be opened.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MaybeNavigationTarget {
     /// HTTP, git, etc. string determined by the `URL_REGEX` regex.
     Url(String),
@@ -378,31 +378,40 @@ impl TerminalBuilder {
             title_override: Option<SharedString>,
         }
 
+        impl ShellParams {
+            fn new(
+                program: String,
+                args: Option<Vec<String>>,
+                title_override: Option<SharedString>,
+            ) -> Self {
+                log::info!("Using {program} as shell");
+                Self {
+                    program,
+                    args,
+                    title_override,
+                }
+            }
+        }
+
         let shell_params = match shell.clone() {
             Shell::System => {
                 #[cfg(target_os = "windows")]
                 {
-                    Some(ShellParams {
-                        program: util::get_windows_system_shell(),
-                        ..Default::default()
-                    })
+                    Some(ShellParams::new(
+                        util::get_windows_system_shell(),
+                        None,
+                        None,
+                    ))
                 }
                 #[cfg(not(target_os = "windows"))]
                 None
             }
-            Shell::Program(program) => Some(ShellParams {
-                program,
-                ..Default::default()
-            }),
+            Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
                 program,
                 args,
                 title_override,
-            } => Some(ShellParams {
-                program,
-                args: Some(args),
-                title_override,
-            }),
+            } => Some(ShellParams::new(program, Some(args), title_override)),
         };
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
@@ -2210,6 +2219,8 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::{
         IndexedCell, TerminalBounds, TerminalBuilder, TerminalContent, content_index_for_mouse,
@@ -2220,7 +2231,7 @@ mod tests {
         term::cell::Cell,
     };
     use collections::HashMap;
-    use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
+    use gpui::{Pixels, Point, TestAppContext, bounds, point, size, smol_timeout};
     use rand::{Rng, distr, rngs::ThreadRng};
     use task::ShellBuilder;
 
@@ -2260,6 +2271,151 @@ mod tests {
         assert_eq!(
             terminal.update(cx, |term, _| term.get_content()).trim(),
             "hello"
+        );
+    }
+
+    // TODO should be tested on Linux too, but does not work there well
+    #[cfg(target_os = "macos")]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_eof(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        // Build an empty command, which will result in a tty shell spawned.
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::System,
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                Vec::new(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+        cx.background_spawn(async move {
+            assert_eq!(
+                completion_rx.recv().await.unwrap(),
+                Some(ExitStatus::default()),
+                "EOF should result in the tty shell exiting successfully",
+            );
+        })
+        .detach();
+
+        let first_event = Event::Wakeup;
+        let wakeup = event_rx.recv().await.expect("No wakeup event received");
+        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
+
+        terminal.update(cx, |terminal, _| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
+            assert!(success, "Should have registered ctrl-c sequence");
+        });
+        terminal.update(cx, |terminal, _| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
+            assert!(success, "Should have registered ctrl-d sequence");
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "EOF command sequence should have triggered a TTY terminal exit, but got events: {all_events:?}",
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(None, &Shell::System)
+            .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program,
+                    args,
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                Some(completion_tx),
+                cx,
+                Vec::new(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+        cx.background_spawn(async move {
+            #[cfg(target_os = "windows")]
+            {
+                let exit_status = completion_rx.recv().await.ok().flatten();
+                if let Some(exit_status) = exit_status {
+                    assert!(
+                        !exit_status.success(),
+                        "Wrong shell command should result in a failure"
+                    );
+                    assert_eq!(exit_status.code(), Some(1));
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let exit_status = completion_rx.recv().await.unwrap().unwrap();
+                assert!(
+                    !exit_status.success(),
+                    "Wrong shell command should result in a failure"
+                );
+                assert_eq!(exit_status.code(), None);
+            }
+        })
+        .detach();
+
+        let mut all_events = Vec::new();
+        while let Ok(Ok(new_event)) =
+            smol_timeout(Duration::from_millis(500), event_rx.recv()).await
+        {
+            all_events.push(new_event.clone());
+        }
+
+        assert!(
+            !all_events
+                .iter()
+                .any(|event| event == &Event::CloseTerminal),
+            "Wrong shell command should update the title but not should not close the terminal to show the error message, but got events: {all_events:?}",
         );
     }
 

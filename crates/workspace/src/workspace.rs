@@ -5553,6 +5553,13 @@ impl Workspace {
 
     fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.add_workspace_actions_listeners(div, window, cx)
+            .on_action(cx.listener(
+                |_workspace, action_sequence: &settings::ActionSequence, window, cx| {
+                    for action in &action_sequence.0 {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))

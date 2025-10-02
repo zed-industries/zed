@@ -12,6 +12,8 @@ use std::{
     sync::LazyLock,
 };
 
+use crate::rel_path::RelPath;
+
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the path to the user's home directory.
@@ -792,6 +794,81 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
                     }
                 }
             }
+        }
+    }
+}
+pub fn compare_rel_paths(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+        if filename.is_empty() {
+            return (None, None);
+        }
+
+        match filename.rsplit_once('.') {
+            // Case 1: No dot was found. The entire name is the stem.
+            None => (Some(filename), None),
+
+            // Case 2: A dot was found.
+            Some((before, after)) => {
+                // This is the crucial check for dotfiles like ".bashrc".
+                // If `before` is empty, the dot was the first character.
+                // In that case, we revert to the "whole name is the stem" logic.
+                if before.is_empty() {
+                    (Some(filename), None)
+                } else {
+                    // Otherwise, we have a standard stem and extension.
+                    (Some(before), Some(after))
+                }
+            }
+        }
+    }
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = a_is_file && components_a.rest().is_empty();
+                let b_is_file = b_is_file && components_b.rest().is_empty();
+
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let (a_stem, a_extension) = a_is_file
+                        .then(|| stem_and_extension(component_a))
+                        .unwrap_or_default();
+                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
+
+                    let (b_stem, b_extension) = b_is_file
+                        .then(|| stem_and_extension(component_b))
+                        .unwrap_or_default();
+                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
+
+                    let compare_components = match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => natural_sort(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    };
+
+                    compare_components.then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = a_extension.unwrap_or_default();
+                            let ext_b = b_extension.unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                });
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
         }
     }
 }

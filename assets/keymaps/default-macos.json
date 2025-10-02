@@ -289,7 +289,7 @@
       "alt-enter": "agent::ContinueWithBurnMode",
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-y": "agent::AllowAlways",
-      "cmd-d": "agent::RejectOnce"
+      "cmd-alt-z": "agent::RejectOnce"
     }
   },
   {

@@ -288,7 +288,7 @@ impl ShellBuilder {
                         combined_command.push_str(") </dev/null");
                     }
                     ShellKind::PowerShell => {
-                        combined_command.insert_str(0, "$null | {");
+                        combined_command.insert_str(0, "$null | & {");
                         combined_command.push_str("}");
                     }
                     ShellKind::Cmd => {

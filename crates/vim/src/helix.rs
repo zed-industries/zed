@@ -468,9 +468,7 @@ impl Vim {
                         let was_empty = range.is_empty();
                         let was_reversed = selection.reversed;
                         (
-                            display_map
-                                .buffer_snapshot
-                                .anchor_at(start_offset, Bias::Left),
+                            display_map.buffer_snapshot.anchor_before(start_offset),
                             end_offset - start_offset,
                             was_empty,
                             was_reversed,

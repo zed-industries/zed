@@ -577,6 +577,31 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
+                        // Proactively surface Authentication Required if the agent advertises auth methods.
+                        if let Some(acp_conn) = thread
+                            .read(cx)
+                            .connection()
+                            .clone()
+                            .downcast::<agent_servers::AcpConnection>()
+                        {
+                            let methods = acp_conn.auth_methods();
+                            if !methods.is_empty() {
+                                // Immediately transition to auth-required UI, but defer to avoid re-entrant update.
+                                let err = AuthRequired {
+                                    description: None,
+                                    provider_id: None,
+                                };
+                                let this_weak = cx.weak_entity();
+                                let agent = agent.clone();
+                                let connection = thread.read(cx).connection().clone();
+                                window.defer(cx, move |window, cx| {
+                                    Self::handle_auth_required(
+                                        this_weak, err, agent, connection, window, cx,
+                                    );
+                                });
+                            }
+                        }
+
                         this.model_selector = thread
                             .read(cx)
                             .connection()
@@ -1012,11 +1037,13 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            if !connection
-                .auth_methods()
-                .iter()
-                .any(|method| method.id.0.as_ref() == "claude-login")
-            {
+            let auth_methods = connection.auth_methods();
+            let has_supported_auth = auth_methods.iter().any(|method| {
+                let id = method.id.0.as_ref();
+                id == "claude-login" || id == "spawn-gemini-cli"
+            });
+            let can_login = has_supported_auth || auth_methods.is_empty() || self.login.is_some();
+            if !can_login {
                 return;
             };
             let this = cx.weak_entity();
@@ -3712,13 +3739,10 @@ impl AcpThreadView {
                         None
                     } else {
                         Some(
-                            Label::new(format!(
-                                "{separator}{}{separator}",
-                                parent.display(path_style)
-                            ))
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
+                            Label::new(format!("{}{separator}", parent.display(path_style)))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
                         )
                     }
                 });

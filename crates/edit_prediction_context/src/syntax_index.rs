@@ -35,6 +35,10 @@ use crate::outline::declarations_in_buffer;
 //
 // * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
 // references are present and their scores.
+//
+// * Include single-file worktrees / non visible worktrees? E.g. go to definition that resolves to a
+// file in a build dependency. Should not be editable in that case - but how to distinguish the case
+// where it should be editable?
 
 // Potential future optimizations:
 //
