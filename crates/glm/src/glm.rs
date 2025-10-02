@@ -181,6 +181,8 @@ pub struct ToolCall {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolCallContent {
     Function { function: FunctionContent },
+    // TODO: tool call for mcp
+    // Mcp { }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -192,7 +194,7 @@ pub struct FunctionContent {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Response {
     pub id: String,
-    pub object: String,
+    pub request_id: String,
     pub created: u64,
     pub model: String,
     pub choices: Vec<Choice>,
@@ -222,7 +224,7 @@ pub struct Choice {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct StreamResponse {
     pub id: String,
-    pub object: String,
+    pub request_id: String,
     pub created: u64,
     pub model: String,
     pub choices: Vec<StreamChoice>,
