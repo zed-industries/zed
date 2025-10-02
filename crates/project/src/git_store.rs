@@ -439,6 +439,15 @@ impl GitStore {
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
     }
+    pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
+        if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
+            let id = repo.read(cx).id;
+            if self.active_repo_id != Some(id) {
+                self.active_repo_id = Some(id);
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
+            }
+        }
+    }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
@@ -1111,7 +1120,6 @@ impl GitStore {
             _ => {}
         }
     }
-
     fn on_repository_event(
         &mut self,
         repo: Entity<Repository>,
