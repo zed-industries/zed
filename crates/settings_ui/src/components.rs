@@ -49,6 +49,8 @@ impl RenderOnce for SettingsEditor {
                 if let Some(placeholder) = self.placeholder {
                     editor.set_placeholder_text(placeholder, window, cx);
                 }
+                // todo(settings_ui): We should have an observe global use for settings store
+                // so whenever a settings file is updated, the settings ui updates too
                 editor
             }
         });
