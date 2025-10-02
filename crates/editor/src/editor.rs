@@ -23475,11 +23475,23 @@ impl EntityInputHandler for Editor {
 
         if ime_active && text != " " {
             self.replace_and_mark_text_in_range(None, text, None, window, cx);
+            if let Some(transaction) = self.ime_transaction {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.group_until_transaction(transaction, cx);
+                });
+            }
+            self.unmark_text(window, cx);
             return;
         }
 
         if range_utf16.is_some() {
             self.replace_and_mark_text_in_range(range_utf16, text, None, window, cx);
+            if let Some(transaction) = self.ime_transaction {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.group_until_transaction(transaction, cx);
+                });
+            }
+            self.unmark_text(window, cx);
             return;
         }
 
@@ -23621,22 +23633,18 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                if range_utf16.is_none() {
-                    this.highlight_text::<InputComposition>(
-                        marked_ranges.clone(),
-                        HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: px(1.),
-                                color: None,
-                                wavy: false,
-                            }),
-                            ..Default::default()
-                        },
-                        cx,
-                    );
-                } else {
-                    this.unmark_text(window, cx);
-                }
+                this.highlight_text::<InputComposition>(
+                    marked_ranges.clone(),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                );
             }
 
             // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
