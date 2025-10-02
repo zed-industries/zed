@@ -9691,6 +9691,7 @@ dependencies = [
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
+ "unindent",
  "workspace-hack",
 ]
 
