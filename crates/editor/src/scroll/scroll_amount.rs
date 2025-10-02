@@ -28,27 +28,27 @@ pub enum ScrollAmount {
 }
 
 impl ScrollAmount {
-    pub fn lines(&self, mut visible_line_count: f32) -> f32 {
+    pub fn lines(&self, mut visible_line_count: f64) -> f64 {
         match self {
-            Self::Line(count) => *count,
+            Self::Line(count) => *count as f64,
             Self::Page(count) => {
                 // for full pages subtract one to leave an anchor line
                 if self.is_full_page() {
                     visible_line_count -= 1.0
                 }
-                (visible_line_count * count).trunc()
+                (visible_line_count * (*count as f64)).trunc()
             }
             Self::Column(_count) => 0.0,
             Self::PageWidth(_count) => 0.0,
         }
     }
 
-    pub fn columns(&self, visible_column_count: f32) -> f32 {
+    pub fn columns(&self, visible_column_count: f64) -> f64 {
         match self {
             Self::Line(_count) => 0.0,
             Self::Page(_count) => 0.0,
-            Self::Column(count) => *count,
-            Self::PageWidth(count) => (visible_column_count * count).trunc(),
+            Self::Column(count) => *count as f64,
+            Self::PageWidth(count) => (visible_column_count * *count as f64).trunc(),
         }
     }
 

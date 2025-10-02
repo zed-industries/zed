@@ -309,8 +309,8 @@ impl ScrollManager {
                         item_id,
                         workspace_id,
                         top_row,
-                        anchor.offset.x,
-                        anchor.offset.y,
+                        anchor.offset.x as f32,
+                        anchor.offset.y as f32,
                     )
                     .await
                     .log_err()
@@ -521,7 +521,8 @@ impl Editor {
             delta.y = 0.0;
         }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position = self.scroll_manager.anchor.scroll_position(&display_map) + delta;
+        let position =
+            self.scroll_manager.anchor.scroll_position(&display_map) + delta.map(f64::from);
         self.set_scroll_position_taking_display_map(position, true, false, display_map, window, cx);
     }
 
@@ -704,9 +705,9 @@ impl Editor {
         if matches!(
             settings.defaults.soft_wrap,
             SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) && (settings.defaults.preferred_line_length as f32) < visible_column_count
+        ) && (settings.defaults.preferred_line_length as f64) < visible_column_count
         {
-            visible_column_count = settings.defaults.preferred_line_length as f32;
+            visible_column_count = settings.defaults.preferred_line_length as f64;
         }
 
         // If the scroll position is currently at the left edge of the document
@@ -717,7 +718,8 @@ impl Editor {
             && amount.columns(visible_column_count) > 0.
             && let Some(last_position_map) = &self.last_position_map
         {
-            current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+            current_position.x +=
+                f64::from(self.gutter_dimensions.margin / last_position_map.em_advance);
         }
         let new_position = current_position
             + point(
@@ -774,7 +776,7 @@ impl Editor {
                 .snapshot(cx)
                 .anchor_before(Point::new(top_row, 0));
             let scroll_anchor = ScrollAnchor {
-                offset: gpui::Point::new(x, y),
+                offset: gpui::Point::new(x as f64, y as f64),
                 anchor: top_anchor,
             };
             self.set_scroll_anchor(scroll_anchor, window, cx);
