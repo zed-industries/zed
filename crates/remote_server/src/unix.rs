@@ -783,7 +783,7 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Res
 
     if persist && persist_at.is_none() {
         let mut secret_path = paths::config_dir().clone();
-        secret_path.push("zedIrohNode.pub");
+        secret_path.push("zedIrohNode.key");
         persist_at = Some(secret_path);
     }
 
@@ -1084,7 +1084,6 @@ impl ProtocolHandler for IrohZedProtocolHandler {
 
 struct IrohZedNode {
     secret: SecretKey,
-    ticket: ZedIrohTicket,
 }
 
 impl IrohZedNode {
@@ -1111,14 +1110,9 @@ impl IrohZedNode {
         iroh_zed_node
     }
 
-    async fn read(node_path: &PathBuf) -> Result<Option<Self>> {
-        let (key_path, ticket_path) = split_node_path(&node_path);
+    async fn read(key_path: &PathBuf) -> Result<Option<Self>> {
         if !key_path.exists() {
             log::debug!("Secret key not found: {:?}", &key_path);
-            return Ok(None);
-        }
-        if !ticket_path.exists() {
-            log::debug!("Ticket not found: {:?}", &ticket_path);
             return Ok(None);
         }
         let key_base64 = tokio::fs::read_to_string(key_path.clone()).await?;
@@ -1128,32 +1122,16 @@ impl IrohZedNode {
             return Err(anyhow!("Not enough bytes in secret key"));
         }
         let secret = SecretKey::try_from(&key_bytes[0..32])?;
-        let public_key = secret.public();
 
-        let ticket_string = tokio::fs::read_to_string(ticket_path.clone()).await?;
-        let ticket_string = ticket_string.trim();
-        let ticket = ZedIrohTicket::from_str(&ticket_string)?;
-        let node_id = ticket.node_addr().node_id;
-        if node_id != public_key {
-            return Err(anyhow!(
-                "Mismatch: {:?} does not belong to {:?}",
-                &key_path,
-                &ticket_path
-            ));
-        }
-
-        Ok(Some(IrohZedNode { secret, ticket }))
+        Ok(Some(IrohZedNode { secret }))
     }
 
     fn generate() -> Self {
         let secret = SecretKey::generate(rand_core::OsRng);
-        let ticket = ZedIrohTicket::new(iroh::NodeAddr::new(secret.public()));
-        IrohZedNode { secret, ticket }
+        IrohZedNode { secret }
     }
 
-    async fn write(node_path: &PathBuf, iroh_zed_node: &IrohZedNode) -> Result<()> {
-        let (key_path, ticket_path) = split_node_path(&node_path);
-
+    async fn write(key_path: &PathBuf, iroh_zed_node: &IrohZedNode) -> Result<()> {
         let secret = iroh_zed_node.secret();
         let mut secret_base64 = BASE64_STANDARD.encode(secret.to_bytes());
         secret_base64.push('\n');
@@ -1162,21 +1140,11 @@ impl IrohZedNode {
         create_file(open_options, &key_path, &secret_base64)
             .await
             .context(format!("Key file: [{:?}]", key_path))?;
-
-        let mut ticket = iroh_zed_node.ticket().to_string();
-        ticket.push('\n');
-        create_file(tokio::fs::OpenOptions::new(), &ticket_path, &ticket)
-            .await
-            .context(format!("Ticket file: [{:?}]", ticket_path))?;
         Ok(())
     }
 
     fn secret(&self) -> &SecretKey {
         &self.secret
-    }
-
-    fn ticket(&self) -> &ZedIrohTicket {
-        &self.ticket
     }
 }
 
@@ -1192,16 +1160,6 @@ async fn create_file(
         .await?;
     open_file.write_all(content.as_bytes()).await?;
     Ok(())
-}
-
-fn split_node_path(node_path: &PathBuf) -> (PathBuf, PathBuf) {
-    let mut key_path = node_path.clone();
-    key_path.set_extension("key");
-    let mut ticket_path = node_path.clone();
-    if ticket_path == key_path {
-        ticket_path.set_extension("pub");
-    }
-    (key_path, ticket_path)
 }
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
