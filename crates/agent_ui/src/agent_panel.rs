@@ -75,6 +75,7 @@ use zed_actions::{
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
+use feature_flags::{CodexAcpFeatureFlag, FeatureFlagAppExt as _};
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1864,6 +1865,8 @@ impl AgentPanel {
                     })
                     .unwrap_or_default();
 
+
+
                 move |window, cx| {
                     telemetry::event!("New Thread Clicked");
 
@@ -2000,32 +2003,34 @@ impl AgentPanel {
                                         }
                                     }),
                             )
-                            .item(
-                                ContextMenuEntry::new("New Codex Thread")
-                                    .icon(IconName::Ai)
-                                    .disabled(is_via_collab)
-                                    .icon_color(Color::Muted)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                AgentType::Codex,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
+                            .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
+                                this.item(
+                                    ContextMenuEntry::new("New Codex Thread")
+                                        .icon(IconName::Ai)
+                                        .disabled(is_via_collab)
+                                        .icon_color(Color::Muted)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.new_agent_thread(
+                                                                    AgentType::Codex,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
                                             }
-                                        }
-                                    }),
-                            )
+                                        }),
+                                )
+                            })
                             .map(|mut menu| {
                                 let agent_names = agent_server_store
                                     .read(cx)
