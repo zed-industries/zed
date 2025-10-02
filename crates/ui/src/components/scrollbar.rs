@@ -122,7 +122,7 @@ pub trait WithScrollbar: Sized {
     where
         T: ScrollableHandle;
 
-    /// TODO: account for these cases properly
+    // TODO: account for these cases properly
     // #[track_caller]
     // fn horizontal_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
     //     self.custom_scrollbars(
