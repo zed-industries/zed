@@ -1520,6 +1520,9 @@ impl PlatformWindow for MacWindow {
                     };
 
                     match action_str.as_ref() {
+                        "None" => {
+                            // "Do Nothing" selected, so do no action
+                        }
                         "Minimize" => {
                             window.miniaturize_(nil);
                         }
@@ -1530,11 +1533,8 @@ impl PlatformWindow for MacWindow {
                             // There is no documented API for "Fill" action, so we'll just zoom the window
                             window.zoom_(nil);
                         }
-                        "None" | "" => {
-                            // Do nothing - respect the "Do Nothing" system setting
-                        }
                         _ => {
-                            // Default to doing nothing for unrecognized settings
+                            window.zoom_(nil);
                         }
                     }
                 }

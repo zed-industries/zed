@@ -12082,6 +12082,8 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "askpass",
+ "async-compression",
+ "async-tar",
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",
@@ -12094,6 +12096,7 @@ dependencies = [
  "dap_adapters",
  "extension",
  "fancy-regex 0.14.0",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12158,6 +12161,7 @@ dependencies = [
  "client",
  "collections",
  "command_palette_hooks",
+ "criterion",
  "db",
  "editor",
  "file_icons",
@@ -12168,6 +12172,7 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
+ "rayon",
  "schemars 1.0.1",
  "search",
  "serde",
@@ -20196,7 +20201,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.207.0"
+version = "0.208.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20417,21 +20422,6 @@ dependencies = [
 name = "zed_proto"
 version = "0.2.2"
 dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_ruff"
-version = "0.1.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_snippets"
-version = "0.0.6"
-dependencies = [
- "serde_json",
  "zed_extension_api 0.1.0",
 ]
 

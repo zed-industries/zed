@@ -1354,6 +1354,7 @@ impl Render for RulesLibrary {
 
         client_side_decorations(
             v_flex()
+                .bg(theme.colors().background)
                 .id("rules-library")
                 .key_context("PromptLibrary")
                 .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))

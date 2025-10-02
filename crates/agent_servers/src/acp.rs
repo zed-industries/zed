@@ -380,6 +380,10 @@ impl AgentConnection for AcpConnection {
             match result {
                 Ok(response) => Ok(response),
                 Err(err) => {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                        return Err(anyhow!(acp::Error::auth_required()));
+                    }
+
                     if err.code != ErrorCode::INTERNAL_ERROR.code {
                         anyhow::bail!(err)
                     }

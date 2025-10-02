@@ -2743,6 +2743,7 @@ mod tests {
         })
         .await
         .unwrap();
+        cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
         let workspace = window.root(cx).unwrap();
@@ -2794,6 +2795,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2832,6 +2834,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2881,6 +2884,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2930,6 +2934,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(workspace, Path::new(path!("/d.txt")), rel_path(""), cx);
@@ -4393,6 +4398,7 @@ mod tests {
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
+                    | "action::Sequence"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}
                     _ => {
@@ -4454,6 +4460,7 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
+                "action",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]

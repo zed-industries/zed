@@ -21,7 +21,10 @@ use std::{
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
 };
-use ui::{Divider, DropdownMenu, ListItem, Switch, prelude::*};
+use ui::{
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
+    prelude::*,
+};
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -2771,12 +2774,23 @@ impl std::fmt::Debug for SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn render(&self, file: SettingsUiFile, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(
+        &self,
+        file: SettingsUiFile,
+        is_last: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
-                .gap_0p5()
-                .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
+                .gap_1()
+                .child(
+                    Label::new(SharedString::new_static(header))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
                 .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
@@ -2790,6 +2804,11 @@ impl SettingsPageItem {
                     .gap_2()
                     .flex_wrap()
                     .justify_between()
+                    .when(!is_last, |this| {
+                        this.pb_4()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
                     .child(
                         v_flex()
                             .max_w_1_2()
@@ -3130,6 +3149,7 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].clone();
+        self.navbar_entry = 0;
         self.build_ui(cx);
     }
 
@@ -3176,52 +3196,26 @@ impl SettingsWindow {
                             .map(|ix| {
                                 let entry = &this.navbar_entries[ix];
 
-                                h_flex()
-                                    .id(("settings-ui-section", ix))
-                                    .w_full()
-                                    .pl_2p5()
-                                    .py_0p5()
-                                    .rounded_sm()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border_transparent)
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .when(this.is_navbar_entry_selected(ix), |this| {
-                                        this.text_color(cx.theme().colors().text)
-                                            .bg(cx.theme().colors().element_selected.opacity(0.2))
-                                            .border_color(cx.theme().colors().border)
+                                TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
+                                    .root_item(entry.is_root)
+                                    .toggle_state(this.is_navbar_entry_selected(ix))
+                                    .when(entry.is_root, |item| {
+                                        item.toggle(
+                                            this.pages[this.page_index_from_navbar_index(ix)]
+                                                .expanded,
+                                        )
+                                        .on_toggle(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.toggle_navbar_entry(ix);
+                                                cx.notify();
+                                            }),
+                                        )
                                     })
-                                    .child(
-                                        ListItem::new(("settings-ui-navbar-entry", ix))
-                                            .selectable(true)
-                                            .inset(true)
-                                            .indent_step_size(px(1.))
-                                            .indent_level(if entry.is_root { 1 } else { 3 })
-                                            .when(entry.is_root, |item| {
-                                                item.toggle(
-                                                    this.pages
-                                                        [this.page_index_from_navbar_index(ix)]
-                                                    .expanded,
-                                                )
-                                                .always_show_disclosure_icon(true)
-                                                .on_toggle(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_navbar_entry(ix);
-                                                    cx.notify();
-                                                }))
-                                            })
-                                            .child(
-                                                h_flex()
-                                                    .text_ui(cx)
-                                                    .truncate()
-                                                    .hover(|s| {
-                                                        s.bg(cx.theme().colors().element_hover)
-                                                    })
-                                                    .child(entry.title),
-                                            ),
-                                    )
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.navbar_entry = ix;
                                         cx.notify();
                                     }))
+                                    .into_any_element()
                             })
                             .collect()
                     }),
@@ -3245,13 +3239,16 @@ impl SettingsWindow {
     }
 
     fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
+        let items: Vec<_> = self.page_items().collect();
+        let items_len = items.len();
+
         v_flex()
             .id("settings-ui-page")
             .gap_4()
-            .children(
-                self.page_items()
-                    .map(|item| item.render(self.current_file.clone(), window, cx)),
-            )
+            .children(items.into_iter().enumerate().map(|(index, item)| {
+                let is_last = index == items_len - 1;
+                item.render(self.current_file.clone(), is_last, window, cx)
+            }))
             .overflow_y_scroll()
             .track_scroll(
                 window
@@ -3288,10 +3285,13 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
+
         div()
             .flex()
             .flex_row()
             .size_full()
+            .font(ui_font)
             .bg(cx.theme().colors().background)
             .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx))
@@ -3344,9 +3344,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
     let toggle_state = if value.into() {
-        ui::ToggleState::Selected
+        ToggleState::Selected
     } else {
-        ui::ToggleState::Unselected
+        ToggleState::Unselected
     };
 
     Switch::new("toggle_button", toggle_state)
@@ -3362,6 +3362,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 });
             }
         })
+        .color(SwitchColor::Accent)
         .into_any_element()
 }
 
@@ -3386,7 +3387,7 @@ where
     DropdownMenu::new(
         "dropdown",
         current_value_label,
-        ui::ContextMenu::build(window, cx, move |mut menu, _, _| {
+        ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (value, label) in variants()
                 .into_iter()
                 .copied()
@@ -3395,7 +3396,7 @@ where
                 menu = menu.toggleable_entry(
                     label,
                     value == current_value,
-                    ui::IconPosition::Start,
+                    IconPosition::Start,
                     None,
                     move |_, cx| {
                         if value == current_value {
@@ -3415,7 +3416,7 @@ where
             menu
         }),
     )
-    .style(ui::DropdownStyle::Outlined)
+    .style(DropdownStyle::Outlined)
     .into_any_element()
 }
 
