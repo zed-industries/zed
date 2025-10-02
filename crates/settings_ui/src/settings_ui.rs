@@ -635,27 +635,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
-            title: "Project",
-            expanded: false,
-            items: vec![
-                SettingsPageItem::SectionHeader("Worktree Settings Content"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Name",
-                    description: "The displayed name of this project. If not set, the root directory name",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.project.worktree.project_name,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.project.worktree.project_name
-                        },
-                    }),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("A new name"),
-                    })),
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Editing",
+            title: "Editor",
             expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
