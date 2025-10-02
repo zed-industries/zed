@@ -156,7 +156,19 @@ pub struct PreviewTabsSettingsContent {
     pub enable_preview_from_code_navigation: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ClosePosition {
     Left,

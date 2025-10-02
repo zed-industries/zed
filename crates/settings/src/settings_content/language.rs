@@ -147,7 +147,19 @@ pub enum EditPredictionsMode {
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.

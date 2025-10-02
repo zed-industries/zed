@@ -494,7 +494,19 @@ pub enum MultiCursorModifier {
 /// Whether the editor will scroll beyond the last line.
 ///
 /// Default: one_page
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBeyondLastLine {
     /// The editor will not scroll beyond the last line.
@@ -580,7 +592,18 @@ pub enum HideMouseMode {
 ///
 /// Default: inline
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
