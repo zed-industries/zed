@@ -123,11 +123,11 @@ As of October 1st, 2025, extension repositories must include one of the followin
 This allows us to distribute the resulting binary produced from your extension code to our users.
 Without a valid license, the pull request to add or update your extension in the following steps will fail CI.
 
-**Note:** This license requirement applies only to your extension code itself (the code that gets compiled into the extension binary).
+Your license file should be at the root of your extension repository with a filename like `LICENSE`, `LICENSE.txt`, `LICENSE-MIT`, etc. For the logic on how license files are identified, see the [license validation source code](https://github.com/zed-industries/extensions/blob/main/src/lib/license.js).
+
+> This license requirement applies only to your extension code itself (the code that gets compiled into the extension binary).
 It does not apply to any tools your extension may download or interact with, such as language servers or other external dependencies.
 If your repository contains both extension code and other projects (like a language server), you are not required to relicense those other projects—only the extension code needs to be one of the aforementioned accepted licenses.
-
-Your license file should be at the root of your extension repository with a filename like `LICENSE`, `LICENSE.txt`, `LICENSE-MIT`, etc. For the logic on how license files are identified, see the [license validation source code](https://github.com/zed-industries/extensions/blob/main/src/lib/license.js).
 
 ## Publishing your extension
 
@@ -172,4 +172,4 @@ In your PR do the following:
 
 If you'd like to automate this process, there is a [community GitHub Action](https://github.com/huacnlee/zed-extension-action) you can use.
 
-> **Note:** If your extension repository already has a different license, you'll need to update it to be one of the [accepted extension licenses](#extension-license-requirements) before publishing or updating your extension.
+> **Note:** If your extension repository has a different license, you'll need to update it to be one of the [accepted extension licenses](#extension-license-requirements) before publishing your update.
