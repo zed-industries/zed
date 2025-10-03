@@ -4136,8 +4136,10 @@ impl BufferSnapshot {
         let applicable_chunks = tree_sitter_data
             .chunks
             .iter()
-            .filter(move |chunk_range| {
-                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
+            .filter(move |buffer_chunk| {
+                let chunk_row_range = buffer_chunk.start..buffer_chunk.end;
+                chunk_row_range.contains(&row_range.start())
+                    || chunk_row_range.contains(&row_range.end())
             })
             .copied()
             .collect::<Vec<_>>();
