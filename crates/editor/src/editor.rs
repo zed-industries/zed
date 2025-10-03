@@ -147,8 +147,8 @@ use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
-    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectPath,
-    ProjectTransaction, TaskSourceKind,
+    InvalidationStrategy, Location, LocationLink, PrepareRenameResponse, Project, ProjectItem,
+    ProjectPath, ProjectTransaction, TaskSourceKind,
     debugger::{
         breakpoint_store::{
             Breakpoint, BreakpointEditAction, BreakpointSessionState, BreakpointState,
@@ -22447,7 +22447,7 @@ pub trait SemanticsProvider {
 
     fn inlay_hints(
         &self,
-        _invalidate_cache: bool,
+        _invalidate: InvalidationStrategy,
         _debounce: Option<Duration>,
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
@@ -22953,14 +22953,14 @@ impl SemanticsProvider for Entity<Project> {
 
     fn inlay_hints(
         &self,
-        invalidate_cache: bool,
+        invalidate: InvalidationStrategy,
         debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(invalidate_cache, debounce, buffer, range, cx)
+            lsp_store.inlay_hints(invalidate, debounce, buffer, range, cx)
         }))
     }
 

@@ -14,7 +14,7 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
-    ResolveState,
+    InvalidationStrategy, ResolveState,
     lsp_store::{ResolvedHint, RowChunkCachedHints},
 };
 use text::{Bias, BufferId, OffsetRangeExt as _};
@@ -192,34 +192,6 @@ impl LspInlayHintData {
     }
 }
 
-/// A logic to apply when querying for new inlay hints and deciding what to do with the old entries in the cache in case of conflicts.
-#[derive(Debug, Clone, Copy)]
-pub enum InvalidationStrategy {
-    /// Hints reset is <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_inlayHint_refresh">requested</a> by the LSP server.
-    /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
-    ///
-    /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
-    RefreshRequested,
-    /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
-    /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
-    BufferEdited,
-    /// A new file got opened/new excerpt was added to a multibuffer/a [multi]buffer was scrolled to a new position.
-    /// No invalidation should be done at all, all new hints are added to the cache.
-    ///
-    /// A special case is the settings change: in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
-    /// This does not lead to cache invalidation, but would require cache usage for determining which hints are not displayed and issuing an update to inlays on the screen.
-    None,
-}
-
-impl InvalidationStrategy {
-    pub fn should_invalidate(&self) -> bool {
-        matches!(
-            self,
-            InvalidationStrategy::RefreshRequested | InvalidationStrategy::BufferEdited
-        )
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum InlayHintRefreshReason {
     ModifiersChanged(bool),
@@ -298,7 +270,7 @@ impl Editor {
                     match inlay_hints.modifiers_override(enabled) {
                         Some(enabled) => {
                             if enabled {
-                                InvalidationStrategy::RefreshRequested
+                                InvalidationStrategy::RefreshRequested(None)
                             } else {
                                 self.splice_inlays(
                                     &visible_inlay_hints
@@ -317,7 +289,7 @@ impl Editor {
                 InlayHintRefreshReason::Toggle(enabled) => {
                     if inlay_hints.toggle(enabled) {
                         if enabled {
-                            InvalidationStrategy::RefreshRequested
+                            InvalidationStrategy::RefreshRequested(None)
                         } else {
                             self.splice_inlays(
                                 &visible_inlay_hints
@@ -363,8 +335,8 @@ impl Editor {
                 }
                 InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
                 InlayHintRefreshReason::BufferEdited => InvalidationStrategy::BufferEdited,
-                InlayHintRefreshReason::RefreshRequested(_) => {
-                    InvalidationStrategy::RefreshRequested
+                InlayHintRefreshReason::RefreshRequested(server_id) => {
+                    InvalidationStrategy::RefreshRequested(Some(server_id))
                 }
             };
             invalidate_cache
@@ -400,7 +372,7 @@ impl Editor {
             let buffer_point_range = buffer_anchor_range.to_point(&buffer_snapshot);
 
             let Some(new_hints) = semantics_provider.inlay_hints(
-                invalidate_cache.should_invalidate(),
+                invalidate_cache,
                 debounce,
                 buffer,
                 buffer_anchor_range.clone(),
