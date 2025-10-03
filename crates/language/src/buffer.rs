@@ -3017,9 +3017,15 @@ impl BufferSnapshot {
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
         let end = Point::new(row_range.end, 0);
         let range = (start..end).to_offset(&self.text);
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            Some(&grammar.indents_config.as_ref()?.query)
-        });
+        let mut matches = self.syntax.matches_with_options(
+            range.clone(),
+            &self.text,
+            TreeSitterOptions {
+                max_distance_from_inclusion_byte_range: Some(10 * 1024),
+                max_start_depth: None,
+            },
+            |grammar| Some(&grammar.indents_config.as_ref()?.query),
+        );
         let indent_configs = matches
             .grammars()
             .iter()
@@ -4052,9 +4058,15 @@ impl BufferSnapshot {
         &self,
         range: Range<usize>,
     ) -> impl Iterator<Item = BracketMatch> + '_ {
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.brackets_config.as_ref().map(|c| &c.query)
-        });
+        let mut matches = self.syntax.matches_with_options(
+            range.clone(),
+            &self.text,
+            TreeSitterOptions {
+                max_distance_from_inclusion_byte_range: Some(10 * 1024),
+                max_start_depth: None,
+            },
+            |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
+        );
         let configs = matches
             .grammars()
             .iter()
