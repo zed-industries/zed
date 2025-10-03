@@ -641,19 +641,10 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_chunks(mut rng: StdRng) {
-        let chunk_len = rng.random_range(0..=MAX_BASE);
-        let text = RandomCharIter::new(&mut rng)
-            .take(chunk_len)
-            .collect::<String>();
-        let mut ix = chunk_len;
-        while !text.is_char_boundary(ix) {
-            ix -= 1;
-        }
-        let text = &text[..ix];
-
+        let text = random_string_with_utf8_len(&mut rng, MAX_BASE);
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::new(text);
-        verify_chunk(chunk.as_slice(), text);
+        let chunk = Chunk::new(&text);
+        verify_chunk(chunk.as_slice(), &text);
 
         for _ in 0..10 {
             let mut start = rng.random_range(0..=chunk.text.len());
