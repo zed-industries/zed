@@ -3196,6 +3196,30 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn excerpts_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = MultiBufferExcerpt<'_>> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&range.start);
+        std::iter::from_fn(move || {
+            let region = cursor.region()?;
+            if region.range.start >= range.end {
+                return None;
+            }
+            let excerpt = MultiBufferExcerpt {
+                diff_transforms: cursor.diff_transforms.clone(),
+                excerpt: region.excerpt,
+                offset: region.range.start,
+                buffer_offset: region.excerpt.buffer_start_offset(),
+                excerpt_offset: cursor.excerpts.start().clone(),
+            };
+            cursor.next_excerpt();
+            Some(excerpt)
+        })
+    }
+
     pub fn buffer_ids_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -6297,6 +6321,12 @@ impl<'a> MultiBufferExcerpt<'a> {
     pub fn contains_buffer_range(&self, range: Range<usize>) -> bool {
         range.start >= self.excerpt.buffer_start_offset()
             && range.end <= self.excerpt.buffer_end_offset()
+    }
+
+    /// Returns true if any part of the given range is in the buffer's excerpt
+    pub fn contains_partial_buffer_range(&self, range: Range<usize>) -> bool {
+        range.start <= self.excerpt.buffer_end_offset()
+            && range.end >= self.excerpt.buffer_start_offset()
     }
 
     pub fn max_buffer_row(&self) -> u32 {
