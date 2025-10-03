@@ -289,7 +289,7 @@ impl Editor {
                 InlayHintRefreshReason::Toggle(enabled) => {
                     if inlay_hints.toggle(enabled) {
                         if enabled {
-                            InvalidationStrategy::RefreshRequested(None)
+                            InvalidationStrategy::None
                         } else {
                             self.splice_inlays(
                                 &visible_inlay_hints
@@ -2709,11 +2709,16 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                assert!(
-                    cached_hint_labels(editor, cx).is_empty(),
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Cache does not change because of toggles in the editor"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
                     "Should clear hints after 2nd toggle"
                 );
-                assert!(visible_hint_labels(editor, cx).is_empty());
             })
             .unwrap();
 
@@ -2733,11 +2738,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                let expected_hints = vec!["2".to_string()];
+                let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
-                    "Should query LSP hints for the 2nd time after enabling hints in settings"
+                    "Should not query LSP hints after enabling hints in settings, as file version is the same"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
@@ -2751,11 +2756,16 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _, cx| {
-                assert!(
-                    cached_hint_labels(editor, cx).is_empty(),
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Cache does not change because of toggles in the editor"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
                     "Should clear hints after enabling in settings and a 3rd toggle"
                 );
-                assert!(visible_hint_labels(editor, cx).is_empty());
             })
             .unwrap();
 
@@ -2766,11 +2776,11 @@ pub mod tests {
             .unwrap();
         cx.executor().run_until_parked();
         editor.update(cx, |editor, _, cx| {
-            let expected_hints = vec!["3".to_string()];
+            let expected_hints = vec!["1".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor,cx),
-                "Should query LSP hints for the 3rd time after enabling hints in settings and toggling them back on"
+                "Should not query LSP hints after enabling hints in settings and toggling them back on"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
         }).unwrap();

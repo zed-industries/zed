@@ -28,7 +28,8 @@ pub enum InvalidationStrategy {
     /// A new file got opened/new excerpt was added to a multibuffer/a [multi]buffer was scrolled to a new position.
     /// No invalidation should be done at all, all new hints are added to the cache.
     ///
-    /// A special case is the settings change: in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
+    /// A special case is the editor toggles and settings change:
+    /// in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other) and toggling hints.
     /// This does not lead to cache invalidation, but would require cache usage for determining which hints are not displayed and issuing an update to inlays on the screen.
     None,
 }
