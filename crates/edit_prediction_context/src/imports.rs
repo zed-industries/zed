@@ -291,10 +291,17 @@ impl Imports {
             if let Some(node) = Self::attach_node(detached_node.into(), &mut trees) {
                 trees.push(node);
             }
+            log::trace!(
+                "Attached node to tree\n{:#?}\nAttach result:\n{:#?}",
+                detached_node,
+                trees
+                    .iter()
+                    .map(|tree| tree.debug(snapshot))
+                    .collect::<Vec<_>>()
+            );
         }
 
         for tree in &trees {
-            log::trace!("Import tree:\n{:#?}", tree.debug(snapshot));
             let mut module = Module::empty();
             Self::gather_from_tree(
                 tree,
@@ -311,13 +318,7 @@ impl Imports {
         let mut tree_index = 0;
         while tree_index < trees.len() {
             let tree = &mut trees[tree_index];
-            if node.module.contains_inclusive(&tree.range()) {
-                node.module_children.push(trees.remove(tree_index));
-                continue;
-            } else if node.content.contains_inclusive(&tree.content) {
-                node.content_children.push(trees.remove(tree_index));
-                continue;
-            } else if tree.content == node.content {
+            if tree.content == node.content {
                 // multiple matches can apply to the same name/list/wildcard. This keeps the queries
                 // simpler by combining info from these matches.
                 //
@@ -329,6 +330,12 @@ impl Imports {
                     tree.alias = node.alias.clone();
                 }
                 return None;
+            } else if node.module.contains_inclusive(&tree.range()) {
+                node.module_children.push(trees.remove(tree_index));
+                continue;
+            } else if node.content.contains_inclusive(&tree.content) {
+                node.content_children.push(trees.remove(tree_index));
+                continue;
             } else if tree.content.contains_inclusive(&node.content) {
                 if let Some(node) = Self::attach_node(node, &mut tree.content_children) {
                     tree.content_children.push(node);
