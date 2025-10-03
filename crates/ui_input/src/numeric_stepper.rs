@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use editor::Editor;
+use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, Modifiers};
 
 use ui::{IconButtonShape, prelude::*};
@@ -276,7 +276,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                     })
                     .map(|decrement| {
                         let decrement_handler = {
-                            let value = self.value.clone();
+                            let value = self.value;
                             let on_change = self.on_change.clone();
                             let min = self.min_value;
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
@@ -405,7 +405,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                     )
                     .map(|increment| {
                         let increment_handler = {
-                            let value = self.value.clone();
+                            let value = self.value;
                             let on_change = self.on_change.clone();
                             let max = self.max_value;
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
