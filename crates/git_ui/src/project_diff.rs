@@ -243,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -531,11 +531,12 @@ impl ProjectDiff {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn excerpt_paths(&self, cx: &App) -> Vec<String> {
+    pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string())
+            .map(|key| key.path())
+            .cloned()
             .collect()
     }
 }
