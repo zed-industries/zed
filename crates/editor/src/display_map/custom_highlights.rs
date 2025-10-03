@@ -75,7 +75,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
-    _semantic_tokens: Option<&HashMap<BufferId, Arc<SemanticTokenView>>>,
+    semantic_tokens: Option<&HashMap<BufferId, Arc<SemanticTokenView>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -119,8 +119,43 @@ fn create_highlight_endpoints(
                 });
             }
         }
-        highlight_endpoints.sort();
     }
+    if let Some(tokens) = semantic_tokens {
+        for mut excerpt in buffer.excerpts_for_range(range.clone()) {
+            let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
+                continue;
+            };
+
+            let buffer_range = excerpt
+                .buffer()
+                .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
+            for token in tokens.tokens_in_range(buffer_range) {
+                let token_range = excerpt
+                    .buffer()
+                    .range_from_version(token.range.clone(), &tokens.version);
+                if !excerpt.contains_partial_buffer_range(token_range.clone()) {
+                    continue;
+                }
+                let token_range = excerpt.map_range_from_buffer(token_range);
+
+                if token_range.end <= range.start || token_range.start >= range.end {
+                    continue;
+                }
+
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.start,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: Some(token.style),
+                });
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.end,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: None,
+                });
+            }
+        }
+    }
+    highlight_endpoints.sort();
     highlight_endpoints.into_iter().peekable()
 }
 
