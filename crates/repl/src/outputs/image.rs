@@ -3,7 +3,7 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
-use gpui::{App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window, img};
+use gpui::{App, ClipboardItem, Image, ImageFormat, RenderImage, Window, img};
 use std::sync::Arc;
 use ui::{IntoElement, Styled, div, prelude::*};
 
@@ -72,17 +72,17 @@ impl Render for ImageView {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let line_height = window.line_height();
 
-        let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
-            let height = u8::MAX as f32 * line_height.0;
+        let (height, width) = if self.height as f32 / f32::from(line_height) == u8::MAX as f32 {
+            let height = u8::MAX as f32 * line_height;
             let width = self.width as f32 * height / self.height as f32;
             (height, width)
         } else {
-            (self.height as f32, self.width as f32)
+            (self.height.into(), self.width.into())
         };
 
         let image = self.image.clone();
 
-        div().h(Pixels(height)).w(Pixels(width)).child(img(image))
+        div().h(height).w(width).child(img(image))
     }
 }
 

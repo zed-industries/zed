@@ -1,5 +1,6 @@
 //! # settings_ui
 mod components;
+use anyhow::Result;
 use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
@@ -25,7 +26,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
     prelude::*,
 };
-use util::{paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
 
@@ -3308,6 +3309,55 @@ impl Render for SettingsWindow {
     }
 }
 
+fn update_settings_file(
+    file: SettingsUiFile,
+    cx: &mut App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) -> Result<()> {
+    match file {
+        SettingsUiFile::Local((worktree_id, rel_path)) => {
+            fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+                workspace::AppState::global(cx)
+                    .upgrade()
+                    .map(|app_state| {
+                        app_state
+                            .workspace_store
+                            .read(cx)
+                            .workspaces()
+                            .iter()
+                            .filter_map(|workspace| {
+                                Some(workspace.read(cx).ok()?.project().clone())
+                            })
+                    })
+                    .into_iter()
+                    .flatten()
+            }
+            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
+            let project = all_projects(cx).find(|project| {
+                project.read_with(cx, |project, cx| {
+                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
+                })
+            });
+            let Some(project) = project else {
+                anyhow::bail!(
+                    "Could not find worktree containing settings file: {}",
+                    &rel_path.display(PathStyle::local())
+                );
+            };
+            project.update(cx, |project, cx| {
+                project.update_local_settings_file(worktree_id, rel_path, cx, update);
+            });
+            return Ok(());
+        }
+        SettingsUiFile::User => {
+            // todo(settings_ui) error?
+            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            Ok(())
+        }
+        SettingsUiFile::Server(_) => unimplemented!(),
+    }
+}
+
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
@@ -3326,12 +3376,13 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
-        .on_confirm(move |new_text, cx: &mut App| {
-            cx.update_global(move |store: &mut SettingsStore, cx| {
-                store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+        .on_confirm({
+            move |new_text, cx| {
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = new_text.map(Into::into);
-                });
-            });
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            }
         })
         .into_any_element()
 }
@@ -3354,12 +3405,10 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                let field = field;
-                cx.update_global(move |store: &mut SettingsStore, cx| {
-                    store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-                        *(field.pick_mut)(settings) = Some(state.into());
-                    });
-                });
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(state.into());
+                })
+                .log_err(); // todo(settings_ui) don't log err
             }
         })
         .color(SwitchColor::Accent)
@@ -3373,7 +3422,7 @@ fn render_dropdown<T>(
     cx: &mut App,
 ) -> AnyElement
 where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + 'static,
+    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
 {
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
@@ -3388,11 +3437,8 @@ where
         "dropdown",
         current_value_label,
         ContextMenu::build(window, cx, move |mut menu, _, _| {
-            for (value, label) in variants()
-                .into_iter()
-                .copied()
-                .zip(labels().into_iter().copied())
-            {
+            for (&value, &label) in std::iter::zip(variants(), labels()) {
+                let file = file.clone();
                 menu = menu.toggleable_entry(
                     label,
                     value == current_value,
@@ -3402,14 +3448,10 @@ where
                         if value == current_value {
                             return;
                         }
-                        cx.update_global(move |store: &mut SettingsStore, cx| {
-                            store.update_settings_file(
-                                <dyn fs::Fs>::global(cx),
-                                move |settings, _cx| {
-                                    *(field.pick_mut)(settings) = Some(value);
-                                },
-                            );
-                        });
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            *(field.pick_mut)(settings) = Some(value);
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
                     },
                 );
             }

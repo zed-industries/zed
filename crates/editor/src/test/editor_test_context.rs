@@ -275,7 +275,8 @@ impl EditorTestContext {
             let details = editor.text_layout_details(window);
 
             let y = pixel_position.y
-                + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
+                + f32::from(line_height)
+                    * Pixels::from(display_point.row().as_f64() - newest_point.row().as_f64());
             let x = pixel_position.x + snapshot.x_for_display_point(display_point, &details)
                 - snapshot.x_for_display_point(newest_point, &details);
             Point::new(x, y)

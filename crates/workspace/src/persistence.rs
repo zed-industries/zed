@@ -252,7 +252,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.0 as i32;
+        let this: i32 = u32::from(self.0) as _;
         this.bind(statement, start_index)
     }
 }

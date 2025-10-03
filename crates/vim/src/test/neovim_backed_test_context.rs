@@ -277,7 +277,7 @@ impl NeovimBackedTestContext {
         let window = self.window;
         let margin = self
             .update_window(window, |_, window, _cx| {
-                window.viewport_size().height - line_height * visible_line_count
+                window.viewport_size().height - line_height * (visible_line_count as f32)
             })
             .unwrap();
 

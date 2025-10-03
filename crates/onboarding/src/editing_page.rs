@@ -167,7 +167,7 @@ fn write_font_ligatures(enabled: bool, cx: &mut App) {
 
 fn read_format_on_save(cx: &App) -> bool {
     match AllLanguageSettings::get_global(cx).defaults.format_on_save {
-        FormatOnSave::On | FormatOnSave::List(_) => true,
+        FormatOnSave::On => true,
         FormatOnSave::Off => false,
     }
 }
