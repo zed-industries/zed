@@ -318,9 +318,11 @@ dependencies = [
  "smol",
  "task",
  "tempfile",
+ "terminal",
  "thiserror 2.0.12",
  "ui",
  "util",
+ "uuid",
  "watch",
  "workspace-hack",
 ]
