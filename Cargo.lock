@@ -17573,6 +17573,7 @@ dependencies = [
  "unicase",
  "util_macros",
  "walkdir",
+ "which 6.0.3",
  "workspace-hack",
 ]
 

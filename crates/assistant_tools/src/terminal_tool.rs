@@ -32,8 +32,8 @@ use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{
-    ResultExt, get_default_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
-    time::duration_alt_display,
+    ResultExt, get_default_system_shell_preferring_bash, markdown::MarkdownInlineCode,
+    size::format_file_size, time::duration_alt_display,
 };
 use workspace::Workspace;
 
@@ -146,7 +146,7 @@ impl Tool for TerminalTool {
             move || {
                 ShellBuilder::new(
                     remote_shell.as_deref(),
-                    &Shell::Program(get_default_system_shell()),
+                    &Shell::Program(get_default_system_shell_preferring_bash()),
                 )
                 .redirect_stdin_to_dev_null()
                 .build(Some(input_command.clone()), &[])

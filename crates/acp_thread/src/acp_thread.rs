@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_default_system_shell};
+use util::{ResultExt, get_default_system_shell_preferring_bash};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -2117,7 +2117,7 @@ impl AcpThread {
                                 .and_then(|r| r.read(cx).default_system_shell())
                         })?
                         .as_deref(),
-                    &Shell::Program(get_default_system_shell()),
+                    &Shell::Program(get_default_system_shell_preferring_bash()),
                 )
                 .redirect_stdin_to_dev_null()
                 .build(Some(command.clone()), &args);
