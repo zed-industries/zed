@@ -802,11 +802,9 @@ impl acp::Client for ClientDelegate {
         &self,
         args: acp::CreateTerminalRequest,
     ) -> Result<acp::CreateTerminalResponse, acp::Error> {
-        // TerminalProvider: spawn PTY task here and notify acp_thread to render
         let thread = self.session_thread(&args.session_id)?;
         let project = thread.read_with(&self.cx, |thread, _cx| thread.project().clone())?;
 
-        // Prepare environment based on cwd and extra env
         let mut env = if let Some(dir) = &args.cwd {
             project
                 .update(&mut self.cx.clone(), |project, cx| {
@@ -821,7 +819,7 @@ impl acp::Client for ClientDelegate {
             env.insert(var.name, var.value);
         }
 
-        // Build shell command for the task
+        // Use remote shell or default system shell, as appropriate
         let remote_shell = project.update(&mut self.cx.clone(), |project, cx| {
             project
                 .remote_client()
@@ -832,7 +830,6 @@ impl acp::Client for ClientDelegate {
                 .redirect_stdin_to_dev_null()
                 .build(Some(args.command.clone()), &args.args);
 
-        // Create the PTY-backed terminal (lower-level) via Project
         let terminal_entity = project
             .update(&mut self.cx.clone(), |project, cx| {
                 project.create_terminal_task(
@@ -848,20 +845,19 @@ impl acp::Client for ClientDelegate {
             })?
             .await?;
 
-        // Register with acp_thread (renderer), which will generate an ID, then return it
-        let label = format!("{} {}", args.command, args.args.join(" "));
-        let terminal_entity_in_acp_thread = thread.update(&mut self.cx.clone(), |thread, cx| {
+        // Register with renderer
+        let terminal_entity = thread.update(&mut self.cx.clone(), |thread, cx| {
             thread.register_terminal_created(
                 acp::TerminalId(uuid::Uuid::new_v4().to_string().into()),
-                label,
+                format!("{} {}", args.command, args.args.join(" ")),
                 args.cwd.clone(),
                 args.output_byte_limit,
                 terminal_entity,
                 cx,
             )
         })?;
-        let terminal_id = terminal_entity_in_acp_thread
-            .read_with(&self.cx, |terminal, _| terminal.id().clone())?;
+        let terminal_id =
+            terminal_entity.read_with(&self.cx, |terminal, _| terminal.id().clone())?;
         Ok(acp::CreateTerminalResponse {
             terminal_id,
             meta: None,
