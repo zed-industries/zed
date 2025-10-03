@@ -23,8 +23,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
-    WithScrollbar, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, Switch, SwitchColor,
+    TreeViewItem, WithScrollbar, prelude::*,
 };
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
@@ -3382,20 +3382,41 @@ impl SettingsWindow {
             let items_len = items.len();
             let mut section_header = None;
 
-            page_content =
-                page_content.children(items.into_iter().enumerate().map(|(index, item)| {
-                    let is_last = index == items_len - 1;
-                    if let SettingsPageItem::SectionHeader(header) = item {
-                        section_header = Some(*header);
-                    }
-                    item.render(
-                        self.current_file.clone(),
-                        section_header.expect("All items rendered after a section header"),
-                        is_last,
-                        window,
-                        cx,
-                    )
-                }))
+            let search_query = self.search_bar.read(cx).text(cx);
+            let has_active_search = !search_query.is_empty();
+            let has_no_results = items_len == 0 && has_active_search;
+
+            if has_no_results {
+                page_content = page_content.child(
+                    v_flex()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .gap_1()
+                        .child(div().child("No Results"))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(format!("No settings match \"{}\"", search_query)),
+                        ),
+                )
+            } else {
+                page_content =
+                    page_content.children(items.into_iter().enumerate().map(|(index, item)| {
+                        let is_last = index == items_len - 1;
+                        if let SettingsPageItem::SectionHeader(header) = item {
+                            section_header = Some(*header);
+                        }
+                        item.render(
+                            self.current_file.clone(),
+                            section_header.expect("All items rendered after a section header"),
+                            is_last,
+                            window,
+                            cx,
+                        )
+                    }))
+            }
         } else {
             page = page.child(
                 h_flex()
