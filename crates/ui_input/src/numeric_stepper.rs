@@ -321,15 +321,18 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                         }
                     })
                     .child(
-                        div()
-                            .text_color(gpui::red())
-                            .in_focus(|this| {
-                                this.border_1()
-                                    .border_color(cx.theme().colors().border_focused)
-                            })
+                        h_flex()
+                            .h_8()
+                            .min_w_16()
+                            .w_full()
+                            .border_1()
+                            .border_color(cx.theme().colors().border_transparent)
+                            .in_focus(|this| this.border_color(cx.theme().colors().border_focused))
                             .child(match *self.mode.read(cx) {
-                                NumericStepperMode::Read => div()
+                                NumericStepperMode::Read => h_flex()
                                     .id("numeric_stepper_label")
+                                    .flex_1()
+                                    .justify_center()
                                     .child(Label::new((self.format)(&self.value)).mx_3())
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
                                         *tab_index += 1;
@@ -338,22 +341,24 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                         })
                                     })
                                     .on_click({
-                                        let mode = self.mode.clone();
-                                        move |click, _, cx| {
+                                        let _mode = self.mode.clone();
+                                        move |click, _, _cx| {
                                             if click.click_count() == 2 || click.is_keyboard() {
-                                                mode.write(cx, NumericStepperMode::Edit);
+                                                // Edit mode is disabled until we implement center text alignment for editor
+                                                // mode.write(cx, NumericStepperMode::Edit);
                                             }
                                         }
                                     })
-                                    .w(px(4.0 * 14.0)) // w_14
-                                    .h_8()
-                                    .overflow_scroll()
                                     .into_any_element(),
-                                NumericStepperMode::Edit => div()
+                                NumericStepperMode::Edit => h_flex()
+                                    .flex_1()
                                     .child(window.use_state(cx, {
                                         |window, cx| {
                                             let previous_focus_handle = window.focused(cx);
                                             let mut editor = Editor::single_line(window, cx);
+                                            let mut style = EditorStyle::default();
+                                            style.text.text_align = gpui::TextAlign::Right;
+                                            editor.set_style(style, window, cx);
 
                                             editor.set_text(format!("{}", self.value), window, cx);
                                             cx.on_focus_out(&editor.focus_handle(cx), window, {
@@ -395,10 +400,6 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                             window.blur();
                                         }
                                     })
-                                    .size_full()
-                                    .w(px(4.0 * 14.0)) // w_14
-                                    .h_8()
-                                    .mx_3()
                                     .into_any_element(),
                             }),
                     )
@@ -412,7 +413,6 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                 let new_value = value + step;
                                 let new_value = if new_value > max { max } else { new_value };
                                 on_change(&new_value, window, cx);
-                                // window.focus(&focus);
                             }
                         };
 
