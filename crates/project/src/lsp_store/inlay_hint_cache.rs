@@ -12,6 +12,36 @@ use crate::{InlayHint, InlayId};
 pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
 
+/// A logic to apply when querying for new inlay hints and deciding what to do with the old entries in the cache in case of conflicts.
+#[derive(Debug, Clone, Copy)]
+pub enum InvalidationStrategy {
+    /// Either a UI (e.g. settings turn off/on) or language servers can ask for a refresh.
+    ///
+    /// Language servers reset hints via <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspace_inlayHint_refresh">request</a>.
+    /// Demands to re-query all inlay hints needed and invalidate all cached entries, but does not require instant update with invalidation.
+    ///
+    /// Despite nothing forbids language server from sending this request on every edit, it is expected to be sent only when certain internal server state update, invisible for the editor otherwise.
+    RefreshRequested(Option<LanguageServerId>),
+    /// Multibuffer excerpt(s) and/or singleton buffer(s) were edited at least on one place.
+    /// Neither editor nor LSP is able to tell which open file hints' are not affected, so all of them have to be invalidated, re-queried and do that fast enough to avoid being slow, but also debounce to avoid loading hints on every fast keystroke sequence.
+    BufferEdited,
+    /// A new file got opened/new excerpt was added to a multibuffer/a [multi]buffer was scrolled to a new position.
+    /// No invalidation should be done at all, all new hints are added to the cache.
+    ///
+    /// A special case is the settings change: in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
+    /// This does not lead to cache invalidation, but would require cache usage for determining which hints are not displayed and issuing an update to inlays on the screen.
+    None,
+}
+
+impl InvalidationStrategy {
+    pub fn should_invalidate(&self) -> bool {
+        matches!(
+            self,
+            InvalidationStrategy::RefreshRequested(_) | InvalidationStrategy::BufferEdited
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct RowChunkCachedHints {
     pub hints: CacheInlayHints,

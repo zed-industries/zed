@@ -127,7 +127,7 @@ use util::{
 
 pub use fs::*;
 pub use language::Location;
-pub use lsp_store::inlay_hint_cache::RowChunkCachedHints;
+pub use lsp_store::inlay_hint_cache::{InvalidationStrategy, RowChunkCachedHints};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
@@ -3486,8 +3486,14 @@ pub struct BufferLspData {
     code_lens: CodeLensData,
     pub inlay_hints: BufferInlayHints,
     next_hint_id: Arc<AtomicUsize>,
-    lsp_requests: HashMap<TypeId, HashMap<LspRequestId, Task<()>>>,
-    chunk_lsp_requests: HashMap<TypeId, HashMap<BufferChunk, LspRequestId>>,
+    lsp_requests: HashMap<LspKey, HashMap<LspRequestId, Task<()>>>,
+    chunk_lsp_requests: HashMap<LspKey, HashMap<BufferChunk, LspRequestId>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LspKey {
+    request_type: TypeId,
+    server_queried: Option<LanguageServerId>,
 }
 
 impl BufferLspData {
@@ -5216,6 +5222,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5281,6 +5288,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5346,6 +5354,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5411,6 +5420,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5477,6 +5487,7 @@ impl LspStore {
 
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5544,6 +5555,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -5715,6 +5727,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -6417,6 +6430,7 @@ impl LspStore {
             }
             let request_task = client.request_lsp(
                 upstream_project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
@@ -6461,7 +6475,7 @@ impl LspStore {
 
     pub fn inlay_hints(
         &mut self,
-        invalidate_cache: bool,
+        invalidate: InvalidationStrategy,
         debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
@@ -6470,6 +6484,12 @@ impl LspStore {
         let buffer_version = buffer.read(cx).version();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
+        let for_server = if let InvalidationStrategy::RefreshRequested(server_id) = invalidate {
+            server_id
+        } else {
+            None
+        };
+        let invalidate_cache = invalidate.should_invalidate();
 
         let lsp_data = self
             .lsp_data
@@ -6513,23 +6533,27 @@ impl LspStore {
                 }
                 (Some(cached_hints), None) => {
                     for (server_id, cached_hints) in cached_hints {
-                        cached_inlay_hints
-                            .entry(row_chunk.start..row_chunk.end)
-                            .or_insert_with(HashMap::default)
-                            .entry(server_id)
-                            .or_insert_with(Vec::new)
-                            .extend(cached_hints);
+                        if for_server.is_none_or(|for_server| for_server == server_id) {
+                            cached_inlay_hints
+                                .entry(row_chunk.start..row_chunk.end)
+                                .or_insert_with(HashMap::default)
+                                .entry(server_id)
+                                .or_insert_with(Vec::new)
+                                .extend(cached_hints);
+                        }
                     }
                 }
                 (Some(cached_hints), Some(fetched_hints)) => {
                     hint_fetch_tasks.push((row_chunk, fetched_hints.clone()));
                     for (server_id, cached_hints) in cached_hints {
-                        cached_inlay_hints
-                            .entry(row_chunk.start..row_chunk.end)
-                            .or_insert_with(HashMap::default)
-                            .entry(server_id)
-                            .or_insert_with(Vec::new)
-                            .extend(cached_hints);
+                        if for_server.is_none_or(|for_server| for_server == server_id) {
+                            cached_inlay_hints
+                                .entry(row_chunk.start..row_chunk.end)
+                                .or_insert_with(HashMap::default)
+                                .entry(server_id)
+                                .or_insert_with(Vec::new)
+                                .extend(cached_hints);
+                        }
                     }
                 }
             }
@@ -6557,7 +6581,7 @@ impl LspStore {
                 lsp_store.update(cx, |lsp_store, cx| {
                     for (chunk, range_to_query) in ranges_to_query {
                         let new_fetch_task =
-                            lsp_store.fetch_inlay_hints(&buffer, range_to_query, cx);
+                            lsp_store.fetch_inlay_hints(for_server, &buffer, range_to_query, cx);
                         let next_hint_id = next_hint_id.clone();
                         let new_inlay_hints = cx
                             .background_spawn(async move {
@@ -6643,12 +6667,14 @@ impl LspStore {
                                         cached: false,
                                     });
                                 for (server_id, new_hints) in new_hints {
-                                    combined_hints
-                                        .hints
-                                        .entry(server_id)
-                                        .or_insert_with(Vec::new)
-                                        .extend(new_hints.clone());
-                                    buffer_hints.insert_new_hints(chunk, server_id, new_hints);
+                                    if for_server.is_none_or(|for_server| for_server == server_id) {
+                                        combined_hints
+                                            .hints
+                                            .entry(server_id)
+                                            .or_insert_with(Vec::new)
+                                            .extend(new_hints.clone());
+                                        buffer_hints.insert_new_hints(chunk, server_id, new_hints);
+                                    }
                                 }
                             }
                             Err(e) => log::error!(
@@ -6670,6 +6696,7 @@ impl LspStore {
     // TODO kb this is identical to code_lens_actions, consider deduplication
     fn fetch_inlay_hints(
         &mut self,
+        for_server: Option<LanguageServerId>,
         buffer: &Entity<Buffer>,
         range: Range<Anchor>,
         cx: &mut Context<Self>,
@@ -6683,6 +6710,7 @@ impl LspStore {
             }
             let request_task = upstream_client.request_lsp(
                 project_id,
+                for_server.map(|id| id.to_proto()),
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -6731,8 +6759,27 @@ impl LspStore {
                 Ok(inlay_hints)
             })
         } else {
-            let inlay_hints_task =
-                self.request_multiple_lsp_locally(buffer, None::<usize>, request, cx);
+            let inlay_hints_task = match for_server {
+                Some(server_id) => {
+                    let server_task = self.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        request,
+                        cx,
+                    );
+                    cx.background_spawn(async move {
+                        let mut responses = Vec::new();
+                        match server_task.await {
+                            Ok(response) => responses.push((server_id, response)),
+                            Err(e) => log::error!(
+                                "Error handling response for inlay hints request: {e:#}"
+                            ),
+                        }
+                        responses
+                    })
+                }
+                None => self.request_multiple_lsp_locally(buffer, None::<usize>, request, cx),
+            };
             let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             cx.background_spawn(async move {
                 Ok(inlay_hints_task
@@ -6997,6 +7044,7 @@ impl LspStore {
 
             let request_task = client.request_lsp(
                 project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
@@ -7075,6 +7123,7 @@ impl LspStore {
             }
             let request_task = client.request_lsp(
                 upstream_project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
@@ -7138,6 +7187,7 @@ impl LspStore {
             }
             let request_task = client.request_lsp(
                 upstream_project_id,
+                None,
                 LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(upstream_project_id, buffer.read(cx)),
@@ -8244,8 +8294,9 @@ impl LspStore {
         cx.background_spawn(async move {
             let mut responses = Vec::with_capacity(response_results.len());
             while let Some((server_id, response_result)) = response_results.next().await {
-                if let Some(response) = response_result.log_err() {
-                    responses.push((server_id, response));
+                match response_result {
+                    Ok(response) => responses.push((server_id, response)),
+                    Err(e) => log::error!("Error handling response for request {request:?}: {e:#}"),
                 }
             }
             responses
@@ -8303,11 +8354,13 @@ impl LspStore {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let lsp_query = envelope.payload;
         let lsp_request_id = LspRequestId(lsp_query.lsp_request_id);
+        let server_id = lsp_query.server_id.map(LanguageServerId::from_proto);
         match lsp_query.request.context("invalid LSP query request")? {
             Request::GetReferences(get_references) => {
                 let position = get_references.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetReferences>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_references,
@@ -8319,6 +8372,7 @@ impl LspStore {
             Request::GetDocumentColor(get_document_color) => {
                 Self::query_lsp_locally::<GetDocumentColor>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_document_color,
@@ -8331,6 +8385,7 @@ impl LspStore {
                 let position = get_hover.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetHover>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_hover,
@@ -8342,6 +8397,7 @@ impl LspStore {
             Request::GetCodeActions(get_code_actions) => {
                 Self::query_lsp_locally::<GetCodeActions>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_code_actions,
@@ -8357,6 +8413,7 @@ impl LspStore {
                     .and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetSignatureHelp>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_signature_help,
@@ -8368,6 +8425,7 @@ impl LspStore {
             Request::GetCodeLens(get_code_lens) => {
                 Self::query_lsp_locally::<GetCodeLens>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_code_lens,
@@ -8380,6 +8438,7 @@ impl LspStore {
                 let position = get_definition.position.clone().and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetDefinitions>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_definition,
@@ -8395,6 +8454,7 @@ impl LspStore {
                     .and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetDeclarations>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_declaration,
@@ -8410,6 +8470,7 @@ impl LspStore {
                     .and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetTypeDefinitions>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_type_definition,
@@ -8425,6 +8486,7 @@ impl LspStore {
                     .and_then(deserialize_anchor);
                 Self::query_lsp_locally::<GetImplementations>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     get_implementation,
@@ -8449,19 +8511,22 @@ impl LspStore {
                         .lsp_data
                         .entry(buffer_id)
                         .or_insert_with(|| BufferLspData::new(&buffer, cx));
-                    let type_id = TypeId::of::<GetDocumentDiagnostics>();
+                    let key = LspKey {
+                        request_type: TypeId::of::<GetDocumentDiagnostics>(),
+                        server_queried: server_id,
+                    };
                     if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
                     ) || buffer
                         .read(cx)
                         .version
                         .changed_since(&lsp_data.buffer_version)
                     {
-                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&type_id) {
+                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
                             lsp_requests.clear();
                         };
                     }
 
-                    let existing_queries = lsp_data.lsp_requests.entry(type_id).or_default();
+                    let existing_queries = lsp_data.lsp_requests.entry(key).or_default();
                     existing_queries.insert(
                         lsp_request_id,
                         cx.spawn(async move |lsp_store, cx| {
@@ -8493,6 +8558,7 @@ impl LspStore {
                     .context("invalid inlay hints range end")?;
                 Self::deduplicate_range_based_lsp_requests::<InlayHints>(
                     &lsp_store,
+                    server_id,
                     lsp_request_id,
                     &inlay_hints,
                     query_start..query_end,
@@ -8502,6 +8568,7 @@ impl LspStore {
                 .context("preparing inlay hints request")?;
                 Self::query_lsp_locally::<InlayHints>(
                     lsp_store,
+                    server_id,
                     sender_id,
                     lsp_request_id,
                     inlay_hints,
@@ -12012,6 +12079,7 @@ impl LspStore {
 
     async fn deduplicate_range_based_lsp_requests<T>(
         lsp_store: &Entity<Self>,
+        server_id: Option<LanguageServerId>,
         lsp_request_id: LspRequestId,
         proto_request: &T::ProtoRequest,
         range: Range<Anchor>,
@@ -12040,14 +12108,17 @@ impl LspStore {
                 .collect::<Vec<_>>();
             match chunks_queried_for.as_slice() {
                 &[chunk] => {
-                    let type_id = TypeId::of::<T>();
+                    let key = LspKey {
+                        request_type: TypeId::of::<T>(),
+                        server_queried: server_id,
+                    };
                     let previous_request = lsp_data
                         .chunk_lsp_requests
-                        .entry(type_id)
+                        .entry(key)
                         .or_default()
                         .insert(chunk, lsp_request_id);
                     if let Some((previous_request, running_requests)) =
-                        previous_request.zip(lsp_data.lsp_requests.get_mut(&type_id))
+                        previous_request.zip(lsp_data.lsp_requests.get_mut(&key))
                     {
                         running_requests.remove(&previous_request);
                     }
@@ -12065,6 +12136,7 @@ impl LspStore {
 
     async fn query_lsp_locally<T>(
         lsp_store: Entity<Self>,
+        for_server_id: Option<LanguageServerId>,
         sender_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         proto_request: T::ProtoRequest,
@@ -12088,10 +12160,32 @@ impl LspStore {
         let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version())?;
         let request =
             T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
-        let type_id = TypeId::of::<T>();
+        let key = LspKey {
+            request_type: TypeId::of::<T>(),
+            server_queried: for_server_id,
+        };
         lsp_store.update(cx, |lsp_store, cx| {
-            let request_task =
-                lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx);
+            let request_task = match for_server_id {
+                Some(server_id) => {
+                    let server_task = lsp_store.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        request.clone(),
+                        cx,
+                    );
+                    cx.background_spawn(async move {
+                        let mut responses = Vec::new();
+                        match server_task.await {
+                            Ok(response) => responses.push((server_id, response)),
+                            Err(e) => log::error!(
+                                "Error handling response for request {request:?}: {e:#}"
+                            ),
+                        }
+                        responses
+                    })
+                }
+                None => lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx),
+            };
             let lsp_data = lsp_store
                 .lsp_data
                 .entry(buffer_id)
@@ -12099,11 +12193,11 @@ impl LspStore {
             if T::ProtoRequest::stop_previous_requests()
                 || buffer_version.changed_since(&lsp_data.buffer_version)
             {
-                if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&type_id) {
+                if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&key) {
                     lsp_requests.clear();
                 }
             }
-            lsp_data.lsp_requests.entry(type_id).or_default().insert(
+            lsp_data.lsp_requests.entry(key).or_default().insert(
                 lsp_request_id,
                 cx.spawn(async move |lsp_store, cx| {
                     let response = request_task.await;
