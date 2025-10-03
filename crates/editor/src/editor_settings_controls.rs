@@ -37,7 +37,6 @@ impl RenderOnce for EditorSettingsControls {
                             .child(BufferFontFamilyControl)
                             .child(BufferFontWeightControl),
                     )
-                    .child(BufferFontSizeControl)
                     .child(BufferFontLigaturesControl),
             )
             .child(SettingsGroup::new("Editor").child(InlineGitBlameControl))
@@ -108,36 +107,6 @@ impl RenderOnce for BufferFontFamilyControl {
 }
 
 #[derive(IntoElement)]
-struct BufferFontSizeControl;
-
-impl EditableSettingControl for BufferFontSizeControl {
-    type Value = Pixels;
-
-    fn name(&self) -> SharedString {
-        "Buffer Font Size".into()
-    }
-
-    fn read(cx: &App) -> Self::Value {
-        ThemeSettings::get_global(cx).buffer_font_size(cx)
-    }
-
-    fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
-        settings.theme.buffer_font_size = Some(value.into());
-    }
-}
-
-impl RenderOnce for BufferFontSizeControl {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let _value = Self::read(cx);
-
-        h_flex()
-            .gap_2()
-            .child(Icon::new(IconName::FontSize))
-            .child(div()) // TODO: Re-evaluate this whole crate once settings UI is complete
-    }
-}
-
-#[derive(IntoElement)]
 struct BufferFontWeightControl;
 
 impl EditableSettingControl for BufferFontWeightControl {
@@ -153,7 +122,7 @@ impl EditableSettingControl for BufferFontWeightControl {
     }
 
     fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {
-        settings.theme.buffer_font_weight = Some(value.0);
+        settings.theme.buffer_font_weight = Some(value);
     }
 }
 

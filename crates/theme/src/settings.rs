@@ -830,7 +830,7 @@ impl settings::Settings for ThemeSettings {
                     .into(),
                 features: content.buffer_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.buffer_font_weight.unwrap()),
+                weight: clamp_font_weight(content.buffer_font_weight.unwrap().0),
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
@@ -857,8 +857,8 @@ impl settings::Settings for ThemeSettings {
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        vscode.f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
-        vscode.f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
+        vscode.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
+        vscode.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
         if let Some(font) = vscode.read_string("editor.font") {
             current.theme.buffer_font_family = Some(FontFamilyName(font.into()));
         }
