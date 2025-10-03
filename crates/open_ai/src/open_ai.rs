@@ -244,6 +244,25 @@ impl Model {
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
     }
+
+    /// Returns whether the given model supports tools.
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            Self::ThreePointFiveTurbo
+            | Self::Four
+            | Self::FourTurbo
+            | Self::FourOmni
+            | Self::FourOmniMini
+            | Self::FourPointOne
+            | Self::FourPointOneMini
+            | Self::FourPointOneNano
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano => true,
+            Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini => false,
+            Self::Custom { .. } => true, // Assume custom models support tools by default
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
