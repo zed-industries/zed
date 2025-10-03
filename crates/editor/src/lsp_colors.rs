@@ -408,8 +408,7 @@ impl Editor {
                     }
 
                     if colors.render_mode == DocumentColorsRenderMode::Inlay
-                        && (!colors_splice.to_insert.is_empty()
-                            || !colors_splice.to_remove.is_empty())
+                        && !colors_splice.is_empty()
                     {
                         editor.splice_inlays(&colors_splice.to_remove, colors_splice.to_insert, cx);
                         updated = true;

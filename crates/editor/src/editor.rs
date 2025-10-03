@@ -20841,7 +20841,7 @@ impl Editor {
         if let Some(inlay_splice) = self.colors.as_mut().and_then(|colors| {
             colors.render_mode_updated(EditorSettings::get_global(cx).lsp_document_colors)
         }) {
-            if !inlay_splice.to_insert.is_empty() || !inlay_splice.to_remove.is_empty() {
+            if !inlay_splice.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }
             self.refresh_colors(false, None, window, cx);
