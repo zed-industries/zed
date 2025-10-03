@@ -3,13 +3,13 @@ use gpui::{Context, HighlightStyle, Hsla, Window};
 use itertools::Itertools;
 use language::CursorShape;
 use multi_buffer::ToPoint;
-use text::{Bias, Point};
+use text::{Bias, OffsetRangeExt, Point};
 
 enum MatchingBracketHighlight {}
 
 struct RainbowBracketHighlight;
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum BracketRefreshReason {
     BufferEdited,
     ScrollPositionChanged,
@@ -72,7 +72,7 @@ impl Editor {
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
-        for (depth, bracket_highlights) in bracket_matches {
+        for (depth, bracket_highlights) in dbg!(bracket_matches) {
             let style = HighlightStyle {
                 color: Some({
                     // todo! these colors lack contrast for this/are not actually good for that?
@@ -87,6 +87,13 @@ impl Editor {
                 bracket_highlights
                     .into_iter()
                     .flat_map(|(_, open, close)| {
+                        dbg!((
+                            depth,
+                            multi_buffer_snapshot.offset_to_point(open.start)
+                                ..multi_buffer_snapshot.offset_to_point(open.end),
+                            multi_buffer_snapshot.offset_to_point(close.start)
+                                ..multi_buffer_snapshot.offset_to_point(close.end),
+                        ));
                         [
                             open.to_anchors(&multi_buffer_snapshot),
                             close.to_anchors(&multi_buffer_snapshot),
@@ -98,7 +105,7 @@ impl Editor {
             );
         }
 
-        if refresh_reason == BracketRefreshReason::ScrollPositionChanged {
+        if dbg!(refresh_reason) == BracketRefreshReason::ScrollPositionChanged {
             return;
         }
         self.clear_background_highlights::<MatchingBracketHighlight>(cx);
@@ -520,7 +527,7 @@ mod tests {
 
         // let expected_ranges = self.ranges(marked_text);
         let snapshot = cx.update_editor(|editor, window, cx| editor.snapshot(window, cx));
-        let rainbow_highlights = (0..10)
+        let rainbow_highlights = (0..6000)
             .flat_map(|key| snapshot.text_key_highlight_ranges::<RainbowBracketHighlight>(key))
             .collect::<Vec<_>>();
         let actual_ranges = dbg!(rainbow_highlights)
@@ -535,6 +542,7 @@ mod tests {
         dbg!(&actual_ranges);
         let last_bracket = actual_ranges.last().unwrap().clone();
 
+        dbg!("~~~~~~~~~~~~~~~~~~~~~~~");
         cx.update_editor(|editor, window, cx| {
             let was_scrolled = editor.set_scroll_position(
                 gpui::Point::new(0.0, last_bracket.1.end.row as f64 * 2.0),
@@ -544,10 +552,10 @@ mod tests {
             assert!(was_scrolled.0);
         });
 
-        let rainbow_highlights = (0..10)
+        let rainbow_highlights = (0..6000)
             .flat_map(|key| snapshot.text_key_highlight_ranges::<RainbowBracketHighlight>(key))
             .collect::<Vec<_>>();
-        let actual_ranges = dbg!(&rainbow_highlights)
+        let actual_ranges = rainbow_highlights
             .iter()
             .flat_map(|ranges| {
                 ranges
@@ -558,6 +566,8 @@ mod tests {
             .collect::<Vec<_>>();
         dbg!(&actual_ranges);
         let new_last_bracket = actual_ranges.last().unwrap().clone();
+        // todo! we do scroll down and get new brackets matched by tree-sitter,
+        // but something still prevents the `text_key_highlight_ranges` to return the right, newest visible bracket on the lower row we scrolled to
         assert_ne!(
             last_bracket, new_last_bracket,
             "After scrolling down, we should have highlighted more brackets"
