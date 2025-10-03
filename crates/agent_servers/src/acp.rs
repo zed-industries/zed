@@ -9,6 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use task::Shell;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -820,15 +821,17 @@ impl acp::Client for ClientDelegate {
         }
 
         // Use remote shell or default system shell, as appropriate
-        let remote_shell = project.update(&mut self.cx.clone(), |project, cx| {
-            project
-                .remote_client()
-                .and_then(|r| r.read(cx).default_system_shell())
-        })?;
-        let (task_command, task_args) =
-            task::ShellBuilder::new(remote_shell.as_deref(), &task::Shell::System)
-                .redirect_stdin_to_dev_null()
-                .build(Some(args.command.clone()), &args.args);
+        let shell = project
+            .update(&mut self.cx.clone(), |project, cx| {
+                project
+                    .remote_client()
+                    .and_then(|r| r.read(cx).default_system_shell())
+                    .map(Shell::Program)
+            })?
+            .unwrap_or(task::Shell::System);
+        let (task_command, task_args) = task::ShellBuilder::new(&shell)
+            .redirect_stdin_to_dev_null()
+            .build(Some(args.command.clone()), &args.args);
 
         let terminal_entity = project
             .update(&mut self.cx.clone(), |project, cx| {
