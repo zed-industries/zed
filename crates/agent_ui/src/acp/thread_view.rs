@@ -381,8 +381,8 @@ impl AcpThreadView {
         });
 
         let subscriptions = [
-            cx.observe_global_in::<SettingsStore>(window, Self::agent_font_size_changed),
-            cx.observe_global_in::<AgentFontSize>(window, Self::agent_font_size_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
             cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
         ];
@@ -4902,9 +4902,9 @@ impl AcpThreadView {
         )
     }
 
-    fn agent_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
-            entry_view_state.agent_font_size_changed(cx);
+            entry_view_state.agent_ui_font_size_changed(cx);
         });
     }
 
