@@ -626,6 +626,18 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct ___tracy_source_location_data {
+    pub name: *const ::std::os::raw::c_char,
+    pub function: *const ::std::os::raw::c_char,
+    pub file: *const ::std::os::raw::c_char,
+    pub line: u32,
+    pub color: u32,
+}
+
+unsafe impl Send for ___tracy_source_location_data {}
+
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -681,13 +693,28 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    #[profiling::function]
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
         let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
         else {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
         };
+        dbg!("Load commit");
         let git_binary_path = self.any_git_binary_path.clone();
         cx.background_spawn(async move {
+            let name = std::ffi::CString::new("fiber_load_bytes").unwrap();
+            let loc = ___tracy_source_location_data {
+                name: name.as_ptr(),
+                function: name.as_ptr(),
+                file: name.as_ptr(),
+                line: 0,
+                color: 0,
+            };
+            let zone = unsafe {
+                // tracy_client_sys::___tracy_fiber_enter(name.as_ptr());
+                tracy_client_sys::___tracy_emit_zone_begin(std::mem::transmute(&loc as *const _), 1)
+            };
+
             let show_output = util::command::new_smol_command(&git_binary_path)
                 .current_dir(&working_directory)
                 .args([
@@ -794,6 +821,11 @@ impl GitRepository for RealGitRepository {
                     old_text,
                     new_text,
                 })
+            }
+
+            unsafe {
+                tracy_client_sys::___tracy_emit_zone_end(zone);
+                // tracy_client_sys::___tracy_fiber_leave();
             }
 
             Ok(CommitDiff { files })

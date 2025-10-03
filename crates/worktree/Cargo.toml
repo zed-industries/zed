@@ -37,6 +37,8 @@ log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
+profiling.workspace = true
+tracy-client-sys.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 serde_json.workspace = true

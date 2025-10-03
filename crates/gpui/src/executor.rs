@@ -103,7 +103,17 @@ impl<T> Future for Task<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
             Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
-            Task(TaskState::Spawned(task)) => task.poll(cx),
+            Task(TaskState::Spawned(task)) => {
+                let name = std::ffi::CString::new("Fiber").unwrap();
+                unsafe {
+                    tracy_client_sys::___tracy_fiber_enter(name.as_ptr());
+                }
+                let res = task.poll(cx);
+                unsafe {
+                    tracy_client_sys::___tracy_fiber_leave();
+                }
+                res
+            }
         }
     }
 }
