@@ -57,7 +57,7 @@ impl WindowsWindowInner {
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
             WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
-            WM_NCLBUTTONDOWN => {
+            WM_NCLBUTTONDBLCLK | WM_NCLBUTTONDOWN => {
                 self.handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam)
             }
             WM_NCRBUTTONDOWN => {
