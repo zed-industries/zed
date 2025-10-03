@@ -1203,7 +1203,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
-        let git_binary_path = self.git_binary_path.clone();
+        let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -1229,7 +1229,7 @@ impl GitRepository for RealGitRepository {
         directory: PathBuf,
         from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
-        let git_binary_path = self.git_binary_path.clone();
+        let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
         let final_path = directory.join(&name);
         let mut args = vec![
