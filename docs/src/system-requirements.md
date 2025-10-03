@@ -49,7 +49,7 @@ Zed supports the follow Windows releases:
 | Windows 11 (all releases) |  Supported         | Supported           |
 | Windows 10 (64-bit)       |  Supported         | Supported           |
 | Windows 8.1               |  EOL 2023-01-10    | Unsupported         |
-| Windows 7 SP1             |  EOL 2020-01-14    | Supported           |
+| Windows 7 SP1             |  EOL 2020-01-14    | Unsupported           |
 
 ### Windows Hardware
 
@@ -57,8 +57,8 @@ Zed supports machines with Intel or AMD 64-bit (x86_64) processors that meet the
 
 - Windows 11 (64-bit)
 - Windows 10 (64-bit)
-- *Graphics*: A GPU that supports DirectX 11 (most PCs from 2012+).
-- *Driver*: Current NVIDIA/AMD/Intel driver (not the Microsoft Basic Display Adapter).
+- Graphics: A GPU that supports DirectX 11 (most PCs from 2012+).
+- Driver: Current NVIDIA/AMD/Intel driver (not the Microsoft Basic Display Adapter).
 
 ## FreeBSD
 
