@@ -3420,12 +3420,16 @@ impl SettingsWindow {
         } else {
             page = page.child(
                 h_flex()
-                    .gap_2()
-                    .child(IconButton::new("back-btn", IconName::ChevronLeft).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
-                        }),
-                    ))
+                    .ml_neg_1p5()
+                    .gap_1()
+                    .child(
+                        IconButton::new("back-btn", IconName::ArrowLeft)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.pop_sub_page(cx);
+                            })),
+                    )
                     .child(self.render_sub_page_breadcrumbs()),
             );
 
