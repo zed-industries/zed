@@ -689,6 +689,7 @@ impl BlockMap {
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
+            let mut just_processed_folded_buffer = false;
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 let mut summary = TransformSummary {
                     input_rows: 0,
@@ -701,17 +702,21 @@ impl BlockMap {
                 match block_placement {
                     BlockPlacement::Above(position) => {
                         rows_before_block = position.0 - new_transforms.summary().input_rows;
+                        just_processed_folded_buffer = false;
                     }
                     BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
-                        let target_row = position.0 + 1;
-                        if target_row <= new_transforms.summary().input_rows {
+                        if just_processed_folded_buffer {
                             continue;
                         }
-                        rows_before_block = target_row - new_transforms.summary().input_rows;
+                        if position.0 + 1 < new_transforms.summary().input_rows {
+                            continue;
+                        }
+                        rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
                         rows_before_block = range.start().0 - new_transforms.summary().input_rows;
                         summary.input_rows = range.end().0 - range.start().0 + 1;
+                        just_processed_folded_buffer = matches!(block, Block::FoldedBuffer { .. });
                     }
                 }
 
