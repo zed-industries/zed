@@ -2775,7 +2775,15 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
-    sub_pages: Vec<SubPageLink>,
+    /// The current sub page path that is selected
+    /// if this is empty the selected page is rendered
+    /// otherwise the last sub page gets rendered
+    sub_pages: Vec<SubPage>,
+}
+
+struct SubPage {
+    link: SubPageLink,
+    section_header: &'static str,
 }
 
 #[derive(PartialEq, Debug)]
@@ -2816,6 +2824,7 @@ impl SettingsPageItem {
     fn render(
         &self,
         file: SettingsUiFile,
+        section_header: &'static str,
         is_last: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -2906,16 +2915,16 @@ impl SettingsPageItem {
                     ),
                 )
                 .child(
-                    Button::new(
-                        ("sub-page".into(), sub_page_link.title),
-                        sub_page_link.title,
-                    )
-                    .icon(Some(IconName::ChevronRight))
-                    .icon_position(Some(IconPosition::End)),
+                    Button::new(("sub-page".into(), sub_page_link.title), "Configure")
+                        .icon(Some(IconName::ChevronRight))
+                        .icon_position(Some(IconPosition::End))
+                        .style(ButtonStyle::Outlined),
                 )
                 .on_click({
                     let sub_page_link = sub_page_link.clone();
-                    cx.listener(move |this, _, _, cx| this.push_sub_page(sub_page_link.clone(), cx))
+                    cx.listener(move |this, _, _, cx| {
+                        this.push_sub_page(sub_page_link.clone(), section_header, cx)
+                    })
                 })
                 .into_any_element(),
         }
@@ -3323,6 +3332,27 @@ impl SettingsWindow {
             })
     }
 
+    fn render_sub_page_breadcrumbs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut items = vec![];
+        items.push(self.current_page().title);
+        items.extend(
+            self.sub_pages
+                .iter()
+                .flat_map(|page| [page.section_header, page.link.title]),
+        );
+
+        let last = items.pop().unwrap();
+        h_flex()
+            .gap_1()
+            .children(
+                items
+                    .into_iter()
+                    .flat_map(|item| [item, "/"])
+                    .map(|item| Label::new(item).color(Color::Muted)),
+            )
+            .child(Label::new(last))
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
         let mut page = v_flex()
             .w_full()
@@ -3344,25 +3374,35 @@ impl SettingsWindow {
 
             let items: Vec<_> = self.page_items().collect();
             let items_len = items.len();
+            let mut section_header = None;
 
             page_content =
                 page_content.children(items.into_iter().enumerate().map(|(index, item)| {
                     let is_last = index == items_len - 1;
-                    item.render(self.current_file.clone(), is_last, window, cx)
+                    if let SettingsPageItem::SectionHeader(header) = item {
+                        section_header = Some(*header);
+                    }
+                    item.render(
+                        self.current_file.clone(),
+                        section_header.expect("All items rendered after a section header"),
+                        is_last,
+                        window,
+                        cx,
+                    )
                 }))
         } else {
             page = page.child(
                 h_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(IconButton::new("back-btn", IconName::ChevronLeft).on_click(
                         cx.listener(|this, _, _, cx| {
                             this.pop_sub_page(cx);
                         }),
                     ))
-                    .children(self.sub_pages.iter().map(|page| page.title)),
+                    .child(self.render_sub_page_breadcrumbs(cx)),
             );
 
-            let active_page_render_fn = self.sub_pages.last().unwrap().render.clone();
+            let active_page_render_fn = self.sub_pages.last().unwrap().link.render.clone();
             page_content = page_content.child((active_page_render_fn)(self, window, cx));
         }
 
@@ -3394,8 +3434,16 @@ impl SettingsWindow {
         ix == self.navbar_entry
     }
 
-    fn push_sub_page(&mut self, sub_page_link: SubPageLink, cx: &mut Context<SettingsWindow>) {
-        self.sub_pages.push(sub_page_link);
+    fn push_sub_page(
+        &mut self,
+        sub_page_link: SubPageLink,
+        section_header: &'static str,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        self.sub_pages.push(SubPage {
+            link: sub_page_link,
+            section_header,
+        });
         cx.notify();
     }
 
