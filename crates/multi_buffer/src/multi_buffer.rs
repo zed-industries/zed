@@ -5227,9 +5227,23 @@ impl MultiBufferSnapshot {
                 None => anchor,
             }
         } else if excerpt_offset.is_zero() && bias == Bias::Left {
-            Anchor::min()
-        } else {
-            Anchor::max()
+            let mut anchor = Anchor::min();
+            // 有条件地恢复旧的 hack，以确保在单例缓冲区下有实际的 excerpt_id
+            if let Some((excerpt_id, _, _)) = self.as_singleton() {
+                anchor.excerpt_id = *excerpt_id;
+                // 同时确保 buffer_id 也被设置
+                anchor.buffer_id = self.buffer_id_for_excerpt(*excerpt_id);
+            }
+            anchor
+        } else { // 对应 ExcerptId::max() 的情况
+            let mut anchor = Anchor::max();
+            // 有条件地恢复旧的 hack，以确保在单例缓冲区下有实际的 excerpt_id
+            if let Some((excerpt_id, _, _)) = self.as_singleton() {
+                anchor.excerpt_id = *excerpt_id;
+                // 同时确保 buffer_id 也被设置
+                anchor.buffer_id = self.buffer_id_for_excerpt(*excerpt_id);
+            }
+            anchor
         }
     }
 
