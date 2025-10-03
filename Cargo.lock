@@ -20338,6 +20338,7 @@ dependencies = [
  "tendril",
  "unicase",
  "walkdir",
+ "which 6.0.3",
  "workspace-hack",
  "zed-collections",
  "zed-util-macros",
