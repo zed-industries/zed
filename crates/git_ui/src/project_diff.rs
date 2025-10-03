@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 1;
-const TRACKED_NAMESPACE: u32 = 2;
-const NEW_NAMESPACE: u32 = 3;
+const CONFLICT_NAMESPACE: u64 = 1;
+const TRACKED_NAMESPACE: u64 = 2;
+const NEW_NAMESPACE: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -243,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -397,7 +397,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
