@@ -832,12 +832,11 @@ impl Item for Editor {
 
         // let mut buffers_to_save =
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
-            buffers.clone()
+            buffers
         } else {
             buffers
-                .iter()
+                .into_iter()
                 .filter(|buffer| buffer.read(cx).is_dirty())
-                .cloned()
                 .collect()
         };
 
@@ -861,22 +860,6 @@ impl Item for Editor {
                         project.save_buffers(buffers_to_save.clone(), cx)
                     })?
                     .await?;
-            }
-
-            // Notify about clean buffers for language server events
-            let buffers_that_were_not_saved: Vec<_> = buffers
-                .into_iter()
-                .filter(|b| !buffers_to_save.contains(b))
-                .collect();
-
-            for buffer in buffers_that_were_not_saved {
-                buffer
-                    .update(cx, |buffer, cx| {
-                        let version = buffer.saved_version().clone();
-                        let mtime = buffer.saved_mtime();
-                        buffer.did_save(version, mtime, cx);
-                    })
-                    .ok();
             }
 
             Ok(())
