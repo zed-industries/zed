@@ -165,7 +165,7 @@ pub struct MoveUpByLines {
 #[serde(deny_unknown_fields)]
 pub struct MoveDownByLines {
     #[serde(default)]
-    pub(super) lines: u32,
+    pub lines: u32,
 }
 
 /// Extends selection up by a specified number of lines.
