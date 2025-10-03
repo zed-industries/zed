@@ -7559,6 +7559,9 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
  "bytes 1.10.1",
  "derive_more",
  "futures 0.3.31",
@@ -7569,7 +7572,10 @@ dependencies = [
  "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "url",
+ "util",
  "workspace-hack",
 ]
 
@@ -8840,11 +8846,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "sha2",
  "shlex",
  "smol",
  "task",
- "tempfile",
  "text",
  "theme",
  "toml 0.8.20",
@@ -12087,8 +12091,6 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "askpass",
- "async-compression",
- "async-tar",
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",
