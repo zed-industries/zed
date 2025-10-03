@@ -791,11 +791,15 @@ impl Fs for RealFs {
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if watcher.add(path).is_err()
+        if let Err(e) = watcher.add(path)
             && let Some(parent) = path.parent()
-            && let Err(e) = watcher.add(parent)
+            && let Err(parent_e) = watcher.add(parent)
         {
-            log::warn!("Failed to watch: {e}");
+            log::warn!(
+                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
+                path.display(),
+                parent.display()
+            );
         }
 
         // Check if path is a symlink and follow the target parent
