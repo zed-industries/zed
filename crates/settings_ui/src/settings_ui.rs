@@ -2775,10 +2775,10 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
-    /// The current sub page path that is selected
-    /// if this is empty the selected page is rendered
-    /// otherwise the last sub page gets rendered
-    sub_pages: Vec<SubPage>,
+    /// The current sub page path that is selected.
+    /// If this is empty the selected page is rendered,
+    /// otherwise the last sub page gets rendered.
+    sub_page_stack: Vec<SubPage>,
 }
 
 struct SubPage {
@@ -3042,7 +3042,7 @@ impl SettingsWindow {
             search_bar,
             search_task: None,
             search_matches: vec![],
-            sub_pages: vec![],
+            sub_page_stack: vec![],
         };
 
         this.fetch_files(cx);
@@ -3336,7 +3336,7 @@ impl SettingsWindow {
         let mut items = vec![];
         items.push(self.current_page().title);
         items.extend(
-            self.sub_pages
+            self.sub_page_stack
                 .iter()
                 .flat_map(|page| [page.section_header, page.link.title]),
         );
@@ -3369,7 +3369,7 @@ impl SettingsWindow {
                     .use_state(cx, |_, _| ScrollHandle::default())
                     .read(cx),
             );
-        if self.sub_pages.len() == 0 {
+        if self.sub_page_stack.len() == 0 {
             page = page.child(self.render_files(window, cx));
 
             let items: Vec<_> = self.page_items().collect();
@@ -3402,7 +3402,7 @@ impl SettingsWindow {
                     .child(self.render_sub_page_breadcrumbs()),
             );
 
-            let active_page_render_fn = self.sub_pages.last().unwrap().link.render.clone();
+            let active_page_render_fn = self.sub_page_stack.last().unwrap().link.render.clone();
             page_content = page_content.child((active_page_render_fn)(self, window, cx));
         }
 
@@ -3440,7 +3440,7 @@ impl SettingsWindow {
         section_header: &'static str,
         cx: &mut Context<SettingsWindow>,
     ) {
-        self.sub_pages.push(SubPage {
+        self.sub_page_stack.push(SubPage {
             link: sub_page_link,
             section_header,
         });
@@ -3448,7 +3448,7 @@ impl SettingsWindow {
     }
 
     fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.sub_pages.pop();
+        self.sub_page_stack.pop();
         cx.notify();
     }
 }
@@ -3797,7 +3797,7 @@ mod test {
             list_handle: UniformListScrollHandle::default(),
             search_matches,
             search_task: None,
-            sub_pages: vec![],
+            sub_page_stack: vec![],
         };
 
         settings_window.build_navbar();
