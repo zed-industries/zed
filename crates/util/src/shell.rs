@@ -29,6 +29,30 @@ pub fn get_default_system_shell() -> String {
     }
 }
 
+/// Get the default system shell, preferring git-bash on Windows.
+pub fn get_default_system_shell_preferring_bash() -> String {
+    if cfg!(windows) {
+        get_windows_git_bash().unwrap_or_else(|| get_windows_system_shell())
+    } else {
+        "/bin/sh".to_string()
+    }
+}
+
+pub fn get_windows_git_bash() -> Option<String> {
+    static GIT_BASH: LazyLock<Option<String>> = LazyLock::new(|| {
+        // /path/to/git/cmd/git.exe/../../bin/bash.exe
+        let git = which::which("git").ok()?;
+        let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
+        if git_bash.is_file() {
+            Some(git_bash.to_string_lossy().to_string())
+        } else {
+            None
+        }
+    });
+
+    (*GIT_BASH).clone()
+}
+
 pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
@@ -152,20 +176,16 @@ impl ShellKind {
 
     pub fn new(program: impl AsRef<Path>) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_name().and_then(|s| s.to_str()) else {
+        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
             return if cfg!(windows) {
                 ShellKind::PowerShell
             } else {
                 ShellKind::Posix
             };
         };
-        if program == "powershell"
-            || program.ends_with("powershell.exe")
-            || program == "pwsh"
-            || program.ends_with("pwsh.exe")
-        {
+        if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
-        } else if program == "cmd" || program.ends_with("cmd.exe") {
+        } else if program == "cmd" {
             ShellKind::Cmd
         } else if program == "nu" {
             ShellKind::Nushell
@@ -177,6 +197,8 @@ impl ShellKind {
             ShellKind::Tcsh
         } else if program == "rc" {
             ShellKind::Rc
+        } else if program == "sh" || program == "bash" {
+            ShellKind::Posix
         } else {
             if cfg!(windows) {
                 ShellKind::PowerShell
