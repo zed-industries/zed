@@ -1318,11 +1318,13 @@ pub struct DebugVariablesConfig {
 
 pub struct ImportsConfig {
     pub query: Query,
-    pub import_statement_ix: u32,
-    pub name_ix: u32,
-    pub path_ix: u32,
+    pub import_ix: u32,
+    pub name_ix: Option<u32>,
+    pub namespace_ix: Option<u32>,
+    pub file_ix: Option<u32>,
     pub list_ix: Option<u32>,
     pub wildcard_ix: Option<u32>,
+    pub alias_ix: Option<u32>,
 }
 
 impl Language {
@@ -1615,32 +1617,37 @@ impl Language {
     pub fn with_imports_query(mut self, source: &str) -> Result<Self> {
         let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
-        let mut import_statement_ix = 0;
-        let mut name_ix = 0;
-        let mut path_ix = 0;
+        let mut import_ix = 0;
+        let mut name_ix = None;
+        let mut namespace_ix = None;
+        let mut file_ix = None;
         let mut list_ix = None;
         let mut wildcard_ix = None;
+        let mut alias_ix = None;
         if populate_capture_indices(
             &query,
             &self.config.name,
             "imports",
             &[],
             &mut [
-                // todo! make some optional
-                Capture::Required("import_statement", &mut import_statement_ix),
-                Capture::Required("name", &mut name_ix),
-                Capture::Required("path", &mut path_ix),
+                Capture::Required("import", &mut import_ix),
+                Capture::Optional("name", &mut name_ix),
+                Capture::Optional("namespace", &mut namespace_ix),
+                Capture::Optional("file", &mut file_ix),
                 Capture::Optional("list", &mut list_ix),
                 Capture::Optional("wildcard", &mut wildcard_ix),
+                Capture::Optional("alias", &mut alias_ix),
             ],
         ) {
             self.grammar_mut()?.imports_config = Some(ImportsConfig {
                 query,
-                import_statement_ix,
+                import_ix,
                 name_ix,
-                path_ix,
+                namespace_ix,
+                file_ix,
                 list_ix,
                 wildcard_ix,
+                alias_ix,
             });
         }
         return Ok(self);

@@ -97,7 +97,7 @@ impl EditPredictionContext {
                 .collect::<String>(),
         );
 
-        let imports = Imports::collect(&buffer).log_err();
+        let imports = Imports::gather(&buffer);
 
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub
@@ -111,7 +111,7 @@ impl EditPredictionContext {
                 &excerpt,
                 &excerpt_occurrences,
                 &adjacent_occurrences,
-                imports.as_ref(),
+                &imports,
                 references,
                 cursor_offset_in_file,
                 buffer,

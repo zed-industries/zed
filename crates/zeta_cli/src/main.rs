@@ -540,7 +540,7 @@ pub async fn retrieval_stats(
                             retrieved_definitions,
                         },
                     };
-                    write!(output, "{:?}\n\n", result)?;
+                    write!(output, "{:#?}\n\n", result)?;
                     results.push(result);
                 }
                 Err(err) => {
@@ -551,7 +551,7 @@ pub async fn retrieval_stats(
                             message: err.to_string(),
                         },
                     };
-                    write!(output, "{:?}\n\n", result)?;
+                    write!(output, "{:#?}\n\n", result)?;
                     results.push(result);
                 }
             }
