@@ -394,7 +394,14 @@ pub async fn retrieval_stats(
         };
         lsp_open_handles.push(lsp_open_handle);
 
-        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+        let (snapshot, parent_abs_path) = buffer.read_with(cx, |buffer, cx| {
+            let parent_abs_path = project::File::from_dyn(buffer.file()).and_then(|f| {
+                let mut path = f.worktree.read(cx).absolutize(&f.path);
+                if path.pop() { Some(path) } else { None }
+            });
+
+            (buffer.snapshot(), parent_abs_path)
+        })?;
         let full_range = 0..snapshot.len();
         let references = references_in_range(
             full_range,
@@ -412,6 +419,7 @@ pub async fn retrieval_stats(
             let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
                 query_point,
                 &snapshot,
+                parent_abs_path.as_deref(),
                 &zeta2::DEFAULT_EXCERPT_OPTIONS,
                 Some(&index),
                 |_, _, _| single_reference_map,

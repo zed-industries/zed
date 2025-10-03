@@ -7,7 +7,7 @@ mod reference;
 mod syntax_index;
 pub mod text_similarity;
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
@@ -19,7 +19,6 @@ pub use declaration_scoring::*;
 pub use excerpt::*;
 pub use reference::*;
 pub use syntax_index::*;
-use util::ResultExt as _;
 
 use crate::imports::Imports;
 
@@ -39,17 +38,36 @@ impl EditPredictionContext {
         syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
+        let parent_abs_path = project::File::from_dyn(buffer.file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         if let Some(syntax_index) = syntax_index {
             let index_state =
                 syntax_index.read_with(cx, |index, _cx| Arc::downgrade(index.state()));
             cx.background_spawn(async move {
+                let parent_abs_path = parent_abs_path.as_deref();
                 let index_state = index_state.upgrade()?;
                 let index_state = index_state.lock().await;
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
+                Self::gather_context(
+                    cursor_point,
+                    &buffer,
+                    parent_abs_path,
+                    &excerpt_options,
+                    Some(&index_state),
+                )
             })
         } else {
             cx.background_spawn(async move {
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, None)
+                let parent_abs_path = parent_abs_path.as_deref();
+                Self::gather_context(
+                    cursor_point,
+                    &buffer,
+                    parent_abs_path,
+                    &excerpt_options,
+                    None,
+                )
             })
         }
     }
@@ -57,12 +75,14 @@ impl EditPredictionContext {
     pub fn gather_context(
         cursor_point: Point,
         buffer: &BufferSnapshot,
+        parent_abs_path: Option<&Path>,
         excerpt_options: &EditPredictionExcerptOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         Self::gather_context_with_references_fn(
             cursor_point,
             buffer,
+            parent_abs_path,
             excerpt_options,
             index_state,
             references_in_excerpt,
@@ -72,6 +92,7 @@ impl EditPredictionContext {
     pub fn gather_context_with_references_fn(
         cursor_point: Point,
         buffer: &BufferSnapshot,
+        parent_abs_path: Option<&Path>,
         excerpt_options: &EditPredictionExcerptOptions,
         index_state: Option<&SyntaxIndexState>,
         get_references: impl FnOnce(
@@ -97,7 +118,7 @@ impl EditPredictionContext {
                 .collect::<String>(),
         );
 
-        let imports = Imports::gather(&buffer);
+        let imports = Imports::gather(&buffer, parent_abs_path);
 
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub

@@ -2,7 +2,7 @@
 
 (import_statement
     (import_clause) @list
-    source: (string (string_fragment) @namespace))
+    source: (string (string_fragment) @source))
 
 ; todo! the "import_clause" node does not have a field name, so it can't be
 ; negated to make this disjoint with the above match.

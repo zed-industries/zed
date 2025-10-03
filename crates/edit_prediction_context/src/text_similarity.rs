@@ -3,9 +3,9 @@ use regex::Regex;
 use std::{
     borrow::Cow,
     hash::{Hash, Hasher as _},
-    path::Path,
     sync::LazyLock,
 };
+use util::rel_path::RelPath;
 
 use crate::reference::Reference;
 
@@ -60,6 +60,16 @@ impl Occurrences {
         this
     }
 
+    pub fn from_worktree_path(worktree_name: Option<Cow<'_, str>>, rel_path: &RelPath) -> Self {
+        if let Some(worktree_name) = worktree_name {
+            Self::from_identifiers(
+                std::iter::once(worktree_name).chain(iter_path_without_extension(rel_path)),
+            )
+        } else {
+            Self::from_identifiers(iter_path_without_extension(rel_path))
+        }
+    }
+
     fn add_hash(&mut self, hash: u64) {
         self.table
             .entry(
@@ -84,20 +94,12 @@ impl Occurrences {
     }
 }
 
-impl From<&Path> for Occurrences {
-    fn from(path: &Path) -> Self {
-        // TODO: hash each component and add to the hash directly?
-        // we wouldn't be able to use split_identifier as is, but maybe it could work with bytes?
-        Self::from_identifiers(iter_path_without_extension(path))
-    }
-}
-
-fn iter_path_without_extension(path: &Path) -> impl Iterator<Item = Cow<'_, str>> {
-    let last_component = path.file_stem().map(|stem| stem.to_string_lossy());
+fn iter_path_without_extension(path: &RelPath) -> impl Iterator<Item = Cow<'_, str>> {
+    let last_component: Option<Cow<'_, str>> = path.file_stem().map(|stem| stem.into());
     let mut path_components = path.components();
     path_components.next_back();
     path_components
-        .map(|component| component.as_os_str().to_string_lossy())
+        .map(|component| component.into())
         .chain(last_component)
 }
 
@@ -247,6 +249,7 @@ pub fn weighted_overlap_coefficient<'a>(
 #[cfg(test)]
 mod test {
     use super::*;
+    use util::rel_path::rel_path;
 
     #[test]
     fn test_split_identifier() {
@@ -291,16 +294,16 @@ mod test {
 
     #[test]
     fn test_iter_path_without_extension() {
-        let mut iter = iter_path_without_extension(Path::new(""));
+        let mut iter = iter_path_without_extension(RelPath::empty());
         assert_eq!(iter.next(), None);
 
-        let iter = iter_path_without_extension(Path::new("foo"));
+        let iter = iter_path_without_extension(rel_path("foo"));
         assert_eq!(iter.collect::<Vec<_>>(), ["foo"]);
 
-        let iter = iter_path_without_extension(Path::new("foo/bar.txt"));
+        let iter = iter_path_without_extension(rel_path("foo/bar.txt"));
         assert_eq!(iter.collect::<Vec<_>>(), ["foo", "bar"]);
 
-        let iter = iter_path_without_extension(Path::new("foo/bar/baz.txt"));
+        let iter = iter_path_without_extension(rel_path("foo/bar/baz.txt"));
         assert_eq!(iter.collect::<Vec<_>>(), ["foo", "bar", "baz"]);
     }
 }

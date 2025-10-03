@@ -2,6 +2,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
@@ -334,6 +335,82 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                     && path_like[1..]
                         .strip_prefix(':')
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
+}
+
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub struct NormalizeError;
+
+impl Error for NormalizeError {}
+
+impl std::fmt::Display for NormalizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("parent reference `..` points outside of base directory")
+    }
+}
+
+/// Copied from stdlib where it's unstable.
+///
+/// Normalize a path, including `..` without traversing the filesystem.
+///
+/// Returns an error if normalization would leave leading `..` components.
+///
+/// <div class="warning">
+///
+/// This function always resolves `..` to the "lexical" parent.
+/// That is "a/b/../c" will always resolve to `a/c` which can change the meaning of the path.
+/// In particular, `a/c` and `a/b/../c` are distinct on many systems because `b` may be a symbolic link, so its parent isn't `a`.
+///
+/// </div>
+///
+/// [`path::absolute`](absolute) is an alternative that preserves `..`.
+/// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the filesystem.
+pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
+    use std::path::Component;
+
+    let mut lexical = PathBuf::new();
+    let mut iter = path.components().peekable();
+
+    // Find the root, if any, and add it to the lexical path.
+    // Here we treat the Windows path "C:\" as a single "root" even though
+    // `components` splits it into two: (Prefix, RootDir).
+    let root = match iter.peek() {
+        Some(Component::ParentDir) => return Err(NormalizeError),
+        Some(p @ Component::RootDir) | Some(p @ Component::CurDir) => {
+            lexical.push(p);
+            iter.next();
+            lexical.as_os_str().len()
+        }
+        Some(Component::Prefix(prefix)) => {
+            lexical.push(prefix.as_os_str());
+            iter.next();
+            if let Some(p @ Component::RootDir) = iter.peek() {
+                lexical.push(p);
+                iter.next();
+            }
+            lexical.as_os_str().len()
+        }
+        None => return Ok(PathBuf::new()),
+        Some(Component::Normal(_)) => 0,
+    };
+
+    for component in iter {
+        match component {
+            Component::RootDir => unreachable!(),
+            Component::Prefix(_) => return Err(NormalizeError),
+            Component::CurDir => continue,
+            Component::ParentDir => {
+                // It's an error if ParentDir causes us to go above the "root".
+                if lexical.as_os_str().len() == root {
+                    return Err(NormalizeError);
+                } else {
+                    lexical.pop();
+                }
+            }
+            Component::Normal(path) => lexical.push(path),
+        }
+    }
+    Ok(lexical)
 }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.

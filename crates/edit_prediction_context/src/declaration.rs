@@ -1,9 +1,11 @@
-use language::LanguageId;
+use gpui::App;
+use language::{BufferSnapshot, LanguageId};
 use project::ProjectEntryId;
 use std::ops::Range;
 use std::sync::Arc;
 use std::{borrow::Cow, path::Path};
 use text::{Bias, BufferId, Rope};
+use util::rel_path::RelPath;
 
 use crate::outline::OutlineDeclaration;
 
@@ -22,14 +24,14 @@ pub enum Declaration {
     File {
         project_entry_id: ProjectEntryId,
         declaration: FileDeclaration,
-        cached_full_path: Arc<Path>,
+        cached_path: CachedDeclarationPath,
     },
     Buffer {
         project_entry_id: ProjectEntryId,
         buffer_id: BufferId,
         rope: Rope,
         declaration: BufferDeclaration,
-        cached_full_path: Arc<Path>,
+        cached_path: CachedDeclarationPath,
     },
 }
 
@@ -75,14 +77,10 @@ impl Declaration {
         }
     }
 
-    pub fn cached_full_path(&self) -> &Arc<Path> {
+    pub fn cached_path(&self) -> &CachedDeclarationPath {
         match self {
-            Declaration::File {
-                cached_full_path, ..
-            } => cached_full_path,
-            Declaration::Buffer {
-                cached_full_path, ..
-            } => cached_full_path,
+            Declaration::File { cached_path, .. } => cached_path,
+            Declaration::Buffer { cached_path, .. } => cached_path,
         }
     }
 
@@ -246,5 +244,22 @@ impl BufferDeclaration {
             signature_range,
             signature_range_is_truncated,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedDeclarationPath {
+    pub worktree_abs_path: Arc<Path>,
+    pub rel_path: Arc<RelPath>,
+}
+
+impl CachedDeclarationPath {
+    pub fn for_buffer(snapshot: &BufferSnapshot, cx: &App) -> Option<Self> {
+        let file = project::File::from_dyn(snapshot.file())?;
+
+        Some(Self {
+            worktree_abs_path: file.worktree.read(cx).abs_path(),
+            rel_path: file.path.clone(),
+        })
     }
 }

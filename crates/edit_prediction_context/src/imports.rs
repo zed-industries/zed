@@ -1,19 +1,22 @@
-use anyhow::Result;
-use anyhow::anyhow;
 use collections::HashMap;
 use language::BufferSnapshot;
 use language::ImportsConfig;
 use language::LanguageId;
-use std::io::Result as IoResult;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 use std::{borrow::Cow, ops::Range};
 use text::OffsetRangeExt;
 use util::RangeExt;
 use util::paths::PathStyle;
+use util::rel_path::RelPath;
 
 use crate::Identifier;
 use crate::text_similarity::Occurrences;
+
+// TODO:
+//
+// * Distinguish different types of paths? (whether they are always relative)
 
 // Future improvements:
 //
@@ -29,6 +32,8 @@ use crate::text_similarity::Occurrences;
 //
 // * Support for importing namespaces (`self` in Rust, etc). Requires parsing of identifier
 // qualification.
+//
+// * Consider deferring path normalization
 
 // Things to document (for extension authors)
 //
@@ -56,14 +61,85 @@ pub enum Import {
 
 #[derive(Debug, Clone)]
 pub enum Module {
-    Path(Arc<Path>),
+    Source(Arc<Path>),
     Namespace(Namespace),
 }
 
-impl Into<Occurrences> for &Module {
-    fn into(self) -> Occurrences {
+impl Module {
+    fn empty() -> Self {
+        Module::Namespace(Namespace::default())
+    }
+
+    fn push_range(
+        &mut self,
+        range: &ModuleRange,
+        snapshot: &BufferSnapshot,
+        parent_abs_path: Option<&Path>,
+    ) -> usize {
+        if range.is_empty() {
+            return 0;
+        }
+
+        match range {
+            ModuleRange::Source(range) => {
+                if let Self::Namespace(namespace) = self
+                    && namespace.0.is_empty()
+                {
+                    let path = snapshot.text_for_range(range.clone()).collect::<Cow<str>>();
+                    let path = Path::new(path.as_ref());
+                    if (path.starts_with(".") || path.starts_with(".."))
+                        && let Some(parent_abs_path) = parent_abs_path
+                        && let Ok(abs_path) =
+                            util::paths::normalize_lexically(&parent_abs_path.join(path))
+                    {
+                        *self = Self::Source(abs_path.into());
+                    } else {
+                        *self = Self::Source(path.into());
+                    };
+                } else {
+                    // todo: warn!
+                }
+            }
+            ModuleRange::Namespace(range) => {
+                if let Self::Namespace(namespace) = self {
+                    namespace.0.push(range_text(snapshot, range));
+                    return 1;
+                } else {
+                    // todo: warn!
+                }
+            }
+        }
+        0
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ModuleRange {
+    Source(Range<usize>),
+    Namespace(Range<usize>),
+}
+
+impl Deref for ModuleRange {
+    type Target = Range<usize>;
+
+    fn deref(&self) -> &Self::Target {
         match self {
-            Module::Path(path) => path.as_ref().into(),
+            ModuleRange::Source(range) => range,
+            ModuleRange::Namespace(range) => range,
+        }
+    }
+}
+
+impl Module {
+    // todo! rename
+    pub fn into_occurrences(&self) -> Occurrences {
+        // todo! compare paths directly
+        match self {
+            Module::Source(path) => Occurrences::from_worktree_path(
+                // todo! figure out which worktree it belongs to
+                None,
+                &RelPath::new(&path, PathStyle::Posix).unwrap(),
+            ),
             Module::Namespace(namespace) => Occurrences::from_identifiers(&namespace.0),
         }
     }
@@ -73,7 +149,7 @@ impl Into<Occurrences> for &Module {
 pub struct Namespace(pub Vec<Arc<str>>);
 
 impl Imports {
-    pub fn gather(snapshot: &BufferSnapshot) -> Self {
+    pub fn gather(snapshot: &BufferSnapshot, parent_abs_path: Option<&Path>) -> Self {
         // Query to match different import patterns
         let mut matches = snapshot
             .syntax
@@ -94,7 +170,7 @@ impl Imports {
                 import_ix,
                 name_ix,
                 namespace_ix,
-                module_path_ix,
+                source_ix,
                 list_ix,
                 wildcard_ix,
                 alias_ix,
@@ -103,9 +179,8 @@ impl Imports {
                 .unwrap();
 
             let mut new_import_range = None;
-            let mut namespace_range = None;
             let mut alias_range = None;
-            let mut module_path_range = None;
+            let mut module = None;
             let mut content: Option<(Range<usize>, NodeKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
@@ -113,12 +188,12 @@ impl Imports {
                 if capture.index == *import_ix {
                     new_import_range = Some(capture_range);
                 } else if Some(capture.index) == *namespace_ix {
-                    namespace_range = Some(capture_range);
+                    module = Some(ModuleRange::Namespace(capture_range));
+                } else if Some(capture.index) == *source_ix {
+                    // todo! check we didn't alreay have this and warn
+                    module = Some(ModuleRange::Source(capture_range));
                 } else if Some(capture.index) == *alias_ix {
                     alias_range = Some(capture_range);
-                } else if Some(capture.index) == *module_path_ix {
-                    // TODO: use to create Module::Path instead of Module::Namespace
-                    module_path_range = Some(capture_range);
                 } else {
                     let mut found_content = None;
                     if Some(capture.index) == *name_ix {
@@ -154,6 +229,7 @@ impl Imports {
                 Self::gather_from_import_statement(
                     &detached_nodes,
                     &snapshot,
+                    parent_abs_path,
                     &mut identifier_to_imports,
                     &mut wildcard_modules,
                 );
@@ -170,7 +246,8 @@ impl Imports {
                     .is_some_and(|import_range| import_range.contains_inclusive(&content))
                 {
                     detached_nodes.push(DetachedNode {
-                        namespace: namespace_range.unwrap_or(0..0),
+                        // todo! have an empty module variant
+                        module: module.unwrap_or(ModuleRange::Namespace(0..0)),
                         content: content.clone(),
                         alias: alias_range.unwrap_or(0..0),
                         language_id,
@@ -189,6 +266,7 @@ impl Imports {
         Self::gather_from_import_statement(
             &detached_nodes,
             &snapshot,
+            parent_abs_path,
             &mut identifier_to_imports,
             &mut wildcard_modules,
         );
@@ -203,6 +281,7 @@ impl Imports {
     fn gather_from_import_statement(
         detached_nodes: &[DetachedNode],
         snapshot: &BufferSnapshot,
+        parent_abs_path: Option<&Path>,
         identifier_to_imports: &mut HashMap<Identifier, Vec<Import>>,
         wildcard_modules: &mut Vec<Module>,
     ) {
@@ -216,11 +295,12 @@ impl Imports {
 
         for tree in &trees {
             log::trace!("Import tree:\n{:#?}", tree.debug(snapshot));
-            let mut namespace = Namespace::default();
+            let mut module = Module::empty();
             Self::gather_from_tree(
                 tree,
                 snapshot,
-                &mut namespace,
+                parent_abs_path,
+                &mut module,
                 identifier_to_imports,
                 wildcard_modules,
             );
@@ -231,8 +311,8 @@ impl Imports {
         let mut tree_index = 0;
         while tree_index < trees.len() {
             let tree = &mut trees[tree_index];
-            if node.namespace.contains_inclusive(&tree.range()) {
-                node.namespace_children.push(trees.remove(tree_index));
+            if node.module.contains_inclusive(&tree.range()) {
+                node.module_children.push(trees.remove(tree_index));
                 continue;
             } else if node.content.contains_inclusive(&tree.content) {
                 node.content_children.push(trees.remove(tree_index));
@@ -242,8 +322,8 @@ impl Imports {
                 // simpler by combining info from these matches.
                 //
                 // TODO: Log warnings when both have some information and there is a mismatch.
-                if tree.namespace.is_empty() {
-                    tree.namespace = node.namespace.clone();
+                if tree.module.is_empty() {
+                    tree.module = node.module.clone();
                 }
                 if tree.alias.is_empty() {
                     tree.alias = node.alias.clone();
@@ -263,20 +343,23 @@ impl Imports {
     fn gather_from_tree(
         tree: &ImportTree,
         snapshot: &BufferSnapshot,
-        namespace: &mut Namespace,
+        parent_abs_path: Option<&Path>,
+        current_module: &mut Module,
         identifier_to_imports: &mut HashMap<Identifier, Vec<Import>>,
         wildcard_modules: &mut Vec<Module>,
     ) {
         let mut pop_count = 0;
 
-        if tree.namespace_children.is_empty() {
-            if !tree.namespace.is_empty() {
-                namespace.0.push(range_text(snapshot, &tree.namespace));
-                pop_count += 1;
-            }
+        if tree.module_children.is_empty() {
+            pop_count += current_module.push_range(&tree.module, snapshot, parent_abs_path);
         } else {
-            for child in &tree.namespace_children {
-                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+            for child in &tree.module_children {
+                pop_count += Self::extend_namespace_from_tree(
+                    child,
+                    snapshot,
+                    parent_abs_path,
+                    current_module,
+                );
             }
         };
 
@@ -291,7 +374,7 @@ impl Imports {
                             })
                             .or_default()
                             .push(Import::Direct {
-                                module: Module::Namespace(namespace.clone()),
+                                module: current_module.clone(),
                             });
                     } else {
                         let alias_name: Arc<str> = range_text(snapshot, &tree.alias);
@@ -305,7 +388,7 @@ impl Imports {
                                 })
                                 .or_default()
                                 .push(Import::Alias {
-                                    module: Module::Namespace(namespace.clone()),
+                                    module: current_module.clone(),
                                     external_identifier: Identifier {
                                         language_id: tree.language_id,
                                         name: external_name,
@@ -314,45 +397,58 @@ impl Imports {
                         }
                     }
                 }
-                NodeKind::Wildcard => wildcard_modules.push(Module::Namespace(namespace.clone())),
+                NodeKind::Wildcard => wildcard_modules.push(current_module.clone()),
             }
         } else {
             for child in &tree.content_children {
                 Self::gather_from_tree(
                     child,
                     snapshot,
-                    namespace,
+                    parent_abs_path,
+                    current_module,
                     identifier_to_imports,
                     wildcard_modules,
                 );
             }
         }
 
-        namespace.0.drain(namespace.0.len() - pop_count..);
+        if pop_count > 0 {
+            match current_module {
+                Module::Source(_path) => {
+                    // todo! warn
+                }
+                Module::Namespace(namespace) => {
+                    namespace.0.drain(namespace.0.len() - pop_count..);
+                }
+            }
+        }
     }
 
     fn extend_namespace_from_tree(
         tree: &ImportTree,
-        namespace: &mut Namespace,
         snapshot: &BufferSnapshot,
+        parent_abs_path: Option<&Path>,
+        module: &mut Module,
     ) -> usize {
         let mut pop_count = 0;
-        if tree.namespace_children.is_empty() {
-            if !tree.namespace.is_empty() {
-                namespace.0.push(range_text(snapshot, &tree.namespace));
-                pop_count += 1;
-            }
+        if tree.module_children.is_empty() {
+            pop_count += module.push_range(&tree.module, snapshot, parent_abs_path);
         } else {
-            for child in &tree.namespace_children {
-                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+            for child in &tree.module_children {
+                pop_count +=
+                    Self::extend_namespace_from_tree(child, snapshot, parent_abs_path, module);
             }
         }
         if tree.content_children.is_empty() {
-            namespace.0.push(range_text(snapshot, &tree.content));
-            pop_count += 1;
+            pop_count += module.push_range(
+                &ModuleRange::Namespace(tree.content.clone()),
+                snapshot,
+                parent_abs_path,
+            );
         } else {
             for child in &tree.content_children {
-                pop_count += Self::extend_namespace_from_tree(child, namespace, snapshot);
+                pop_count +=
+                    Self::extend_namespace_from_tree(child, snapshot, parent_abs_path, module);
             }
         }
         pop_count
@@ -368,7 +464,7 @@ fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Arc<str> {
 
 #[derive(Debug)]
 struct DetachedNode {
-    namespace: Range<usize>,
+    module: ModuleRange,
     content: Range<usize>,
     alias: Range<usize>,
     language_id: LanguageId,
@@ -394,8 +490,8 @@ impl NodeKind {
 
 #[derive(Debug)]
 struct ImportTree {
-    namespace: Range<usize>,
-    namespace_children: Vec<ImportTree>,
+    module: ModuleRange,
+    module_children: Vec<ImportTree>,
     content: Range<usize>,
     content_children: Vec<ImportTree>,
     alias: Range<usize>,
@@ -405,7 +501,7 @@ struct ImportTree {
 
 impl ImportTree {
     fn range(&self) -> Range<usize> {
-        self.namespace.start.min(self.content.start)..self.namespace.end.max(self.content.end)
+        self.module.start.min(self.content.start)..self.module.end.max(self.content.end)
     }
 
     #[allow(dead_code)]
@@ -420,8 +516,8 @@ impl ImportTree {
 impl From<&DetachedNode> for ImportTree {
     fn from(value: &DetachedNode) -> Self {
         ImportTree {
-            namespace: value.namespace.clone(),
-            namespace_children: Vec::new(),
+            module: value.module.clone(),
+            module_children: Vec::new(),
             content: value.content.clone(),
             content_children: Vec::new(),
             alias: value.alias.clone(),
@@ -439,16 +535,13 @@ struct ImportTreeDebug<'a> {
 impl std::fmt::Debug for ImportTreeDebug<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ImportTree")
-            .field("namespace_range", &self.tree.namespace)
+            .field("module_range", &self.tree.module)
+            .field("module_text", &range_text(self.snapshot, &self.tree.module))
             .field(
-                "namespace_text",
-                &range_text(self.snapshot, &self.tree.namespace),
-            )
-            .field(
-                "namespace_children",
+                "module_children",
                 &self
                     .tree
-                    .namespace_children
+                    .module_children
                     .iter()
                     .map(|child| child.debug(&self.snapshot))
                     .collect::<Vec<Self>>(),
@@ -475,6 +568,7 @@ impl std::fmt::Debug for ImportTreeDebug<'_> {
 
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
     use std::sync::{Arc, LazyLock};
 
     use super::*;
@@ -611,47 +705,73 @@ mod test {
 
     #[gpui::test]
     fn test_typescript_imports(cx: &mut TestAppContext) {
-        // TODO: Distinguish that these are file paths in the output
+        let parent_abs_path = PathBuf::from("/home/user/project");
 
-        check_imports(
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import RandomNumberGenerator, { pi as π } from "./maths.js";"#,
             &[
-                &["./maths.js", "RandomNumberGenerator"],
-                &["./maths.js", "pi AS π"],
+                &["/home/user/project/maths.js", "RandomNumberGenerator"],
+                &["/home/user/project/maths.js", "pi AS π"],
             ],
             cx,
         );
 
-        check_imports(
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import { pi, phi, absolute } from "./maths.js";"#,
             &[
-                &["./maths.js", "pi"],
-                &["./maths.js", "phi"],
-                &["./maths.js", "absolute"],
+                &["/home/user/project/maths.js", "pi"],
+                &["/home/user/project/maths.js", "phi"],
+                &["/home/user/project/maths.js", "absolute"],
+            ],
+            cx,
+        );
+
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import { pi, phi, absolute } from "./maths/index.js";"#,
+            &[
+                &["/home/user/project/maths/index.js", "pi"],
+                &["/home/user/project/maths/index.js", "phi"],
+                &["/home/user/project/maths/index.js", "absolute"],
             ],
             cx,
         );
 
         /*
         check_imports(
+            Some(&parent_abs_path),
                 &TYPESCRIPT,
                 r#"import "./maths.js";"#,
-                &[&["./maths.js", "WILDCARD"]],
+                &[&["/home/user/project/maths.js", "WILDCARD"]],
                 cx,
             );
 
         check_imports(
+            Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import * as math from "./maths.js";"#,
-            &[&["./maths.js", "WILDCARD AS math"]],
+            &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
             cx,
         );
         */
     }
 
     fn check_imports(
+        language: &Arc<Language>,
+        source: &str,
+        expected: &[&[&str]],
+        cx: &mut TestAppContext,
+    ) {
+        check_imports_with_file_abs_path(None, language, source, expected, cx);
+    }
+
+    fn check_imports_with_file_abs_path(
+        parent_abs_path: Option<&Path>,
         language: &Arc<Language>,
         source: &str,
         expected: &[&[&str]],
@@ -666,7 +786,7 @@ mod test {
 
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
-        let imports = Imports::gather(&snapshot);
+        let imports = Imports::gather(&snapshot, parent_abs_path);
         let mut actual_symbols = imports
             .identifier_to_imports
             .iter()
@@ -679,7 +799,7 @@ mod test {
                 imports
                     .wildcard_modules
                     .iter()
-                    .map(|namespace| namespace.to_identifier_parts("WILDCARD")),
+                    .map(|module| module.to_identifier_parts("WILDCARD")),
             )
             .collect::<Vec<_>>();
         let mut expected_symbols = expected
@@ -792,11 +912,7 @@ mod test {
         fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
             match self {
                 Self::Namespace(namespace) => namespace.to_identifier_parts(identifier),
-                Self::Path(path) => path
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy().into())
-                    .chain(std::iter::once(identifier.to_string()))
-                    .collect(),
+                Self::Source(path) => vec![path.display().to_string(), identifier.to_string()],
             }
         }
     }

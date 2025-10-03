@@ -112,7 +112,7 @@ pub fn scored_declarations(
     let wildcard_imports_ocurrences = imports
         .wildcard_modules
         .iter()
-        .map(|module| module.into())
+        .map(|module| module.into_occurrences())
         .collect::<Vec<_>>();
 
     let mut declarations = identifier_to_references
@@ -127,7 +127,7 @@ pub fn scored_declarations(
                 .into_iter()
                 .flat_map(|imports| {
                     imports.iter().filter_map(|import| match import {
-                        Import::Direct { module } => Some(module.into()),
+                        Import::Direct { module } => Some(module.into_occurrences()),
                         // TODO: Handle aliased imports
                         Import::Alias { .. } => None,
                     })
@@ -315,9 +315,17 @@ fn score_declaration(
     // TODO: Consider directly caching this instead
     //
     // TODO: Handle special cases like lib.rs as the last component
-    let declaration_path = declaration.cached_full_path();
-    let path_occurrences = declaration_path.as_ref().into();
+    //
+    // TODO: Only compute when namespaces are used?
 
+    let cached_path = declaration.cached_path();
+    let path_occurrences = Occurrences::from_worktree_path(
+        cached_path
+            .worktree_abs_path
+            .file_name()
+            .map(|f| f.to_string_lossy()),
+        &cached_path.rel_path,
+    );
     let import_similarity = import_namespace_occurrences
         .iter()
         .map(|namespace_occurrences| {

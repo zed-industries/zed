@@ -501,6 +501,11 @@ impl Zeta {
 
         let diagnostics = snapshot.diagnostic_sets().clone();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -519,6 +524,7 @@ impl Zeta {
                 let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
+                    parent_abs_path.as_deref(),
                     &options.excerpt,
                     index_state.as_deref(),
                 ) else {
@@ -785,6 +791,11 @@ impl Zeta {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect::<Vec<_>>();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         cx.background_spawn(async move {
             let index_state = if let Some(index_state) = index_state {
                 Some(index_state.lock_owned().await)
@@ -798,6 +809,7 @@ impl Zeta {
             EditPredictionContext::gather_context(
                 cursor_point,
                 &snapshot,
+                parent_abs_path.as_deref(),
                 &options.excerpt,
                 index_state.as_deref(),
             )
