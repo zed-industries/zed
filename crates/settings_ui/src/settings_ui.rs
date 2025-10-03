@@ -3094,7 +3094,7 @@ impl SettingsWindow {
                     search_matches[entry.page_index][item_index]
                 } else {
                     search_matches[entry.page_index].iter().any(|b| *b)
-                        && !search_matches[entry.page_index].is_empty()
+                        || search_matches[entry.page_index].is_empty()
                 };
                 if included_in_search {
                     break;
@@ -3732,54 +3732,50 @@ mod test {
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
         let mut pages: Vec<SettingsPage> = Vec::new();
-        let mut current_page = None;
+        let mut expanded_pages = Vec::new();
         let mut selected_idx = None;
-        let mut ix = 0;
-        let mut in_closed_subentry = false;
+        let mut index = 0;
+        let mut in_expanded_section = false;
 
         for mut line in input
             .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
         {
-            let mut is_selected = false;
-            if line.ends_with("*") {
-                assert!(
-                    selected_idx.is_none(),
-                    "Can only have one selected navbar entry at a time"
-                );
-                selected_idx = Some(ix);
-                line = &line[..line.len() - 1];
-                is_selected = true;
+            if let Some(pre) = line.strip_suffix('*') {
+                assert!(selected_idx.is_none(), "Only one selected entry allowed");
+                selected_idx = Some(index);
+                line = pre;
             }
-
-            if line.starts_with("v") || line.starts_with(">") {
-                if let Some(current_page) = current_page.take() {
-                    pages.push(current_page);
-                }
-
-                let expanded = line.starts_with("v");
-                in_closed_subentry = !expanded;
-                ix += 1;
-
-                current_page = Some(SettingsPage {
-                    title: line.split_once(" ").unwrap().1,
-                    items: Vec::default(),
+            let (kind, title) = line.split_once(" ").unwrap();
+            assert_eq!(kind.len(), 1);
+            let kind = kind.chars().next().unwrap();
+            if kind == 'v' {
+                let page_idx = pages.len();
+                expanded_pages.push(page_idx);
+                pages.push(SettingsPage {
+                    title,
+                    items: vec![],
                 });
-            } else if line.starts_with("-") {
-                if !in_closed_subentry {
-                    ix += 1;
-                } else if is_selected && in_closed_subentry {
-                    panic!("Can't select sub entry if it's parent is closed");
+                index += 1;
+                in_expanded_section = true;
+            } else if kind == '>' {
+                pages.push(SettingsPage {
+                    title,
+                    items: vec![],
+                });
+                index += 1;
+                in_expanded_section = false;
+            } else if kind == '-' {
+                pages
+                    .last_mut()
+                    .unwrap()
+                    .items
+                    .push(SettingsPageItem::SectionHeader(title));
+                if selected_idx == Some(index) && !in_expanded_section {
+                    panic!("Items in unexpanded sections cannot be selected");
                 }
-
-                let Some(current_page) = current_page.as_mut() else {
-                    panic!("Sub entries must be within a page");
-                };
-
-                current_page.items.push(SettingsPageItem::SectionHeader(
-                    line.split_once(" ").unwrap().1,
-                ));
+                index += 1;
             } else {
                 panic!(
                     "Entries must start with one of 'v', '>', or '-'\n line: {}",
@@ -3787,15 +3783,6 @@ mod test {
                 );
             }
         }
-
-        if let Some(current_page) = current_page.take() {
-            pages.push(current_page);
-        }
-
-        let search_matches = pages
-            .iter()
-            .map(|page| vec![true; page.items.len()])
-            .collect::<Vec<_>>();
 
         let mut settings_window = SettingsWindow {
             files: Vec::default(),
@@ -3805,48 +3792,70 @@ mod test {
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
             list_handle: UniformListScrollHandle::default(),
-            search_matches,
+            search_matches: vec![],
             search_task: None,
             sub_page_stack: vec![],
         };
 
+        settings_window.build_search_matches();
         settings_window.build_navbar();
+        for expanded_page_index in expanded_pages {
+            for entry in &mut settings_window.navbar_entries {
+                if entry.page_index == expanded_page_index && entry.is_root {
+                    entry.expanded = true;
+                }
+            }
+        }
         settings_window
     }
 
     #[track_caller]
     fn check_navbar_toggle(
         before: &'static str,
-        toggle_idx: usize,
+        toggle_page: &'static str,
         after: &'static str,
         window: &mut Window,
         cx: &mut App,
     ) {
         let mut settings_window = parse(before, window, cx);
+        let toggle_page_idx = settings_window
+            .pages
+            .iter()
+            .position(|page| page.title == toggle_page)
+            .expect("page not found");
+        let toggle_idx = settings_window
+            .navbar_entries
+            .iter()
+            .position(|entry| entry.page_index == toggle_page_idx)
+            .expect("page not found");
         settings_window.toggle_navbar_entry(toggle_idx);
 
         let expected_settings_window = parse(after, window, cx);
 
         pretty_assertions::assert_eq!(
+            settings_window
+                .visible_navbar_entries()
+                .map(|(_, entry)| entry)
+                .collect::<Vec<_>>(),
             expected_settings_window
                 .visible_navbar_entries()
+                .map(|(_, entry)| entry)
                 .collect::<Vec<_>>(),
-            settings_window.visible_navbar_entries().collect::<Vec<_>>(),
         );
-        assert_eq!(
-            settings_window.navbar_entry(),
-            expected_settings_window.navbar_entry()
+        pretty_assertions::assert_eq!(
+            settings_window.navbar_entries[settings_window.navbar_entry()],
+            expected_settings_window.navbar_entries[expected_settings_window.navbar_entry()],
         );
     }
 
     macro_rules! check_navbar_toggle {
-        ($name:ident, before: $before:expr, toggle_idx: $toggle_idx:expr, after: $after:expr) => {
+        ($name:ident, before: $before:expr, toggle_page: $toggle_page:expr, after: $after:expr) => {
             #[gpui::test]
             fn $name(cx: &mut gpui::TestAppContext) {
                 let window = cx.add_empty_window();
                 window.update(|window, cx| {
                     register_settings(cx);
-                    check_navbar_toggle($before, $toggle_idx, $after, window, cx);
+                    check_navbar_toggle($before, $toggle_page, $after, window, cx);
                 });
             }
         };
@@ -3861,7 +3870,7 @@ mod test {
         v Project
         - Project Settings
         ",
-        toggle_idx: 0,
+        toggle_page: "General",
         after: r"
         > General*
         v Project
@@ -3878,7 +3887,7 @@ mod test {
         v Project
         - Project Settings
         ",
-        toggle_idx: 0,
+        toggle_page: "General",
         after: r"
         v General*
         - General
@@ -3897,7 +3906,7 @@ mod test {
         v Project
         - Project Settings*
         ",
-        toggle_idx: 1,
+        toggle_page: "Project",
         after: r"
         > General
         > Project*
@@ -3916,7 +3925,7 @@ mod test {
         - General
         > Appearance & Behavior
         ",
-        toggle_idx: 3,
+        toggle_page: "Project",
         after: r"
         v General Page
         - General
@@ -3940,7 +3949,7 @@ mod test {
         - General*
         > Appearance & Behavior
         ",
-        toggle_idx: 0,
+        toggle_page: "General Page",
         after: r"
         > General Page
         v Project
@@ -3963,34 +3972,9 @@ mod test {
         - General*
         > Appearance & Behavior
         ",
-        toggle_idx: 0,
+        toggle_page: "General Page",
         after: r"
         v General Page
-        - General
-        - Privacy
-        v Project
-        - Worktree Settings Content
-        v AI
-        - General*
-        > Appearance & Behavior
-        "
-    );
-
-    check_navbar_toggle!(
-        navbar_toggle_sub_entry_does_nothing,
-        before: r"
-        > General Page
-        - General
-        - Privacy
-        v Project
-        - Worktree Settings Content
-        v AI
-        - General*
-        > Appearance & Behavior
-        ",
-        toggle_idx: 4,
-        after: r"
-        > General Page
         - General
         - Privacy
         v Project
