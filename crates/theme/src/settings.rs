@@ -547,6 +547,15 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
+    /// Returns the agent panel buffer font size. Falls back to the buffer font size if unset.
+    pub fn agent_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<AgentFontSize>()
+            .map(|size| size.0)
+            .or(self.agent_buffer_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.buffer_font_size(cx))
+    }
+
     /// Returns the buffer font size, read from the settings.
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
@@ -728,15 +737,18 @@ pub fn reset_ui_font_size(cx: &mut App) {
 /// Sets the adjusted agent panel font size.
 pub fn adjust_agent_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
+/// Sets the adjusted font size of user messages in the agent panel.
+pub fn adjust_agent_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let agent_buffer_font_size = ThemeSettings::get_global(cx).agent_buffer_font_size(cx);
     let adjusted_size = cx
         .try_global::<AgentFontSize>()
-        .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
+        .map_or(agent_buffer_font_size, |adjusted_size| adjusted_size.0);
     cx.set_global(AgentFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
-/// Resets the agent panel font size to the default value.
-pub fn reset_agent_font_size(cx: &mut App) {
+/// Resets the user message font size in the agent panel to the default value.
+pub fn reset_agent_buffer_font_size(cx: &mut App) {
     if cx.has_global::<AgentFontSize>() {
         cx.remove_global::<AgentFontSize>();
         cx.refresh_windows();
@@ -798,7 +810,8 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_font_size: content.agent_font_size.map(Into::into),
+            agent_ui_font_size: content.agent_ui_font_size.map(Into::into),
+            agent_buffer_font_size: content.agent_buffer_font_size.map(Into::into),
             active_theme: themes
                 .get(theme_selection.theme(*system_appearance))
                 .or(themes.get(&zed_default_dark().name))
