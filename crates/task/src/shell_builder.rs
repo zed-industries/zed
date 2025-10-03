@@ -18,14 +18,11 @@ pub struct ShellBuilder {
 
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
-    pub fn new(remote_system_shell: Option<&str>, shell: &Shell) -> Self {
-        let (program, args) = match remote_system_shell {
-            Some(program) => (program.to_string(), Vec::new()),
-            None => match shell {
-                Shell::System => (get_system_shell(), Vec::new()),
-                Shell::Program(shell) => (shell.clone(), Vec::new()),
-                Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
-            },
+    pub fn new(shell: &Shell) -> Self {
+        let (program, args) = match shell {
+            Shell::System => (get_system_shell(), Vec::new()),
+            Shell::Program(shell) => (shell.clone(), Vec::new()),
+            Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
 
         let kind = ShellKind::new(&program);
@@ -123,7 +120,7 @@ mod test {
     #[test]
     fn test_nu_shell_variable_substitution() {
         let shell = Shell::Program("nu".to_owned());
-        let shell_builder = ShellBuilder::new(None, &shell);
+        let shell_builder = ShellBuilder::new(&shell);
 
         let (program, args) = shell_builder.build(
             Some("echo".into()),
@@ -151,7 +148,7 @@ mod test {
     #[test]
     fn redirect_stdin_to_dev_null_precedence() {
         let shell = Shell::Program("nu".to_owned());
-        let shell_builder = ShellBuilder::new(None, &shell);
+        let shell_builder = ShellBuilder::new(&shell);
 
         let (program, args) = shell_builder
             .redirect_stdin_to_dev_null()

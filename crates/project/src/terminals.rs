@@ -452,10 +452,12 @@ impl Project {
         let path = self.first_project_directory(cx);
         let remote_client = self.remote_client.as_ref();
         let settings = self.terminal_settings(&path, cx).clone();
-        let remote_shell = remote_client
+        let shell = remote_client
             .as_ref()
-            .and_then(|remote_client| remote_client.read(cx).shell());
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &settings.shell).non_interactive();
+            .and_then(|remote_client| remote_client.read(cx).shell())
+            .map(Shell::Program)
+            .unwrap_or_else(|| settings.shell.clone());
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self
