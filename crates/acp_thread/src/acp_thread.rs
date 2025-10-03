@@ -877,7 +877,7 @@ impl AcpThread {
                 // Flush any pending output
                 if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
                     for data in chunks.drain(..) {
-                        let _ = entity.update(cx, |term, cx| {
+                        entity.update(cx, |term, cx| {
                             term.inner().update(cx, |inner, cx| {
                                 inner.write_output(&data, cx);
                             })
@@ -888,7 +888,7 @@ impl AcpThread {
                 // Apply any pending exit
                 if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
                     // For now, just notify views; summary handling can be extended later.
-                    let _ = entity.update(cx, |_term, cx| {
+                    entity.update(cx, |_term, cx| {
                         cx.notify();
                     });
                 }
@@ -897,7 +897,7 @@ impl AcpThread {
             }
             TerminalProviderEvent::Output { terminal_id, data } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    let _ = entity.update(cx, |term, cx| {
+                    entity.update(cx, |term, cx| {
                         term.inner().update(cx, |inner, cx| {
                             inner.write_output(&data, cx);
                         })
@@ -911,7 +911,7 @@ impl AcpThread {
             }
             TerminalProviderEvent::TitleChanged { terminal_id, title } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    let _ = entity.update(cx, |term, cx| {
+                    entity.update(cx, |term, cx| {
                         term.inner().update(cx, |inner, cx| {
                             inner.breadcrumb_text = title;
                             cx.emit(::terminal::Event::BreadcrumbsChanged);
@@ -924,7 +924,7 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    let _ = entity.update(cx, |_term, cx| {
+                    entity.update(cx, |_term, cx| {
                         cx.notify();
                     });
                 } else {
