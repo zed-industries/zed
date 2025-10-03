@@ -619,6 +619,7 @@ pub fn main() {
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
+        encodings::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();

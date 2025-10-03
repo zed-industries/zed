@@ -77,11 +77,6 @@ pub struct StatusBar {
     ///
     /// Default: true
     pub cursor_position_button: bool,
-
-    /// Whether to show the encoding indicator in the status bar.
-    ///
-    /// Default: true
-    pub encoding_indicator: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,7 +175,6 @@ pub struct SearchSettings {
     pub include_ignored: bool,
     pub regex: bool,
 }
-
 
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {

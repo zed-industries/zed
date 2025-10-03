@@ -6,8 +6,8 @@ use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use encoding_rs::UTF_8;
 use collections::{HashMap, HashSet};
+use encoding_rs::UTF_8;
 use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
 use extension::ExtensionHostProxy;
