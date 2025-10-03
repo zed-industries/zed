@@ -1,14 +1,13 @@
 //! A crate for handling file encodings in the text editor.
 
 use crate::selectors::encoding::Action;
-use editor::{Editor, EditorSettings};
+use editor::Editor;
 use encoding_rs::Encoding;
 use gpui::{ClickEvent, Entity, Subscription, WeakEntity};
 use language::Buffer;
-use settings::Settings;
-use ui::{Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
+use ui::{App, Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
-use workspace::{ItemHandle, StatusItemView, Workspace};
+use workspace::{ItemHandle, StatusItemView, Workspace, with_active_or_new_workspace};
 
 use crate::selectors::encoding::EncodingSelector;
 use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
@@ -39,7 +38,7 @@ impl Render for EncodingIndicator {
         let status_element = div();
         let show_save_or_reopen_selector = self.show_save_or_reopen_selector;
 
-        if (!EditorSettings::get_global(cx).status_bar.encoding_indicator) || !self.show {
+        if !self.show {
             return status_element;
         }
 
@@ -75,7 +74,7 @@ impl Render for EncodingIndicator {
                                     window,
                                     cx,
                                     Action::Save,
-                                    buffer.downgrade(),
+                                    Some(buffer.downgrade()),
                                     weak_workspace,
                                 );
                                 selector
@@ -99,7 +98,7 @@ impl EncodingIndicator {
             encoding,
             workspace,
             observe_editor,
-            show: true,
+            show: false,
             observe_buffer_encoding,
             show_save_or_reopen_selector: false,
         }
@@ -287,7 +286,17 @@ pub fn encoding_from_name(name: &str) -> &'static Encoding {
         "GBK" => encoding_rs::GBK,
         "GB18030" => encoding_rs::GB18030,
         "Big5" => encoding_rs::BIG5,
-        "HZ-GB-2312" => encoding_rs::UTF_8, // encoding_rs doesn't support HZ, fallback to UTF-8
-        _ => encoding_rs::UTF_8,            // Default to UTF-8 for unknown names
+        _ => encoding_rs::UTF_8, // Default to UTF-8 for unknown names
     }
+}
+
+pub fn init(cx: &mut App) {
+    cx.on_action(|_: &zed_actions::encodings::Toggle, cx: &mut App| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                EncodingSelector::new(window, cx, Action::Reopen, None, weak_workspace)
+            });
+        });
+    });
 }
