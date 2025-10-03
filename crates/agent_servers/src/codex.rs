@@ -10,6 +10,13 @@ use project::agent_server_store::CODEX_NAME;
 #[derive(Clone)]
 pub struct Codex;
 
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    crate::common_e2e_tests!(async |_, _, _| Codex, allow_option_id = "proceed_once");
+}
+
 impl AgentServer for Codex {
     fn telemetry_id(&self) -> &'static str {
         "codex"

@@ -1015,7 +1015,7 @@ impl AcpThreadView {
             let auth_methods = connection.auth_methods();
             let has_supported_auth = auth_methods.iter().any(|method| {
                 let id = method.id.0.as_ref();
-                id == "claude-login" || id == "spawn-gemini-cli" || id == "spawn-codex-acp"
+                id == "claude-login" || id == "spawn-gemini-cli"
             });
             let can_login = has_supported_auth || auth_methods.is_empty() || self.login.is_some();
             if !can_login {
@@ -1519,8 +1519,7 @@ impl AcpThreadView {
         configuration_view.take();
         pending_auth_method.replace(method.clone());
         let authenticate = if (method.0.as_ref() == "claude-login"
-            || method.0.as_ref() == "spawn-gemini-cli"
-            || method.0.as_ref() == "spawn-codex-acp")
+            || method.0.as_ref() == "spawn-gemini-cli")
             && let Some(login) = self.login.clone()
         {
             if let Some(workspace) = self.workspace.upgrade() {
@@ -5637,8 +5636,6 @@ pub(crate) mod tests {
     use workspace::Item;
 
     use super::*;
-
-    use agent_client_protocol as acp;
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {
