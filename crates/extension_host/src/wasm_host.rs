@@ -1,7 +1,7 @@
 pub mod wit;
 
-use crate::ExtensionManifest;
 use crate::capability_granter::CapabilityGranter;
+use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
@@ -29,6 +29,7 @@ use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use settings::Settings;
 use std::borrow::Cow;
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
@@ -569,6 +570,11 @@ impl WasmHost {
                 message(cx).await;
             }
         });
+
+        let extension_settings = ExtensionSettings::get_global(cx);
+
+        dbg!(&extension_settings.granted_capabilities);
+
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
