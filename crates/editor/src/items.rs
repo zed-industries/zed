@@ -832,12 +832,11 @@ impl Item for Editor {
 
         // let mut buffers_to_save =
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
-            buffers.clone()
+            buffers
         } else {
             buffers
-                .iter()
+                .into_iter()
                 .filter(|buffer| buffer.read(cx).is_dirty())
-                .cloned()
                 .collect()
         };
 
