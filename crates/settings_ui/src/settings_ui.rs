@@ -6,7 +6,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    ScrollHandle, Stateful, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
     WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
@@ -1387,7 +1387,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Languages"),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "JSON",
-                    render: Rc::new(|state, window, cx| "A settings page!".into_any_element()),
+                    render: Rc::new(|_, _, _| "A settings page!".into_any_element()),
                 }),
             ],
         },
@@ -3332,7 +3332,7 @@ impl SettingsWindow {
             })
     }
 
-    fn render_sub_page_breadcrumbs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
         let mut items = vec![];
         items.push(self.current_page().title);
         items.extend(
@@ -3399,7 +3399,7 @@ impl SettingsWindow {
                             this.pop_sub_page(cx);
                         }),
                     ))
-                    .child(self.render_sub_page_breadcrumbs(cx)),
+                    .child(self.render_sub_page_breadcrumbs()),
             );
 
             let active_page_render_fn = self.sub_pages.last().unwrap().link.render.clone();
@@ -3797,6 +3797,7 @@ mod test {
             list_handle: UniformListScrollHandle::default(),
             search_matches,
             search_task: None,
+            sub_pages: vec![],
         };
 
         settings_window.build_navbar();
