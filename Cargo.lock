@@ -12101,6 +12101,7 @@ dependencies = [
  "dap_adapters",
  "extension",
  "fancy-regex 0.14.0",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
