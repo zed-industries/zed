@@ -5313,7 +5313,7 @@ impl Project {
         update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
     ) {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            // todo! error?
+            // todo(settings_ui) error?
             return;
         };
         cx.spawn(async move |cx| {

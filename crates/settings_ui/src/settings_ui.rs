@@ -3350,7 +3350,7 @@ fn update_settings_file(
             return Ok(());
         }
         SettingsUiFile::User => {
-            /* todo! error? */
+            // todo(settings_ui) error?
             SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
             Ok(())
         }
