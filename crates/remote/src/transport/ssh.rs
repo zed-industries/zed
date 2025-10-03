@@ -134,7 +134,10 @@ impl RemoteConnection for SshRemoteConnection {
             ssh_shell,
             ..
         } = self;
-        let env = socket.envs.clone();
+        let mut env = socket.envs.clone();
+        if let Ok(password) = socket.password.clone().decrypt() {
+            env.insert("ZED_SSH_ASKPASS".to_owned(), password);
+        }
         build_command(
             input_program,
             input_args,

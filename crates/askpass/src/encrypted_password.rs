@@ -27,7 +27,7 @@ pub trait ProcessExt {
 
 impl ProcessExt for smol::process::Command {
     fn encrypted_env(&mut self, name: &str, value: EncryptedPassword) -> &mut Self {
-        if let Ok(password) = decrypt(value) {
+        if let Ok(password) = value.decrypt() {
             self.env(name, password);
         }
         self
@@ -37,7 +37,7 @@ impl ProcessExt for smol::process::Command {
 impl TryFrom<EncryptedPassword> for proto::AskPassResponse {
     type Error = anyhow::Error;
     fn try_from(pw: EncryptedPassword) -> Result<Self, Self::Error> {
-        let pw = decrypt(pw)?;
+        let pw = pw.decrypt()?;
         Ok(Self { response: pw })
     }
 }
@@ -79,38 +79,41 @@ impl TryFrom<&str> for EncryptedPassword {
     }
 }
 
-pub(crate) fn decrypt(mut password: EncryptedPassword) -> Result<String> {
-    #[cfg(windows)]
-    {
-        use anyhow::Context;
-        use windows::Win32::Security::Cryptography::{
-            CRYPTPROTECTMEMORY_BLOCK_SIZE, CRYPTPROTECTMEMORY_SAME_PROCESS, CryptUnprotectMemory,
-        };
-        assert_eq!(
-            password.0.len() % CRYPTPROTECTMEMORY_BLOCK_SIZE as usize,
-            0,
-            "Violated pre-condition (buffer size <{}> must be a multiple of CRYPTPROTECTMEMORY_BLOCK_SIZE <{}>) for CryptUnprotectMemory.",
-            password.0.len(),
-            CRYPTPROTECTMEMORY_BLOCK_SIZE
-        );
-        if password.1 != 0 {
-            unsafe {
-                CryptUnprotectMemory(
-                    password.0.as_mut_ptr() as _,
-                    password.0.len().try_into()?,
-                    CRYPTPROTECTMEMORY_SAME_PROCESS,
-                )
-                .context("while decrypting a SSH password")?
+impl EncryptedPassword {
+    pub fn decrypt(mut self) -> Result<String> {
+        #[cfg(windows)]
+        {
+            use anyhow::Context;
+            use windows::Win32::Security::Cryptography::{
+                CRYPTPROTECTMEMORY_BLOCK_SIZE, CRYPTPROTECTMEMORY_SAME_PROCESS,
+                CryptUnprotectMemory,
             };
+            assert_eq!(
+                self.0.len() % CRYPTPROTECTMEMORY_BLOCK_SIZE as usize,
+                0,
+                "Violated pre-condition (buffer size <{}> must be a multiple of CRYPTPROTECTMEMORY_BLOCK_SIZE <{}>) for CryptUnprotectMemory.",
+                self.0.len(),
+                CRYPTPROTECTMEMORY_BLOCK_SIZE
+            );
+            if self.1 != 0 {
+                unsafe {
+                    CryptUnprotectMemory(
+                        self.0.as_mut_ptr() as _,
+                        self.0.len().try_into()?,
+                        CRYPTPROTECTMEMORY_SAME_PROCESS,
+                    )
+                    .context("while decrypting a SSH password")?
+                };
 
-            {
-                // Remove padding
-                _ = password.0.drain(password.1 as usize..);
+                {
+                    // Remove padding
+                    _ = self.0.drain(self.1 as usize..);
+                }
             }
-        }
 
-        Ok(String::from_utf8(std::mem::take(&mut password.0))?)
+            Ok(String::from_utf8(std::mem::take(&mut self.0))?)
+        }
+        #[cfg(not(windows))]
+        Ok(String::from_utf8(std::mem::take(&mut self.0))?)
     }
-    #[cfg(not(windows))]
-    Ok(String::from_utf8(std::mem::take(&mut password.0))?)
 }

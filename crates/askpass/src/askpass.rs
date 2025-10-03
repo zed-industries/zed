@@ -16,8 +16,6 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 use util::ResultExt as _;
 
-use crate::encrypted_password::decrypt;
-
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
     CancelledByUser,
@@ -116,7 +114,7 @@ impl AskPassSession {
                     {
                         askpass_secret.get_or_init(|| password.clone());
                     }
-                    if let Ok(decrypted) = decrypt(password) {
+                    if let Ok(decrypted) = password.decrypt() {
                         stream.write_all(decrypted.as_bytes()).await.log_err();
                     }
                 } else {
