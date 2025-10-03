@@ -668,6 +668,20 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 100)]
+    fn test_split_chunk_slice(mut rng: StdRng) {
+        let text = &random_string_with_utf8_len(&mut rng, MAX_BASE);
+        let chunk = Chunk::new(text);
+        let offset = char_offsets_with_end(text)
+            .into_iter()
+            .choose(&mut rng)
+            .unwrap();
+        let (a, b) = chunk.as_slice().split_at(offset);
+        let (a_str, b_str) = text.split_at(offset);
+        verify_chunk(a, a_str);
+        verify_chunk(b, b_str);
+    }
+
     #[gpui::test(iterations = 1000)]
     fn test_nth_set_bit_random(mut rng: StdRng) {
         let set_count = rng.random_range(0..=128);
