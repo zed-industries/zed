@@ -342,6 +342,14 @@ impl Editor {
             invalidate_cache
         };
 
+        match &self.inlay_hints {
+            Some(inlay_hints) => {
+                if !inlay_hints.enabled {
+                    return;
+                }
+            }
+            None => return,
+        }
         let ignore_debounce = matches!(
             reason,
             InlayHintRefreshReason::SettingsChange(_)
@@ -1444,7 +1452,6 @@ pub mod tests {
             })
             .unwrap();
 
-        dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         fake_server
             .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
@@ -1458,8 +1465,15 @@ pub mod tests {
                     2,
                     "Should not load new hints when they got disabled"
                 );
-                assert!(cached_hint_labels(editor, cx).is_empty());
-                assert!(visible_hint_labels(editor, cx).is_empty());
+                assert_eq!(
+                    vec![
+                        "type hint".to_string(),
+                        "parameter hint".to_string(),
+                        "other hint".to_string(),
+                    ],
+                    cached_hint_labels(editor, cx)
+                );
+                assert_eq!(Vec::<String>::new(), visible_hint_labels(editor, cx));
             })
             .unwrap();
 
@@ -1486,8 +1500,8 @@ pub mod tests {
             .update(cx, |editor, _, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
-                    3,
-                    "Should query for new hints when they got re-enabled"
+                    2,
+                    "Should not query for new hints when they got re-enabled, as the file version did not change"
                 );
                 assert_eq!(
                     vec![
@@ -1521,7 +1535,7 @@ pub mod tests {
             .update(cx, |editor, _, cx| {
                 assert_eq!(
                     lsp_request_count.load(Ordering::Relaxed),
-                    4,
+                    3,
                     "Should query for new hints again"
                 );
                 assert_eq!(
