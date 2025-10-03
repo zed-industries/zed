@@ -1180,7 +1180,7 @@ pub struct Editor {
     inlay_hints: Option<LspInlayHintData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
-    update_semantic_tokens_task: Task<()>,
+    pub(crate) update_semantic_tokens_task: Task<()>,
 }
 
 fn debounce_value(debounce_ms: u64) -> Option<Duration> {
