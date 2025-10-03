@@ -1,6 +1,6 @@
 //! # settings_ui
 mod components;
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
@@ -12,7 +12,7 @@ use gpui::{
 use project::WorktreeId;
 use settings::{
     BottomDockLayout, CloseWindowWhenNoItems, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsLocation, SettingsStore,
+    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -3349,9 +3349,11 @@ fn update_settings_file(
             });
             return Ok(());
         }
-        SettingsUiFile::User => Ok(
-            /* todo! error? */ SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update)
-        ),
+        SettingsUiFile::User => {
+            /* todo! error? */
+            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            Ok(())
+        }
         SettingsUiFile::Server(_) => unimplemented!(),
     }
 }
