@@ -1362,7 +1362,7 @@ mod tests {
     use settings::SettingsStore;
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use super::*;
 
@@ -1468,7 +1468,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "foo".into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1489,7 +1489,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "bar".into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
