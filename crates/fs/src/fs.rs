@@ -1890,6 +1890,10 @@ impl FakeFs {
             .unwrap_or(0)
     }
 
+    pub fn emit_fs_event(&self, path: impl Into<PathBuf>, event: Option<PathEventKind>) {
+        self.state.lock().emit_event(std::iter::once((path, event)));
+    }
+
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
     }
