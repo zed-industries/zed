@@ -24,7 +24,7 @@ use std::{
 };
 use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
-    prelude::*,
+    WithScrollbar, prelude::*,
 };
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
@@ -2779,6 +2779,7 @@ pub struct SettingsWindow {
     /// If this is empty the selected page is rendered,
     /// otherwise the last sub page gets rendered.
     sub_page_stack: Vec<SubPage>,
+    scroll_handle: ScrollHandle,
 }
 
 struct SubPage {
@@ -3043,6 +3044,7 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             sub_page_stack: vec![],
+            scroll_handle: ScrollHandle::new(),
         };
 
         this.fetch_files(cx);
@@ -3353,22 +3355,26 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
-    fn render_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
         let mut page = v_flex()
             .w_full()
             .pt_4()
+            .pb_6()
             .px_6()
             .gap_4()
-            .bg(cx.theme().colors().editor_background);
+            .bg(cx.theme().colors().editor_background)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
+
         let mut page_content = v_flex()
             .id("settings-ui-page")
             .gap_4()
             .overflow_y_scroll()
-            .track_scroll(
-                window
-                    .use_state(cx, |_, _| ScrollHandle::default())
-                    .read(cx),
-            );
+            .track_scroll(&self.scroll_handle);
+
         if self.sub_page_stack.len() == 0 {
             page = page.child(self.render_files(window, cx));
 
@@ -3798,6 +3804,7 @@ mod test {
             search_matches,
             search_task: None,
             sub_page_stack: vec![],
+            scroll_handle: ScrollHandle::new(),
         };
 
         settings_window.build_navbar();
