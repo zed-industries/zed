@@ -28,6 +28,10 @@ use crate::Identifier;
 // * Support for importing namespaces (`self` in Rust, etc). Requires parsing of identifier
 // qualification.
 
+// Things to document (for extension authors)
+//
+// * the @import capture must match before all others it contains
+
 #[derive(Debug, Clone)]
 pub struct Imports {
     // TODO: this is not so meaningful when imports come from anywhere in the file
@@ -81,28 +85,20 @@ impl Imports {
                 .imports_config()
                 .unwrap();
 
+            let mut new_import_range = None;
             let mut namespace_range = None;
-            let mut content: Option<(Range<usize>, NodeKind)> = None;
             let mut alias_range = None;
+            let mut content: Option<(Range<usize>, NodeKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
 
                 if capture.index == *import_ix {
-                    import_range = Some(capture_range.clone());
-                    all_imports_range
-                        .get_or_insert_with(|| capture_range.clone())
-                        .end = capture_range.end;
-                    Self::gather_from_import_statement(
-                        &detached_nodes,
-                        &snapshot,
-                        &mut identifier_to_imports,
-                        &mut wildcard_namespaces,
-                    );
-                    detached_nodes.clear();
-                } else if import_range
-                    .as_ref()
-                    .is_some_and(|import_range| import_range.contains_inclusive(&capture_range))
-                {
+                    new_import_range = Some(capture_range);
+                } else if Some(capture.index) == *namespace_ix {
+                    namespace_range = Some(capture_range);
+                } else if Some(capture.index) == *alias_ix {
+                    alias_range = Some(capture_range);
+                } else {
                     let mut found_content = None;
                     if Some(capture.index) == *name_ix {
                         found_content = Some((capture_range, NodeKind::Name));
@@ -110,10 +106,6 @@ impl Imports {
                         found_content = Some((capture_range, NodeKind::List));
                     } else if Some(capture.index) == *wildcard_ix {
                         found_content = Some((capture_range, NodeKind::Wildcard));
-                    } else if Some(capture.index) == *namespace_ix {
-                        namespace_range = Some(capture_range);
-                    } else if Some(capture.index) == *alias_ix {
-                        alias_range = Some(capture_range);
                     }
                     if let Some((found_content_range, found_kind)) = found_content {
                         if let Some((_, old_kind)) = content {
@@ -136,14 +128,38 @@ impl Imports {
                 }
             }
 
+            if let Some(new_import_range) = new_import_range {
+                log::trace!("starting new import {:?}", new_import_range);
+                Self::gather_from_import_statement(
+                    &detached_nodes,
+                    &snapshot,
+                    &mut identifier_to_imports,
+                    &mut wildcard_namespaces,
+                );
+                detached_nodes.clear();
+                all_imports_range
+                    .get_or_insert_with(|| new_import_range.clone())
+                    .end = new_import_range.end;
+                import_range = Some(new_import_range.clone());
+            }
+
             if let Some((content, kind)) = content {
-                detached_nodes.push(DetachedNode {
-                    namespace: namespace_range.unwrap_or(0..0),
-                    content: content.clone(),
-                    alias: alias_range.unwrap_or(0..0),
-                    language_id,
-                    kind,
-                });
+                if import_range
+                    .as_ref()
+                    .is_some_and(|import_range| import_range.contains_inclusive(&content))
+                {
+                    detached_nodes.push(DetachedNode {
+                        namespace: namespace_range.unwrap_or(0..0),
+                        content: content.clone(),
+                        alias: alias_range.unwrap_or(0..0),
+                        language_id,
+                        kind,
+                    });
+                } else {
+                    log::trace!(
+                        "filtered out match not inside import range: {kind:?} at {content:?}"
+                    );
+                }
             }
 
             matches.advance();
@@ -172,13 +188,13 @@ impl Imports {
         let mut trees = Vec::new();
 
         for detached_node in detached_nodes {
-            if !Self::attach_node(&detached_node, &mut trees) {
-                trees.push(detached_node.into());
+            if let Some(node) = Self::attach_node(detached_node.into(), &mut trees) {
+                trees.push(node);
             }
         }
 
         for tree in &trees {
-            println!("{:#?}", tree.debug(snapshot));
+            log::trace!("Import tree:\n{:#?}", tree.debug(snapshot));
             let mut namespace = Namespace::default();
             Self::gather_from_tree(
                 tree,
@@ -190,31 +206,37 @@ impl Imports {
         }
     }
 
-    fn attach_node(detached_node: &DetachedNode, trees: &mut Vec<ImportTree>) -> bool {
-        for tree in trees {
-            if detached_node.namespace.contains_inclusive(&tree.range()) {
-                let mut new_parent = detached_node.into();
-                std::mem::swap(tree, &mut new_parent);
-                let old_tree = new_parent;
-                tree.namespace_children.push(old_tree);
-                return true;
-            } else if tree.content == detached_node.content {
+    fn attach_node(mut node: ImportTree, trees: &mut Vec<ImportTree>) -> Option<ImportTree> {
+        let mut tree_index = 0;
+        while tree_index < trees.len() {
+            let tree = &mut trees[tree_index];
+            if node.namespace.contains_inclusive(&tree.range()) {
+                node.namespace_children.push(trees.remove(tree_index));
+                continue;
+            } else if node.content.contains_inclusive(&tree.content) {
+                node.content_children.push(trees.remove(tree_index));
+                continue;
+            } else if tree.content == node.content {
+                // multiple matches can apply to the same name/list/wildcard. This keeps the queries
+                // simpler by combining info from these matches.
+                //
+                // TODO: Log warnings when both have some information and there is a mismatch.
                 if tree.namespace.is_empty() {
-                    tree.namespace = detached_node.namespace.clone();
+                    tree.namespace = node.namespace.clone();
                 }
                 if tree.alias.is_empty() {
-                    tree.alias = detached_node.alias.clone();
+                    tree.alias = node.alias.clone();
                 }
-                return true;
-            } else if tree.content.contains_inclusive(&detached_node.content) {
-                if Self::attach_node(detached_node, &mut tree.content_children) {
-                    return true;
+                return None;
+            } else if tree.content.contains_inclusive(&node.content) {
+                if let Some(node) = Self::attach_node(node, &mut tree.content_children) {
+                    tree.content_children.push(node);
                 }
-                tree.content_children.push(detached_node.into());
-                return true;
+                return None;
             }
+            tree_index += 1;
         }
-        false
+        Some(node)
     }
 
     fn gather_from_tree(
@@ -253,7 +275,7 @@ impl Imports {
                     } else {
                         let alias_name: Arc<str> = range_text(snapshot, &tree.alias);
                         let external_name = range_text(snapshot, &tree.content);
-                        // TODO: Make this special case be language-specific
+                        // TODO: Make this special case be language-specific / configured?
                         if alias_name.as_ref() != "_" {
                             identifier_to_imports
                                 .entry(Identifier {
@@ -362,7 +384,7 @@ struct ImportTree {
 
 impl ImportTree {
     fn range(&self) -> Range<usize> {
-        self.namespace.start..self.content.end
+        self.namespace.start.min(self.content.start)..self.namespace.end.max(self.content.end)
     }
 
     #[allow(dead_code)]
@@ -437,7 +459,9 @@ mod test {
     use super::*;
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
-    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::{
+        Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust, tree_sitter_typescript,
+    };
 
     #[gpui::test]
     fn test_rust_simple(cx: &mut TestAppContext) {
@@ -564,6 +588,48 @@ mod test {
         );
     }
 
+    #[gpui::test]
+    fn test_typescript_imports(cx: &mut TestAppContext) {
+        // TODO: Distinguish that these are file paths in the output
+
+        check_imports(
+            &TYPESCRIPT,
+            r#"import RandomNumberGenerator, { pi as π } from "./maths.js";"#,
+            &[
+                &["./maths.js", "RandomNumberGenerator"],
+                &["./maths.js", "pi AS π"],
+            ],
+            cx,
+        );
+
+        check_imports(
+            &TYPESCRIPT,
+            r#"import { pi, phi, absolute } from "./maths.js";"#,
+            &[
+                &["./maths.js", "pi"],
+                &["./maths.js", "phi"],
+                &["./maths.js", "absolute"],
+            ],
+            cx,
+        );
+
+        /*
+        check_imports(
+                &TYPESCRIPT,
+                r#"import "./maths.js";"#,
+                &[&["./maths.js", "WILDCARD"]],
+                cx,
+            );
+
+        check_imports(
+            &TYPESCRIPT,
+            r#"import * as math from "./maths.js";"#,
+            &[&["./maths.js", "WILDCARD AS math"]],
+            cx,
+        );
+        */
+    }
+
     fn check_imports(
         language: &Arc<Language>,
         source: &str,
@@ -665,6 +731,24 @@ mod test {
                 Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_imports_query(include_str!("../../languages/src/rust/imports.scm"))
+            .unwrap(),
+        )
+    });
+
+    static TYPESCRIPT: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "TypeScript".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["ts".to_string()],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            )
+            .with_imports_query(include_str!("../../languages/src/typescript/imports.scm"))
             .unwrap(),
         )
     });
