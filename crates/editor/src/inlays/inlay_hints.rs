@@ -48,8 +48,9 @@ pub struct LspInlayHintData {
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
     inlays_for_version: Option<clock::Global>,
-    inlay_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
-    inlay_chunks_received: HashSet<Range<BufferRow>>,
+    hint_tasks: HashMap<BufferId, HashMap<Range<BufferRow>, Task<()>>>,
+    hint_chunks_received: HashSet<Range<BufferRow>>,
+    pub hint_kinds: HashMap<InlayId, Option<InlayHintKind>>,
 }
 
 impl LspInlayHintData {
@@ -59,8 +60,9 @@ impl LspInlayHintData {
             enabled: settings.enabled,
             enabled_in_settings: settings.enabled,
             inlays_for_version: None,
-            inlay_tasks: HashMap::default(),
-            inlay_chunks_received: HashSet::default(),
+            hint_tasks: HashMap::default(),
+            hint_kinds: HashMap::default(),
+            hint_chunks_received: HashSet::default(),
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
@@ -95,18 +97,19 @@ impl LspInlayHintData {
 
     pub fn clear(&mut self) {
         self.inlays_for_version = None;
-        self.inlay_tasks.clear();
-        self.inlay_chunks_received.clear();
+        self.hint_tasks.clear();
+        self.hint_chunks_received.clear();
+        self.hint_kinds.clear();
     }
 
     /// Checks inlay hint settings for enabled hint kinds and general enabled state.
     /// Generates corresponding inlay_map splice updates on settings changes.
     /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
-    pub fn update_settings(
+    fn update_settings(
         &mut self,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-    ) -> ControlFlow<Option<InlaySplice>> {
+    ) -> ControlFlow<Option<InlaySplice>, Option<InlaySplice>> {
         let old_enabled = self.enabled;
         // If the setting for inlay hints has changed, update `enabled`. This condition avoids inlay
         // hint visibility changes when other settings change (such as theme).
@@ -132,7 +135,23 @@ impl LspInlayHintData {
                     ControlFlow::Break(None)
                 } else {
                     self.allowed_hint_kinds = new_allowed_hint_kinds;
-                    ControlFlow::Continue(())
+                    ControlFlow::Continue(
+                        Some(InlaySplice {
+                            to_remove: visible_hints
+                                .iter()
+                                .filter_map(|inlay| {
+                                    let inlay_kind = self.hint_kinds.get(&inlay.id).copied()?;
+                                    if !self.allowed_hint_kinds.contains(&inlay_kind) {
+                                        Some(inlay.id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect(),
+                            to_insert: Vec::new(),
+                        })
+                        .filter(|splice| !splice.is_empty()),
+                    )
                 }
             }
             (true, false) => {
@@ -151,7 +170,23 @@ impl LspInlayHintData {
             (false, true) => {
                 self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
-                ControlFlow::Continue(())
+                ControlFlow::Continue(
+                    Some(InlaySplice {
+                        to_remove: visible_hints
+                            .iter()
+                            .filter_map(|inlay| {
+                                let inlay_kind = self.hint_kinds.get(&inlay.id).copied()?;
+                                if !self.allowed_hint_kinds.contains(&inlay_kind) {
+                                    Some(inlay.id)
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                        to_insert: Vec::new(),
+                    })
+                    .filter(|splice| !splice.is_empty()),
+                )
             }
         }
     }
@@ -239,6 +274,7 @@ impl Editor {
         self.inlay_hints.as_ref().is_some_and(|cache| cache.enabled)
     }
 
+    /// TODO kb docs
     pub(crate) fn refresh_inlay_hints(
         &mut self,
         reason: InlayHintRefreshReason,
@@ -307,7 +343,16 @@ impl Editor {
                             return;
                         }
                         ControlFlow::Break(None) => return,
-                        ControlFlow::Continue(()) => InvalidationStrategy::RefreshRequested,
+                        ControlFlow::Continue(splice) => {
+                            if let Some(InlaySplice {
+                                to_remove,
+                                to_insert,
+                            }) = splice
+                            {
+                                self.splice_inlays(&to_remove, to_insert, cx);
+                            }
+                            InvalidationStrategy::None
+                        }
                     }
                 }
                 InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
@@ -367,82 +412,86 @@ impl Editor {
             // TODO kb check if the range is covered already by the fetched chunks, for non-invalidate cases
             // TODO kb we can have new allowed hint kids applied, with old spliced away and duplicates in the new inlay hints
             // TODO kb also, avoid splices that remove and re-add same inlays
-            let a = &inlay_hints.inlay_chunks_received;
+            let a = &inlay_hints.hint_chunks_received;
 
-            inlay_hints
-                .inlay_tasks
-                .entry(buffer_id)
-                .or_default()
-                .insert(
-                    // TODO kb this is a range of the visible excerpt
-                    // does not look appropriate?
-                    hints_range.clone(),
-                    cx.spawn(async move |editor, cx| {
-                        let new_hints = new_hints.await;
-                        editor
-                            .update(cx, |editor, cx| {
-                                let visible_inlay_hint_ids = editor
-                                    .visible_inlay_hints(cx)
-                                    .iter()
-                                    .map(|inlay| inlay.id)
-                                    .collect::<Vec<_>>();
-                                let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
-                                let Some(buffer_snapshot) =
-                                    multi_buffer_snapshot.buffer_for_excerpt(excerpt_id)
-                                else {
-                                    return;
-                                };
+            inlay_hints.hint_tasks.entry(buffer_id).or_default().insert(
+                // TODO kb this is a range of the visible excerpt
+                // does not look appropriate?
+                hints_range.clone(),
+                cx.spawn(async move |editor, cx| {
+                    let new_hints = new_hints.await;
+                    editor
+                        .update(cx, |editor, cx| {
+                            let visible_inlay_hint_ids = editor
+                                .visible_inlay_hints(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect::<Vec<_>>();
+                            let multi_buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+                            let Some(buffer_snapshot) =
+                                multi_buffer_snapshot.buffer_for_excerpt(excerpt_id)
+                            else {
+                                return;
+                            };
 
-                                let mut update_data = None;
-                                let should_invalidate = invalidate_cache.should_invalidate();
-                                if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
-                                    let inlay_tasks =
-                                        inlay_hints.inlay_tasks.entry(buffer_id).or_default();
-                                    match new_hints {
-                                        Ok(new_hints) => {
-                                            let mut hints_to_remove = Vec::new();
-                                            match &inlay_hints.inlays_for_version {
-                                                Some(inlays_for_version) => {
-                                                    if !inlays_for_version
-                                                        .changed_since(&buffer_version)
+                            let mut update_data = None;
+                            let should_invalidate = invalidate_cache.should_invalidate();
+                            if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
+                                let inlay_tasks =
+                                    inlay_hints.hint_tasks.entry(buffer_id).or_default();
+                                match new_hints {
+                                    Ok(new_hints) => {
+                                        let mut hints_to_remove = Vec::new();
+                                        match &inlay_hints.inlays_for_version {
+                                            Some(inlays_for_version) => {
+                                                if !inlays_for_version
+                                                    .changed_since(&buffer_version)
+                                                {
+                                                    if should_invalidate
+                                                        || buffer_version
+                                                            .changed_since(inlays_for_version)
                                                     {
-                                                        if should_invalidate
-                                                            || buffer_version
-                                                                .changed_since(inlays_for_version)
-                                                        {
-                                                            inlay_tasks.clear();
-                                                            inlay_hints
-                                                                .inlay_chunks_received
-                                                                .clear();
-                                                            hints_to_remove
-                                                                .extend(visible_inlay_hint_ids);
-                                                        }
+                                                        inlay_tasks.clear();
+                                                        inlay_hints.hint_chunks_received.clear();
+                                                        hints_to_remove
+                                                            .extend(visible_inlay_hint_ids);
                                                     }
                                                 }
-                                                None => {}
                                             }
+                                            None => {}
+                                        }
 
-                                            let hints_to_insert = new_hints
+                                        let hints_to_insert = new_hints
                                             .into_iter()
                                             .flat_map(
                                                 |(chunk, RowChunkCachedHints { cached, hints })| {
                                                     let was_fetched = !inlay_hints
-                                                        .inlay_chunks_received
+                                                        .hint_chunks_received
                                                         .insert(chunk.clone());
                                                     hints
                                                         .into_values()
-                                                        .filter(move |_| {
+                                                        .flatten()
+                                                        .filter(|(new_hint_id, _)| {
                                                             should_invalidate
                                                                 || !cached
                                                                 || !was_fetched
+                                                                || !inlay_hints
+                                                                    .hint_kinds
+                                                                    .contains_key(new_hint_id)
                                                         })
-                                                        .flatten()
-                                                        .filter(|(_, new_hint)| inlay_hints
-                                                            .allowed_hint_kinds
-                                                            .contains(&new_hint.kind))
-                                                        .dedup()
+                                                        .filter(|(_, new_hint)| {
+                                                            inlay_hints
+                                                                .allowed_hint_kinds
+                                                                .contains(&new_hint.kind)
+                                                        })
+                                                        .dedup_by(|(_, hint_a), (_, hint_b)| {
+                                                            hint_a == hint_b
+                                                        })
+                                                        .collect::<Vec<_>>()
                                                 },
                                             )
+                                            .collect::<Vec<_>>()
+                                            .into_iter()
                                             .filter_map(|(hint_id, lsp_hint)| {
                                                 if lsp_hint
                                                     .position
@@ -464,32 +513,33 @@ impl Editor {
                                                             excerpt_id,
                                                             lsp_hint.position,
                                                         )?;
+                                                    inlay_hints
+                                                        .hint_kinds
+                                                        .insert(hint_id, lsp_hint.kind);
                                                     return Some(Inlay::hint(
-                                                        hint_id,
-                                                        position,
-                                                        &lsp_hint,
+                                                        hint_id, position, &lsp_hint,
                                                     ));
                                                 }
                                                 None
                                             })
                                             .collect();
-                                            update_data = Some((hints_to_remove, hints_to_insert));
-                                            inlay_hints.inlays_for_version = Some(buffer_version);
-                                        }
-                                        // TODO kb who should log and clean up the errored state? Could we do that with `lsp_store_cx.spawn`?
-                                        Err(_) => {}
+                                        update_data = Some((hints_to_remove, hints_to_insert));
+                                        inlay_hints.inlays_for_version = Some(buffer_version);
                                     }
-
-                                    inlay_tasks.remove(&hints_range);
+                                    // TODO kb who should log and clean up the errored state? Could we do that with `lsp_store_cx.spawn`?
+                                    Err(_) => {}
                                 }
 
-                                if let Some((hints_to_remove, hints_to_insert)) = update_data {
-                                    editor.splice_inlays(&hints_to_remove, hints_to_insert, cx);
-                                }
-                            })
-                            .ok();
-                    }),
-                );
+                                inlay_tasks.remove(&hints_range);
+                            }
+
+                            if let Some((hints_to_remove, hints_to_insert)) = update_data {
+                                editor.splice_inlays(&hints_to_remove, hints_to_insert, cx);
+                            }
+                        })
+                        .ok();
+                }),
+            );
         }
     }
 
@@ -1400,12 +1450,18 @@ pub mod tests {
                     2,
                     "Should not load new hints when hints got disabled"
                 );
-                assert!(
-                    cached_hint_labels(editor, cx).is_empty(),
-                    "Should clear the cache when hints got disabled"
+                assert_eq!(
+                    vec![
+                        "type hint".to_string(),
+                        "parameter hint".to_string(),
+                        "other hint".to_string(),
+                    ],
+                    cached_hint_labels(editor, cx),
+                    "Should not clear the cache when hints got disabled"
                 );
-                assert!(
-                    visible_hint_labels(editor, cx).is_empty(),
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
                     "Should clear visible hints when hints got disabled"
                 );
                 assert_eq!(
@@ -1416,6 +1472,7 @@ pub mod tests {
             })
             .unwrap();
 
+        dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
         fake_server
             .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
@@ -2494,7 +2551,7 @@ pub mod tests {
                     "Hint display settings change should not change the cache"
                 );
                 assert_eq!(
-                    vec!["main hint #0".to_string(),],
+                    vec!["main hint #0".to_string()],
                     visible_hint_labels(editor, cx),
                     "Settings change should make cached hints visible, but only the visible ones, from the remaining excerpt"
                 );

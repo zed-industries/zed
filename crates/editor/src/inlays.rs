@@ -20,6 +20,12 @@ pub struct InlaySplice {
     pub to_insert: Vec<Inlay>,
 }
 
+impl InlaySplice {
+    pub fn is_empty(&self) -> bool {
+        self.to_remove.is_empty() && self.to_insert.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub id: InlayId,
@@ -117,11 +123,16 @@ impl InlineValueCache {
 
 impl Editor {
     pub fn splice_inlays(
-        &self,
+        &mut self,
         to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {
+        if let Some(inlay_hints) = &mut self.inlay_hints {
+            for id_to_remove in to_remove {
+                inlay_hints.hint_kinds.remove(id_to_remove);
+            }
+        }
         self.display_map.update(cx, |display_map, cx| {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });
