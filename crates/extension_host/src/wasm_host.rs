@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
-    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
+    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
+    WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -573,8 +573,6 @@ impl WasmHost {
 
         let extension_settings = ExtensionSettings::get_global(cx);
 
-        dbg!(&extension_settings.granted_capabilities);
-
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
@@ -583,19 +581,7 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
-            granted_capabilities: vec![
-                ExtensionCapability::ProcessExec(ProcessExecCapability {
-                    command: "*".to_string(),
-                    args: vec!["**".to_string()],
-                }),
-                ExtensionCapability::DownloadFile(DownloadFileCapability {
-                    host: "*".to_string(),
-                    path: vec!["**".to_string()],
-                }),
-                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
-                    package: "*".to_string(),
-                }),
-            ],
+            granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })

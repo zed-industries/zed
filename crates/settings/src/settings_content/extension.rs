@@ -21,7 +21,7 @@ pub struct ExtensionSettingsContent {
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
     /// The capabilities granted to extensions.
     #[serde(default)]
-    pub granted_extension_capabilities: Vec<ExtensionCapabilityContent>,
+    pub granted_extension_capabilities: Option<Vec<ExtensionCapabilityContent>>,
 }
 
 /// A capability for an extension.
