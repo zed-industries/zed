@@ -299,6 +299,13 @@ pub mod settings_profile_selector {
     pub struct Toggle;
 }
 
+pub mod encodings {
+    use gpui::Action;
+
+    #[derive(PartialEq, Debug, Clone, Action)]
+    pub struct Toggle;
+}
+
 pub mod agent {
     use gpui::actions;
 

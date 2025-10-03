@@ -97,20 +97,38 @@ impl Render for InvalidItemView {
                                 .child(Label::new(self.error.clone()).size(LabelSize::Small)),
                         )
                         .when(self.is_local, |contents| {
-                            contents.child(
-                                h_flex().justify_center().child(
-                                    Button::new("open-with-system", "Open in Default App")
-                                        .on_click(move |_, _, cx| {
-                                            cx.open_with_system(&abs_path);
-                                        })
+                            contents
+                                .child(
+                                    h_flex().justify_center().child(
+                                        Button::new("open-with-system", "Open in Default App")
+                                            .on_click(move |_, _, cx| {
+                                                cx.open_with_system(&abs_path);
+                                            })
+                                            .style(ButtonStyle::Outlined)
+                                            .key_binding(KeyBinding::for_action(
+                                                &OpenWithSystem,
+                                                window,
+                                                cx,
+                                            )),
+                                    ),
+                                )
+                                .child(
+                                    h_flex().justify_center().child(
+                                        Button::new(
+                                            "open-with-encoding",
+                                            "Open With a Different Encoding",
+                                        )
                                         .style(ButtonStyle::Outlined)
-                                        .key_binding(KeyBinding::for_action(
-                                            &OpenWithSystem,
-                                            window,
-                                            cx,
-                                        )),
-                                ),
-                            )
+                                        .on_click(
+                                            |_, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(zed_actions::encodings::Toggle),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
+                                    ),
+                                )
                         }),
                 ),
             )

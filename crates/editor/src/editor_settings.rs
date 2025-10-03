@@ -65,6 +65,18 @@ pub struct Jupyter {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StatusBar {
+    /// Whether to display the active language button in the status bar.
+    ///
+    /// Default: true
+    pub active_language_button: bool,
+    /// Whether to show the cursor position button in the status bar.
+    ///
+    /// Default: true
+    pub cursor_position_button: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Toolbar {
     pub breadcrumbs: bool,
     pub quick_actions: bool,

@@ -638,9 +638,7 @@ impl LocalBufferStore {
             let buffer = match load_buffer.await {
                 Ok(buffer) => {
                     // Reload the buffer to trigger UTF-16 detection
-                    buffer
-                        .update(cx, |buffer, cx| buffer.reload(cx, false))?
-                        .await?;
+                    buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
                     Ok(buffer)
                 }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
@@ -720,9 +718,7 @@ impl LocalBufferStore {
         cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
-                let transaction = buffer
-                    .update(cx, |buffer, cx| buffer.reload(cx, false))?
-                    .await?;
+                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
                 buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !push_to_history {

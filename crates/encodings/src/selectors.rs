@@ -123,7 +123,7 @@ pub mod save_or_reopen {
                                 window,
                                 cx,
                                 Action::Save,
-                                buffer.downgrade(),
+                                Some(buffer.downgrade()),
                                 weak_workspace,
                             );
                             selector
@@ -147,7 +147,7 @@ pub mod save_or_reopen {
                                 window,
                                 cx,
                                 Action::Reopen,
-                                buffer.downgrade(),
+                                Some(buffer.downgrade()),
                                 weak_workspace,
                             );
                             selector
@@ -301,14 +301,14 @@ pub mod encoding {
         encodings: Vec<StringMatchCandidate>,
         matches: Vec<StringMatch>,
         selector: WeakEntity<EncodingSelector>,
-        buffer: WeakEntity<Buffer>,
+        buffer: Option<WeakEntity<Buffer>>,
         action: Action,
     }
 
     impl EncodingSelectorDelegate {
         pub fn new(
             selector: WeakEntity<EncodingSelector>,
-            buffer: WeakEntity<Buffer>,
+            buffer: Option<WeakEntity<Buffer>>,
             action: Action,
         ) -> EncodingSelectorDelegate {
             EncodingSelectorDelegate {
@@ -349,7 +349,7 @@ pub mod encoding {
                 ],
                 matches: Vec::new(),
                 selector,
-                buffer,
+                buffer: buffer,
                 action,
             }
         }
@@ -423,7 +423,9 @@ pub mod encoding {
         }
 
         fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-            if let Some(buffer) = self.buffer.upgrade() {
+            if let Some(buffer) = &self.buffer
+                && let Some(buffer) = buffer.upgrade()
+            {
                 buffer.update(cx, |buffer, cx| {
                     let buffer_encoding = buffer.encoding.clone();
                     let buffer_encoding = &mut *buffer_encoding.lock().unwrap();
@@ -431,7 +433,7 @@ pub mod encoding {
                         encoding_from_name(self.matches[self.current_selection].string.as_str());
                     if self.action == Action::Reopen {
                         let executor = cx.background_executor().clone();
-                        executor.spawn(buffer.reload(cx, true)).detach();
+                        executor.spawn(buffer.reload(cx)).detach();
                     } else if self.action == Action::Save {
                         let executor = cx.background_executor().clone();
 
@@ -493,7 +495,7 @@ pub mod encoding {
             window: &mut Window,
             cx: &mut Context<EncodingSelector>,
             action: Action,
-            buffer: WeakEntity<Buffer>,
+            buffer: Option<WeakEntity<Buffer>>,
             workspace: WeakEntity<Workspace>,
         ) -> EncodingSelector {
             let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer, action);

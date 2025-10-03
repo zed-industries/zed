@@ -120,27 +120,6 @@ pub trait Fs: Send + Sync {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
 
-    /// Load a file with the specified encoding, returning a UTF-8 string.
-    async fn load_with_encoding(
-        &self,
-        path: PathBuf,
-        encoding: EncodingWrapper,
-        force: bool, // if true, ignore BOM and use the specified encoding,
-
-        // The current encoding of the buffer. BOM (if it exists) is checked
-        // to find if encoding is UTF-16, and if so, the encoding is updated to UTF-16
-        // regardless of the value of `encoding`.
-        buffer_encoding: Arc<std::sync::Mutex<&'static Encoding>>,
-    ) -> anyhow::Result<String> {
-        Ok(encodings::to_utf8(
-            self.load_bytes(path.as_path()).await?,
-            encoding,
-            force,
-            Some(buffer_encoding.clone()),
-        )
-        .await?)
-    }
-
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(
@@ -631,13 +610,8 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let encoding = EncodingWrapper::new(encoding_rs::UTF_8);
-        let text = smol::unblock(async || {
-            encodings::to_utf8(std::fs::read(path)?, encoding, false, None).await
-        })
-        .await
-        .await;
-        text
+        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        Ok(text)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {

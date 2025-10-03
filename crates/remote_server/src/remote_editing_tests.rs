@@ -6,7 +6,8 @@ use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use encoding::all::UTF_8;
+use encoding_rs::UTF_8;
+use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, encodings::EncodingWrapper};
