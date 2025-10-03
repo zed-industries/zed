@@ -129,20 +129,16 @@ impl Project {
             .map(|p| {
                 let p = p.clone();
                 let active = self.active_toolchain(p.clone(), LanguageName::new("Python"), cx);
-                let list = self.toolchain_store.as_ref().map(|store| {
-                    store.update(cx, |store, cx| {
-                        store.list_toolchains(p.clone(), LanguageName::new("Python"), cx)
-                    })
-                });
-                (active, list, p)
+                (active, p)
             })
             .collect::<Vec<_>>();
+        let toolchain_store = self.toolchain_store.clone();
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell);
             let activation_script = maybe!(async {
-                for (active_task, list_task, path) in toolchain_tasks {
+                for (active_task, path) in toolchain_tasks {
                     if let Some(toolchain) = active_task.await {
                         let language = lang_registry
                             .language_for_name(&toolchain.language_name.0)
@@ -156,13 +152,17 @@ impl Project {
                         );
                     }
 
-                    if let Some(list_task) = list_task {
+                    if let Some(store) = &toolchain_store {
+                        let list_task = store.update(&mut cx.clone(), |store, cx| {
+                            store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
+                        }).ok()?;
+
                         if let Some(toolchain_list) = list_task.await {
                             let toolchain = toolchain_list.toolchains.default
                                 .and_then(|idx| toolchain_list.toolchains.toolchains.get(idx).cloned())
                                 .or_else(|| toolchain_list.toolchains.toolchains.first().cloned())?;
 
-                            project.update(cx, |this, cx| {
+                            project.update(&mut cx.clone(), |this, cx| {
                                 this.activate_toolchain(path, toolchain.clone(), cx)
                             }).ok()?.await;
 
@@ -364,14 +364,10 @@ impl Project {
             .map(|p| {
                 let p = p.clone();
                 let active = self.active_toolchain(p.clone(), LanguageName::new("Python"), cx);
-                let list = self.toolchain_store.as_ref().map(|store| {
-                    store.update(cx, |store, cx| {
-                        store.list_toolchains(p.clone(), LanguageName::new("Python"), cx)
-                    })
-                });
-                (active, list, p)
+                (active, p)
             })
             .collect::<Vec<_>>();
+        let toolchain_store = self.toolchain_store.clone();
         let remote_client = self.remote_client.clone();
         let shell_kind = ShellKind::new(&match &remote_client {
             Some(remote_client) => remote_client
@@ -393,7 +389,7 @@ impl Project {
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
             let activation_script = maybe!(async {
-                for (active_task, list_task, path) in toolchain_tasks {
+                for (active_task, path) in toolchain_tasks {
                     if let Some(toolchain) = active_task.await {
                         let language = lang_registry
                             .language_for_name(&toolchain.language_name.0)
@@ -407,13 +403,17 @@ impl Project {
                         );
                     }
 
-                    if let Some(list_task) = list_task {
+                    if let Some(store) = &toolchain_store {
+                        let list_task = store.update(&mut cx.clone(), |store, cx| {
+                            store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
+                        }).ok()?;
+
                         if let Some(toolchain_list) = list_task.await {
                             let toolchain = toolchain_list.toolchains.default
                                 .and_then(|idx| toolchain_list.toolchains.toolchains.get(idx).cloned())
                                 .or_else(|| toolchain_list.toolchains.toolchains.first().cloned())?;
 
-                            project.update(cx, |this, cx| {
+                            project.update(&mut cx.clone(), |this, cx| {
                                 this.activate_toolchain(path, toolchain.clone(), cx)
                             }).ok()?.await;
 
