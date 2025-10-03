@@ -393,149 +393,181 @@ impl std::fmt::Debug for NodeDebug<'_> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock};
 
     use super::*;
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
-    use itertools::Itertools;
     use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 
     #[gpui::test]
-    fn test_collect_rust_imports(cx: &mut TestAppContext) {
-        let examples = vec![
-            (
-                "use std::collections::HashMap;",
-                vec!["std::collections::HashMap"],
-            ),
-            (
-                "use custom::std::collections::HashMap;",
-                vec!["custom::std::collections::HashMap"],
-            ),
-            (
-                "pub use std::collections::HashMap;",
-                vec!["std::collections::HashMap"],
-            ),
-            (
-                "use std::collections::{HashMap, HashSet};",
-                vec!["std::collections::HashMap", "std::collections::HashSet"],
-            ),
-            (
-                "use std::{any::TypeId, collections::{HashMap, HashSet}};",
-                vec![
-                    "std::any::TypeId",
-                    "std::collections::HashMap",
-                    "std::collections::HashSet",
-                ],
-            ),
-            ("use std::{a::b::HashMap};", vec!["std::a::b::HashMap"]),
-            (
-                "use {std::any::TypeId, std::collections::{HashMap, HashSet}};",
-                vec![
-                    "std::any::TypeId",
-                    "std::collections::HashMap",
-                    "std::collections::HashSet",
-                ],
-            ),
-            (
-                indoc! {"
-                    use std::collections::HashMap;
-                    use std::any::{TypeId, Any};
-                "},
-                vec![
-                    "std::collections::HashMap",
-                    "std::any::TypeId",
-                    "std::any::Any",
-                ],
-            ),
-            (
-                indoc! {"
-                    use std::collections::HashSet;
+    fn test_rust_simple(cx: &mut TestAppContext) {
+        check_example(
+            &RUST_LANGUAGE,
+            "use std::collections::HashMap;",
+            &[&["std", "collections", "HashMap"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "pub use std::collections::HashMap;",
+            &[&["std", "collections", "HashMap"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use std::collections::{HashMap, HashSet};",
+            &[
+                &["std", "collections", "HashMap"],
+                &["std", "collections", "HashSet"],
+            ],
+            cx,
+        );
+    }
 
-                    fn main() {
-                        let unqualified = HashSet::new();
-                        let qualified = std::collections::HashMap::new();
-                    }
+    #[gpui::test]
+    fn test_rust_nested(cx: &mut TestAppContext) {
+        check_example(
+            &RUST_LANGUAGE,
+            "use std::{any::TypeId, collections::{HashMap, HashSet}};",
+            &[
+                &["std", "any", "TypeId"],
+                &["std", "collections", "HashMap"],
+                &["std", "collections", "HashSet"],
+            ],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use a::b::c::{d::e::F, g::h::I};",
+            &[
+                &["a", "b", "c", "d", "e", "F"],
+                &["a", "b", "c", "g", "h", "I"],
+            ],
+            cx,
+        );
+    }
 
-                    use std::any::TypeId;
-                "},
-                vec!["std::collections::HashSet", "std::any::TypeId"],
-            ),
-            ("use prelude::*;", vec!["prelude::*"]),
-            ("use zed::prelude::*;", vec!["zed::prelude::*"]),
-            ("use prelude::{*};", vec!["prelude::*"]),
-            ("use prelude::{Foo, *};", vec!["prelude::Foo", "prelude::*"]),
-            (
-                "use gpui::{prelude::*, App};",
-                vec!["gpui::prelude::*", "gpui::App"],
-            ),
-            (
-                "use zed::prelude::{Foo, *};",
-                vec!["zed::prelude::Foo", "zed::prelude::*"],
-            ),
-        ];
-        let language = Arc::new(rust_lang());
-        let mut failures = Vec::new();
-        for (source, expected) in examples {
-            let buffer = cx.new(|cx| {
-                let mut buffer = Buffer::local(source, cx);
-                buffer.set_language(Some(language.clone()), cx);
-                buffer
-            });
-            cx.run_until_parked();
+    #[gpui::test]
+    fn test_rust_multiple_imports(cx: &mut TestAppContext) {
+        check_example(
+            &RUST_LANGUAGE,
+            indoc! {"
+                use std::collections::HashMap;
+                use std::any::{TypeId, Any};
+            "},
+            &[
+                &["std", "collections", "HashMap"],
+                &["std", "any", "TypeId"],
+                &["std", "any", "Any"],
+            ],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            indoc! {"
+                use std::collections::HashSet;
 
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+                fn main() {
+                    let unqualified = HashSet::new();
+                    let qualified = std::collections::HashMap::new();
+                }
 
-            let imports = Imports::collect(&snapshot);
-            let imports = imports.expect(&format!(
-                "Failed to collect imports for source:\n{}",
-                source
-            ));
-            let mut actual_symbols = imports
-                .identifier_namespaces
-                .iter()
-                .flat_map(|(identifier, namespaces)| {
-                    namespaces
-                        .iter()
-                        .map(|namespace| namespace.to_identifier_parts(identifier.name.as_ref()))
-                })
-                .chain(
-                    imports
-                        .wildcard_namespaces
-                        .iter()
-                        .map(|namespace| namespace.to_identifier_parts("*")),
-                )
-                .collect::<Vec<_>>();
-            let mut expected_symbols = expected
-                .iter()
-                .map(|expected| {
-                    expected
-                        .split("::")
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            actual_symbols.sort();
-            expected_symbols.sort();
-            if actual_symbols != expected_symbols {
-                let top_layer = snapshot.syntax_layers().next().unwrap();
-                failures.push(ImportsFailure {
-                    expected_symbols,
-                    actual_symbols,
-                    tree: tree_to_string(&top_layer.node()),
-                });
-            }
-        }
+                use std::any::TypeId;
+            "},
+            &[
+                &["std", "collections", "HashSet"],
+                &["std", "any", "TypeId"],
+            ],
+            cx,
+        );
+    }
 
-        if !failures.is_empty() {
-            panic!(
-                "{} cases failed:\n\n{}",
-                failures.len(),
-                failures
-                    .into_iter()
-                    .map(|failure| failure.to_string())
-                    .join("\n")
+    #[gpui::test]
+    fn test_rust_wildcard(cx: &mut TestAppContext) {
+        check_example(
+            &RUST_LANGUAGE,
+            "use prelude::*;",
+            &[&["prelude", "WILDCARD"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use zed::prelude::*;",
+            &[&["zed", "prelude", "WILDCARD"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use prelude::{*};",
+            &[&["prelude", "WILDCARD"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use prelude::{File, *};",
+            &[&["prelude", "File"], &["prelude", "WILDCARD"]],
+            cx,
+        );
+        check_example(
+            &RUST_LANGUAGE,
+            "use zed::{App, prelude::*};",
+            &[&["zed", "App"], &["zed", "prelude", "WILDCARD"]],
+            cx,
+        );
+    }
+
+    fn check_example(
+        language: &Arc<Language>,
+        source: &str,
+        expected: &[&[&str]],
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(source, cx);
+            buffer.set_language(Some(language.clone()), cx);
+            buffer
+        });
+        cx.run_until_parked();
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+        let imports = Imports::collect(&snapshot);
+        let imports = imports.expect(&format!(
+            "Failed to collect imports for source:\n{}",
+            source
+        ));
+        let mut actual_symbols = imports
+            .identifier_namespaces
+            .iter()
+            .flat_map(|(identifier, namespaces)| {
+                namespaces
+                    .iter()
+                    .map(|namespace| namespace.to_identifier_parts(identifier.name.as_ref()))
+            })
+            .chain(
+                imports
+                    .wildcard_namespaces
+                    .iter()
+                    .map(|namespace| namespace.to_identifier_parts("WILDCARD")),
             )
+            .collect::<Vec<_>>();
+        let mut expected_symbols = expected
+            .iter()
+            .map(|expected| expected.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        actual_symbols.sort();
+        expected_symbols.sort();
+        if actual_symbols != expected_symbols {
+            let top_layer = snapshot.syntax_layers().next().unwrap();
+            panic!(
+                "Expected imports: {:?}\n\
+                Actual imports: {:?}\n\
+                Tree:\n{}",
+                expected_symbols,
+                actual_symbols,
+                tree_to_string(&top_layer.node()),
+            );
         }
     }
 
@@ -576,39 +608,23 @@ mod test {
         result
     }
 
-    fn rust_lang() -> Language {
-        Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
+    static RUST_LANGUAGE: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rs".to_string()],
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_imports_query(include_str!("../../languages/src/rust/imports.scm"))
-        .unwrap()
-    }
-
-    struct ImportsFailure {
-        expected_symbols: Vec<Vec<String>>,
-        actual_symbols: Vec<Vec<String>>,
-        tree: String,
-    }
-
-    impl std::fmt::Display for ImportsFailure {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(
-                f,
-                "Expected imports: {:?}\n\
-                Actual imports: {:?}\n\
-                Tree:\n{}",
-                self.expected_symbols, self.actual_symbols, self.tree,
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
-        }
-    }
+            .with_imports_query(include_str!("../../languages/src/rust/imports.scm"))
+            .unwrap(),
+        )
+    });
 
     impl Namespace {
         fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
