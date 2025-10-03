@@ -109,7 +109,7 @@ Zed simplifies language server management for users:
 2. Storage Location:
 
    - macOS: `~/Library/Application Support/Zed/languages`
-   - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
+   - Linux: `$XDG_DATA_HOME/zed/languages`, `$FLATPAK_XDG_DATA_HOME/zed/languages`, or `$HOME/.local/share/zed/languages`
 
 3. Automatic Updates: Zed keeps your language servers up-to-date, ensuring you always have the latest features and improvements.
 
