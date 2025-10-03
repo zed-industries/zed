@@ -1256,6 +1256,63 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
             editor.display_text(cx),
             editor.buffer.read(cx).read(cx).text()
         );
+        let (_, positions) = marked_text_ranges(
+            &"
+                       class Foo:
+                           # Hello!
+
+                           def a():
+                              print(1)
+
+                           def b():
+                               p«riˇ»nt(2)
+
+
+                       class Bar:
+                           # World!
+
+                           def a():
+                               «ˇprint(1)
+
+                           def b():
+                               print(2)»
+
+
+                   "
+            .unindent(),
+            true,
+        );
+
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges(positions)
+        });
+
+        editor.fold_at_level(&FoldAtLevel(2), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():⋯
+
+                    def b():
+                        print(2)
+
+
+                class Bar:
+                    # World!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+            "
+            .unindent(),
+        );
     });
 }
 
