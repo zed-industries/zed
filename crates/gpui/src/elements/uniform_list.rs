@@ -352,8 +352,8 @@ impl Element for UniformList {
                     let is_scrolled_vertically = !scroll_offset.y.is_zero();
                     let min_vertical_scroll_offset = padded_bounds.size.height - content_height;
                     if is_scrolled_vertically && scroll_offset.y < min_vertical_scroll_offset {
-                        shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset;
-                        scroll_offset.y = min_vertical_scroll_offset;
+                        shared_scroll_offset.borrow_mut().y = min_vertical_scroll_offset.round();
+                        scroll_offset.y = min_vertical_scroll_offset.round();
                     }
 
                     let content_width = content_size.width + padding.left + padding.right;
@@ -379,10 +379,12 @@ impl Element for UniformList {
 
                         if item_top < scroll_top + padding.top + offset_pixels {
                             scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_top) + padding.top + offset_pixels;
+                            updated_scroll_offset.y =
+                                (-(item_top) + padding.top + offset_pixels).round();
                         } else if item_bottom > scroll_top + list_height - padding.bottom {
                             scrolled_to_top = true;
-                            updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
+                            updated_scroll_offset.y =
+                                (-(item_bottom - list_height) - padding.bottom).round();
                         }
 
                         if deferred_scroll.scroll_strict
@@ -395,7 +397,8 @@ impl Element for UniformList {
                                     updated_scroll_offset.y = -item_top
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                        .max(Pixels::ZERO)
+                                        .round();
                                 }
                                 ScrollStrategy::Center => {
                                     let item_center = item_top + item_height / 2.0;
@@ -407,13 +410,15 @@ impl Element for UniformList {
                                     updated_scroll_offset.y = -target_scroll_top
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                        .max(Pixels::ZERO)
+                                        .round();
                                 }
                                 ScrollStrategy::Bottom => {
                                     updated_scroll_offset.y = -(item_bottom - list_height)
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
-                                        .max(Pixels::ZERO);
+                                        .max(Pixels::ZERO)
+                                        .round();
                                 }
                             }
                         }
