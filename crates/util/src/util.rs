@@ -296,13 +296,20 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
         .to_string();
 
+    #[cfg(target_os = "windows")]
+    {
+        Ok(zed_path)
+    }
+
     // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
     // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
     // errors are introduced in the future :(
-    let zed_path_escaped =
-        shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
-
-    Ok(zed_path_escaped.to_string())
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(shlex::try_quote(&zed_path)
+            .context("Failed to shell-escape Zed executable path.")?
+            .to_string())
+    }
 }
 
 /// Returns a shell escaped path for the zed cli executable, this function
