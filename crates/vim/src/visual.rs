@@ -15,7 +15,10 @@ use workspace::searchable::Direction;
 
 use crate::{
     Vim,
-    motion::{Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line},
+    motion::{
+        Motion, MotionKind, first_non_whitespace, next_line_end, start_of_line,
+        start_of_relative_buffer_row,
+    },
     object::Object,
     state::{Mark, Mode, Operator},
 };
@@ -399,12 +402,13 @@ impl Vim {
                 if row == head.row() {
                     break;
                 }
-                if tail.row() > head.row() {
-                    row.0 -= 1
-                } else {
-                    row.0 += 1
-                }
+
+                // Move to the next or previous buffer row, ensuring that
+                // wrapped lines are handled correctly.
+                let direction = if tail.row() > head.row() { -1 } else { 1 };
+                row = start_of_relative_buffer_row(map, DisplayPoint::new(row, 0), direction).row();
             }
+
             s.select(selections);
         })
     }
@@ -1530,6 +1534,63 @@ mod test {
             kox jumps over
             khe lazy dog
             k"
+        });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_wrapping_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Ensure that the editor is wrapping lines at 12 columns so that each
+        // of the lines ends up being wrapped.
+        cx.set_shared_wrap(12).await;
+        cx.set_shared_state(indoc! {
+            "ˇ12345678901234567890
+            12345678901234567890
+            12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v j").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»2345678901234567890
+            «1ˇ»2345678901234567890
+            12345678901234567890
+            "
+        });
+
+        // Test with lines taking up different amounts of display rows to ensure
+        // that, even in that case, only the buffer rows are taken into account.
+        cx.set_shared_state(indoc! {
+            "ˇ123456789012345678901234567890123456789012345678901234567890
+            1234567890123456789012345678901234567890
+            12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v 2 j").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»23456789012345678901234567890123456789012345678901234567890
+            «1ˇ»234567890123456789012345678901234567890
+            «1ˇ»2345678901234567890
+            "
+        });
+
+        // Same scenario as above, but using the up motion to ensure that the
+        // result is the same.
+        cx.set_shared_state(indoc! {
+            "123456789012345678901234567890123456789012345678901234567890
+            1234567890123456789012345678901234567890
+            ˇ12345678901234567890
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v 2 k").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "«1ˇ»23456789012345678901234567890123456789012345678901234567890
+            «1ˇ»234567890123456789012345678901234567890
+            «1ˇ»2345678901234567890
+            "
         });
     }
 
