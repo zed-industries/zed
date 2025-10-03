@@ -108,13 +108,6 @@ actions!(
     ]
 );
 
-///Scrolling is unbearably sluggish by default. Alacritty supports a configurable
-///Scroll multiplier that is set to 3 by default. This will be removed when I
-///Implement scroll bars.
-#[cfg(target_os = "macos")]
-const SCROLL_MULTIPLIER: f32 = 4.;
-#[cfg(not(target_os = "macos"))]
-const SCROLL_MULTIPLIER: f32 = 1.;
 const DEBUG_TERMINAL_WIDTH: Pixels = px(500.);
 const DEBUG_TERMINAL_HEIGHT: Pixels = px(30.);
 const DEBUG_CELL_WIDTH: Pixels = px(5.);
@@ -1825,9 +1818,9 @@ impl Terminal {
         &mut self,
         e: &ScrollWheelEvent,
         mouse_mode: bool,
-        multiplier: f32,
+        scroll_multiplier: f32,
     ) -> Option<i32> {
-        let scroll_multiplier = if mouse_mode { 1. } else { multiplier };
+        let scroll_multiplier = if mouse_mode { 1. } else { scroll_multiplier };
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */
