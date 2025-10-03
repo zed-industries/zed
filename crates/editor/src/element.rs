@@ -6186,8 +6186,8 @@ impl EditorElement {
 
                 self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window, cx);
-                self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
+                self.paint_document_colors(layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
@@ -6321,7 +6321,7 @@ impl EditorElement {
         });
     }
 
-    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
+    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         let Some((colors_render_mode, image_colors)) = &layout.document_colors else {
             return;
         };
@@ -6334,7 +6334,7 @@ impl EditorElement {
 
         let line_end_overshoot = layout.line_end_overshoot();
 
-        for (range, color) in image_colors {
+        for (range, color, shape_line) in image_colors {
             match colors_render_mode {
                 DocumentColorsRenderMode::Inlay | DocumentColorsRenderMode::None => return,
                 DocumentColorsRenderMode::Background => {
@@ -6347,6 +6347,22 @@ impl EditorElement {
                         layout,
                         window,
                     );
+
+                    // paint text above the background color
+                    let row_range = &layout.visible_display_row_range;
+                    if row_range.start <= range.start.row() && range.end.row() < row_range.end {
+                        let row = range.start.row().max(row_range.start).min(row_range.end);
+                        let line_height = layout.position_map.line_height;
+                        let start_y = layout.content_origin.y + row.as_f32() * line_height
+                            - layout.position_map.scroll_pixel_position.y;
+                        let line_layout =
+                            &layout.position_map.line_layouts[row.minus(row_range.start) as usize];
+                        let start_x = layout.content_origin.x
+                            + line_layout.x_for_index(range.start.column() as usize)
+                            - layout.position_map.scroll_pixel_position.x;
+
+                        _ = shape_line.paint(point(start_x, start_y), line_height, window, cx);
+                    }
                 }
                 DocumentColorsRenderMode::Border => {
                     self.paint_highlighted_range(
@@ -8754,12 +8770,10 @@ impl Element for EditorElement {
                             cx,
                         );
 
-                    let document_colors = self
-                        .editor
-                        .read(cx)
-                        .colors
-                        .as_ref()
-                        .map(|colors| colors.editor_display_highlights(&snapshot));
+                    let document_colors =
+                        self.editor.read(cx).colors.as_ref().map(|colors| {
+                            colors.editor_display_highlights(&snapshot, &style, window)
+                        });
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -9750,7 +9764,10 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
-    document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
+    document_colors: Option<(
+        DocumentColorsRenderMode,
+        Vec<(Range<DisplayPoint>, Hsla, ShapedLine)>,
+    )>,
 }
 
 impl EditorLayout {
