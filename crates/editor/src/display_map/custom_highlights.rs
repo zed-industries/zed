@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
     vec,
 };
-use text::BufferId;
+use text::{BufferId, BufferSnapshot};
 
 use crate::display_map::{HighlightKey, PositionedSemanticTokens, TextHighlights};
 
@@ -75,7 +75,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TextHighlights>,
-    _semantic_tokens: Option<&HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
+    semantic_tokens: Option<&HashMap<BufferId, Arc<PositionedSemanticTokens>>>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
@@ -119,9 +119,74 @@ fn create_highlight_endpoints(
                 });
             }
         }
-        highlight_endpoints.sort();
     }
+    if let Some(tokens) = semantic_tokens {
+        for mut excerpt in buffer.excerpts_for_range(range.clone()) {
+            let Some(tokens) = tokens.get(&excerpt.buffer_id()) else {
+                continue;
+            };
+
+            let buffer_range = excerpt
+                .buffer()
+                .range_to_version(excerpt.map_range_to_buffer(range.clone()), &tokens.version);
+            for token in tokens.tokens_in_range(buffer_range) {
+                let token_range =
+                    range_from_version(excerpt.buffer(), token.range.clone(), &tokens.version);
+                if !excerpt.contains_partial_buffer_range(token_range.clone()) {
+                    continue;
+                }
+                let token_range = excerpt.map_range_from_buffer(token_range);
+
+                if token_range.end < range.start || token_range.start > range.end {
+                    continue;
+                }
+
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.start,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: Some(token.style),
+                });
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: token_range.end,
+                    tag: HighlightKey::Type(std::any::TypeId::of::<()>()),
+                    style: None,
+                });
+            }
+        }
+    }
+    highlight_endpoints.sort();
     highlight_endpoints.into_iter().peekable()
+}
+
+pub fn range_from_version(
+    buffer: &BufferSnapshot,
+    range: Range<usize>,
+    version: &clock::Global,
+) -> Range<usize> {
+    let mut edits = buffer.edits_since(version).peekable();
+    let mut last_old_end = 0;
+    let mut last_new_end = 0;
+    let offsets = [range.start, range.end].map(move |old_offset| {
+        while let Some(edit) = edits.peek() {
+            if edit.old.start > old_offset {
+                break;
+            }
+
+            if edit.old.end <= old_offset {
+                last_new_end = edit.new.end;
+                last_old_end = edit.old.end;
+                edits.next();
+                continue;
+            }
+
+            let overshoot = old_offset - edit.old.start;
+            return (edit.new.start + overshoot).min(edit.new.end);
+        }
+
+        last_new_end + old_offset.saturating_sub(last_old_end)
+    });
+
+    offsets[0]..offsets[1]
 }
 
 impl<'a> Iterator for CustomHighlightsChunks<'a> {
