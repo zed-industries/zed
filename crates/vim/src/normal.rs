@@ -657,7 +657,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_start_rows: BTreeSet<u32> = selections
@@ -699,7 +699,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
@@ -745,7 +745,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
 
                 let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -774,9 +774,10 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all::<Point>(&display_map);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                let (_map, display_selections) = editor.selections.all_display(cx);
+                let display_selections = editor.selections.all_display(&display_map);
                 let original_positions = display_selections
                     .iter()
                     .map(|s| (s.id, s.head()))
@@ -937,13 +938,14 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let (map, display_selections) = editor.selections.all_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let display_selections = editor.selections.all_display(&display_map);
 
-                let mut edits = Vec::new();
+                let mut edits = Vec::with_capacity(display_selections.len());
                 for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
-                        let new_point = movement::saturating_right(&map, range.end);
+                        let new_point = movement::saturating_right(&display_map, range.end);
                         if range.end == new_point {
                             return;
                         }
@@ -951,8 +953,8 @@ impl Vim {
                     }
 
                     edits.push((
-                        range.start.to_offset(&map, Bias::Left)
-                            ..range.end.to_offset(&map, Bias::Left),
+                        range.start.to_offset(&display_map, Bias::Left)
+                            ..range.end.to_offset(&display_map, Bias::Left),
                         text.repeat(if is_return_char { 0 } else { count }),
                     ));
                 }
@@ -976,16 +978,16 @@ impl Vim {
     pub fn save_selection_starts(
         &self,
         editor: &Editor,
-
         cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
-        let (map, selections) = editor.selections.all_display(cx);
+        let display_map = editor.display_snapshot(cx);
+        let selections = editor.selections.all_display(&display_map);
         selections
             .iter()
             .map(|selection| {
                 (
                     selection.id,
-                    map.display_point_to_anchor(selection.start, Bias::Right),
+                    display_map.display_point_to_anchor(selection.start, Bias::Right),
                 )
             })
             .collect::<HashMap<_, _>>()
