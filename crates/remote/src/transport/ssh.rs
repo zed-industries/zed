@@ -512,16 +512,7 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command(
-                    "sh",
-                    &[
-                        "-c",
-                        &shell_script!(
-                            "mkdir -p {parent}",
-                            parent = parent.display(self.path_style()).as_ref()
-                        ),
-                    ],
-                )
+                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
                 .await?;
         }
 
@@ -592,16 +583,7 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command(
-                    "sh",
-                    &[
-                        "-c",
-                        &shell_script!(
-                            "mkdir -p {parent}",
-                            parent = parent.display(self.path_style()).as_ref()
-                        ),
-                    ],
-                )
+                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
                 .await?;
         }
 
@@ -735,6 +717,7 @@ impl SshSocket {
         log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
+            .arg("-T")
             .arg(to_run);
         command
     }
@@ -795,7 +778,7 @@ impl SshSocket {
     }
 
     async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("sh", &["-c", "uname -sm"]).await?;
+        let uname = self.run_command("uname", &["-sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };

@@ -15,7 +15,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    DocumentationAside, DocumentationEdge, DocumentationSide, HighlightedLabel, LabelSize,
+    ListItem, ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -86,8 +87,8 @@ impl ProfileSelector {
             let picker = cx.new(|cx| {
                 Picker::list(delegate, window, cx)
                     .show_scrollbar(true)
-                    .width(rems(20.))
-                    .max_height(Some(rems(16.).into()))
+                    .width(rems(18.))
+                    .max_height(Some(rems(20.).into()))
             });
 
             self.picker = Some(picker);
@@ -536,18 +537,10 @@ impl PickerDelegate for ProfilePickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .child(
-                            v_flex()
-                                .child(HighlightedLabel::new(
-                                    candidate.name.clone(),
-                                    entry.positions.clone(),
-                                ))
-                                .when_some(Self::documentation(candidate), |this, doc| {
-                                    this.child(
-                                        Label::new(doc).size(LabelSize::Small).color(Color::Muted),
-                                    )
-                                }),
-                        )
+                        .child(HighlightedLabel::new(
+                            candidate.name.clone(),
+                            entry.positions.clone(),
+                        ))
                         .when(is_active, |this| {
                             this.end_slot(
                                 div()
@@ -559,6 +552,36 @@ impl PickerDelegate for ProfilePickerDelegate {
                 )
             }
         }
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
+        use std::rc::Rc;
+
+        let entry = match self.filtered_entries.get(self.selected_index)? {
+            ProfilePickerEntry::Profile(entry) => entry,
+            ProfilePickerEntry::Header(_) => return None,
+        };
+
+        let candidate = self.candidates.get(entry.candidate_index)?;
+        let docs_aside = Self::documentation(candidate)?.to_string();
+
+        let settings = AgentSettings::get_global(cx);
+        let side = match settings.dock {
+            settings::DockPosition::Left => DocumentationSide::Right,
+            settings::DockPosition::Bottom | settings::DockPosition::Right => {
+                DocumentationSide::Left
+            }
+        };
+
+        Some(DocumentationAside {
+            side,
+            edge: DocumentationEdge::Top,
+            render: Rc::new(move |_| Label::new(docs_aside.clone()).into_any_element()),
+        })
     }
 
     fn render_footer(
