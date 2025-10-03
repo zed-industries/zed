@@ -2809,6 +2809,12 @@ impl From<Pixels> for u32 {
     }
 }
 
+impl From<&Pixels> for u32 {
+    fn from(pixels: &Pixels) -> Self {
+        pixels.0 as u32
+    }
+}
+
 impl From<u32> for Pixels {
     fn from(pixels: u32) -> Self {
         Pixels(pixels as f32)

@@ -12,10 +12,10 @@ use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
-    ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip,
-    prelude::*,
+    ButtonLike, ListItem, ListItemSpacing, PopoverMenu, SwitchField, ToggleButtonGroup,
+    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
+use ui_input::NumericStepper;
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
@@ -341,23 +341,14 @@ fn render_font_customization_section(
                                 })
                                 .with_handle(ui_font_handle),
                         )
-                        .child(
-                            NumericStepper::new(
-                                "ui-font-size",
-                                ui_font_size.to_string(),
-                                move |_, _, cx| {
-                                    write_ui_font_size(ui_font_size - px(1.), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_ui_font_size(ui_font_size + px(1.), cx);
-                                },
-                            )
-                            .style(ui::NumericStepperStyle::Outlined)
-                            .tab_index({
-                                *tab_index += 2;
-                                *tab_index - 2
-                            }),
-                        ),
+                        .child(font_picker_stepper(
+                            "ui-font-size",
+                            &ui_font_size,
+                            tab_index,
+                            write_ui_font_size,
+                            window,
+                            cx,
+                        )),
                 ),
         )
         .child(
@@ -405,25 +396,59 @@ fn render_font_customization_section(
                                 })
                                 .with_handle(buffer_font_handle),
                         )
-                        .child(
-                            NumericStepper::new(
-                                "buffer-font-size",
-                                buffer_font_size.to_string(),
-                                move |_, _, cx| {
-                                    write_buffer_font_size(buffer_font_size - px(1.), cx);
-                                },
-                                move |_, _, cx| {
-                                    write_buffer_font_size(buffer_font_size + px(1.), cx);
-                                },
-                            )
-                            .style(ui::NumericStepperStyle::Outlined)
-                            .tab_index({
-                                *tab_index += 2;
-                                *tab_index - 2
-                            }),
-                        ),
+                        .child(font_picker_stepper(
+                            "buffer-font-size",
+                            &buffer_font_size,
+                            tab_index,
+                            write_buffer_font_size,
+                            window,
+                            cx,
+                        )),
                 ),
         )
+}
+
+fn font_picker_stepper(
+    id: &'static str,
+    font_size: &Pixels,
+    tab_index: &mut isize,
+    write_font_size: fn(Pixels, &mut App),
+    window: &mut Window,
+    cx: &mut App,
+) -> NumericStepper<u32> {
+    window.with_id(id, |window| {
+        let optimistic_font_size: gpui::Entity<Option<u32>> = window.use_state(cx, |_, _| None);
+        optimistic_font_size.update(cx, |optimistic_font_size, _| {
+            if let Some(optimistic_font_size_val) = optimistic_font_size {
+                if *optimistic_font_size_val == u32::from(font_size) {
+                    *optimistic_font_size = None;
+                }
+            }
+        });
+
+        let stepper_font_size = optimistic_font_size
+            .read(cx)
+            .unwrap_or_else(|| font_size.into());
+
+        NumericStepper::new(
+            SharedString::new(format!("{}-stepper", id)),
+            stepper_font_size,
+            window,
+            cx,
+        )
+        .on_change(move |new_value, _, cx| {
+            optimistic_font_size.write(cx, Some(*new_value));
+            write_font_size(Pixels::from(*new_value), cx);
+        })
+        .format(|value| format!("{value}px"))
+        .style(ui_input::NumericStepperStyle::Outlined)
+        .tab_index({
+            *tab_index += 2;
+            *tab_index - 2
+        })
+        .min(6)
+        .max(32)
+    })
 }
 
 type FontPicker = Picker<FontPickerDelegate>;
