@@ -8982,6 +8982,102 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_odd_events_for_ignored_dirs(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "**/target/",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "target": {
+                "debug": {
+                    "foo.txt": "foo",
+                    "deps": {}
+                }
+            }
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "**/target/".into()),
+            ("src/main.rs", "fn main() {}".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let repo_events = Arc::new(Mutex::new(Vec::new()));
+    let project_events = Arc::new(Mutex::new(Vec::new()));
+
+    project.update(cx, |project, cx| {
+        let repo_events = repo_events.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let crate::git_store::GitStoreEvent::RepositoryUpdated(_, e, _) = e {
+                repo_events.lock().push(e.clone());
+            }
+        })
+        .detach();
+        let project_events = project_events.clone();
+        cx.subscribe_self(move |_, e, _| {
+            project_events.lock().push(e.clone());
+        })
+        .detach();
+    });
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("target/debug/foo.txt"), cx)
+    })
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+    tree.update(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path("src"), false),
+                (rel_path("src/main.rs"), false),
+                (rel_path("target"), true),
+                (rel_path("target/debug"), true),
+                (rel_path("target/debug/deps"), true),
+                (rel_path("target/debug/foo.txt"), true),
+            ]
+        );
+    });
+
+    dbg!("~~~~~~~~~~~~~~~~~~~~~~~~");
+    log::error!("@@@@@@");
+    dbg!(repo_events.lock().drain(..).collect::<Vec<_>>());
+    dbg!(project_events.lock().drain(..).collect::<Vec<_>>());
+
+    fs.emit_fs_event("/root/target/debug/deps", None);
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    dbg!(repo_events.lock().as_slice());
+    dbg!(project_events.lock().as_slice());
+}
+
+#[gpui::test]
 async fn test_repos_in_invisible_worktrees(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
