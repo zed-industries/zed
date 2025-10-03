@@ -20,7 +20,6 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
-use base64::Engine as _;
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
@@ -750,20 +749,11 @@ impl acp::Client for ClientDelegate {
         // Post-handle: stream terminal output/exit if present on ToolCallUpdate meta.
         if let acp::SessionUpdate::ToolCallUpdate(tcu) = &update_clone {
             if let Some(meta) = &tcu.meta {
-                // terminal_output: prefer lossless base64; fall back to utf8 string
                 if let Some(term_out) = meta.get("terminal_output") {
                     if let Some(id_str) = term_out.get("terminal_id").and_then(|v| v.as_str()) {
                         let terminal_id = acp::TerminalId(id_str.into());
-                        let bytes: Option<Vec<u8>> =
-                            if let Some(b64) = term_out.get("data_b64").and_then(|v| v.as_str()) {
-                                base64::engine::general_purpose::STANDARD.decode(b64).ok()
-                            } else if let Some(s) = term_out.get("data").and_then(|v| v.as_str()) {
-                                Some(s.as_bytes().to_vec())
-                            } else {
-                                None
-                            };
-
-                        if let Some(data) = bytes {
+                        if let Some(s) = term_out.get("data").and_then(|v| v.as_str()) {
+                            let data = s.as_bytes().to_vec();
                             let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                                 thread.on_terminal_provider_event(
                                     TerminalProviderEvent::Output {
@@ -820,7 +810,7 @@ impl acp::Client for ClientDelegate {
         let mut env = if let Some(dir) = &args.cwd {
             project
                 .update(&mut self.cx.clone(), |project, cx| {
-                    project.directory_environment(dir.as_path().into(), cx)
+                    project.directory_environment(&task::Shell::System, dir.clone().into(), cx)
                 })?
                 .await
                 .unwrap_or_default()

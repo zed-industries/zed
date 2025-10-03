@@ -48,7 +48,6 @@ tempfile.workspace = true
 thiserror.workspace = true
 ui.workspace = true
 terminal.workspace = true
-base64.workspace = true
 uuid.workspace = true
 util.workspace = true
 watch.workspace = true
