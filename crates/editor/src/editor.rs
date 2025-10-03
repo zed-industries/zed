@@ -1196,7 +1196,7 @@ pub struct Editor {
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
-    update_semantic_tokens_task: Task<()>,
+    pub(crate) update_semantic_tokens_task: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]

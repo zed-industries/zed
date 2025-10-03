@@ -16247,6 +16247,231 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let full_counter = Arc::new(AtomicUsize::new(0));
+    let full_counter_clone = full_counter.clone();
+
+    let mut full_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+            full_counter_clone.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![lsp::SemanticToken {
+                            delta_line: 0,
+                            delta_start: 3,
+                            length: 4,
+                            token_type: 0,
+                            token_modifiers_bitset: 0,
+                        }],
+                        // The server isn't capable of deltas, so even though we sent back
+                        // a result ID, the client shouldn't request a delta.
+                        result_id: Some("a".into()),
+                    },
+                )))
+            }
+        });
+
+    cx.set_state("ˇfn main() {}");
+    assert!(full_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    cx.set_state("ˇfn main() { a }");
+    assert!(full_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+    let buffer_id = cx.buffer(|b, _| b.remote_id());
+    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
+    assert_eq!(tokens.tokens[0].range, 3..7);
+
+    assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
+}
+
+#[gpui::test]
+async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let full_counter = Arc::new(AtomicUsize::new(0));
+    let full_counter_clone = full_counter.clone();
+
+    let mut full_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+            full_counter_clone.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![lsp::SemanticToken {
+                            delta_line: 0,
+                            delta_start: 3,
+                            length: 4,
+                            token_type: 0,
+                            token_modifiers_bitset: 0,
+                        }],
+                        result_id: None, // Sending back `None` forces the client to not use deltas.
+                    },
+                )))
+            }
+        });
+
+    cx.set_state("ˇfn main() {}");
+    assert!(full_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    cx.set_state("ˇfn main() { a }");
+    assert!(full_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+    let buffer_id = cx.buffer(|b, _| b.remote_id());
+    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
+    assert_eq!(tokens.tokens[0].range, 3..7);
+
+    assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
+}
+
+#[gpui::test]
+async fn lsp_semantic_tokens_delta(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let full_counter = Arc::new(AtomicUsize::new(0));
+    let full_counter_clone = full_counter.clone();
+    let delta_counter = Arc::new(AtomicUsize::new(0));
+    let delta_counter_clone = delta_counter.clone();
+
+    let mut full_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+            full_counter_clone.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![lsp::SemanticToken {
+                            delta_line: 0,
+                            delta_start: 3,
+                            length: 4,
+                            token_type: 0,
+                            token_modifiers_bitset: 0,
+                        }],
+                        result_id: Some("a".into()),
+                    },
+                )))
+            }
+        });
+
+    let mut delta_request = cx
+        .set_request_handler::<lsp::request::SemanticTokensFullDeltaRequest, _, _>(
+            move |_, params, _| {
+                delta_counter_clone.fetch_add(1, atomic::Ordering::Release);
+                assert_eq!(params.previous_result_id, "a");
+                async move {
+                    Ok(Some(lsp::SemanticTokensFullDeltaResult::TokensDelta(
+                        lsp::SemanticTokensDelta {
+                            edits: vec![],
+                            result_id: Some("b".into()),
+                        },
+                    )))
+                }
+            },
+        );
+
+    // Initial request, for the empty buffer.
+    cx.set_state("ˇfn main() {}");
+    assert!(full_request.next().await.is_some());
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    cx.set_state("ˇfn main() { a }");
+    assert!(delta_request.next().await.is_some());
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    let buffer_id = cx.buffer(|b, _| b.remote_id());
+    let tokens = &cx.editor(|e, _, cx| e.display_map.read(cx).semantic_tokens[&buffer_id].clone());
+    assert_eq!(tokens.tokens[0].range, 3..7);
+
+    assert_eq!(full_counter.load(atomic::Ordering::Acquire), 1);
+    assert_eq!(delta_counter.load(atomic::Ordering::Acquire), 1);
+}
+
+#[gpui::test]
 async fn test_following(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
