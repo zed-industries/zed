@@ -288,7 +288,6 @@ fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path = std::env::current_exe()
