@@ -863,22 +863,6 @@ impl Item for Editor {
                     .await?;
             }
 
-            // Notify about clean buffers for language server events
-            let buffers_that_were_not_saved: Vec<_> = buffers
-                .into_iter()
-                .filter(|b| !buffers_to_save.contains(b))
-                .collect();
-
-            for buffer in buffers_that_were_not_saved {
-                buffer
-                    .update(cx, |buffer, cx| {
-                        let version = buffer.saved_version().clone();
-                        let mtime = buffer.saved_mtime();
-                        buffer.did_save(version, mtime, cx);
-                    })
-                    .ok();
-            }
-
             Ok(())
         })
     }
