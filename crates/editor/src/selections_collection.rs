@@ -332,6 +332,9 @@ impl SelectionsCollection {
         self.all(cx).last().unwrap().clone()
     }
 
+    /// Returns a list of (potentially backwards!) ranges representing the selections.
+    /// Useful for test assertions, but prefer `.all()` instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &mut App,

@@ -1,4 +1,5 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -60,6 +61,7 @@ pub trait PathExt {
         }
     }
     fn local_to_wsl(&self) -> Option<PathBuf>;
+    fn multiple_extensions(&self) -> Option<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -129,6 +131,27 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         Some(new_path.into())
+    }
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
+    fn multiple_extensions(&self) -> Option<String> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
+
+        let parts: Vec<&str> = file_name
+            .split('.')
+            // Skip the part with the file name extension
+            .skip(1)
+            .collect();
+
+        if parts.len() < 2 {
+            return None;
+        }
+
+        Some(parts.into_iter().join("."))
     }
 }
 
@@ -1726,5 +1749,24 @@ mod tests {
         assert_eq!(natural_sort("file-1a", "file-1b"), Ordering::Less);
         assert_eq!(natural_sort("file-1.2", "file-1.10"), Ordering::Less);
         assert_eq!(natural_sort("file-1.10", "file-1.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_multiple_extensions() {
+        // No extensions
+        let path = Path::new("/a/b/c/file_name");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Only one extension
+        let path = Path::new("/a/b/c/file_name.tsx");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Stories sample extension
+        let path = Path::new("/a/b/c/file_name.stories.tsx");
+        assert_eq!(path.multiple_extensions(), Some("stories.tsx".to_string()));
+
+        // Longer sample extension
+        let path = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
     }
 }

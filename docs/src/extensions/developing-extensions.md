@@ -123,7 +123,7 @@ As of October 1st, 2025, extension repositories must include one of the followin
 This allows us to distribute the resulting binary produced from your extension code to our users.
 Without a valid license, the pull request to add or update your extension in the following steps will fail CI.
 
-Your license file should be at the root of your extension repository with a filename like `LICENSE`, `LICENSE.txt`, `LICENSE-MIT`, etc. For the logic on how license files are identified, see the [license validation source code](https://github.com/zed-industries/extensions/blob/main/src/lib/license.js).
+Your license file should be at the root of your extension repository. Any filename that has `LICENCE` or `LICENSE` as a prefix (case insensitive) will be inspected to ensure it matches one of the accepted licenses. See the [license validation source code](https://github.com/zed-industries/extensions/blob/main/src/lib/license.js).
 
 > This license requirement applies only to your extension code itself (the code that gets compiled into the extension binary).
 > It does not apply to any tools your extension may download or interact with, such as language servers or other external dependencies.
