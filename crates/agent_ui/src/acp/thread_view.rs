@@ -577,31 +577,6 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
-                        // Proactively surface Authentication Required if the agent advertises auth methods.
-                        if let Some(acp_conn) = thread
-                            .read(cx)
-                            .connection()
-                            .clone()
-                            .downcast::<agent_servers::AcpConnection>()
-                        {
-                            let methods = acp_conn.auth_methods();
-                            if !methods.is_empty() {
-                                // Immediately transition to auth-required UI, but defer to avoid re-entrant update.
-                                let err = AuthRequired {
-                                    description: None,
-                                    provider_id: None,
-                                };
-                                let this_weak = cx.weak_entity();
-                                let agent = agent.clone();
-                                let connection = thread.read(cx).connection().clone();
-                                window.defer(cx, move |window, cx| {
-                                    Self::handle_auth_required(
-                                        this_weak, err, agent, connection, window, cx,
-                                    );
-                                });
-                            }
-                        }
-
                         this.model_selector = thread
                             .read(cx)
                             .connection()
