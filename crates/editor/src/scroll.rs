@@ -30,9 +30,11 @@ const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct WasScrolled(pub(crate) bool);
 
+pub type ScrollOffset = f64;
+pub type ScrollPixelOffset = f64;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollAnchor {
-    pub offset: gpui::Point<f32>,
+    pub offset: gpui::Point<ScrollOffset>,
     pub anchor: Anchor,
 }
 
@@ -44,12 +46,12 @@ impl ScrollAnchor {
         }
     }
 
-    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
+    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
             if self.anchor == Anchor::min() {
                 0.
             } else {
-                let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
+                let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
                 (offset + scroll_top).max(0.)
             }
         })
@@ -147,19 +149,24 @@ impl ActiveScrollbarState {
 }
 
 pub struct ScrollManager {
-    pub(crate) vertical_scroll_margin: f32,
+    pub(crate) vertical_scroll_margin: ScrollOffset,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
     autoscroll_request: Option<(Autoscroll, bool)>,
-    last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
+    last_autoscroll: Option<(
+        gpui::Point<ScrollOffset>,
+        ScrollOffset,
+        ScrollOffset,
+        AutoscrollStrategy,
+    )>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
     active_scrollbar: Option<ActiveScrollbarState>,
-    visible_line_count: Option<f32>,
-    visible_column_count: Option<f32>,
+    visible_line_count: Option<f64>,
+    visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
 }
@@ -200,13 +207,13 @@ impl ScrollManager {
         self.ongoing.axis = axis;
     }
 
-    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
+    pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.anchor.scroll_position(snapshot)
     }
 
     fn set_scroll_position(
         &mut self,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: gpui::Point<ScrollOffset>,
         map: &DisplaySnapshot,
         local: bool,
         autoscroll: bool,
@@ -219,7 +226,7 @@ impl ScrollManager {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().0 as f32;
+                    let max_row = map.max_point().row().as_f64();
                     scroll_top.min(max_row - height_in_lines + 1.).max(0.)
                 } else {
                     scroll_top
@@ -227,7 +234,7 @@ impl ScrollManager {
             }
             ScrollBeyondLastLine::VerticalScrollMargin => {
                 if let Some(height_in_lines) = self.visible_line_count {
-                    let max_row = map.max_point().row().0 as f32;
+                    let max_row = map.max_point().row().as_f64();
                     scroll_top
                         .min(max_row - height_in_lines + 1. + self.vertical_scroll_margin)
                         .max(0.)
@@ -244,16 +251,14 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map
-            .buffer_snapshot
-            .anchor_at(scroll_top_buffer_point, Bias::Right);
+        let top_anchor = map.buffer_snapshot.anchor_after(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
                 anchor: top_anchor,
                 offset: point(
                     scroll_position.x.max(0.),
-                    scroll_top - top_anchor.to_display_point(map).row().as_f32(),
+                    scroll_top - top_anchor.to_display_point(map).row().as_f64(),
                 ),
             },
             scroll_top_buffer_point.row,
@@ -439,7 +444,7 @@ impl ScrollManager {
         self.minimap_thumb_state
     }
 
-    pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
+    pub fn clamp_scroll_left(&mut self, max: f64) -> bool {
         if max < self.anchor.offset.x {
             self.anchor.offset.x = max;
             true
@@ -463,11 +468,11 @@ impl Editor {
     }
 
     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut Context<Self>) {
-        self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
+        self.scroll_manager.vertical_scroll_margin = margin_rows as f64;
         cx.notify();
     }
 
-    pub fn visible_line_count(&self) -> Option<f32> {
+    pub fn visible_line_count(&self) -> Option<f64> {
         self.scroll_manager.visible_line_count
     }
 
@@ -476,13 +481,13 @@ impl Editor {
             .map(|line_count| line_count as u32 - 1)
     }
 
-    pub fn visible_column_count(&self) -> Option<f32> {
+    pub fn visible_column_count(&self) -> Option<f64> {
         self.scroll_manager.visible_column_count
     }
 
     pub(crate) fn set_visible_line_count(
         &mut self,
-        lines: f32,
+        lines: f64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -501,7 +506,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn set_visible_column_count(&mut self, columns: f32) {
+    pub(crate) fn set_visible_column_count(&mut self, columns: f64) {
         self.scroll_manager.visible_column_count = Some(columns);
     }
 
@@ -516,13 +521,14 @@ impl Editor {
             delta.y = 0.0;
         }
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position = self.scroll_manager.anchor.scroll_position(&display_map) + delta;
+        let position =
+            self.scroll_manager.anchor.scroll_position(&display_map) + delta.map(f64::from);
         self.set_scroll_position_taking_display_map(position, true, false, display_map, window, cx);
     }
 
     pub fn set_scroll_position(
         &mut self,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: gpui::Point<ScrollOffset>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> WasScrolled {
@@ -558,7 +564,7 @@ impl Editor {
 
     pub(crate) fn set_scroll_position_internal(
         &mut self,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: gpui::Point<ScrollOffset>,
         local: bool,
         autoscroll: bool,
         window: &mut Window,
@@ -577,7 +583,7 @@ impl Editor {
 
     fn set_scroll_position_taking_display_map(
         &mut self,
-        scroll_position: gpui::Point<f32>,
+        scroll_position: gpui::Point<ScrollOffset>,
         local: bool,
         autoscroll: bool,
         display_map: DisplaySnapshot,
@@ -612,7 +618,7 @@ impl Editor {
         editor_was_scrolled
     }
 
-    pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {
+    pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<ScrollOffset> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
@@ -699,9 +705,9 @@ impl Editor {
         if matches!(
             settings.defaults.soft_wrap,
             SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) && (settings.defaults.preferred_line_length as f32) < visible_column_count
+        ) && (settings.defaults.preferred_line_length as f64) < visible_column_count
         {
-            visible_column_count = settings.defaults.preferred_line_length as f32;
+            visible_column_count = settings.defaults.preferred_line_length as f64;
         }
 
         // If the scroll position is currently at the left edge of the document
@@ -712,7 +718,8 @@ impl Editor {
             && amount.columns(visible_column_count) > 0.
             && let Some(last_position_map) = &self.last_position_map
         {
-            current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+            current_position.x +=
+                f64::from(self.gutter_dimensions.margin / last_position_map.em_advance);
         }
         let new_position = current_position
             + point(
@@ -767,7 +774,7 @@ impl Editor {
                 .buffer()
                 .read(cx)
                 .snapshot(cx)
-                .anchor_at(Point::new(top_row, 0), Bias::Left);
+                .anchor_before(Point::new(top_row, 0));
             let scroll_anchor = ScrollAnchor {
                 offset: gpui::Point::new(x, y),
                 anchor: top_anchor,

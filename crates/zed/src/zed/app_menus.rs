@@ -142,6 +142,13 @@ pub fn app_menus() -> Vec<Menu> {
                         replace_newest: false,
                     },
                 ),
+                MenuItem::action(
+                    "Select Previous Occurrence",
+                    editor::actions::SelectPrevious {
+                        replace_newest: false,
+                    },
+                ),
+                MenuItem::action("Select All Occurrences", editor::actions::SelectAllMatches),
                 MenuItem::separator(),
                 MenuItem::action("Move Line Up", editor::actions::MoveLineUp),
                 MenuItem::action("Move Line Down", editor::actions::MoveLineDown),

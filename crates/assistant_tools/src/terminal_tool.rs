@@ -27,6 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{Shell, ShellBuilder};
+use terminal::terminal_settings::TerminalSettings;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
@@ -119,9 +120,10 @@ impl Tool for TerminalTool {
         };
 
         let cwd = working_dir.clone();
-        let env = match &working_dir {
+        let env = match &cwd {
             Some(dir) => project.update(cx, |project, cx| {
-                project.directory_environment(dir.as_path().into(), cx)
+                let shell = TerminalSettings::get_global(cx).shell.clone();
+                project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
         };

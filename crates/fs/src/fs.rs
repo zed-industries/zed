@@ -134,7 +134,11 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
@@ -247,7 +251,7 @@ impl From<MTime> for proto::Timestamp {
 }
 
 pub struct RealFs {
-    git_binary_path: Option<PathBuf>,
+    bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
 }
 
@@ -325,7 +329,7 @@ pub struct RealWatcher {}
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
-            git_binary_path,
+            bundled_git_binary_path: git_binary_path,
             executor,
         }
     }
@@ -828,10 +832,15 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        dotgit_path: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
-            self.git_binary_path.clone(),
+            self.bundled_git_binary_path.clone(),
+            system_git_binary_path.map(|path| path.to_path_buf()),
             self.executor.clone(),
         )?))
     }
@@ -2425,7 +2434,11 @@ impl Fs for FakeFs {
         )
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        _system_git_binary: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         use util::ResultExt as _;
 
         self.with_git_state_and_paths(
@@ -3077,7 +3090,7 @@ mod tests {
         // With the file handle still open, the file should be replaced
         // https://github.com/zed-industries/zed/issues/30054
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();
@@ -3095,7 +3108,7 @@ mod tests {
     #[gpui::test]
     async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();

@@ -746,7 +746,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size + px(1.0));
@@ -762,7 +762,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size - px(1.0));
@@ -791,7 +791,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
@@ -808,7 +808,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
@@ -1231,31 +1231,54 @@ pub fn handle_settings_file_changes(
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Helper function to process settings content
-    let process_settings =
-        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
-            // Apply migrations to both user and global settings
-            let (processed_content, content_migrated) =
-                if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+    let process_settings = move |content: String,
+                                 is_user: bool,
+                                 store: &mut SettingsStore,
+                                 cx: &mut App|
+          -> bool {
+        let id = NotificationId::Named("failed-to-migrate-settings".into());
+        // Apply migrations to both user and global settings
+        let (processed_content, content_migrated) = match migrate_settings(&content) {
+            Ok(result) => {
+                dismiss_app_notification(&id, cx);
+                if let Some(migrated_content) = result {
                     (migrated_content, true)
                 } else {
                     (content, false)
-                };
-
-            let result = if is_user {
-                store.set_user_settings(&processed_content, cx)
-            } else {
-                store.set_global_settings(&processed_content, cx)
-            };
-
-            if let Err(err) = &result {
-                let settings_type = if is_user { "user" } else { "global" };
-                log::error!("Failed to load {} settings: {err}", settings_type);
+                }
             }
-
-            settings_changed(result.err(), cx);
-
-            content_migrated
+            Err(err) => {
+                show_app_notification(id, cx, move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("Failed to migrate settings\n{err}"), cx)
+                            .primary_message("Open Settings File")
+                            .primary_icon(IconName::Settings)
+                            .primary_on_click(|window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                cx.emit(DismissEvent);
+                            })
+                    })
+                });
+                // notify user here
+                (content, false)
+            }
         };
+
+        let result = if is_user {
+            store.set_user_settings(&processed_content, cx)
+        } else {
+            store.set_global_settings(&processed_content, cx)
+        };
+
+        if let Err(err) = &result {
+            let settings_type = if is_user { "user" } else { "global" };
+            log::error!("Failed to load {} settings: {err}", settings_type);
+        }
+
+        settings_changed(result.err(), cx);
+
+        content_migrated
+    };
 
     // Initial load of both settings files
     let global_content = cx
@@ -2746,6 +2769,7 @@ mod tests {
         })
         .await
         .unwrap();
+        cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
         let workspace = window.root(cx).unwrap();
@@ -2797,6 +2821,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2835,6 +2860,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2884,6 +2910,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2933,6 +2960,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(workspace, Path::new(path!("/d.txt")), rel_path(""), cx);
@@ -3852,7 +3880,7 @@ mod tests {
         fn active_location(
             workspace: &WindowHandle<Workspace>,
             cx: &mut TestAppContext,
-        ) -> (ProjectPath, DisplayPoint, f32) {
+        ) -> (ProjectPath, DisplayPoint, f64) {
             workspace
                 .update(cx, |workspace, _, cx| {
                     let item = workspace.active_item(cx).unwrap();
@@ -4396,6 +4424,7 @@ mod tests {
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
+                    | "action::Sequence"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}
                     _ => {
@@ -4457,6 +4486,7 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
+                "action",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]

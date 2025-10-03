@@ -1520,6 +1520,9 @@ impl PlatformWindow for MacWindow {
                     };
 
                     match action_str.as_ref() {
+                        "None" => {
+                            // "Do Nothing" selected, so do no action
+                        }
                         "Minimize" => {
                             window.miniaturize_(nil);
                         }

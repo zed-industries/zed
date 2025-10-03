@@ -378,31 +378,40 @@ impl TerminalBuilder {
             title_override: Option<SharedString>,
         }
 
+        impl ShellParams {
+            fn new(
+                program: String,
+                args: Option<Vec<String>>,
+                title_override: Option<SharedString>,
+            ) -> Self {
+                log::info!("Using {program} as shell");
+                Self {
+                    program,
+                    args,
+                    title_override,
+                }
+            }
+        }
+
         let shell_params = match shell.clone() {
             Shell::System => {
                 #[cfg(target_os = "windows")]
                 {
-                    Some(ShellParams {
-                        program: util::get_windows_system_shell(),
-                        ..Default::default()
-                    })
+                    Some(ShellParams::new(
+                        util::shell::get_windows_system_shell(),
+                        None,
+                        None,
+                    ))
                 }
                 #[cfg(not(target_os = "windows"))]
                 None
             }
-            Shell::Program(program) => Some(ShellParams {
-                program,
-                ..Default::default()
-            }),
+            Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
                 program,
                 args,
                 title_override,
-            } => Some(ShellParams {
-                program,
-                args: Some(args),
-                title_override,
-            }),
+            } => Some(ShellParams::new(program, Some(args), title_override)),
         };
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
@@ -2308,8 +2317,9 @@ mod tests {
         })
         .detach();
 
+        let first_event = Event::Wakeup;
         let wakeup = event_rx.recv().await.expect("No wakeup event received");
-        assert_eq!(wakeup, Event::Wakeup, "Expected wakeup, got {wakeup:?}");
+        assert_eq!(wakeup, first_event, "Expected wakeup, got {wakeup:?}");
 
         terminal.update(cx, |terminal, _| {
             let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
@@ -2320,13 +2330,13 @@ mod tests {
             assert!(success, "Should have registered ctrl-d sequence");
         });
 
-        let mut all_events = vec![Event::Wakeup];
-        while let Ok(Ok(new_event)) =
-            smol_timeout(Duration::from_millis(500), event_rx.recv()).await
-        {
+        let mut all_events = vec![first_event];
+        while let Ok(Ok(new_event)) = smol_timeout(Duration::from_secs(1), event_rx.recv()).await {
             all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
         }
-
         assert!(
             all_events.contains(&Event::CloseTerminal),
             "EOF command sequence should have triggered a TTY terminal exit, but got events: {all_events:?}",
@@ -2375,6 +2385,10 @@ mod tests {
             {
                 let exit_status = completion_rx.recv().await.ok().flatten();
                 if let Some(exit_status) = exit_status {
+                    assert!(
+                        !exit_status.success(),
+                        "Wrong shell command should result in a failure"
+                    );
                     assert_eq!(exit_status.code(), Some(1));
                 }
             }

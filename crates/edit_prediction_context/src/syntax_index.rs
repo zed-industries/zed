@@ -35,6 +35,10 @@ use crate::outline::declarations_in_buffer;
 //
 // * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
 // references are present and their scores.
+//
+// * Include single-file worktrees / non visible worktrees? E.g. go to definition that resolves to a
+// file in a build dependency. Should not be editable in that case - but how to distinguish the case
+// where it should be editable?
 
 // Potential future optimizations:
 //
@@ -112,64 +116,33 @@ impl SyntaxIndex {
             .worktrees()
             .map(|w| w.read(cx).snapshot())
             .collect::<Vec<_>>();
-        this.state.try_lock().unwrap()._file_indexing_task =
-            Some(cx.spawn(async move |this, cx| {
-                let snapshots_file_count = initial_worktree_snapshots
-                    .iter()
-                    .map(|worktree| worktree.file_count())
-                    .sum::<usize>();
-                let chunk_size = snapshots_file_count.div_ceil(file_indexing_parallelism);
-                let chunk_count = snapshots_file_count.div_ceil(chunk_size);
-                let file_chunks = initial_worktree_snapshots
-                    .iter()
-                    .flat_map(|worktree| {
-                        let worktree_id = worktree.id();
-                        worktree.files(false, 0).map(move |entry| {
-                            (
-                                entry.id,
-                                ProjectPath {
-                                    worktree_id,
-                                    path: entry.path.clone(),
-                                },
-                            )
+        if !initial_worktree_snapshots.is_empty() {
+            this.state.try_lock().unwrap()._file_indexing_task =
+                Some(cx.spawn(async move |this, cx| {
+                    let snapshots_file_count = initial_worktree_snapshots
+                        .iter()
+                        .map(|worktree| worktree.file_count())
+                        .sum::<usize>();
+                    let chunk_size = snapshots_file_count.div_ceil(file_indexing_parallelism);
+                    let chunk_count = snapshots_file_count.div_ceil(chunk_size);
+                    let file_chunks = initial_worktree_snapshots
+                        .iter()
+                        .flat_map(|worktree| {
+                            let worktree_id = worktree.id();
+                            worktree.files(false, 0).map(move |entry| {
+                                (
+                                    entry.id,
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: entry.path.clone(),
+                                    },
+                                )
+                            })
                         })
-                    })
-                    .chunks(chunk_size);
+                        .chunks(chunk_size);
 
-                let mut tasks = Vec::with_capacity(chunk_count);
-                for chunk in file_chunks.into_iter() {
-                    tasks.push(Self::update_dirty_files(
-                        &this,
-                        chunk.into_iter().collect(),
-                        cx.clone(),
-                    ));
-                }
-                futures::future::join_all(tasks).await;
-
-                log::info!("Finished initial file indexing");
-                *initial_file_indexing_done_tx.borrow_mut() = true;
-
-                let Ok(state) = this.read_with(cx, |this, _cx| this.state.clone()) else {
-                    return;
-                };
-                while dirty_files_rx.next().await.is_some() {
-                    let mut state = state.lock().await;
-                    let was_underused = state.dirty_files.capacity() > 255
-                        && state.dirty_files.len() * 8 < state.dirty_files.capacity();
-                    let dirty_files = state.dirty_files.drain().collect::<Vec<_>>();
-                    if was_underused {
-                        state.dirty_files.shrink_to_fit();
-                    }
-                    drop(state);
-                    if dirty_files.is_empty() {
-                        continue;
-                    }
-
-                    let chunk_size = dirty_files.len().div_ceil(file_indexing_parallelism);
-                    let chunk_count = dirty_files.len().div_ceil(chunk_size);
                     let mut tasks = Vec::with_capacity(chunk_count);
-                    let chunks = dirty_files.into_iter().chunks(chunk_size);
-                    for chunk in chunks.into_iter() {
+                    for chunk in file_chunks.into_iter() {
                         tasks.push(Self::update_dirty_files(
                             &this,
                             chunk.into_iter().collect(),
@@ -177,8 +150,41 @@ impl SyntaxIndex {
                         ));
                     }
                     futures::future::join_all(tasks).await;
-                }
-            }));
+
+                    log::info!("Finished initial file indexing");
+                    *initial_file_indexing_done_tx.borrow_mut() = true;
+
+                    let Ok(state) = this.read_with(cx, |this, _cx| this.state.clone()) else {
+                        return;
+                    };
+                    while dirty_files_rx.next().await.is_some() {
+                        let mut state = state.lock().await;
+                        let was_underused = state.dirty_files.capacity() > 255
+                            && state.dirty_files.len() * 8 < state.dirty_files.capacity();
+                        let dirty_files = state.dirty_files.drain().collect::<Vec<_>>();
+                        if was_underused {
+                            state.dirty_files.shrink_to_fit();
+                        }
+                        drop(state);
+                        if dirty_files.is_empty() {
+                            continue;
+                        }
+
+                        let chunk_size = dirty_files.len().div_ceil(file_indexing_parallelism);
+                        let chunk_count = dirty_files.len().div_ceil(chunk_size);
+                        let mut tasks = Vec::with_capacity(chunk_count);
+                        let chunks = dirty_files.into_iter().chunks(chunk_size);
+                        for chunk in chunks.into_iter() {
+                            tasks.push(Self::update_dirty_files(
+                                &this,
+                                chunk.into_iter().collect(),
+                                cx.clone(),
+                            ));
+                        }
+                        futures::future::join_all(tasks).await;
+                    }
+                }));
+        }
 
         cx.subscribe(&worktree_store, Self::handle_worktree_store_event)
             .detach();

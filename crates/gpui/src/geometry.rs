@@ -200,9 +200,9 @@ impl Point<Pixels> {
     ///
     /// ```
     /// # use gpui::{Point, Pixels, ScaledPixels};
-    /// let p = Point { x: Pixels(10.0), y: Pixels(20.0) };
+    /// let p = Point { x: Pixels::from(10.0), y: Pixels::from(20.0) };
     /// let scaled_p = p.scale(1.5);
-    /// assert_eq!(scaled_p, Point { x: ScaledPixels(15.0), y: ScaledPixels(30.0) });
+    /// assert_eq!(scaled_p, Point { x: ScaledPixels::from(15.0), y: ScaledPixels::from(30.0) });
     /// ```
     pub fn scale(&self, factor: f32) -> Point<ScaledPixels> {
         Point {
@@ -217,7 +217,7 @@ impl Point<Pixels> {
     ///
     /// ```
     /// # use gpui::{Pixels, Point};
-    /// let p = Point { x: Pixels(3.0), y: Pixels(4.0) };
+    /// let p = Point { x: Pixels::from(3.0), y: Pixels::from(4.0) };
     /// assert_eq!(p.magnitude(), 5.0);
     /// ```
     pub fn magnitude(&self) -> f64 {
@@ -493,9 +493,9 @@ impl Size<Pixels> {
     ///
     /// ```
     /// # use gpui::{Size, Pixels, ScaledPixels};
-    /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
+    /// let size = Size { width: Pixels::from(100.0), height: Pixels::from(50.0) };
     /// let scaled_size = size.scale(2.0);
-    /// assert_eq!(scaled_size, Size { width: ScaledPixels(200.0), height: ScaledPixels(100.0) });
+    /// assert_eq!(scaled_size, Size { width: ScaledPixels::from(200.0), height: ScaledPixels::from(100.0) });
     /// ```
     pub fn scale(&self, factor: f32) -> Size<ScaledPixels> {
         Size {
@@ -1628,19 +1628,19 @@ impl Bounds<Pixels> {
     /// ```
     /// # use gpui::{Bounds, Point, Size, Pixels, ScaledPixels, DevicePixels};
     /// let bounds = Bounds {
-    ///     origin: Point { x: Pixels(10.0), y: Pixels(20.0) },
-    ///     size: Size { width: Pixels(30.0), height: Pixels(40.0) },
+    ///     origin: Point { x: Pixels::from(10.0), y: Pixels::from(20.0) },
+    ///     size: Size { width: Pixels::from(30.0), height: Pixels::from(40.0) },
     /// };
     /// let display_scale_factor = 2.0;
     /// let scaled_bounds = bounds.scale(display_scale_factor);
     /// assert_eq!(scaled_bounds, Bounds {
     ///     origin: Point {
-    ///         x: ScaledPixels(20.0),
-    ///         y: ScaledPixels(40.0),
+    ///         x: ScaledPixels::from(20.0),
+    ///         y: ScaledPixels::from(40.0),
     ///     },
     ///     size: Size {
-    ///         width: ScaledPixels(60.0),
-    ///         height: ScaledPixels(80.0)
+    ///         width: ScaledPixels::from(60.0),
+    ///         height: ScaledPixels::from(80.0)
     ///     },
     /// });
     /// ```
@@ -1888,10 +1888,10 @@ impl Edges<Length> {
     /// ```
     /// # use gpui::{DefiniteLength, Edges, Length, Pixels};
     /// let no_edges = Edges::<Length>::zero();
-    /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels(0.))));
-    /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels(0.))));
-    /// assert_eq!(no_edges.bottom, Length::Definite(DefiniteLength::from(Pixels(0.))));
-    /// assert_eq!(no_edges.left, Length::Definite(DefiniteLength::from(Pixels(0.))));
+    /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels::ZERO)));
+    /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels::ZERO)));
+    /// assert_eq!(no_edges.bottom, Length::Definite(DefiniteLength::from(Pixels::ZERO)));
+    /// assert_eq!(no_edges.left, Length::Definite(DefiniteLength::from(Pixels::ZERO)));
     /// ```
     pub fn zero() -> Self {
         Self {
@@ -1993,10 +1993,10 @@ impl Edges<AbsoluteLength> {
     /// ```
     /// # use gpui::{AbsoluteLength, Edges, Pixels};
     /// let no_edges = Edges::<AbsoluteLength>::zero();
-    /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels(0.0)));
-    /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels(0.0)));
-    /// assert_eq!(no_edges.bottom, AbsoluteLength::Pixels(Pixels(0.0)));
-    /// assert_eq!(no_edges.left, AbsoluteLength::Pixels(Pixels(0.0)));
+    /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels::ZERO));
+    /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels::ZERO));
+    /// assert_eq!(no_edges.bottom, AbsoluteLength::Pixels(Pixels::ZERO));
+    /// assert_eq!(no_edges.left, AbsoluteLength::Pixels(Pixels::ZERO));
     /// ```
     pub fn zero() -> Self {
         Self {
@@ -2066,16 +2066,16 @@ impl Edges<Pixels> {
     /// ```
     /// # use gpui::{Edges, Pixels, ScaledPixels};
     /// let edges = Edges {
-    ///     top: Pixels(10.0),
-    ///     right: Pixels(20.0),
-    ///     bottom: Pixels(30.0),
-    ///     left: Pixels(40.0),
+    ///     top: Pixels::from(10.0),
+    ///     right: Pixels::from(20.0),
+    ///     bottom: Pixels::from(30.0),
+    ///     left: Pixels::from(40.0),
     /// };
     /// let scaled_edges = edges.scale(2.0);
-    /// assert_eq!(scaled_edges.top, ScaledPixels(20.0));
-    /// assert_eq!(scaled_edges.right, ScaledPixels(40.0));
-    /// assert_eq!(scaled_edges.bottom, ScaledPixels(60.0));
-    /// assert_eq!(scaled_edges.left, ScaledPixels(80.0));
+    /// assert_eq!(scaled_edges.top, ScaledPixels::from(20.0));
+    /// assert_eq!(scaled_edges.right, ScaledPixels::from(40.0));
+    /// assert_eq!(scaled_edges.bottom, ScaledPixels::from(60.0));
+    /// assert_eq!(scaled_edges.left, ScaledPixels::from(80.0));
     /// ```
     pub fn scale(&self, factor: f32) -> Edges<ScaledPixels> {
         Edges {
@@ -2273,18 +2273,18 @@ impl Corners<AbsoluteLength> {
     /// ```
     /// # use gpui::{Corners, AbsoluteLength, Pixels, Rems, Size};
     /// let corners = Corners {
-    ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
+    ///     top_left: AbsoluteLength::Pixels(Pixels::from(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
-    ///     bottom_right: AbsoluteLength::Pixels(Pixels(30.0)),
+    ///     bottom_right: AbsoluteLength::Pixels(Pixels::from(30.0)),
     ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
     /// };
-    /// let rem_size = Pixels(16.0);
+    /// let rem_size = Pixels::from(16.0);
     /// let corners_in_pixels = corners.to_pixels(rem_size);
     ///
-    /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
-    /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
-    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0));
-    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0)); // 2 rems converted to pixels
+    /// assert_eq!(corners_in_pixels.top_left, Pixels::from(15.0));
+    /// assert_eq!(corners_in_pixels.top_right, Pixels::from(16.0)); // 1 rem converted to pixels
+    /// assert_eq!(corners_in_pixels.bottom_right, Pixels::from(30.0));
+    /// assert_eq!(corners_in_pixels.bottom_left, Pixels::from(32.0)); // 2 rems converted to pixels
     /// ```
     pub fn to_pixels(self, rem_size: Pixels) -> Corners<Pixels> {
         Corners {
@@ -2314,16 +2314,16 @@ impl Corners<Pixels> {
     /// ```
     /// # use gpui::{Corners, Pixels, ScaledPixels};
     /// let corners = Corners {
-    ///     top_left: Pixels(10.0),
-    ///     top_right: Pixels(20.0),
-    ///     bottom_right: Pixels(30.0),
-    ///     bottom_left: Pixels(40.0),
+    ///     top_left: Pixels::from(10.0),
+    ///     top_right: Pixels::from(20.0),
+    ///     bottom_right: Pixels::from(30.0),
+    ///     bottom_left: Pixels::from(40.0),
     /// };
     /// let scaled_corners = corners.scale(2.0);
-    /// assert_eq!(scaled_corners.top_left, ScaledPixels(20.0));
-    /// assert_eq!(scaled_corners.top_right, ScaledPixels(40.0));
-    /// assert_eq!(scaled_corners.bottom_right, ScaledPixels(60.0));
-    /// assert_eq!(scaled_corners.bottom_left, ScaledPixels(80.0));
+    /// assert_eq!(scaled_corners.top_left, ScaledPixels::from(20.0));
+    /// assert_eq!(scaled_corners.top_right, ScaledPixels::from(40.0));
+    /// assert_eq!(scaled_corners.bottom_right, ScaledPixels::from(60.0));
+    /// assert_eq!(scaled_corners.bottom_left, ScaledPixels::from(80.0));
     /// ```
     #[must_use]
     pub fn scale(&self, factor: f32) -> Corners<ScaledPixels> {
@@ -2391,12 +2391,12 @@ impl<T: Clone + Debug + Default + PartialEq> Corners<T> {
     /// ```
     /// # use gpui::{Corners, Pixels, Rems};
     /// let corners = Corners {
-    ///     top_left: Pixels(10.0),
-    ///     top_right: Pixels(20.0),
-    ///     bottom_right: Pixels(30.0),
-    ///     bottom_left: Pixels(40.0),
+    ///     top_left: Pixels::from(10.0),
+    ///     top_right: Pixels::from(20.0),
+    ///     bottom_right: Pixels::from(30.0),
+    ///     bottom_left: Pixels::from(40.0),
     /// };
-    /// let corners_in_rems = corners.map(|&px| Rems(px.0 / 16.0));
+    /// let corners_in_rems = corners.map(|&px| Rems(f32::from(px) / 16.0));
     /// assert_eq!(corners_in_rems, Corners {
     ///     top_left: Rems(0.625),
     ///     top_right: Rems(1.25),
@@ -2547,11 +2547,11 @@ impl From<Percentage> for Radians {
 /// use gpui::{Pixels, ScaledPixels};
 ///
 /// // Define a length of 10 pixels
-/// let length = Pixels(10.0);
+/// let length = Pixels::from(10.0);
 ///
 /// // Define a length and scale it by a factor of 2
 /// let scaled_length = length.scale(2.0);
-/// assert_eq!(scaled_length, ScaledPixels(20.0));
+/// assert_eq!(scaled_length, ScaledPixels::from(20.0));
 /// ```
 #[derive(
     Clone,
@@ -2570,7 +2570,7 @@ impl From<Percentage> for Radians {
     JsonSchema,
 )]
 #[repr(transparent)]
-pub struct Pixels(pub f32);
+pub struct Pixels(pub(crate) f32);
 
 impl Div for Pixels {
     type Output = f32;
@@ -2945,7 +2945,7 @@ impl From<usize> for DevicePixels {
 /// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
-pub struct ScaledPixels(pub f32);
+pub struct ScaledPixels(pub(crate) f32);
 
 impl ScaledPixels {
     /// Floors the `ScaledPixels` value to the nearest whole number.
@@ -3008,6 +3008,12 @@ impl From<ScaledPixels> for f64 {
 impl From<ScaledPixels> for u32 {
     fn from(pixels: ScaledPixels) -> Self {
         pixels.0 as u32
+    }
+}
+
+impl From<f32> for ScaledPixels {
+    fn from(pixels: f32) -> Self {
+        Self(pixels)
     }
 }
 
@@ -3180,12 +3186,12 @@ impl AbsoluteLength {
     ///
     /// ```
     /// # use gpui::{AbsoluteLength, Pixels, Rems};
-    /// let length_in_pixels = AbsoluteLength::Pixels(Pixels(42.0));
+    /// let length_in_pixels = AbsoluteLength::Pixels(Pixels::from(42.0));
     /// let length_in_rems = AbsoluteLength::Rems(Rems(2.0));
-    /// let rem_size = Pixels(16.0);
+    /// let rem_size = Pixels::from(16.0);
     ///
-    /// assert_eq!(length_in_pixels.to_pixels(rem_size), Pixels(42.0));
-    /// assert_eq!(length_in_rems.to_pixels(rem_size), Pixels(32.0));
+    /// assert_eq!(length_in_pixels.to_pixels(rem_size), Pixels::from(42.0));
+    /// assert_eq!(length_in_rems.to_pixels(rem_size), Pixels::from(32.0));
     /// ```
     pub fn to_pixels(self, rem_size: Pixels) -> Pixels {
         match self {
@@ -3330,9 +3336,9 @@ impl DefiniteLength {
     /// let base_size = AbsoluteLength::Pixels(px(100.0));
     /// let rem_size = px(16.0);
     ///
-    /// assert_eq!(length_in_pixels.to_pixels(base_size, rem_size), Pixels(42.0));
-    /// assert_eq!(length_in_rems.to_pixels(base_size, rem_size), Pixels(32.0));
-    /// assert_eq!(length_as_fraction.to_pixels(base_size, rem_size), Pixels(50.0));
+    /// assert_eq!(length_in_pixels.to_pixels(base_size, rem_size), Pixels::from(42.0));
+    /// assert_eq!(length_in_rems.to_pixels(base_size, rem_size), Pixels::from(32.0));
+    /// assert_eq!(length_as_fraction.to_pixels(base_size, rem_size), Pixels::from(50.0));
     /// ```
     pub fn to_pixels(self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
         match self {

@@ -220,7 +220,18 @@ impl UserSettingsContent {
 ///
 /// Default: VSCode
 #[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -313,7 +324,7 @@ pub struct AudioSettingsContent {
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -323,6 +334,15 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+}
+
+impl Default for TelemetrySettingsContent {
+    fn default() -> Self {
+        Self {
+            diagnostics: Some(true),
+            metrics: Some(true),
+        }
+    }
 }
 
 #[skip_serializing_none]
@@ -706,7 +726,19 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Copy, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSide {
     Left,
