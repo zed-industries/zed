@@ -1161,17 +1161,28 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
-            self.refresh_search(cx);
+            self.refresh_search(true, cx);
         }
     }
 
-    fn refresh_search(&mut self, cx: &mut Context<Self>) {
-        self.fetch_extensions_debounced(
-            Some(Box::new(|this, cx| {
-                this.scroll_to_top(cx);
-            })),
-            cx,
-        );
+    fn refresh_search(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        if debounce {
+            self.fetch_extensions_debounced(
+                Some(Box::new(|this, cx| {
+                    this.scroll_to_top(cx);
+                })),
+                cx,
+            );
+        } else {
+            self.fetch_extensions(
+                self.search_query(cx),
+                Some(BTreeSet::from_iter(self.provides_filter)),
+                Some(Box::new(|this, cx| {
+                    this.scroll_to_top(cx);
+                })),
+                cx,
+            );
+        }
         self.refresh_feature_upsells(cx);
     }
 
@@ -1179,7 +1190,7 @@ impl ExtensionsPage {
         self.query_editor.update(cx, |editor, cx| {
             editor.set_text(format!("id:{id}"), window, cx)
         });
-        self.refresh_search(cx);
+        self.refresh_search(true, cx);
     }
 
     pub fn change_provides_filter(
@@ -1188,7 +1199,7 @@ impl ExtensionsPage {
         cx: &mut Context<Self>,
     ) {
         self.provides_filter = provides_filter;
-        self.refresh_search(cx);
+        self.refresh_search(false, cx);
     }
 
     fn fetch_extensions_debounced(
@@ -1236,37 +1247,56 @@ impl ExtensionsPage {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_search = self.search_query(cx).is_some();
-
-        let message = if self.is_fetching_extensions {
-            "Loading extensions..."
+        return if self.is_fetching_extensions {
+            Label::new("Loading extensions...")
         } else {
+            let has_search = self.search_query(cx).is_some();
+
             match self.filter {
                 ExtensionFilter::All => {
                     if has_search {
-                        "No extensions that match your search."
+                        if let Some(category) = self.provides_filter {
+                            Label::new(&format!(
+                                "No extensions in \"{}\" category that match your search.",
+                                extension_provides_label(category)
+                            ))
+                        } else {
+                            Label::new("No extensions that match your search.")
+                        }
                     } else {
-                        "No extensions."
+                        Label::new("No extensions.")
                     }
                 }
                 ExtensionFilter::Installed => {
                     if has_search {
-                        "No installed extensions that match your search."
+                        if let Some(category) = self.provides_filter {
+                            Label::new(&format!(
+                                "No installed extensions in \"{}\" category that match your search.",
+                                extension_provides_label(category)
+                            ))
+                        } else {
+                            Label::new("No installed extensions that match your search.")
+                        }
                     } else {
-                        "No installed extensions."
+                        Label::new("No installed extensions.")
                     }
                 }
                 ExtensionFilter::NotInstalled => {
                     if has_search {
-                        "No not installed extensions that match your search."
+                        if let Some(category) = self.provides_filter {
+                            Label::new(&format!(
+                                "No not installed extensions in \"{}\" category that match your search.",
+                                extension_provides_label(category)
+                            ))
+                        } else {
+                            Label::new("No not installed extensions that match your search.")
+                        }
                     } else {
-                        "No not installed extensions."
+                        Label::new("No not installed extensions.")
                     }
                 }
             }
         };
-
-        Label::new(message)
     }
 
     fn update_settings(
