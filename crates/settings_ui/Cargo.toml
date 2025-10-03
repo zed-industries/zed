@@ -46,6 +46,7 @@ paths.workspace = true
 session.workspace = true
 settings.workspace = true
 zlog.workspace = true
+pretty_assertions.workspace = true
 
 [[example]]
 name = "ui"

@@ -3088,9 +3088,6 @@ impl SettingsWindow {
         let entries = &self.navbar_entries;
         let search_matches = &self.search_matches;
         std::iter::from_fn(move || {
-            if index >= self.navbar_entries.len() {
-                return None;
-            }
             while index < entries.len() {
                 let entry = &entries[index];
                 let included_in_search = if let Some(item_index) = entry.item_index {
@@ -3103,6 +3100,9 @@ impl SettingsWindow {
                     break;
                 }
                 index += 1;
+            }
+            if index >= self.navbar_entries.len() {
+                return None;
             }
             let entry = &entries[index];
             let entry_index = index;
@@ -3622,10 +3622,6 @@ mod test {
     use super::*;
 
     impl SettingsWindow {
-        fn navbar(&self) -> &[NavBarEntry] {
-            self.navbar_entries.as_slice()
-        }
-
         fn navbar_entry(&self) -> usize {
             self.navbar_entry
         }
@@ -3809,7 +3805,12 @@ mod test {
 
         let expected_settings_window = parse(after, window, cx);
 
-        assert_eq!(settings_window.navbar(), expected_settings_window.navbar());
+        pretty_assertions::assert_eq!(
+            settings_window.visible_navbar_entries().collect::<Vec<_>>(),
+            expected_settings_window
+                .visible_navbar_entries()
+                .collect::<Vec<_>>()
+        );
         assert_eq!(
             settings_window.navbar_entry(),
             expected_settings_window.navbar_entry()
