@@ -1,4 +1,9 @@
-use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
+use std::{
+    any::Any,
+    fmt::Debug,
+    ops::Not,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
@@ -7,7 +12,8 @@ use gpui::{
     LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
     ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
-    UniformListScrollHandle, Window, prelude::FluentBuilder as _, px, quad, relative, size,
+    UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
+    size,
 };
 use settings::SettingsStore;
 use smallvec::SmallVec;
@@ -16,9 +22,12 @@ use util::ResultExt;
 
 use std::ops::Range;
 
-use crate::scrollbars::{ScrollbarVisibility, ShowScrollbar};
+use crate::scrollbars::{ScrollbarAutoHide, ScrollbarVisibility, ShowScrollbar};
 
-const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_millis(1500);
+const SCROLLBAR_HIDE_DELAY_INTERVAL: Duration = Duration::from_secs(1);
+const SCROLLBAR_HIDE_DURATION: Duration = Duration::from_millis(400);
+const SCROLLBAR_SHOW_DURATION: Duration = Duration::from_millis(50);
+
 const SCROLLBAR_PADDING: Pixels = px(4.);
 
 pub mod scrollbars {
@@ -52,20 +61,6 @@ pub mod scrollbars {
                 settings::ShowScrollbar::System => ShowScrollbar::System,
                 settings::ShowScrollbar::Always => ShowScrollbar::Always,
                 settings::ShowScrollbar::Never => ShowScrollbar::Never,
-            }
-        }
-    }
-
-    impl ShowScrollbar {
-        pub(super) fn show(&self) -> bool {
-            *self != Self::Never
-        }
-
-        pub(super) fn should_auto_hide(&self, cx: &mut App) -> bool {
-            match self {
-                Self::Auto => true,
-                Self::System => cx.default_global::<ScrollbarAutoHide>().should_hide(),
-                _ => false,
             }
         }
     }
@@ -127,23 +122,24 @@ pub trait WithScrollbar: Sized {
     where
         T: ScrollableHandle;
 
-    #[track_caller]
-    fn horizontal_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
-        self.custom_scrollbars(
-            Scrollbars::new(ScrollAxes::Horizontal).ensure_id(core::panic::Location::caller()),
-            window,
-            cx,
-        )
-    }
+    // TODO: account for these cases properly
+    // #[track_caller]
+    // fn horizontal_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
+    //     self.custom_scrollbars(
+    //         Scrollbars::new(ScrollAxes::Horizontal).ensure_id(core::panic::Location::caller()),
+    //         window,
+    //         cx,
+    //     )
+    // }
 
-    #[track_caller]
-    fn vertical_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
-        self.custom_scrollbars(
-            Scrollbars::new(ScrollAxes::Vertical).ensure_id(core::panic::Location::caller()),
-            window,
-            cx,
-        )
-    }
+    // #[track_caller]
+    // fn vertical_scrollbar(self, window: &mut Window, cx: &mut App) -> Self::Output {
+    //     self.custom_scrollbars(
+    //         Scrollbars::new(ScrollAxes::Vertical).ensure_id(core::panic::Location::caller()),
+    //         window,
+    //         cx,
+    //     )
+    // }
 
     #[track_caller]
     fn vertical_scrollbar_for<ScrollHandle: ScrollableHandle>(
@@ -289,6 +285,30 @@ impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
 //         .with_decoration(scrollbar)
 //     }
 // }
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ShowBehavior {
+    Always,
+    Autohide,
+    Never,
+}
+
+impl ShowBehavior {
+    fn from_setting(setting: ShowScrollbar, cx: &mut App) -> Self {
+        match setting {
+            ShowScrollbar::Never => Self::Never,
+            ShowScrollbar::Auto => Self::Autohide,
+            ShowScrollbar::System => {
+                if cx.default_global::<ScrollbarAutoHide>().should_hide() {
+                    Self::Autohide
+                } else {
+                    Self::Always
+                }
+            }
+            ShowScrollbar::Always => Self::Always,
+        }
+    }
+}
 
 pub enum ScrollAxes {
     Horizontal,
@@ -460,35 +480,103 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Clone, Debug)]
 enum VisibilityState {
     Visible,
+    Animating { showing: bool, delta: f32 },
     Hidden,
     Disabled,
 }
 
+const DELTA_MAX: f32 = 1.0;
+
 impl VisibilityState {
-    fn from_show_setting(show_setting: ShowScrollbar) -> Self {
-        if show_setting.show() {
-            Self::Visible
-        } else {
-            Self::Disabled
+    fn from_behavior(behavior: ShowBehavior) -> Self {
+        match behavior {
+            ShowBehavior::Always => Self::Visible,
+            ShowBehavior::Never => Self::Disabled,
+            ShowBehavior::Autohide => Self::for_show(),
+        }
+    }
+
+    fn for_show() -> Self {
+        Self::Animating {
+            showing: true,
+            delta: Default::default(),
+        }
+    }
+
+    fn for_autohide() -> Self {
+        Self::Animating {
+            showing: Default::default(),
+            delta: Default::default(),
         }
     }
 
     fn is_visible(&self) -> bool {
-        *self == VisibilityState::Visible
+        matches!(self, Self::Visible | Self::Animating { .. })
     }
 
     #[inline]
     fn is_disabled(&self) -> bool {
         *self == VisibilityState::Disabled
     }
+
+    fn animation_progress(&self) -> Option<(f32, Duration, bool)> {
+        match self {
+            Self::Animating { showing, delta } => Some((
+                *delta,
+                if *showing {
+                    SCROLLBAR_SHOW_DURATION
+                } else {
+                    SCROLLBAR_HIDE_DURATION
+                },
+                *showing,
+            )),
+            _ => None,
+        }
+    }
+
+    fn set_delta(&mut self, new_delta: f32) {
+        match self {
+            Self::Animating { showing, .. } if new_delta >= DELTA_MAX => {
+                if *showing {
+                    *self = Self::Visible;
+                } else {
+                    *self = Self::Hidden;
+                }
+            }
+            Self::Animating { delta, .. } => *delta = new_delta,
+            _ => {}
+        }
+    }
+
+    fn toggle_visible(&self, show_behavior: ShowBehavior) -> Self {
+        match self {
+            Self::Hidden => {
+                if show_behavior == ShowBehavior::Autohide {
+                    Self::for_show()
+                } else {
+                    Self::Visible
+                }
+            }
+            Self::Animating {
+                showing: false,
+                delta: progress,
+            } => Self::Animating {
+                showing: true,
+                delta: DELTA_MAX - progress,
+            },
+            _ => self.clone(),
+        }
+    }
 }
 
-enum ParentHovered {
-    Yes(bool),
-    No(bool),
+enum ParentHoverEvent {
+    Within,
+    Entered,
+    Exited,
+    Outside,
 }
 
 /// This is used to ensure notifies within the state do not notify the parent
@@ -502,7 +590,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     manually_added: bool,
     scroll_handle: T,
     width: ScrollbarWidth,
-    show_setting: ShowScrollbar,
+    show_behavior: ShowBehavior,
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
@@ -526,7 +614,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             Handle::Untracked(func) => (false, func()),
         };
 
-        let show_setting = (config.get_visibility)(cx);
+        let show_behavior = ShowBehavior::from_setting((config.get_visibility)(cx), cx);
         ScrollbarState {
             thumb_state: Default::default(),
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
@@ -534,9 +622,9 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             scroll_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
-            show_setting,
+            show_behavior,
             get_visibility: config.get_visibility,
-            show_state: VisibilityState::from_show_setting(show_setting),
+            show_state: VisibilityState::from_behavior(show_behavior),
             mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
@@ -544,22 +632,26 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_show_scrollbar((self.get_visibility)(cx), window, cx);
+        self.set_show_behavior(
+            ShowBehavior::from_setting((self.get_visibility)(cx), cx),
+            window,
+            cx,
+        );
     }
 
     /// Schedules a scrollbar auto hide if no auto hide is currently in progress yet.
     fn schedule_auto_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._auto_hide_task.is_none() {
-            self._auto_hide_task =
-                (self.visible() && self.show_setting.should_auto_hide(cx)).then(|| {
+            self._auto_hide_task = (self.visible() && self.show_behavior == ShowBehavior::Autohide)
+                .then(|| {
                     cx.spawn_in(window, async move |scrollbar_state, cx| {
                         cx.background_executor()
-                            .timer(SCROLLBAR_SHOW_INTERVAL)
+                            .timer(SCROLLBAR_HIDE_DELAY_INTERVAL)
                             .await;
                         scrollbar_state
                             .update(cx, |state, cx| {
                                 if state.thumb_state == ThumbState::Inactive {
-                                    state.set_visibility(VisibilityState::Hidden, cx);
+                                    state.set_visibility(VisibilityState::for_autohide(), cx);
                                 }
                                 state._auto_hide_task.take();
                             })
@@ -570,20 +662,21 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_visibility(VisibilityState::Visible, cx);
+        let visibility = self.show_state.toggle_visible(self.show_behavior);
+        self.set_visibility(visibility, cx);
         self._auto_hide_task.take();
         self.schedule_auto_hide(window, cx);
     }
 
-    fn set_show_scrollbar(
+    fn set_show_behavior(
         &mut self,
-        show: ShowScrollbar,
+        behavior: ShowBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.show_setting != show {
-            self.show_setting = show;
-            self.set_visibility(VisibilityState::from_show_setting(show), cx);
+        if self.show_behavior != behavior {
+            self.show_behavior = behavior;
+            self.set_visibility(VisibilityState::from_behavior(behavior), cx);
             self.schedule_auto_hide(window, cx);
             cx.notify();
         }
@@ -679,7 +772,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             if state == ThumbState::Inactive {
                 self.schedule_auto_hide(window, cx);
             } else {
-                self.set_visibility(VisibilityState::Visible, cx);
+                self.set_visibility(self.show_state.toggle_visible(self.show_behavior), cx);
                 self._auto_hide_task.take();
             }
             self.thumb_state = state;
@@ -687,13 +780,15 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_parent_hovered(&mut self, position: &Point<Pixels>) -> ParentHovered {
+    fn update_parent_hovered(&mut self, position: &Point<Pixels>) -> ParentHoverEvent {
         let last_parent_hovered = self.mouse_in_parent;
         self.mouse_in_parent = self.parent_hovered(position);
         let state_changed = self.mouse_in_parent != last_parent_hovered;
-        match self.mouse_in_parent {
-            true => ParentHovered::Yes(state_changed),
-            false => ParentHovered::No(state_changed),
+        match (self.mouse_in_parent, state_changed) {
+            (true, true) => ParentHoverEvent::Entered,
+            (true, false) => ParentHoverEvent::Within,
+            (false, true) => ParentHoverEvent::Exited,
+            (false, false) => ParentHoverEvent::Outside,
         }
     }
 
@@ -963,10 +1058,10 @@ impl PartialEq for ScrollbarPrepaintState {
 
 impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
     type RequestLayoutState = ();
-    type PrepaintState = Option<ScrollbarPrepaintState>;
+    type PrepaintState = Option<(ScrollbarPrepaintState, Option<f32>)>;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        Some(("scrollbar_animation", self.state.entity_id()).into())
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -992,7 +1087,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
     fn prepaint(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
@@ -1090,7 +1185,31 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 .update(cx, |state, cx| state.show_scrollbars(window, cx));
         }
 
-        prepaint_state
+        prepaint_state.map(|state| {
+            let autohide_delta = self.state.read(cx).show_state.animation_progress().map(
+                |(delta, delta_duration, should_invert)| {
+                    window.with_element_state(id.unwrap(), |state, window| {
+                        let state = state.unwrap_or_else(|| Instant::now());
+                        let current = Instant::now();
+
+                        let new_delta = DELTA_MAX
+                            .min(delta + (current - state).div_duration_f32(delta_duration));
+                        self.state
+                            .update(cx, |state, _| state.show_state.set_delta(new_delta));
+
+                        window.request_animation_frame();
+                        let delta = if should_invert {
+                            DELTA_MAX - delta
+                        } else {
+                            delta
+                        };
+                        (ease_in_out(delta), current)
+                    })
+                },
+            );
+
+            (state, autohide_delta)
+        })
     }
 
     fn paint(
@@ -1103,7 +1222,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(prepaint_state) = prepaint_state.take() else {
+        let Some((prepaint_state, autohide_fade)) = prepaint_state.take() else {
             return;
         };
 
@@ -1142,7 +1261,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         blend_color.min(blend_color.alpha(MAXIMUM_OPACITY))
                     };
 
-                    let thumb_background = blending_color.blend(thumb_base_color);
+                    let mut thumb_color = blending_color.blend(thumb_base_color);
+
+                    if !hovered && let Some(fade) = autohide_fade {
+                        thumb_color.fade_out(fade);
+                    }
 
                     if let Some((track_bounds, color)) = track_background {
                         window.paint_quad(quad(
@@ -1158,7 +1281,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     window.paint_quad(quad(
                         *thumb_bounds,
                         Corners::all(Pixels::MAX).clamp_radii_for_quad_size(thumb_bounds.size),
-                        thumb_background,
+                        thumb_color,
                         Edges::default(),
                         Hsla::transparent_black(),
                         BorderStyle::default(),
@@ -1253,10 +1376,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         }
                         _ => state.update(cx, |state, cx| {
                             match state.update_parent_hovered(&event.position) {
-                                ParentHovered::Yes(state_changed)
+                                hover @ ParentHoverEvent::Entered
+                                | hover @ ParentHoverEvent::Within
                                     if event.pressed_button.is_none() =>
                                 {
-                                    if state_changed {
+                                    if matches!(hover, ParentHoverEvent::Entered) {
                                         state.show_scrollbars(window, cx);
                                     }
                                     state.update_hovered_thumb(&event.position, window, cx);
@@ -1264,7 +1388,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                         cx.stop_propagation();
                                     }
                                 }
-                                ParentHovered::No(state_changed) if state_changed => {
+                                ParentHoverEvent::Exited => {
                                     state.set_thumb_state(ThumbState::Inactive, window, cx);
                                 }
                                 _ => {}

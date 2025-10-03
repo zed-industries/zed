@@ -1,207 +1,8 @@
-use std::fmt;
-
-use util::get_system_shell;
+use util::shell::get_system_shell;
 
 use crate::Shell;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ShellKind {
-    #[default]
-    Posix,
-    Csh,
-    Fish,
-    PowerShell,
-    Nushell,
-    Cmd,
-}
-
-impl fmt::Display for ShellKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ShellKind::Posix => write!(f, "sh"),
-            ShellKind::Csh => write!(f, "csh"),
-            ShellKind::Fish => write!(f, "fish"),
-            ShellKind::PowerShell => write!(f, "powershell"),
-            ShellKind::Nushell => write!(f, "nu"),
-            ShellKind::Cmd => write!(f, "cmd"),
-        }
-    }
-}
-
-impl ShellKind {
-    pub fn system() -> Self {
-        Self::new(&get_system_shell())
-    }
-
-    pub fn new(program: &str) -> Self {
-        #[cfg(windows)]
-        let (_, program) = program.rsplit_once('\\').unwrap_or(("", program));
-        #[cfg(not(windows))]
-        let (_, program) = program.rsplit_once('/').unwrap_or(("", program));
-        if program == "powershell"
-            || program.ends_with("powershell.exe")
-            || program == "pwsh"
-            || program.ends_with("pwsh.exe")
-        {
-            ShellKind::PowerShell
-        } else if program == "cmd" || program.ends_with("cmd.exe") {
-            ShellKind::Cmd
-        } else if program == "nu" {
-            ShellKind::Nushell
-        } else if program == "fish" {
-            ShellKind::Fish
-        } else if program == "csh" {
-            ShellKind::Csh
-        } else {
-            // Some other shell detected, the user might install and use a
-            // unix-like shell.
-            ShellKind::Posix
-        }
-    }
-
-    fn to_shell_variable(self, input: &str) -> String {
-        match self {
-            Self::PowerShell => Self::to_powershell_variable(input),
-            Self::Cmd => Self::to_cmd_variable(input),
-            Self::Posix => input.to_owned(),
-            Self::Fish => input.to_owned(),
-            Self::Csh => input.to_owned(),
-            Self::Nushell => Self::to_nushell_variable(input),
-        }
-    }
-
-    fn to_cmd_variable(input: &str) -> String {
-        if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("%{}%", &var_str[..var_str.len() - 1])
-            } else {
-                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-                // which will result in the task failing to run in such cases.
-                input.into()
-            }
-        } else if let Some(var_str) = input.strip_prefix('$') {
-            // If the input starts with "$", directly append to "$env:"
-            format!("%{}%", var_str)
-        } else {
-            // If no prefix is found, return the input as is
-            input.into()
-        }
-    }
-    fn to_powershell_variable(input: &str) -> String {
-        if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("$env:{}", &var_str[..var_str.len() - 1])
-            } else {
-                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-                // which will result in the task failing to run in such cases.
-                input.into()
-            }
-        } else if let Some(var_str) = input.strip_prefix('$') {
-            // If the input starts with "$", directly append to "$env:"
-            format!("$env:{}", var_str)
-        } else {
-            // If no prefix is found, return the input as is
-            input.into()
-        }
-    }
-
-    fn to_nushell_variable(input: &str) -> String {
-        let mut result = String::new();
-        let mut source = input;
-        let mut is_start = true;
-
-        loop {
-            match source.chars().next() {
-                None => return result,
-                Some('$') => {
-                    source = Self::parse_nushell_var(&source[1..], &mut result, is_start);
-                    is_start = false;
-                }
-                Some(_) => {
-                    is_start = false;
-                    let chunk_end = source.find('$').unwrap_or(source.len());
-                    let (chunk, rest) = source.split_at(chunk_end);
-                    result.push_str(chunk);
-                    source = rest;
-                }
-            }
-        }
-    }
-
-    fn parse_nushell_var<'a>(source: &'a str, text: &mut String, is_start: bool) -> &'a str {
-        if source.starts_with("env.") {
-            text.push('$');
-            return source;
-        }
-
-        match source.chars().next() {
-            Some('{') => {
-                let source = &source[1..];
-                if let Some(end) = source.find('}') {
-                    let var_name = &source[..end];
-                    if !var_name.is_empty() {
-                        if !is_start {
-                            text.push_str("(");
-                        }
-                        text.push_str("$env.");
-                        text.push_str(var_name);
-                        if !is_start {
-                            text.push_str(")");
-                        }
-                        &source[end + 1..]
-                    } else {
-                        text.push_str("${}");
-                        &source[end + 1..]
-                    }
-                } else {
-                    text.push_str("${");
-                    source
-                }
-            }
-            Some(c) if c.is_alphabetic() || c == '_' => {
-                let end = source
-                    .find(|c: char| !c.is_alphanumeric() && c != '_')
-                    .unwrap_or(source.len());
-                let var_name = &source[..end];
-                if !is_start {
-                    text.push_str("(");
-                }
-                text.push_str("$env.");
-                text.push_str(var_name);
-                if !is_start {
-                    text.push_str(")");
-                }
-                &source[end..]
-            }
-            _ => {
-                text.push('$');
-                source
-            }
-        }
-    }
-
-    fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
-        match self {
-            ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
-            ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
-            ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => interactive
-                .then(|| "-i".to_owned())
-                .into_iter()
-                .chain(["-c".to_owned(), combined_command])
-                .collect(),
-        }
-    }
-
-    pub fn command_prefix(&self) -> Option<char> {
-        match self {
-            ShellKind::PowerShell => Some('&'),
-            ShellKind::Nushell => Some('^'),
-            _ => None,
-        }
-    }
-}
+pub use util::shell::ShellKind;
 
 /// ShellBuilder is used to turn a user-requested task into a
 /// program that can be executed by the shell.
@@ -210,6 +11,7 @@ pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
     interactive: bool,
+    /// Whether to redirect stdin to /dev/null for the spawned command as a subshell.
     redirect_stdin: bool,
     kind: ShellKind,
 }
@@ -252,7 +54,12 @@ impl ShellBuilder {
                 ShellKind::Cmd => {
                     format!("{} /C '{}'", self.program, command_to_use_in_label)
                 }
-                ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
+                ShellKind::Posix
+                | ShellKind::Nushell
+                | ShellKind::Fish
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Rc => {
                     let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
                     format!(
                         "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
@@ -282,11 +89,18 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
-                    ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
-                        combined_command.push_str(" </dev/null");
+                    ShellKind::Posix
+                    | ShellKind::Nushell
+                    | ShellKind::Fish
+                    | ShellKind::Csh
+                    | ShellKind::Tcsh
+                    | ShellKind::Rc => {
+                        combined_command.insert(0, '(');
+                        combined_command.push_str(") </dev/null");
                     }
                     ShellKind::PowerShell => {
-                        combined_command.insert_str(0, "$null | ");
+                        combined_command.insert_str(0, "$null | & {");
+                        combined_command.push_str("}");
                     }
                     ShellKind::Cmd => {
                         combined_command.push_str("< NUL");
@@ -332,5 +146,18 @@ mod test {
                 "echo $env.hello $env.world nothing --($env.something) $ ${test"
             ]
         );
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_precedence() {
+        let shell = Shell::Program("nu".to_owned());
+        let shell_builder = ShellBuilder::new(None, &shell);
+
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some("echo".into()), &["nothing".to_string()]);
+
+        assert_eq!(program, "nu");
+        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
     }
 }

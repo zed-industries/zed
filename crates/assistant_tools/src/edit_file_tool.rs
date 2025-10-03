@@ -17,7 +17,7 @@ use editor::{
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, WeakEntity, pulsating_between, px,
+    TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use indoc::formatdoc;
 use language::{
@@ -1102,7 +1102,7 @@ impl ToolCard for EditFileToolCard {
                     .relative()
                     .h_full()
                     .when(!self.full_height_expanded, |editor_container| {
-                        editor_container.max_h(px(COLLAPSED_LINES as f32 * editor_line_height.0))
+                        editor_container.max_h(COLLAPSED_LINES as f32 * editor_line_height)
                     })
                     .overflow_hidden()
                     .border_t_1()
@@ -1161,7 +1161,7 @@ async fn build_buffer(
     LineEnding::normalize(&mut text);
     let text = Rope::from(text);
     let language = cx
-        .update(|_cx| language_registry.language_for_file_path(&path))?
+        .update(|_cx| language_registry.load_language_for_file_path(&path))?
         .await
         .ok();
     let buffer = cx.new(|cx| {

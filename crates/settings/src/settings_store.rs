@@ -157,13 +157,12 @@ pub struct SettingsStore {
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum SettingsFile {
     User,
-    Global,
-    Extension,
     Server,
     Default,
+    /// Local also represents project settings in ssh projects as well as local projects
     Local((WorktreeId, Arc<RelPath>)),
 }
 
@@ -479,18 +478,97 @@ impl SettingsStore {
         // ignoring profiles
         // ignoring os profiles
         // ignoring release channel profiles
+        // ignoring global
+        // ignoring extension
 
         if self.user_settings.is_some() {
             files.push(SettingsFile::User);
         }
-        if self.extension_settings.is_some() {
-            files.push(SettingsFile::Extension);
-        }
-        if self.global_settings.is_some() {
-            files.push(SettingsFile::Global);
-        }
         files.push(SettingsFile::Default);
         files
+    }
+
+    fn get_content_for_file(&self, file: SettingsFile) -> Option<&SettingsContent> {
+        match file {
+            SettingsFile::User => self
+                .user_settings
+                .as_ref()
+                .map(|settings| settings.content.as_ref()),
+            SettingsFile::Default => Some(self.default_settings.as_ref()),
+            SettingsFile::Server => self.server_settings.as_deref(),
+            SettingsFile::Local(ref key) => self.local_settings.get(key),
+        }
+    }
+
+    pub fn get_overrides_for_field<T>(
+        &self,
+        target_file: SettingsFile,
+        get: fn(&SettingsContent) -> &Option<T>,
+    ) -> Vec<SettingsFile> {
+        let all_files = self.get_all_files();
+        let mut found_file = false;
+        let mut overrides = Vec::new();
+
+        for file in all_files.into_iter().rev() {
+            if !found_file {
+                found_file = file == target_file;
+                continue;
+            }
+
+            if let SettingsFile::Local((wt_id, ref path)) = file
+                && let SettingsFile::Local((target_wt_id, ref target_path)) = target_file
+                && (wt_id != target_wt_id || !target_path.starts_with(path))
+            {
+                // if requesting value from a local file, don't return values from local files in different worktrees
+                continue;
+            }
+
+            let Some(content) = self.get_content_for_file(file.clone()) else {
+                continue;
+            };
+            if get(content).is_some() {
+                overrides.push(file);
+            }
+        }
+
+        overrides
+    }
+
+    pub fn get_value_from_file<T>(
+        &self,
+        target_file: SettingsFile,
+        pick: fn(&SettingsContent) -> &Option<T>,
+    ) -> (SettingsFile, &T) {
+        // TODO: Add a metadata field for overriding the "overrides" tag, for contextually different settings
+        //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
+
+        // todo(settings_ui) cache all files
+        let all_files = self.get_all_files();
+        let mut found_file = false;
+
+        for file in all_files.into_iter() {
+            if !found_file && file != target_file && file != SettingsFile::Default {
+                continue;
+            }
+            found_file = true;
+
+            if let SettingsFile::Local((wt_id, ref path)) = file
+                && let SettingsFile::Local((target_wt_id, ref target_path)) = target_file
+                && (wt_id != target_wt_id || !target_path.starts_with(&path))
+            {
+                // if requesting value from a local file, don't return values from local files in different worktrees
+                continue;
+            }
+
+            let Some(content) = self.get_content_for_file(file.clone()) else {
+                continue;
+            };
+            if let Some(value) = pick(content).as_ref() {
+                return (file, value);
+            }
+        }
+
+        unreachable!("All values should have defaults");
     }
 }
 
@@ -1608,5 +1686,315 @@ mod tests {
                 git_status: true, // Staff from global settings
             }
         );
+    }
+
+    #[gpui::test]
+    fn test_get_value_for_field_basic(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<DefaultLanguageSettings>(cx);
+
+        store
+            .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
+            .unwrap();
+        let local = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        store
+            .set_local_settings(
+                local.0,
+                local.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+
+        fn get(content: &SettingsContent) -> &Option<u32> {
+            &content.project.all_languages.defaults.preferred_line_length
+        }
+
+        let default_value = get(&store.default_settings).unwrap();
+
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            (SettingsFile::User, &0)
+        );
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::User, get),
+            (SettingsFile::User, &0)
+        );
+        store.set_user_settings(r#"{}"#, cx).unwrap();
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            (SettingsFile::Default, &default_value)
+        );
+        store
+            .set_local_settings(
+                local.0,
+                local.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 80}"#),
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            (SettingsFile::Local(local), &80)
+        );
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::User, get),
+            (SettingsFile::Default, &default_value)
+        );
+    }
+
+    #[gpui::test]
+    fn test_get_value_for_field_local_worktrees_dont_interfere(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
+
+        let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+
+        let local_1_child = (
+            WorktreeId::from_usize(0),
+            RelPath::new(
+                std::path::Path::new("child1"),
+                util::paths::PathStyle::Posix,
+            )
+            .unwrap()
+            .into_arc(),
+        );
+
+        let local_2 = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let local_2_child = (
+            WorktreeId::from_usize(1),
+            RelPath::new(
+                std::path::Path::new("child2"),
+                util::paths::PathStyle::Posix,
+            )
+            .unwrap()
+            .into_arc(),
+        );
+
+        fn get(content: &SettingsContent) -> &Option<u32> {
+            &content.project.all_languages.defaults.preferred_line_length
+        }
+
+        store
+            .set_local_settings(
+                local_1.0,
+                local_1.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 1}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_1_child.0,
+                local_1_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_2.0,
+                local_2.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 2}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_2_child.0,
+                local_2_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+
+        // each local child should only inherit from it's parent
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_2_child), get),
+            (SettingsFile::Local(local_2), &2)
+        );
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
+            (SettingsFile::Local(local_1.clone()), &1)
+        );
+
+        // adjacent children should be treated as siblings not inherit from each other
+        let local_1_adjacent_child = (local_1.0, rel_path("adjacent_child").into_arc());
+        store
+            .set_local_settings(
+                local_1_adjacent_child.0,
+                local_1_adjacent_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_1_child.0,
+                local_1_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 3}"#),
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), get),
+            (SettingsFile::Local(local_1.clone()), &1)
+        );
+        store
+            .set_local_settings(
+                local_1_adjacent_child.0,
+                local_1_adjacent_child.1,
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 3}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                local_1_child.0,
+                local_1_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_value_from_file(SettingsFile::Local(local_1_child), get),
+            (SettingsFile::Local(local_1), &1)
+        );
+    }
+
+    #[gpui::test]
+    fn test_get_overrides_for_field(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<DefaultLanguageSettings>(cx);
+
+        let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
+        let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
+        let wt0_child2 = (WorktreeId::from_usize(0), rel_path("child2").into_arc());
+
+        let wt1_root = (WorktreeId::from_usize(1), RelPath::empty().into_arc());
+        let wt1_subdir = (WorktreeId::from_usize(1), rel_path("subdir").into_arc());
+
+        fn get(content: &SettingsContent) -> &Option<u32> {
+            &content.project.all_languages.defaults.preferred_line_length
+        }
+
+        store
+            .set_user_settings(r#"{"preferred_line_length": 100}"#, cx)
+            .unwrap();
+
+        store
+            .set_local_settings(
+                wt0_root.0,
+                wt0_root.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 80}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                wt0_child1.0,
+                wt0_child1.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 120}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                wt0_child2.0,
+                wt0_child2.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+
+        store
+            .set_local_settings(
+                wt1_root.0,
+                wt1_root.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 90}"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                wt1_subdir.0,
+                wt1_subdir.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{}"#),
+                cx,
+            )
+            .unwrap();
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Default, get);
+        assert_eq!(
+            overrides,
+            vec![
+                SettingsFile::User,
+                SettingsFile::Local(wt0_root.clone()),
+                SettingsFile::Local(wt0_child1.clone()),
+                SettingsFile::Local(wt1_root.clone()),
+            ]
+        );
+
+        let overrides = store.get_overrides_for_field(SettingsFile::User, get);
+        assert_eq!(
+            overrides,
+            vec![
+                SettingsFile::Local(wt0_root.clone()),
+                SettingsFile::Local(wt0_child1.clone()),
+                SettingsFile::Local(wt1_root.clone()),
+            ]
+        );
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_root), get);
+        assert_eq!(overrides, vec![]);
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
+        assert_eq!(overrides, vec![]);
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child2), get);
+        assert_eq!(overrides, vec![]);
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_root), get);
+        assert_eq!(overrides, vec![]);
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_subdir), get);
+        assert_eq!(overrides, vec![]);
+
+        let wt0_deep_child = (
+            WorktreeId::from_usize(0),
+            rel_path("child1/subdir").into_arc(),
+        );
+        store
+            .set_local_settings(
+                wt0_deep_child.0,
+                wt0_deep_child.1.clone(),
+                LocalSettingsKind::Settings,
+                Some(r#"{"preferred_line_length": 140}"#),
+                cx,
+            )
+            .unwrap();
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child), get);
+        assert_eq!(overrides, vec![]);
+
+        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1), get);
+        assert_eq!(overrides, vec![]);
     }
 }

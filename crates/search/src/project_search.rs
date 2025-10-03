@@ -955,7 +955,12 @@ impl ProjectSearchView {
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
             let new_query = search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.build_search_query(cx);
+                let open_buffers = if search_view.included_opened_only {
+                    Some(search_view.open_buffers(cx, workspace))
+                } else {
+                    None
+                };
+                let new_query = search_view.build_search_query(cx, open_buffers);
                 if new_query.is_some()
                     && let Some(old_query) = search_view.entity.read(cx).active_query.clone()
                 {
@@ -1131,7 +1136,14 @@ impl ProjectSearchView {
     }
 
     fn search(&mut self, cx: &mut Context<Self>) {
-        if let Some(query) = self.build_search_query(cx) {
+        let open_buffers = if self.included_opened_only {
+            self.workspace
+                .update(cx, |workspace, cx| self.open_buffers(cx, workspace))
+                .ok()
+        } else {
+            None
+        };
+        if let Some(query) = self.build_search_query(cx, open_buffers) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
         }
     }
@@ -1140,15 +1152,14 @@ impl ProjectSearchView {
         self.query_editor.read(cx).text(cx)
     }
 
-    fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
+    fn build_search_query(
+        &mut self,
+        cx: &mut Context<Self>,
+        open_buffers: Option<Vec<Entity<Buffer>>>,
+    ) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
 
         let text = self.search_query_text(cx);
-        let open_buffers = if self.included_opened_only {
-            Some(self.open_buffers(cx))
-        } else {
-            None
-        };
         let included_files = self
             .filters_enabled
             .then(|| {
@@ -1284,17 +1295,13 @@ impl ProjectSearchView {
         query
     }
 
-    fn open_buffers(&self, cx: &mut Context<Self>) -> Vec<Entity<Buffer>> {
+    fn open_buffers(&self, cx: &App, workspace: &Workspace) -> Vec<Entity<Buffer>> {
         let mut buffers = Vec::new();
-        self.workspace
-            .update(cx, |workspace, cx| {
-                for editor in workspace.items_of_type::<Editor>(cx) {
-                    if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                        buffers.push(buffer);
-                    }
-                }
-            })
-            .ok();
+        for editor in workspace.items_of_type::<Editor>(cx) {
+            if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+                buffers.push(buffer);
+            }
+        }
         buffers
     }
 
@@ -4040,7 +4047,7 @@ pub mod tests {
 
                     // Scroll results all the way down
                     results_editor.scroll(
-                        Point::new(0., f32::MAX),
+                        Point::new(0., f64::MAX),
                         Some(Axis::Vertical),
                         window,
                         cx,

@@ -4176,7 +4176,6 @@ impl Workspace {
 
     pub fn adjacent_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
-            .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
             .unwrap_or_else(|| {
                 self.split_pane(self.active_pane.clone(), SplitDirection::Right, window, cx)
             })
@@ -4401,8 +4400,16 @@ impl Workspace {
     fn active_item_path_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
-        self.project
-            .update(cx, |project, cx| project.set_active_path(active_entry, cx));
+        self.project.update(cx, |project, cx| {
+            project.set_active_path(active_entry.clone(), cx)
+        });
+
+        if let Some(project_path) = &active_entry {
+            let git_store_entity = self.project.read(cx).git_store().clone();
+            git_store_entity.update(cx, |git_store, cx| {
+                git_store.set_active_repo_for_path(project_path, cx);
+            });
+        }
 
         self.update_window_title(window, cx);
     }
@@ -5554,6 +5561,13 @@ impl Workspace {
 
     fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.add_workspace_actions_listeners(div, window, cx)
+            .on_action(cx.listener(
+                |_workspace, action_sequence: &settings::ActionSequence, window, cx| {
+                    for action in &action_sequence.0 {
+                        window.dispatch_action(action.boxed_clone(), cx);
+                    }
+                },
+            ))
             .on_action(cx.listener(Self::close_inactive_items_and_panes))
             .on_action(cx.listener(Self::close_all_items_and_panes))
             .on_action(cx.listener(Self::save_all))
@@ -5975,7 +5989,7 @@ impl Workspace {
         self.left_dock.read_with(cx, |left_dock, cx| {
             let left_dock_size = left_dock
                 .active_panel_size(window, cx)
-                .unwrap_or(Pixels(0.0));
+                .unwrap_or(Pixels::ZERO);
             if left_dock_size + size > self.bounds.right() {
                 size = self.bounds.right() - left_dock_size
             }

@@ -2,7 +2,10 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
+use crate::{
+    DisplayRow, EditorStyle, ToOffset, ToPoint,
+    scroll::{ScrollAnchor, ScrollOffset},
+};
 use gpui::{Pixels, WindowTextSystem};
 use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -27,8 +30,8 @@ pub struct TextLayoutDetails {
     pub(crate) editor_style: EditorStyle,
     pub(crate) rem_size: Pixels,
     pub scroll_anchor: ScrollAnchor,
-    pub visible_rows: Option<f32>,
-    pub vertical_scroll_margin: f32,
+    pub visible_rows: Option<f64>,
+    pub vertical_scroll_margin: ScrollOffset,
 }
 
 /// Returns a column to the left of the current point, wrapping
@@ -1018,22 +1021,22 @@ mod tests {
                 [
                     Inlay::edit_prediction(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        buffer_snapshot.anchor_before(offset),
                         "test",
                     ),
                     Inlay::edit_prediction(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        buffer_snapshot.anchor_after(offset),
                         "test",
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        buffer_snapshot.anchor_before(offset),
                         "test",
                     ),
                     Inlay::mock_hint(
                         post_inc(&mut id),
-                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        buffer_snapshot.anchor_after(offset),
                         "test",
                     ),
                 ]
@@ -1220,13 +1223,13 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 2),
-                    SelectionGoal::HorizontalPosition(col_2_x.0),
+                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 0),
-                    SelectionGoal::HorizontalPosition(col_2_x.0),
+                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
                 ),
             );
             assert_eq!(
@@ -1251,26 +1254,26 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    SelectionGoal::HorizontalPosition(col_4_x.into()),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 3),
-                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                    SelectionGoal::HorizontalPosition(col_4_x.into())
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 3),
-                    SelectionGoal::HorizontalPosition(col_4_x.0),
+                    SelectionGoal::HorizontalPosition(col_4_x.into()),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_4_x.0)
+                    SelectionGoal::HorizontalPosition(col_4_x.into())
                 ),
             );
 
@@ -1282,26 +1285,26 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(3), 5),
-                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    SelectionGoal::HorizontalPosition(col_5_x.into()),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                    SelectionGoal::HorizontalPosition(col_5_x.into())
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_5_x.0),
+                    SelectionGoal::HorizontalPosition(col_5_x.into()),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(3), 5),
-                    SelectionGoal::HorizontalPosition(col_5_x.0)
+                    SelectionGoal::HorizontalPosition(col_5_x.into())
                 ),
             );
 
@@ -1326,13 +1329,13 @@ mod tests {
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(4), 2),
-                    SelectionGoal::HorizontalPosition(max_point_x.0),
+                    SelectionGoal::HorizontalPosition(max_point_x.into()),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(4), 2),
-                    SelectionGoal::HorizontalPosition(max_point_x.0)
+                    SelectionGoal::HorizontalPosition(max_point_x.into())
                 ),
             );
         });

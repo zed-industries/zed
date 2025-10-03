@@ -76,7 +76,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: usize = 0;
+const COMMAND_HINT_INLAY_ID: u32 = 0;
 
 impl MessageEditor {
     pub fn new(

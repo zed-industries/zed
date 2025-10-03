@@ -4,76 +4,44 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
-use gpui::{App, Entity, EntityId, Task, prelude::*};
-use language::{BufferSnapshot, ToPoint as _};
+use gpui::{App, Entity, Task, prelude::*};
+use language::ToPoint as _;
 use project::Project;
 use util::ResultExt as _;
 
-use crate::{Zeta, prediction::EditPrediction};
+use crate::{BufferEditPrediction, Zeta};
 
 pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
-    current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2>,
     last_request_timestamp: Instant,
+    project: Entity<Project>,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(
-        project: Option<&Entity<Project>>,
+        project: Entity<Project>,
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
         cx: &mut App,
     ) -> Self {
         let zeta = Zeta::global(client, user_store, cx);
-        if let Some(project) = project {
-            zeta.update(cx, |zeta, cx| {
-                zeta.register_project(project, cx);
-            });
-        }
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_project(&project, cx);
+        });
 
         Self {
             zeta,
-            current_prediction: None,
             next_pending_prediction_id: 0,
             pending_predictions: ArrayVec::new(),
             last_request_timestamp: Instant::now(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct CurrentEditPrediction {
-    buffer_id: EntityId,
-    prediction: EditPrediction,
-}
-
-impl CurrentEditPrediction {
-    fn should_replace_prediction(&self, old_prediction: &Self, snapshot: &BufferSnapshot) -> bool {
-        if self.buffer_id != old_prediction.buffer_id {
-            return true;
-        }
-
-        let Some(old_edits) = old_prediction.prediction.interpolate(snapshot) else {
-            return true;
-        };
-        let Some(new_edits) = self.prediction.interpolate(snapshot) else {
-            return false;
-        };
-
-        if old_edits.len() == 1 && new_edits.len() == 1 {
-            let (old_range, old_text) = &old_edits[0];
-            let (new_range, new_text) = &new_edits[0];
-            new_range == old_range && new_text.starts_with(old_text)
-        } else {
-            true
+            project: project,
         }
     }
 }
@@ -128,42 +96,31 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        project: Option<Entity<project::Project>>,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(project) = project else {
-            return;
-        };
+        let zeta = self.zeta.read(cx);
 
-        if self
-            .zeta
-            .read(cx)
-            .user_store
-            .read_with(cx, |user_store, _cx| {
-                user_store.account_too_young() || user_store.has_overdue_invoices()
-            })
-        {
+        if zeta.user_store.read_with(cx, |user_store, _cx| {
+            user_store.account_too_young() || user_store.has_overdue_invoices()
+        }) {
             return;
         }
 
-        if let Some(current_prediction) = self.current_prediction.as_ref() {
-            let snapshot = buffer.read(cx).snapshot();
-            if current_prediction
-                .prediction
-                .interpolate(&snapshot)
-                .is_some()
-            {
-                return;
-            }
+        if let Some(current) = zeta.current_prediction_for_buffer(&buffer, &self.project, cx)
+            && let BufferEditPrediction::Local { prediction } = current
+            && prediction.interpolate(buffer.read(cx)).is_some()
+        {
+            return;
         }
 
         let pending_prediction_id = self.next_pending_prediction_id;
         self.next_pending_prediction_id += 1;
         let last_request_timestamp = self.last_request_timestamp;
 
+        let project = self.project.clone();
         let task = cx.spawn(async move |this, cx| {
             if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
                 .checked_duration_since(Instant::now())
@@ -171,49 +128,22 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
                 cx.background_executor().timer(timeout).await;
             }
 
-            let prediction_request = this.update(cx, |this, cx| {
+            let refresh_task = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_prediction(&project, &buffer, cursor_position, cx)
+                    zeta.refresh_prediction(&project, &buffer, cursor_position, cx)
                 })
             });
 
-            let prediction = match prediction_request {
-                Ok(prediction_request) => {
-                    let prediction_request = prediction_request.await;
-                    prediction_request.map(|c| {
-                        c.map(|prediction| CurrentEditPrediction {
-                            buffer_id: buffer.entity_id(),
-                            prediction,
-                        })
-                    })
-                }
-                Err(error) => Err(error),
-            };
+            if let Some(refresh_task) = refresh_task.ok() {
+                refresh_task.await.log_err();
+            }
 
             this.update(cx, |this, cx| {
                 if this.pending_predictions[0].id == pending_prediction_id {
                     this.pending_predictions.remove(0);
                 } else {
                     this.pending_predictions.clear();
-                }
-
-                let Some(new_prediction) = prediction
-                    .context("edit prediction failed")
-                    .log_err()
-                    .flatten()
-                else {
-                    cx.notify();
-                    return;
-                };
-
-                if let Some(old_prediction) = this.current_prediction.as_ref() {
-                    let snapshot = buffer.read(cx).snapshot();
-                    if new_prediction.should_replace_prediction(old_prediction, &snapshot) {
-                        this.current_prediction = Some(new_prediction);
-                    }
-                } else {
-                    this.current_prediction = Some(new_prediction);
                 }
 
                 cx.notify();
@@ -248,15 +178,18 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     ) {
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
-        // TODO [zeta2] report accept
-        self.current_prediction.take();
+    fn accept(&mut self, cx: &mut Context<Self>) {
+        self.zeta.update(cx, |zeta, _cx| {
+            zeta.accept_current_prediction(&self.project);
+        });
         self.pending_predictions.clear();
     }
 
-    fn discard(&mut self, _cx: &mut Context<Self>) {
+    fn discard(&mut self, cx: &mut Context<Self>) {
+        self.zeta.update(cx, |zeta, _cx| {
+            zeta.discard_current_prediction(&self.project);
+        });
         self.pending_predictions.clear();
-        self.current_prediction.take();
     }
 
     fn suggest(
@@ -265,36 +198,44 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<edit_prediction::EditPrediction> {
-        let CurrentEditPrediction {
-            buffer_id,
-            prediction,
-            ..
-        } = self.current_prediction.as_mut()?;
+        let prediction =
+            self.zeta
+                .read(cx)
+                .current_prediction_for_buffer(buffer, &self.project, cx)?;
 
-        // Invalidate previous prediction if it was generated for a different buffer.
-        if *buffer_id != buffer.entity_id() {
-            self.current_prediction.take();
-            return None;
-        }
+        let prediction = match prediction {
+            BufferEditPrediction::Local { prediction } => prediction,
+            BufferEditPrediction::Jump { prediction } => {
+                return Some(edit_prediction::EditPrediction::Jump {
+                    id: Some(prediction.id.to_string().into()),
+                    snapshot: prediction.snapshot.clone(),
+                    target: prediction.edits.first().unwrap().0.start,
+                });
+            }
+        };
 
         let buffer = buffer.read(cx);
-        let Some(edits) = prediction.interpolate(&buffer.snapshot()) else {
-            self.current_prediction.take();
+        let snapshot = buffer.snapshot();
+
+        let Some(edits) = prediction.interpolate(&snapshot) else {
+            self.zeta.update(cx, |zeta, _cx| {
+                zeta.discard_current_prediction(&self.project);
+            });
             return None;
         };
 
-        let cursor_row = cursor_position.to_point(buffer).row;
+        let cursor_row = cursor_position.to_point(&snapshot).row;
         let (closest_edit_ix, (closest_edit_range, _)) =
             edits.iter().enumerate().min_by_key(|(_, (range, _))| {
-                let distance_from_start = cursor_row.abs_diff(range.start.to_point(buffer).row);
-                let distance_from_end = cursor_row.abs_diff(range.end.to_point(buffer).row);
+                let distance_from_start = cursor_row.abs_diff(range.start.to_point(&snapshot).row);
+                let distance_from_end = cursor_row.abs_diff(range.end.to_point(&snapshot).row);
                 cmp::min(distance_from_start, distance_from_end)
             })?;
 
         let mut edit_start_ix = closest_edit_ix;
         for (range, _) in edits[..edit_start_ix].iter().rev() {
-            let distance_from_closest_edit =
-                closest_edit_range.start.to_point(buffer).row - range.end.to_point(buffer).row;
+            let distance_from_closest_edit = closest_edit_range.start.to_point(&snapshot).row
+                - range.end.to_point(&snapshot).row;
             if distance_from_closest_edit <= 1 {
                 edit_start_ix -= 1;
             } else {
@@ -305,7 +246,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         let mut edit_end_ix = closest_edit_ix + 1;
         for (range, _) in &edits[edit_end_ix..] {
             let distance_from_closest_edit =
-                range.start.to_point(buffer).row - closest_edit_range.end.to_point(buffer).row;
+                range.start.to_point(buffer).row - closest_edit_range.end.to_point(&snapshot).row;
             if distance_from_closest_edit <= 1 {
                 edit_end_ix += 1;
             } else {
@@ -313,7 +254,7 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             }
         }
 
-        Some(edit_prediction::EditPrediction {
+        Some(edit_prediction::EditPrediction::Local {
             id: Some(prediction.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(prediction.edit_preview.clone()),

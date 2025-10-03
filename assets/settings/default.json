@@ -1,5 +1,7 @@
 {
-  "project_name": null,
+  /// The displayed name of this project. If not set or empty, the root directory name
+  /// will be displayed.
+  "project_name": "",
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -1241,6 +1243,9 @@
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    "blame": {
+      "show_avatar": true
     },
     // Control which information is shown in the branch picker.
     "branch_picker": {

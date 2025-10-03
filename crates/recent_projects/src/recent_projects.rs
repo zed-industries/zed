@@ -328,7 +328,12 @@ impl PickerDelegate for RecentProjectsDelegate {
             &Default::default(),
             cx.background_executor().clone(),
         ));
-        self.matches.sort_unstable_by_key(|m| m.candidate_id);
+        self.matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score) // Descending score
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id)) // Ascending candidate_id for ties
+        });
 
         if self.reset_selected_match_index {
             self.selected_match_index = self
@@ -683,8 +688,8 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |div, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })
     }
