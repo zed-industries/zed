@@ -1,7 +1,9 @@
 use hashbrown::HashTable;
 use regex::Regex;
 use std::{
+    borrow::Cow,
     hash::{Hash, Hasher as _},
+    path::Path,
     sync::LazyLock,
 };
 
@@ -80,6 +82,23 @@ impl Occurrences {
             .map(|entry| entry.count)
             .unwrap_or(0)
     }
+}
+
+impl From<&Path> for Occurrences {
+    fn from(path: &Path) -> Self {
+        // TODO: hash each component and add to the hash directly?
+        // we wouldn't be able to use split_identifier as is, but maybe it could work with bytes?
+        Self::from_identifiers(iter_path_without_extension(path))
+    }
+}
+
+fn iter_path_without_extension(path: &Path) -> impl Iterator<Item = Cow<'_, str>> {
+    let last_component = path.file_stem().map(|stem| stem.to_string_lossy());
+    let mut path_components = path.components();
+    path_components.next_back();
+    path_components
+        .map(|component| component.as_os_str().to_string_lossy())
+        .chain(last_component)
 }
 
 pub fn fx_hash<T: Hash + ?Sized>(data: &T) -> u64 {
@@ -268,5 +287,20 @@ mod test {
         // Numerator is the same as weighted_jaccard_similarity. Denominator is the total weight of
         // the smaller set, 10.
         assert_eq!(weighted_overlap_coefficient(&set_a, &set_b), 7.0 / 10.0);
+    }
+
+    #[test]
+    fn test_iter_path_without_extension() {
+        let mut iter = iter_path_without_extension(Path::new(""));
+        assert_eq!(iter.next(), None);
+
+        let iter = iter_path_without_extension(Path::new("foo"));
+        assert_eq!(iter.collect::<Vec<_>>(), ["foo"]);
+
+        let iter = iter_path_without_extension(Path::new("foo/bar.txt"));
+        assert_eq!(iter.collect::<Vec<_>>(), ["foo", "bar"]);
+
+        let iter = iter_path_without_extension(Path::new("foo/bar/baz.txt"));
+        assert_eq!(iter.collect::<Vec<_>>(), ["foo", "bar", "baz"]);
     }
 }

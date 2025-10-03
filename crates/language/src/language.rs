@@ -1321,7 +1321,7 @@ pub struct ImportsConfig {
     pub import_ix: u32,
     pub name_ix: Option<u32>,
     pub namespace_ix: Option<u32>,
-    pub file_ix: Option<u32>,
+    pub module_path_ix: Option<u32>,
     pub list_ix: Option<u32>,
     pub wildcard_ix: Option<u32>,
     pub alias_ix: Option<u32>,
@@ -1620,7 +1620,7 @@ impl Language {
         let mut import_ix = 0;
         let mut name_ix = None;
         let mut namespace_ix = None;
-        let mut file_ix = None;
+        let mut module_path_ix = None;
         let mut list_ix = None;
         let mut wildcard_ix = None;
         let mut alias_ix = None;
@@ -1633,7 +1633,7 @@ impl Language {
                 Capture::Required("import", &mut import_ix),
                 Capture::Optional("name", &mut name_ix),
                 Capture::Optional("namespace", &mut namespace_ix),
-                Capture::Optional("file", &mut file_ix),
+                Capture::Optional("module_path", &mut module_path_ix),
                 Capture::Optional("list", &mut list_ix),
                 Capture::Optional("wildcard", &mut wildcard_ix),
                 Capture::Optional("alias", &mut alias_ix),
@@ -1644,7 +1644,7 @@ impl Language {
                 import_ix,
                 name_ix,
                 namespace_ix,
-                file_ix,
+                module_path_ix,
                 list_ix,
                 wildcard_ix,
                 alias_ix,

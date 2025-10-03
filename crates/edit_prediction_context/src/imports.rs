@@ -5,6 +5,7 @@ use language::BufferSnapshot;
 use language::ImportsConfig;
 use language::LanguageId;
 use std::io::Result as IoResult;
+use std::path::Path;
 use std::sync::Arc;
 use std::{borrow::Cow, ops::Range};
 use text::OffsetRangeExt;
@@ -12,6 +13,7 @@ use util::RangeExt;
 use util::paths::PathStyle;
 
 use crate::Identifier;
+use crate::text_similarity::Occurrences;
 
 // Future improvements:
 //
@@ -38,18 +40,33 @@ pub struct Imports {
     pub all_imports_range: Option<Range<usize>>,
     pub identifier_to_imports: HashMap<Identifier, Vec<Import>>,
     // todo!
-    pub wildcard_namespaces: Vec<Namespace>,
+    pub wildcard_modules: Vec<Module>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Import {
     Direct {
-        namespace: Namespace,
+        module: Module,
     },
     Alias {
-        namespace: Namespace,
+        module: Module,
         external_identifier: Identifier,
     },
+}
+
+#[derive(Debug, Clone)]
+pub enum Module {
+    Path(Arc<Path>),
+    Namespace(Namespace),
+}
+
+impl Into<Occurrences> for &Module {
+    fn into(self) -> Occurrences {
+        match self {
+            Module::Path(path) => path.as_ref().into(),
+            Module::Namespace(namespace) => Occurrences::from_identifiers(&namespace.0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -66,7 +83,7 @@ impl Imports {
 
         let mut detached_nodes: Vec<DetachedNode> = Vec::new();
         let mut identifier_to_imports = HashMap::default();
-        let mut wildcard_namespaces = Vec::new();
+        let mut wildcard_modules = Vec::new();
         let mut all_imports_range: Option<Range<usize>> = None;
         let mut import_range = None;
 
@@ -77,7 +94,7 @@ impl Imports {
                 import_ix,
                 name_ix,
                 namespace_ix,
-                file_ix,
+                module_path_ix,
                 list_ix,
                 wildcard_ix,
                 alias_ix,
@@ -88,6 +105,7 @@ impl Imports {
             let mut new_import_range = None;
             let mut namespace_range = None;
             let mut alias_range = None;
+            let mut module_path_range = None;
             let mut content: Option<(Range<usize>, NodeKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
@@ -98,6 +116,9 @@ impl Imports {
                     namespace_range = Some(capture_range);
                 } else if Some(capture.index) == *alias_ix {
                     alias_range = Some(capture_range);
+                } else if Some(capture.index) == *module_path_ix {
+                    // TODO: use to create Module::Path instead of Module::Namespace
+                    module_path_range = Some(capture_range);
                 } else {
                     let mut found_content = None;
                     if Some(capture.index) == *name_ix {
@@ -134,7 +155,7 @@ impl Imports {
                     &detached_nodes,
                     &snapshot,
                     &mut identifier_to_imports,
-                    &mut wildcard_namespaces,
+                    &mut wildcard_modules,
                 );
                 detached_nodes.clear();
                 all_imports_range
@@ -169,13 +190,13 @@ impl Imports {
             &detached_nodes,
             &snapshot,
             &mut identifier_to_imports,
-            &mut wildcard_namespaces,
+            &mut wildcard_modules,
         );
 
         Imports {
             all_imports_range,
             identifier_to_imports,
-            wildcard_namespaces,
+            wildcard_modules,
         }
     }
 
@@ -183,7 +204,7 @@ impl Imports {
         detached_nodes: &[DetachedNode],
         snapshot: &BufferSnapshot,
         identifier_to_imports: &mut HashMap<Identifier, Vec<Import>>,
-        wildcard_namespaces: &mut Vec<Namespace>,
+        wildcard_modules: &mut Vec<Module>,
     ) {
         let mut trees = Vec::new();
 
@@ -201,7 +222,7 @@ impl Imports {
                 snapshot,
                 &mut namespace,
                 identifier_to_imports,
-                wildcard_namespaces,
+                wildcard_modules,
             );
         }
     }
@@ -244,7 +265,7 @@ impl Imports {
         snapshot: &BufferSnapshot,
         namespace: &mut Namespace,
         identifier_to_imports: &mut HashMap<Identifier, Vec<Import>>,
-        wildcard_namespaces: &mut Vec<Namespace>,
+        wildcard_modules: &mut Vec<Module>,
     ) {
         let mut pop_count = 0;
 
@@ -270,7 +291,7 @@ impl Imports {
                             })
                             .or_default()
                             .push(Import::Direct {
-                                namespace: namespace.clone(),
+                                module: Module::Namespace(namespace.clone()),
                             });
                     } else {
                         let alias_name: Arc<str> = range_text(snapshot, &tree.alias);
@@ -284,7 +305,7 @@ impl Imports {
                                 })
                                 .or_default()
                                 .push(Import::Alias {
-                                    namespace: namespace.clone(),
+                                    module: Module::Namespace(namespace.clone()),
                                     external_identifier: Identifier {
                                         language_id: tree.language_id,
                                         name: external_name,
@@ -293,7 +314,7 @@ impl Imports {
                         }
                     }
                 }
-                NodeKind::Wildcard => wildcard_namespaces.push(namespace.clone()),
+                NodeKind::Wildcard => wildcard_modules.push(Module::Namespace(namespace.clone())),
             }
         } else {
             for child in &tree.content_children {
@@ -302,7 +323,7 @@ impl Imports {
                     snapshot,
                     namespace,
                     identifier_to_imports,
-                    wildcard_namespaces,
+                    wildcard_modules,
                 );
             }
         }
@@ -656,7 +677,7 @@ mod test {
             })
             .chain(
                 imports
-                    .wildcard_namespaces
+                    .wildcard_modules
                     .iter()
                     .map(|namespace| namespace.to_identifier_parts("WILDCARD")),
             )
@@ -756,12 +777,26 @@ mod test {
     impl Import {
         fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
             match self {
-                Import::Direct { namespace } => namespace.to_identifier_parts(identifier),
+                Import::Direct { module } => module.to_identifier_parts(identifier),
                 Import::Alias {
-                    namespace,
+                    module,
                     external_identifier: external_name,
-                } => namespace
-                    .to_identifier_parts(&format!("{} AS {}", external_name.name, identifier)),
+                } => {
+                    module.to_identifier_parts(&format!("{} AS {}", external_name.name, identifier))
+                }
+            }
+        }
+    }
+
+    impl Module {
+        fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
+            match self {
+                Self::Namespace(namespace) => namespace.to_identifier_parts(identifier),
+                Self::Path(path) => path
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy().into())
+                    .chain(std::iter::once(identifier.to_string()))
+                    .collect(),
             }
         }
     }
