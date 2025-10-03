@@ -144,7 +144,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General Page",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -303,7 +302,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
@@ -663,7 +661,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Editor",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
@@ -1360,7 +1357,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Languages & Frameworks",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1393,7 +1389,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Workbench & Window",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Workbench"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1497,7 +1492,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Panels & Tools",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Project Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1702,7 +1696,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Version Control",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Git"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1865,7 +1858,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "System & Network",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
                 // todo(settings_ui): Proxy needs a default
@@ -1905,7 +1897,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Diagnostics & Errors",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Display"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2123,7 +2114,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Collaboration",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Calls"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2203,7 +2193,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "AI",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2226,7 +2215,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "Project",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2246,7 +2234,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2318,7 +2305,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Editing",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
@@ -2797,7 +2783,6 @@ struct NavBarEntry {
 
 struct SettingsPage {
     title: &'static str,
-    expanded: bool,
     items: Vec<SettingsPageItem>,
 }
 
@@ -3062,43 +3047,22 @@ impl SettingsWindow {
         let toggle_page_index = self.page_index_from_navbar_index(ix);
         let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
 
-        let expanded = &mut self.page_for_navbar_index(ix).expanded;
+        let expanded = &mut self.navbar_entries[ix].expanded;
         *expanded = !*expanded;
         // if currently selected page is a child of the parent page we are folding,
         // set the current page to the parent page
         if !*expanded && selected_page_index == toggle_page_index {
             self.navbar_entry = ix;
         }
-        // else if selected_page_index > toggle_page_index {
-        //     let sub_items_count = self.pages[toggle_page_index]
-        //         .items
-        //         .iter()
-        //         .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-        //         .count();
-        //     if expanded {
-        //         self.navbar_entry += sub_items_count;
-        //     } else {
-        //         self.navbar_entry -= sub_items_count;
-        //     }
-        // }
-
-        // self.build_navbar();
     }
 
     fn build_navbar(&mut self) {
         let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
         for (page_index, page) in self.pages.iter().enumerate() {
-            if !self.search_matches[page_index]
-                .iter()
-                .any(|is_match| *is_match)
-                && !self.search_matches[page_index].is_empty()
-            {
-                continue;
-            }
             navbar_entries.push(NavBarEntry {
                 title: page.title,
                 is_root: true,
-                expanded: page.expanded,
+                expanded: false,
                 page_index,
                 item_index: None,
             });
@@ -3123,7 +3087,6 @@ impl SettingsWindow {
         let mut index = 0;
         let entries = &self.navbar_entries;
         let search_matches = &self.search_matches;
-        let pages = &self.pages;
         std::iter::from_fn(move || {
             if index >= self.navbar_entries.len() {
                 return None;
@@ -3134,6 +3097,7 @@ impl SettingsWindow {
                     search_matches[entry.page_index][item_index]
                 } else {
                     search_matches[entry.page_index].iter().any(|b| *b)
+                        && !search_matches[entry.page_index].is_empty()
                 };
                 if included_in_search {
                     break;
@@ -3144,7 +3108,7 @@ impl SettingsWindow {
             let entry_index = index;
 
             index += 1;
-            if entry.is_root && !pages[entry.page_index].expanded {
+            if entry.is_root && !entry.expanded {
                 while index < entries.len() {
                     if entries[index].is_root {
                         break;
@@ -3164,7 +3128,6 @@ impl SettingsWindow {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
-            self.build_navbar();
             cx.notify();
             return;
         }
@@ -3230,7 +3193,6 @@ impl SettingsWindow {
                     page[header_index] = true;
                     page[item_index] = true;
                 }
-                this.build_navbar();
                 this.navbar_entry = 0;
                 cx.notify();
             })
@@ -3330,16 +3292,12 @@ impl SettingsWindow {
                                     .root_item(entry.is_root)
                                     .toggle_state(this.is_navbar_entry_selected(ix))
                                     .when(entry.is_root, |item| {
-                                        item.expanded(
-                                            this.pages[this.page_index_from_navbar_index(ix)]
-                                                .expanded,
-                                        )
-                                        .on_toggle(
-                                            cx.listener(move |this, _, _, cx| {
+                                        item.expanded(entry.expanded).on_toggle(cx.listener(
+                                            move |this, _, _, cx| {
                                                 this.toggle_navbar_entry(ix);
                                                 cx.notify();
-                                            }),
-                                        )
+                                            },
+                                        ))
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.navbar_entry = ix;
@@ -3691,7 +3649,6 @@ mod test {
         ) -> Self {
             let page = SettingsPage {
                 title,
-                expanded: false,
                 items: Vec::default(),
             };
 
@@ -3789,7 +3746,6 @@ mod test {
 
                 current_page = Some(SettingsPage {
                     title: line.split_once(" ").unwrap().1,
-                    expanded,
                     items: Vec::default(),
                 });
             } else if line.starts_with("-") {
