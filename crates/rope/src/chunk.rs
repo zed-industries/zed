@@ -633,6 +633,8 @@ fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::iter::once;
+
     use super::*;
     use rand::prelude::*;
     use util::RandomCharIter;
@@ -707,15 +709,24 @@ mod tests {
     }
 
     #[gpui::test(iterations = 1000)]
-    fn append_random_strings(mut rng: StdRng) {
+    fn test_append_random_strings(mut rng: StdRng) {
         let len1 = rng.random_range(0..=MAX_BASE);
         let len2 = rng.random_range(0..=MAX_BASE).saturating_sub(len1);
         let str1 = random_string_with_utf8_len(&mut rng, len1);
         let str2 = random_string_with_utf8_len(&mut rng, len2);
         let mut chunk1 = Chunk::new(&str1);
         let chunk2 = Chunk::new(&str2);
-        chunk1.append(chunk2.as_slice());
-        verify_chunk(chunk1.as_slice(), &(str1 + &str2));
+        let chunk2chars = str2
+            .char_indices()
+            .map(|(i, _c)| i)
+            .chain(once(str2.len()))
+            .collect::<Vec<usize>>();
+        let start_index = rng.random_range(0..chunk2chars.len());
+        let end_index = rng.random_range(start_index..chunk2chars.len());
+        let start_byte = chunk2chars[start_index];
+        let end_byte = chunk2chars[end_index];
+        chunk1.append(chunk2.slice(start_byte..end_byte));
+        verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_byte..end_byte]));
     }
 
     fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
