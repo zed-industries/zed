@@ -633,8 +633,6 @@ fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::iter::once;
-
     use super::*;
     use rand::prelude::*;
     use util::RandomCharIter;
@@ -647,9 +645,8 @@ mod tests {
         verify_chunk(chunk.as_slice(), &text);
 
         // Verify Chunk::chars() bitmap
-        let expected_chars = text
-            .char_indices()
-            .map(|(i, _c)| i)
+        let expected_chars = char_offsets(&text)
+            .into_iter()
             .inspect(|i| assert!(*i < 128))
             .fold(0u128, |acc, i| acc | (1 << i));
         assert_eq!(chunk.chars(), expected_chars);
@@ -715,17 +712,27 @@ mod tests {
         let str2 = random_string_with_utf8_len(&mut rng, len2);
         let mut chunk1 = Chunk::new(&str1);
         let chunk2 = Chunk::new(&str2);
-        let chunk2chars = str2
-            .char_indices()
-            .map(|(i, _c)| i)
-            .chain(once(str2.len()))
-            .collect::<Vec<usize>>();
-        let start_index = rng.random_range(0..chunk2chars.len());
-        let end_index = rng.random_range(start_index..chunk2chars.len());
-        let start_byte = chunk2chars[start_index];
-        let end_byte = chunk2chars[end_index];
-        chunk1.append(chunk2.slice(start_byte..end_byte));
-        verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_byte..end_byte]));
+        let char_offsets = char_offsets_with_end(&str2);
+        let start_index = rng.random_range(0..char_offsets.len());
+        let start_offset = char_offsets[start_index];
+        let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
+        chunk1.append(chunk2.slice(start_offset..end_offset));
+        verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_offset..end_offset]));
+    }
+
+    /// Return the byte offsets for each character in a string.
+    ///
+    /// These are valid offsets to split the string.
+    fn char_offsets(text: &str) -> Vec<usize> {
+        text.char_indices().map(|(i, _c)| i).collect()
+    }
+
+    /// Return the byte offsets for each character in a string, plus the offset
+    /// past the end of the string.
+    fn char_offsets_with_end(text: &str) -> Vec<usize> {
+        let mut v = char_offsets(text);
+        v.push(text.len());
+        v
     }
 
     fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
