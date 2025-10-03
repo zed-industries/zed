@@ -874,7 +874,6 @@ impl AcpThread {
                     cx,
                 );
 
-                // Flush any pending output
                 if let Some(mut chunks) = self.pending_terminal_output.remove(&terminal_id) {
                     for data in chunks.drain(..) {
                         entity.update(cx, |term, cx| {
@@ -885,9 +884,7 @@ impl AcpThread {
                     }
                 }
 
-                // Apply any pending exit
                 if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    // For now, just notify views; summary handling can be extended later.
                     entity.update(cx, |_term, cx| {
                         cx.notify();
                     });
@@ -2320,7 +2317,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Generate a terminal id
         let terminal_id = acp::TerminalId(uuid::Uuid::new_v4().to_string().into());
 
         // Send Output BEFORE Created - should be buffered by acp_thread
@@ -2334,7 +2330,7 @@ mod tests {
             );
         });
 
-        // Create a display-only lower-level terminal and then send Created
+        // Create a display-only terminal and then send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
                 None,
@@ -2450,8 +2446,6 @@ mod tests {
             content.contains("pre-exit data"),
             "expected pre-exit data to render, got: {content}"
         );
-
-        // We don't assert exit summary here yet, just that nothing panicked and output flushed.
     }
 
     #[gpui::test]
