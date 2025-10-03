@@ -1157,7 +1157,7 @@ impl Terminal {
 
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
-        // This bypasses the PTY/event loop, enabling display-only terminals.
+        // This bypasses the PTY/event loop for display-only terminals.
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
             alacritty_terminal::vte::ansi::StdSyncHandler,
         >::new();
