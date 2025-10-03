@@ -1133,12 +1133,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         rs_editor
             .update(cx, |editor, _window, cx| {
-                // TODO: Here, we do not get "2", because inserting another language server will trigger `RefreshInlayHints` event from the `LspStore`
-                // A project is listened in every editor, so each of them will react to this event.
-                //
-                // We do not have language server IDs for remote projects, so cannot easily say on the editor level,
-                // whether we should ignore a particular `RefreshInlayHints` event.
-                let expected_hints = vec!["3".to_string()];
+                let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
@@ -1181,7 +1176,7 @@ pub mod tests {
             .unwrap();
         rs_editor
             .update(cx, |editor, _window, cx| {
-                let expected_hints = vec!["3".to_string()];
+                let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor, cx),
