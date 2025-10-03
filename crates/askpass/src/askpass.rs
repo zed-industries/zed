@@ -85,8 +85,20 @@ impl AskPassSession {
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = UnixListener::bind(&askpass_socket).context("creating askpass socket")?;
-        let zed_cli_path =
-            util::get_shell_safe_zed_cli_path().context("getting zed-cli path for askpass")?;
+
+        let current_exe =
+            std::env::current_exe().context("Failed to determine current executable")?;
+        let is_remote_server = current_exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("zed-remote-server-"));
+
+        let zed_cli_path = if is_remote_server {
+            util::get_shell_safe_zed_path()
+        } else {
+            util::get_shell_safe_zed_cli_path()
+        }
+        .context("getting zed-cli path for askpass")?;
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let mut kill_tx = Some(askpass_kill_master_tx);
