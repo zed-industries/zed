@@ -1364,6 +1364,17 @@ impl DisplaySnapshot {
             .cloned()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn text_key_highlight_ranges<Tag: ?Sized + 'static>(
+        &self,
+        key: usize,
+    ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        let type_id = TypeId::of::<Tag>();
+        self.text_highlights
+            .get(&HighlightKey::TypePlus(type_id, key))
+            .cloned()
+    }
+
     #[allow(unused)]
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(

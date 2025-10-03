@@ -2402,6 +2402,12 @@ impl Editor {
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
             editor.update_lsp_data(false, None, window, cx);
+            // todo!
+            editor.refresh_bracket_highlights(
+                BracketRefreshReason::ScrollPositionChanged,
+                window,
+                cx,
+            );
         }
 
         if editor.mode.is_full() {
