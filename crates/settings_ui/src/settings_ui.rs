@@ -3193,20 +3193,29 @@ impl SettingsWindow {
                     page[header_index] = true;
                     page[item_index] = true;
                 }
-                this.navbar_entry = 0;
+                let first_navbar_entry_index = this
+                    .visible_navbar_entries()
+                    .next()
+                    .map(|e| e.0)
+                    .unwrap_or(0);
+                this.navbar_entry = first_navbar_entry_index;
                 cx.notify();
             })
             .ok();
         }));
     }
 
-    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.pages = self.current_file.pages();
+    fn build_search_matches(&mut self) {
         self.search_matches = self
             .pages
             .iter()
             .map(|page| vec![true; page.items.len()])
             .collect::<Vec<_>>();
+    }
+
+    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.pages = self.current_file.pages();
+        self.build_search_matches();
         self.build_navbar();
 
         if !self.search_bar.read(cx).is_empty(cx) {
@@ -3634,6 +3643,7 @@ mod test {
         }
 
         fn build(mut self) -> Self {
+            self.build_search_matches();
             self.build_navbar();
             self
         }
@@ -3662,13 +3672,25 @@ mod test {
 
         fn assert_search_results(&self, other: &Self) {
             // page index could be different because of filtered out pages
-            assert!(
-                self.navbar_entries
-                    .iter()
-                    .zip(other.navbar_entries.iter())
-                    .all(|(entry, other)| {
-                        entry.is_root == other.is_root && entry.title == other.title
+            #[derive(Debug, PartialEq)]
+            struct EntryMinimal {
+                is_root: bool,
+                title: &'static str,
+            }
+            pretty_assertions::assert_eq!(
+                other
+                    .visible_navbar_entries()
+                    .map(|(_, entry)| EntryMinimal {
+                        is_root: entry.is_root,
+                        title: entry.title,
                     })
+                    .collect::<Vec<_>>(),
+                self.visible_navbar_entries()
+                    .map(|(_, entry)| EntryMinimal {
+                        is_root: entry.is_root,
+                        title: entry.title,
+                    })
+                    .collect::<Vec<_>>(),
             );
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
@@ -3806,10 +3828,10 @@ mod test {
         let expected_settings_window = parse(after, window, cx);
 
         pretty_assertions::assert_eq!(
-            settings_window.visible_navbar_entries().collect::<Vec<_>>(),
             expected_settings_window
                 .visible_navbar_entries()
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            settings_window.visible_navbar_entries().collect::<Vec<_>>(),
         );
         assert_eq!(
             settings_window.navbar_entry(),
