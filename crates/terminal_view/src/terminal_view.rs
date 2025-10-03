@@ -508,6 +508,7 @@ impl TerminalView {
     }
 
     fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let settings = TerminalSettings::get_global(cx);
         let terminal_content = self.terminal.read(cx).last_content();
 
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
@@ -522,7 +523,9 @@ impl TerminalView {
                 return;
             }
         }
-        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
+        self.terminal.update(cx, |term, _| {
+            term.scroll_wheel(event, settings.scroll_multiplier)
+        });
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {

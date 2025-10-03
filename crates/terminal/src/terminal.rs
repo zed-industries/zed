@@ -1785,15 +1785,10 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, cx: &Context<Self>) {
-        let settings = TerminalSettings::get_global(cx);
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, scroll_multiplier: f32) {
         let mouse_mode = self.mouse_mode(e.shift);
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(
-            e,
-            mouse_mode,
-            settings.scroll_multiplier.unwrap_or(SCROLL_MULTIPLIER),
-        ) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode, scroll_multiplier) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
