@@ -1785,10 +1785,15 @@ impl Terminal {
     }
 
     ///Scroll the terminal
-    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent) {
+    pub fn scroll_wheel(&mut self, e: &ScrollWheelEvent, cx: &Context<Self>) {
+        let settings = TerminalSettings::get_global(cx);
         let mouse_mode = self.mouse_mode(e.shift);
 
-        if let Some(scroll_lines) = self.determine_scroll_lines(e, mouse_mode) {
+        if let Some(scroll_lines) = self.determine_scroll_lines(
+            e,
+            mouse_mode,
+            settings.scroll_multiplier.unwrap_or(SCROLL_MULTIPLIER),
+        ) {
             if mouse_mode {
                 let point = grid_point(
                     e.position - self.last_content.terminal_bounds.bounds.origin,
@@ -1821,8 +1826,13 @@ impl Terminal {
         self.word_from_position(window.mouse_position());
     }
 
-    fn determine_scroll_lines(&mut self, e: &ScrollWheelEvent, mouse_mode: bool) -> Option<i32> {
-        let scroll_multiplier = if mouse_mode { 1. } else { SCROLL_MULTIPLIER };
+    fn determine_scroll_lines(
+        &mut self,
+        e: &ScrollWheelEvent,
+        mouse_mode: bool,
+        multiplier: f32,
+    ) -> Option<i32> {
+        let scroll_multiplier = if mouse_mode { 1. } else { multiplier };
         let line_height = self.last_content.terminal_bounds.line_height;
         match e.touch_phase {
             /* Reset scroll state on started */

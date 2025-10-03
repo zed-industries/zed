@@ -106,6 +106,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: 10_000
     pub max_scroll_history_lines: Option<usize>,
+    /// The multiplier for scrolling with the mouse wheel.
+    ///
+    /// Default: 4.0 for macOS, 1.0 for other platforms
+    pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
     /// Scrollbar-related settings
