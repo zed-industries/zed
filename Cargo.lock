@@ -14558,6 +14558,7 @@ dependencies = [
  "strum 0.27.1",
  "theme",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "workspace-hack",

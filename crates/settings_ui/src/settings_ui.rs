@@ -26,6 +26,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
     prelude::*,
 };
+use ui_input::{NumericStepper, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -369,16 +370,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): We need to implement a numeric stepper for these
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Font Size",
-                //     description: "Font size for editor text",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_font_size,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Font Size",
+                    description: "Font size for editor text",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_font_size,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
+                    }),
+                    metadata: None,
+                }),
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Buffer Font Weight",
                 //     description: "Font weight for editor text (100-900)",
@@ -2705,6 +2705,9 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<f32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
         });
 
     // todo(settings_ui): Figure out how we want to handle discriminant unions
@@ -3412,6 +3415,27 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
             }
         })
         .color(SwitchColor::Accent)
+        .into_any_element()
+}
+
+fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
+    field: SettingField<T>,
+    file: SettingsUiFile,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+
+    NumericStepper::new("numeric_stepper", value, window, cx)
+        .on_change({
+            move |value, _window, cx| {
+                let value = *value;
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(value);
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            }
+        })
         .into_any_element()
 }
 
