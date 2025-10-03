@@ -646,6 +646,14 @@ mod tests {
         let chunk = Chunk::new(&text);
         verify_chunk(chunk.as_slice(), &text);
 
+        // Verify Chunk::chars() bitmap
+        let expected_chars = text
+            .char_indices()
+            .map(|(i, _c)| i)
+            .inspect(|i| assert!(*i < 128))
+            .fold(0u128, |acc, i| acc | (1 << i));
+        assert_eq!(chunk.chars(), expected_chars);
+
         for _ in 0..10 {
             let mut start = rng.random_range(0..=chunk.text.len());
             let mut end = rng.random_range(start..=chunk.text.len());
