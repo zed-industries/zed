@@ -24,6 +24,7 @@ fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
+paths.workspace = true
 project.workspace = true
 serde.workspace = true
 settings.workspace = true
