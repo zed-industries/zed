@@ -339,6 +339,29 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    pub fn new_display_only(
+        working_directory: Option<PathBuf>,
+        cursor_shape: CursorShape,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        window_id: u64,
+        cx: &App,
+    ) -> Result<TerminalBuilder> {
+        Self::new(
+            working_directory,
+            None,
+            Shell::System,
+            HashMap::default(),
+            cursor_shape,
+            alternate_scroll,
+            max_scroll_history_lines,
+            false,
+            window_id,
+            None,
+            cx,
+            Vec::new(),
+        )
+    }
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -378,31 +401,40 @@ impl TerminalBuilder {
             title_override: Option<SharedString>,
         }
 
+        impl ShellParams {
+            fn new(
+                program: String,
+                args: Option<Vec<String>>,
+                title_override: Option<SharedString>,
+            ) -> Self {
+                log::info!("Using {program} as shell");
+                Self {
+                    program,
+                    args,
+                    title_override,
+                }
+            }
+        }
+
         let shell_params = match shell.clone() {
             Shell::System => {
                 #[cfg(target_os = "windows")]
                 {
-                    Some(ShellParams {
-                        program: util::get_windows_system_shell(),
-                        ..Default::default()
-                    })
+                    Some(ShellParams::new(
+                        util::shell::get_windows_system_shell(),
+                        None,
+                        None,
+                    ))
                 }
                 #[cfg(not(target_os = "windows"))]
                 None
             }
-            Shell::Program(program) => Some(ShellParams {
-                program,
-                ..Default::default()
-            }),
+            Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
                 program,
                 args,
                 title_override,
-            } => Some(ShellParams {
-                program,
-                args: Some(args),
-                title_override,
-            }),
+            } => Some(ShellParams::new(program, Some(args), title_override)),
         };
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
@@ -1121,6 +1153,19 @@ impl Terminal {
     pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
         self.term_config.default_cursor_style = cursor_shape.into();
         self.term.lock().set_options(self.term_config.clone());
+    }
+
+    pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        // Inject bytes directly into the terminal emulator and refresh the UI.
+        // This bypasses the PTY/event loop for display-only terminals.
+        let mut processor = alacritty_terminal::vte::ansi::Processor::<
+            alacritty_terminal::vte::ansi::StdSyncHandler,
+        >::new();
+        {
+            let mut term = self.term.lock();
+            processor.advance(&mut *term, bytes);
+        }
+        cx.emit(Event::Wakeup);
     }
 
     pub fn total_lines(&self) -> usize {
@@ -2262,6 +2307,17 @@ mod tests {
         assert_eq!(
             terminal.update(cx, |term, _| term.get_content()).trim(),
             "hello"
+        );
+
+        // Inject additional output directly into the emulator (display-only path)
+        terminal.update(cx, |term, cx| {
+            term.write_output(b"\nfrom_injection", cx);
+        });
+
+        let content_after = terminal.update(cx, |term, _| term.get_content());
+        assert!(
+            content_after.contains("from_injection"),
+            "expected injected output to appear, got: {content_after}"
         );
     }
 

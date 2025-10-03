@@ -18,7 +18,9 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::RowExt;
 use editor::SelectionEffects;
+use editor::scroll::ScrollOffset;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
     MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
@@ -744,7 +746,7 @@ impl InlineAssistant {
                 let scroll_bottom = scroll_top + editor.visible_line_count().unwrap_or(0.);
                 editor_assists.scroll_lock = editor
                     .row_for_block(decorations.prompt_block_id, cx)
-                    .map(|row| row.0 as f32)
+                    .map(|row| row.as_f64())
                     .filter(|prompt_row| (scroll_top..scroll_bottom).contains(&prompt_row))
                     .map(|prompt_row| InlineAssistScrollLock {
                         assist_id,
@@ -910,7 +912,9 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let scroll_position = editor.scroll_position(cx);
-            let target_scroll_top = editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32
+            let target_scroll_top = editor
+                .row_for_block(decorations.prompt_block_id, cx)?
+                .as_f64()
                 - scroll_lock.distance_from_top;
             if target_scroll_top != scroll_position.y {
                 editor.set_scroll_position(point(scroll_position.x, target_scroll_top), window, cx);
@@ -959,8 +963,9 @@ impl InlineAssistant {
                     if let Some(decorations) = assist.decorations.as_ref() {
                         let distance_from_top = editor.update(cx, |editor, cx| {
                             let scroll_top = editor.scroll_position(cx).y;
-                            let prompt_row =
-                                editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32;
+                            let prompt_row = editor
+                                .row_for_block(decorations.prompt_block_id, cx)?
+                                .0 as ScrollOffset;
                             Some(prompt_row - scroll_top)
                         });
 
@@ -1192,8 +1197,8 @@ impl InlineAssistant {
             let mut scroll_target_range = None;
             if let Some(decorations) = assist.decorations.as_ref() {
                 scroll_target_range = maybe!({
-                    let top = editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32;
-                    let bottom = editor.row_for_block(decorations.end_block_id, cx)?.0 as f32;
+                    let top = editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f64;
+                    let bottom = editor.row_for_block(decorations.end_block_id, cx)?.0 as f64;
                     Some((top, bottom))
                 });
                 if scroll_target_range.is_none() {
@@ -1207,15 +1212,15 @@ impl InlineAssistant {
                     .start
                     .to_display_point(&snapshot.display_snapshot)
                     .row();
-                let top = start_row.0 as f32;
+                let top = start_row.0 as ScrollOffset;
                 let bottom = top + 1.0;
                 (top, bottom)
             });
             let mut scroll_target_top = scroll_target_range.0;
             let mut scroll_target_bottom = scroll_target_range.1;
 
-            scroll_target_top -= editor.vertical_scroll_margin() as f32;
-            scroll_target_bottom += editor.vertical_scroll_margin() as f32;
+            scroll_target_top -= editor.vertical_scroll_margin() as ScrollOffset;
+            scroll_target_bottom += editor.vertical_scroll_margin() as ScrollOffset;
 
             let height_in_lines = editor.visible_line_count().unwrap_or(0.);
             let scroll_top = editor.scroll_position(cx).y;
@@ -1543,7 +1548,7 @@ struct EditorInlineAssists {
 
 struct InlineAssistScrollLock {
     assist_id: InlineAssistId,
-    distance_from_top: f32,
+    distance_from_top: ScrollOffset,
 }
 
 impl EditorInlineAssists {

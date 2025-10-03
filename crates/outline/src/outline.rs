@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use editor::scroll::ScrollOffset;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
@@ -130,7 +131,7 @@ struct OutlineViewDelegate {
     active_editor: Entity<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
-    prev_scroll_position: Option<Point<f32>>,
+    prev_scroll_position: Option<Point<ScrollOffset>>,
     matches: Vec<StringMatch>,
     last_query: String,
 }

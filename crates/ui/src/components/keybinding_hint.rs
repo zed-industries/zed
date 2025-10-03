@@ -249,7 +249,7 @@ impl RenderOnce for KeybindingHint {
                         blur_radius: px(0.),
                         spread_radius: px(0.),
                     }])
-                    .child(self.keybinding.size(rems_from_px(kb_size.0))),
+                    .child(self.keybinding.size(rems_from_px(kb_size))),
             )
             .children(self.suffix)
     }

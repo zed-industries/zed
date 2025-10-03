@@ -14,7 +14,7 @@ use crate::{
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use collections::HashMap;
-use futures::StreamExt;
+use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
     VisualTestContext, WindowBounds, WindowOptions, div,
@@ -782,12 +782,12 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             assert!(pop_history(&mut editor, cx).is_none());
 
             // Set scroll position to check later
-            editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), window, cx);
+            editor.set_scroll_position(gpui::Point::<f64>::new(5.5, 5.5), window, cx);
             let original_scroll_position = editor.scroll_manager.anchor();
 
             // Jump to the end of the document and adjust scroll
             editor.move_to_end(&MoveToEnd, window, cx);
-            editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), window, cx);
+            editor.set_scroll_position(gpui::Point::<f64>::new(-2.5, -0.5), window, cx);
             assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
             let nav_entry = pop_history(&mut editor, cx).unwrap();
@@ -817,7 +817,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             );
             assert_eq!(
                 editor.scroll_position(cx),
-                gpui::Point::new(0., editor.max_point(cx).row().as_f32())
+                gpui::Point::new(0., editor.max_point(cx).row().as_f64())
             );
 
             editor
@@ -11931,14 +11931,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
             Formatter::LanguageServer { name: None },
-            Formatter::CodeActions(
-                [
-                    ("code-action-1".into(), true),
-                    ("code-action-2".into(), true),
-                ]
-                .into_iter()
-                .collect(),
-            ),
+            Formatter::CodeAction("code-action-1".into()),
+            Formatter::CodeAction("code-action-2".into()),
         ])))
     });
 
@@ -26358,6 +26352,119 @@ async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_mult
         "this will embed -> [link]({url})ˇ\nthis will replace -> {url}ˇ"
     ));
 }
+
+#[gpui::test]
+async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "first.rs": "# First Document\nSome content here.",
+            "second.rs": "Plain text content for second file.",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let language = rust_lang();
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(language.clone());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer1 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(PathBuf::from(path!("/project/first.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer2 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(PathBuf::from(path!("/project/second.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer1, cx),
+            buffer1.clone(),
+            [Point::zero()..buffer1.read(cx).max_point()],
+            3,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer2, cx),
+            buffer2.clone(),
+            [Point::zero()..buffer1.read(cx).max_point()],
+            3,
+            cx,
+        );
+        multi_buffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let fake_language_server = fake_servers.next().await.unwrap();
+
+    buffer1.update(cx, |buffer, cx| buffer.edit([(0..0, "hello!")], None, cx));
+
+    let save = editor.update_in(cx, |editor, window, cx| {
+        assert!(editor.is_dirty(cx));
+
+        editor.save(
+            SaveOptions {
+                format: true,
+                autosave: true,
+            },
+            project,
+            window,
+            cx,
+        )
+    });
+    let (start_edit_tx, start_edit_rx) = oneshot::channel();
+    let (done_edit_tx, done_edit_rx) = oneshot::channel();
+    let mut done_edit_rx = Some(done_edit_rx);
+    let mut start_edit_tx = Some(start_edit_tx);
+
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| {
+        start_edit_tx.take().unwrap().send(()).unwrap();
+        let done_edit_rx = done_edit_rx.take().unwrap();
+        async move {
+            done_edit_rx.await.unwrap();
+            Ok(None)
+        }
+    });
+
+    start_edit_rx.await.unwrap();
+    buffer2
+        .update(cx, |buffer, cx| buffer.edit([(0..0, "world!")], None, cx))
+        .unwrap();
+
+    done_edit_tx.send(()).unwrap();
+
+    save.await.unwrap();
+    cx.update(|_, cx| assert!(editor.is_dirty(cx)));
+}
+
 #[track_caller]
 fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
     editor

@@ -40,7 +40,8 @@ impl ModalContainerProperties {
         let font_size = style.font_size.to_pixels(window.rem_size());
 
         if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
-            modal_width = preferred_char_width as f32 * em_width.0 + (container_padding * 2.0);
+            modal_width =
+                f32::from(preferred_char_width as f32 * em_width + px(container_padding * 2.0));
         }
 
         Self {

@@ -46,7 +46,6 @@ clap = { version = "4", features = ["cargo", "derive", "string", "wrap_help"] }
 clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "std", "string", "suggestions", "usage", "wrap_help"] }
 concurrent-queue = { version = "2" }
 cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
-crc32fast = { version = "1" }
 crossbeam-channel = { version = "0.5" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
@@ -177,7 +176,6 @@ clap = { version = "4", features = ["cargo", "derive", "string", "wrap_help"] }
 clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "std", "string", "suggestions", "usage", "wrap_help"] }
 concurrent-queue = { version = "2" }
 cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
-crc32fast = { version = "1" }
 crossbeam-channel = { version = "0.5" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }

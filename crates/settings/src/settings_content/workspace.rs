@@ -156,7 +156,19 @@ pub struct PreviewTabsSettingsContent {
     pub enable_preview_from_code_navigation: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ClosePosition {
     Left,
@@ -164,7 +176,19 @@ pub enum ClosePosition {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ShowCloseButton {
     Always,
@@ -174,7 +198,18 @@ pub enum ShowCloseButton {
 }
 
 #[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
@@ -184,7 +219,19 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
@@ -212,7 +259,19 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
     /// Contained between the left and right docks
@@ -226,7 +285,19 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
-#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
     /// Match platform conventions by default, so "on" on macOS and "off" everywhere else
@@ -249,7 +320,18 @@ impl CloseWindowWhenNoItems {
 }
 
 #[derive(
-    Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
@@ -333,7 +415,19 @@ pub struct CenteredLayoutSettings {
     pub right_padding: Option<f32>,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OnLastWindowClosed {
     /// Match platform conventions by default, so don't quit on macOS, and quit on other platforms
