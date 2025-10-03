@@ -535,7 +535,7 @@ The [vim-exchange](https://github.com/tommcdo/vim-exchange) feature does not hav
 }
 ```
 
-### Restoring common text editing keybindings
+### Restoring common text editing and Zed keybindings
 
 If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
 
@@ -543,14 +543,15 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
 {
   "context": "Editor && !menu",
   "bindings": {
-    "ctrl-c": "editor::Copy",          // vim default: return to normal mode
-    "ctrl-x": "editor::Cut",           // vim default: decrement
-    "ctrl-v": "editor::Paste",         // vim default: visual block mode
-    "ctrl-y": "editor::Undo",          // vim default: line up
-    "ctrl-f": "buffer_search::Deploy", // vim default: page down
-    "ctrl-o": "workspace::Open",       // vim default: go back
-    "ctrl-s": "workspace::Save",       // vim default: show signature
-    "ctrl-a": "editor::SelectAll",     // vim default: increment
+    "ctrl-c": "editor::Copy",               // vim default: return to normal mode
+    "ctrl-x": "editor::Cut",                // vim default: decrement
+    "ctrl-v": "editor::Paste",              // vim default: visual block mode
+    "ctrl-y": "editor::Undo",               // vim default: line up
+    "ctrl-f": "buffer_search::Deploy",      // vim default: page down
+    "ctrl-o": "workspace::Open",            // vim default: go back
+    "ctrl-s": "workspace::Save",            // vim default: show signature
+    "ctrl-a": "editor::SelectAll",          // vim default: increment
+    "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },
 ```
