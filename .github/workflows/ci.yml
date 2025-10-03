@@ -871,8 +871,7 @@ jobs:
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        # Re-enable when we are ready to publish windows preview releases
-        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling'))
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
