@@ -2790,7 +2790,9 @@ struct SubPage {
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
+    expanded: bool,
     page_index: usize,
+    item_index: Option<usize>,
 }
 
 struct SettingsPage {
@@ -3062,25 +3064,25 @@ impl SettingsWindow {
 
         let expanded = &mut self.page_for_navbar_index(ix).expanded;
         *expanded = !*expanded;
-        let expanded = *expanded;
         // if currently selected page is a child of the parent page we are folding,
         // set the current page to the parent page
-        if selected_page_index == toggle_page_index {
+        if !*expanded && selected_page_index == toggle_page_index {
             self.navbar_entry = ix;
-        } else if selected_page_index > toggle_page_index {
-            let sub_items_count = self.pages[toggle_page_index]
-                .items
-                .iter()
-                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-                .count();
-            if expanded {
-                self.navbar_entry += sub_items_count;
-            } else {
-                self.navbar_entry -= sub_items_count;
-            }
         }
+        // else if selected_page_index > toggle_page_index {
+        //     let sub_items_count = self.pages[toggle_page_index]
+        //         .items
+        //         .iter()
+        //         .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
+        //         .count();
+        //     if expanded {
+        //         self.navbar_entry += sub_items_count;
+        //     } else {
+        //         self.navbar_entry -= sub_items_count;
+        //     }
+        // }
 
-        self.build_navbar();
+        // self.build_navbar();
     }
 
     fn build_navbar(&mut self) {
@@ -3096,28 +3098,63 @@ impl SettingsWindow {
             navbar_entries.push(NavBarEntry {
                 title: page.title,
                 is_root: true,
+                expanded: page.expanded,
                 page_index,
+                item_index: None,
             });
-            if !page.expanded {
-                continue;
-            }
 
             for (item_index, item) in page.items.iter().enumerate() {
                 let SettingsPageItem::SectionHeader(title) = item else {
                     continue;
                 };
-                if !self.search_matches[page_index][item_index] {
-                    continue;
-                }
-
                 navbar_entries.push(NavBarEntry {
                     title,
                     is_root: false,
+                    expanded: false,
                     page_index,
+                    item_index: Some(item_index),
                 });
             }
         }
         self.navbar_entries = navbar_entries;
+    }
+
+    fn visible_navbar_entries(&self) -> impl Iterator<Item = (usize, &NavBarEntry)> {
+        let mut index = 0;
+        let entries = &self.navbar_entries;
+        let search_matches = &self.search_matches;
+        let pages = &self.pages;
+        std::iter::from_fn(move || {
+            if index >= self.navbar_entries.len() {
+                return None;
+            }
+            while index < entries.len() {
+                let entry = &entries[index];
+                let included_in_search = if let Some(item_index) = entry.item_index {
+                    search_matches[entry.page_index][item_index]
+                } else {
+                    search_matches[entry.page_index].iter().any(|b| *b)
+                };
+                if included_in_search {
+                    break;
+                }
+                index += 1;
+            }
+            let entry = &entries[index];
+            let entry_index = index;
+
+            index += 1;
+            if entry.is_root && !pages[entry.page_index].expanded {
+                while index < entries.len() {
+                    if entries[index].is_root {
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+
+            return Some((entry_index, entry));
+        })
     }
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -3171,7 +3208,7 @@ impl SettingsWindow {
                 candidates.as_slice(),
                 &query,
                 false,
-                false,
+                true,
                 candidates.len(),
                 &atomic_bool,
                 cx.background_executor().clone(),
@@ -3285,16 +3322,15 @@ impl SettingsWindow {
                     "settings-ui-nav-bar",
                     self.navbar_entries.len(),
                     cx.processor(|this, range: Range<usize>, _, cx| {
-                        range
-                            .into_iter()
-                            .map(|ix| {
-                                let entry = &this.navbar_entries[ix];
-
+                        this.visible_navbar_entries()
+                            .skip(range.start.saturating_sub(1))
+                            .take(range.len())
+                            .map(|(ix, entry)| {
                                 TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
                                     .root_item(entry.is_root)
                                     .toggle_state(this.is_navbar_entry_selected(ix))
                                     .when(entry.is_root, |item| {
-                                        item.toggle(
+                                        item.expanded(
                                             this.pages[this.page_index_from_navbar_index(ix)]
                                                 .expanded,
                                         )
