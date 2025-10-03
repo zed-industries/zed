@@ -420,7 +420,7 @@ fn font_picker_stepper(
         let optimistic_font_size: gpui::Entity<Option<u32>> = window.use_state(cx, |_, _| None);
         optimistic_font_size.update(cx, |optimistic_font_size, _| {
             if let Some(optimistic_font_size_val) = optimistic_font_size {
-                if *optimistic_font_size_val == font_size.0 as u32 {
+                if *optimistic_font_size_val == u32::from(font_size) {
                     *optimistic_font_size = None;
                 }
             }
@@ -428,7 +428,7 @@ fn font_picker_stepper(
 
         let stepper_font_size = optimistic_font_size
             .read(cx)
-            .unwrap_or_else(|| font_size.0 as u32);
+            .unwrap_or_else(|| font_size.into());
 
         NumericStepper::new(
             SharedString::new(format!("{}-stepper", id)),
