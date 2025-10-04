@@ -335,7 +335,7 @@ impl Markdown {
 
                 for path in paths {
                     if let Ok(language) = registry
-                        .language_for_file_path(Path::new(path.as_ref()))
+                        .load_language_for_file_path(Path::new(path.as_ref()))
                         .await
                     {
                         languages_by_path.insert(path, language);

@@ -76,7 +76,7 @@ pub enum MessageEditorEvent {
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
-const COMMAND_HINT_INLAY_ID: usize = 0;
+const COMMAND_HINT_INLAY_ID: u32 = 0;
 
 impl MessageEditor {
     pub fn new(
@@ -1299,7 +1299,7 @@ impl Render for MessageEditor {
                     font_family: settings.buffer_font.family.clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
-                    font_size: settings.buffer_font_size(cx).into(),
+                    font_size: settings.agent_buffer_font_size(cx).into(),
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };

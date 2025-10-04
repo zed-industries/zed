@@ -55,6 +55,7 @@ pub fn init(cx: &mut App) {
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 pub enum Sound {
     Joined,
+    GuestJoined,
     Leave,
     Mute,
     Unmute,
@@ -67,6 +68,7 @@ impl Sound {
     fn file(&self) -> &'static str {
         match self {
             Self::Joined => "joined_call",
+            Self::GuestJoined => "guest_joined_call",
             Self::Leave => "leave_call",
             Self::Mute => "mute",
             Self::Unmute => "unmute",

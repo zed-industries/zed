@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.207.0"
+version = "0.208.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -25,7 +25,6 @@ agent.workspace = true
 agent_settings.workspace = true
 agent_ui.workspace = true
 anyhow.workspace = true
-askpass.workspace = true
 assets.workspace = true
 assistant_tools.workspace = true
 audio.workspace = true
@@ -190,7 +189,6 @@ project = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
-util_macros.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]

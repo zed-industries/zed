@@ -2,7 +2,7 @@
 use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, WeakEntity};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
 use language::LanguageRegistry;
 use project::LspStore;
 
@@ -103,12 +103,21 @@ pub fn resolve_schema_request_inner(
                 .into_iter()
                 .map(|name| name.to_string())
                 .collect::<Vec<_>>();
-            let icon_theme_names = &theme::ThemeRegistry::global(cx)
-                .list_icon_themes()
-                .into_iter()
-                .map(|icon_theme| icon_theme.name)
-                .collect::<Vec<SharedString>>();
-            let theme_names = &theme::ThemeRegistry::global(cx).list_names();
+
+            let mut icon_theme_names = vec![];
+            let mut theme_names = vec![];
+            if let Some(registry) = theme::ThemeRegistry::try_global(cx) {
+                icon_theme_names.extend(
+                    registry
+                        .list_icon_themes()
+                        .into_iter()
+                        .map(|icon_theme| icon_theme.name),
+                );
+                theme_names.extend(registry.list_names());
+            }
+            let icon_theme_names = icon_theme_names.as_slice();
+            let theme_names = theme_names.as_slice();
+
             cx.global::<settings::SettingsStore>().json_schema(
                 &settings::SettingsJsonSchemaParams {
                     language_names,

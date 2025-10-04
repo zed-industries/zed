@@ -212,9 +212,7 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/ruff",
     "extensions/slash-commands-example",
-    "extensions/snippets",
     "extensions/test-extension",
 
     #
@@ -474,9 +472,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-graphics = { version = "0.7.0" }
+blade-macros = { version = "0.3.0" }
+blade-util = { version = "0.3.0" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -550,6 +548,7 @@ nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
+num-traits = "0.2"
 objc = "0.2"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSArray",
@@ -620,7 +619,6 @@ runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
@@ -669,7 +667,7 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter = { version = "0.25.10", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -686,7 +684,7 @@ tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
-tree-sitter-python = { git = "https://github.com/zed-industries/tree-sitter-python", rev = "218fcbf3fda3d029225f3dec005cb497d111b35e" }
+tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"

@@ -240,6 +240,12 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Selects (count) next menu item
+        MenuSelectNext,
+        /// Selects (count) previous menu item
+        MenuSelectPrevious,
+        /// Clears count or toggles project panel focus
+        ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
     ]
@@ -269,6 +275,53 @@ pub fn init(cx: &mut App) {
             update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
+        });
+
+        workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &ToggleProjectPanelFocus, window, cx| {
+            if Vim::take_count(cx).is_none() {
+                window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|workspace, n: &Number, window, cx| {
+            let vim = workspace
+                .focused_pane(window, cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
+            if let Some(vim) = vim {
+                let digit = n.0;
+                vim.entity.update(cx, |_, cx| {
+                    cx.defer_in(window, move |vim, window, cx| {
+                        vim.push_count_digit(digit, window, cx)
+                    })
+                });
+            } else {
+                let count = Vim::globals(cx).pre_count.unwrap_or(0);
+                Vim::globals(cx).pre_count = Some(
+                    count
+                        .checked_mul(10)
+                        .and_then(|c| c.checked_add(n.0))
+                        .unwrap_or(count),
+                );
+            };
         });
 
         workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {

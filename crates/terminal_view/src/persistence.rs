@@ -458,7 +458,10 @@ impl TerminalDb {
             let mut next_index = statement.bind(&item_id, 1)?;
             next_index = statement.bind(&workspace_id, next_index)?;
             next_index = statement.bind(&working_directory, next_index)?;
-            statement.bind(&working_directory.to_string_lossy().to_string(), next_index)?;
+            statement.bind(
+                &working_directory.to_string_lossy().into_owned(),
+                next_index,
+            )?;
             statement.exec()
         })
         .await

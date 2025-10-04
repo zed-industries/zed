@@ -251,7 +251,7 @@
       "alt-enter": "agent::ContinueWithBurnMode",
       "ctrl-y": "agent::AllowOnce",
       "ctrl-alt-y": "agent::AllowAlways",
-      "ctrl-d": "agent::RejectOnce"
+      "ctrl-alt-z": "agent::RejectOnce"
     }
   },
   {
@@ -345,10 +345,21 @@
     }
   },
   {
-    "context": "AcpThread > Editor",
+    "context": "AcpThread > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
+      "ctrl-shift-r": "agent::OpenAgentDiff",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
+    }
+  },
+  {
+    "context": "AcpThread > Editor && use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "agent::Chat",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
       "ctrl-shift-n": "agent::RejectAll",

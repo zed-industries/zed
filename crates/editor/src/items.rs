@@ -5,7 +5,7 @@ use crate::{
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
-    scroll::ScrollAnchor,
+    scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -578,12 +578,11 @@ fn deserialize_selection(
 
 fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
-    Some(Anchor {
+    Some(Anchor::in_buffer(
         excerpt_id,
-        text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
-        buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
-        diff_base_anchor: None,
-    })
+        buffer.buffer_id_for_excerpt(excerpt_id)?,
+        language::proto::deserialize_anchor(anchor.anchor?)?,
+    ))
 }
 
 impl Item for Editor {
@@ -640,7 +639,7 @@ impl Item for Editor {
             .and_then(|f| f.as_local())?
             .abs_path(cx);
 
-        let file_path = file_path.compact().to_string_lossy().to_string();
+        let file_path = file_path.compact().to_string_lossy().into_owned();
 
         Some(file_path.into())
     }
@@ -833,12 +832,11 @@ impl Item for Editor {
 
         // let mut buffers_to_save =
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
-            buffers.clone()
+            buffers
         } else {
             buffers
-                .iter()
+                .into_iter()
                 .filter(|buffer| buffer.read(cx).is_dirty())
-                .cloned()
                 .collect()
         };
 
@@ -862,22 +860,6 @@ impl Item for Editor {
                         project.save_buffers(buffers_to_save.clone(), cx)
                     })?
                     .await?;
-            }
-
-            // Notify about clean buffers for language server events
-            let buffers_that_were_not_saved: Vec<_> = buffers
-                .into_iter()
-                .filter(|b| !buffers_to_save.contains(b))
-                .collect();
-
-            for buffer in buffers_that_were_not_saved {
-                buffer
-                    .update(cx, |buffer, cx| {
-                        let version = buffer.saved_version().clone();
-                        let mtime = buffer.saved_mtime();
-                        buffer.did_save(version, mtime, cx);
-                    })
-                    .ok();
             }
 
             Ok(())
@@ -1339,7 +1321,7 @@ struct EditorRestorationData {
 
 #[derive(Default, Debug)]
 pub struct RestorationData {
-    pub scroll_position: (BufferRow, gpui::Point<f32>),
+    pub scroll_position: (BufferRow, gpui::Point<ScrollOffset>),
     pub folds: Vec<Range<Point>>,
     pub selections: Vec<Range<Point>>,
 }
@@ -1752,13 +1734,8 @@ impl SearchableItem for Editor {
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    Anchor {
-                                        diff_base_anchor: Some(start),
-                                        ..deleted_hunk_anchor
-                                    }..Anchor {
-                                        diff_base_anchor: Some(end),
-                                        ..deleted_hunk_anchor
-                                    }
+                                    deleted_hunk_anchor.with_diff_base_anchor(start)
+                                        ..deleted_hunk_anchor.with_diff_base_anchor(end)
                                 } else {
                                     let start = search_buffer
                                         .anchor_after(search_range.start + match_range.start);
@@ -1909,7 +1886,7 @@ fn path_for_file<'a>(
                 return None;
             }
         }
-        Some(full_path.to_string_lossy().to_string().into())
+        Some(full_path.to_string_lossy().into_owned().into())
     } else {
         let mut path = file.path().strip_prefix(prefix).ok()?;
         if !include_filename {

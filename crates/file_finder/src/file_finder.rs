@@ -355,9 +355,9 @@ impl FileFinder {
         match width_setting {
             FileFinderWidth::Small => small_width,
             FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - Pixels(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - Pixels(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - Pixels(1024.)).max(small_width),
+            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
+            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
+            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
         }
     }
 }
@@ -559,7 +559,12 @@ impl Matches {
 
         let new_history_matches = matching_history_items(history_items, currently_opened, query);
         let new_search_matches: Vec<Match> = new_search_matches
-            .filter(|path_match| !new_history_matches.contains_key(&path_match.0.path))
+            .filter(|path_match| {
+                !new_history_matches.contains_key(&ProjectPath {
+                    path: path_match.0.path.clone(),
+                    worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                })
+            })
             .map(Match::Search)
             .collect();
 
@@ -690,7 +695,7 @@ fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
     query: &FileSearchQuery,
-) -> HashMap<Arc<RelPath>, Match> {
+) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
     let history_items_by_worktrees = history_items
@@ -744,9 +749,9 @@ fn matching_history_items<'a>(
                         worktree_id: WorktreeId::from_usize(path_match.worktree_id),
                         path: Arc::clone(&path_match.path),
                     })
-                    .map(|(_, found_path)| {
+                    .map(|(project_path, found_path)| {
                         (
-                            Arc::clone(&path_match.path),
+                            project_path.clone(),
                             Match::History {
                                 path: found_path.clone(),
                                 panel_match: Some(ProjectPanelOrdMatch(path_match)),

@@ -6,7 +6,7 @@ use editor::{
     hover_popover::diagnostics_markdown_style,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
-use language::{BufferId, Diagnostic, DiagnosticEntry};
+use language::{BufferId, Diagnostic, DiagnosticEntryRef};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownElement};
 use settings::Settings;
@@ -24,7 +24,7 @@ pub struct DiagnosticRenderer;
 
 impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         cx: &mut App,
@@ -35,7 +35,7 @@ impl DiagnosticRenderer {
         else {
             return Vec::new();
         };
-        let primary = diagnostic_group[primary_ix].clone();
+        let primary = &diagnostic_group[primary_ix];
         let group_id = primary.diagnostic.group_id;
         let mut results = vec![];
         for entry in diagnostic_group.iter() {
@@ -123,7 +123,7 @@ impl DiagnosticRenderer {
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
@@ -152,19 +152,15 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
 
     fn render_hover(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
         cx: &mut App,
     ) -> Option<Entity<Markdown>> {
         let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
-        blocks.into_iter().find_map(|block| {
-            if block.initial_range == range {
-                Some(block.markdown)
-            } else {
-                None
-            }
-        })
+        blocks
+            .into_iter()
+            .find_map(|block| (block.initial_range == range).then(|| block.markdown))
     }
 
     fn open_link(
@@ -189,7 +185,7 @@ pub(crate) struct DiagnosticBlock {
 impl DiagnosticBlock {
     pub fn render_block(&self, editor: WeakEntity<Editor>, bcx: &BlockContext) -> AnyElement {
         let cx = &bcx.app;
-        let status_colors = bcx.app.theme().status();
+        let status_colors = cx.theme().status();
 
         let max_width = bcx.em_width * 120.;
 

@@ -301,7 +301,7 @@ impl ProjectPicker {
                         update_settings_file(fs, cx, {
                             let paths = paths
                                 .iter()
-                                .map(|path| path.to_string_lossy().to_string())
+                                .map(|path| path.to_string_lossy().into_owned())
                                 .collect();
                             move |settings, _| match index {
                                 ServerIndex::Ssh(index) => {

@@ -1395,7 +1395,7 @@ impl BlockSnapshot {
         })
     }
 
-    pub fn sticky_header_excerpt(&self, position: f32) -> Option<StickyHeaderExcerpt<'_>> {
+    pub(crate) fn sticky_header_excerpt(&self, position: f64) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(());
         cursor.seek(&BlockRow(top_row), Bias::Right);

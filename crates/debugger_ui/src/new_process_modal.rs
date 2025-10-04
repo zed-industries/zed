@@ -1578,7 +1578,7 @@ impl PickerDelegate for DebugDelegate {
 
 pub(crate) fn resolve_path(path: &mut String) {
     if path.starts_with('~') {
-        let home = paths::home_dir().to_string_lossy().to_string();
+        let home = paths::home_dir().to_string_lossy().into_owned();
         let trimmed_path = path.trim().to_owned();
         *path = trimmed_path.replacen('~', &home, 1);
     } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {

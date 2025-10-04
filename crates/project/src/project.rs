@@ -33,6 +33,7 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+use task::Shell;
 
 use crate::{
     agent_server_store::{AgentServerStore, AllAgentServersSettings},
@@ -891,8 +892,8 @@ impl DirectoryLister {
         project
             .visible_worktrees(cx)
             .next()
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
-            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().into_owned())
+            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().into_owned()))
             .map(|mut s| {
                 s.push_str(path_style.separator());
                 s
@@ -1894,11 +1895,12 @@ impl Project {
 
     pub fn directory_environment(
         &self,
+        shell: &Shell,
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment(abs_path, cx)
+            environment.get_directory_environment_for_shell(shell, abs_path, cx)
         })
     }
 
@@ -4207,7 +4209,7 @@ impl Project {
                 let metadata = fs.metadata(&expanded).await.ok().flatten();
 
                 metadata.map(|metadata| ResolvedPath::AbsPath {
-                    path: expanded.to_string_lossy().to_string(),
+                    path: expanded.to_string_lossy().into_owned(),
                     is_dir: metadata.is_dir,
                 })
             })
@@ -5292,6 +5294,51 @@ impl Project {
     pub fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree_store.read(cx).path_style()
     }
+
+    pub fn contains_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: &RelPath,
+        cx: &App,
+    ) -> bool {
+        self.worktree_for_id(worktree_id, cx)
+            .map_or(false, |worktree| {
+                worktree.read(cx).entry_for_path(rel_path).is_some()
+            })
+    }
+
+    pub fn update_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: Arc<RelPath>,
+        cx: &mut App,
+        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
+    ) {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            // todo(settings_ui) error?
+            return;
+        };
+        cx.spawn(async move |cx| {
+            let file = worktree
+                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .await
+                .context("Failed to load settings file")?;
+
+            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
+                store.new_text_for_update(file.text, move |settings| update(settings, cx))
+            })?;
+            worktree
+                .update(cx, |worktree, cx| {
+                    let line_ending = text::LineEnding::detect(&new_text);
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                })?
+                .await
+                .context("Failed to write settings file")?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 }
 
 pub struct PathMatchCandidateSet {
@@ -5535,17 +5582,6 @@ impl Completion {
         }
         None
     }
-}
-
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
-    entries.sort_by(|entry_a, entry_b| {
-        let entry_a = entry_a.as_ref();
-        let entry_b = entry_b.as_ref();
-        compare_paths(
-            (entry_a.path.as_std_path(), entry_a.is_file()),
-            (entry_b.path.as_std_path(), entry_b.is_file()),
-        )
-    });
 }
 
 fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {

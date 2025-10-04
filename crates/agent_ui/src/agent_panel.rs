@@ -7,7 +7,7 @@ use acp_thread::AcpThread;
 use agent2::{DbThreadMetadata, HistoryEntry};
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::agent_server_store::{
-    AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
+    AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME,
 };
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -75,6 +75,7 @@ use zed_actions::{
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
+use feature_flags::{CodexAcpFeatureFlag, FeatureFlagAppExt as _};
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -216,6 +217,7 @@ pub enum AgentType {
     TextThread,
     Gemini,
     ClaudeCode,
+    Codex,
     NativeAgent,
     Custom {
         name: SharedString,
@@ -230,6 +232,7 @@ impl AgentType {
             Self::NativeAgent => "Agent 2".into(),
             Self::Gemini => "Gemini CLI".into(),
             Self::ClaudeCode => "Claude Code".into(),
+            Self::Codex => "Codex".into(),
             Self::Custom { name, .. } => name.into(),
         }
     }
@@ -239,6 +242,7 @@ impl AgentType {
             Self::Zed | Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
+            Self::Codex => Some(IconName::AiOpenAi),
             Self::Custom { .. } => Some(IconName::Terminal),
         }
     }
@@ -249,6 +253,7 @@ impl From<ExternalAgent> for AgentType {
         match value {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
+            ExternalAgent::Codex => Self::Codex,
             ExternalAgent::Custom { name, command } => Self::Custom { name, command },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
@@ -1103,15 +1108,15 @@ impl AgentPanel {
             WhichFontSize::AgentFont => {
                 if persist {
                     update_settings_file(self.fs.clone(), cx, move |settings, cx| {
-                        let agent_font_size =
-                            ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                        let agent_ui_font_size =
+                            ThemeSettings::get_global(cx).agent_ui_font_size(cx) + delta;
                         let _ = settings
                             .theme
-                            .agent_font_size
-                            .insert(theme::clamp_font_size(agent_font_size).into());
+                            .agent_ui_font_size
+                            .insert(theme::clamp_font_size(agent_ui_font_size).into());
                     });
                 } else {
-                    theme::adjust_agent_font_size(cx, |size| size + delta);
+                    theme::adjust_agent_ui_font_size(cx, |size| size + delta);
                 }
             }
             WhichFontSize::BufferFont => {
@@ -1131,10 +1136,10 @@ impl AgentPanel {
     ) {
         if action.persist {
             update_settings_file(self.fs.clone(), cx, move |settings, _| {
-                settings.theme.agent_font_size = None;
+                settings.theme.agent_ui_font_size = None;
             });
         } else {
-            theme::reset_agent_font_size(cx);
+            theme::reset_agent_ui_font_size(cx);
         }
     }
 
@@ -1426,6 +1431,11 @@ impl AgentPanel {
                     window,
                     cx,
                 )
+            }
+            AgentType::Codex => {
+                self.selected_agent = AgentType::Codex;
+                self.serialize(cx);
+                self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
             }
             AgentType::Custom { name, command } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name, command }),
@@ -1940,32 +1950,6 @@ impl AgentPanel {
                             .separator()
                             .header("External Agents")
                             .item(
-                                ContextMenuEntry::new("New Gemini CLI Thread")
-                                    .icon(IconName::AiGemini)
-                                    .icon_color(Color::Muted)
-                                    .disabled(is_via_collab)
-                                    .handler({
-                                        let workspace = workspace.clone();
-                                        move |window, cx| {
-                                            if let Some(workspace) = workspace.upgrade() {
-                                                workspace.update(cx, |workspace, cx| {
-                                                    if let Some(panel) =
-                                                        workspace.panel::<AgentPanel>(cx)
-                                                    {
-                                                        panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                AgentType::Gemini,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        });
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    }),
-                            )
-                            .item(
                                 ContextMenuEntry::new("New Claude Code Thread")
                                     .icon(IconName::AiClaude)
                                     .disabled(is_via_collab)
@@ -1991,12 +1975,66 @@ impl AgentPanel {
                                         }
                                     }),
                             )
+                            .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
+                                this.item(
+                                    ContextMenuEntry::new("New Codex Thread")
+                                        .icon(IconName::AiOpenAi)
+                                        .disabled(is_via_collab)
+                                        .icon_color(Color::Muted)
+                                        .handler({
+                                            let workspace = workspace.clone();
+                                            move |window, cx| {
+                                                if let Some(workspace) = workspace.upgrade() {
+                                                    workspace.update(cx, |workspace, cx| {
+                                                        if let Some(panel) =
+                                                            workspace.panel::<AgentPanel>(cx)
+                                                        {
+                                                            panel.update(cx, |panel, cx| {
+                                                                panel.new_agent_thread(
+                                                                    AgentType::Codex,
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                )
+                            })
+                            .item(
+                                ContextMenuEntry::new("New Gemini CLI Thread")
+                                    .icon(IconName::AiGemini)
+                                    .icon_color(Color::Muted)
+                                    .disabled(is_via_collab)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::Gemini,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
                             .map(|mut menu| {
                                 let agent_names = agent_server_store
                                     .read(cx)
                                     .external_agents()
                                     .filter(|name| {
-                                        name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME
+                                        name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
                                     })
                                     .cloned()
                                     .collect::<Vec<_>>();
@@ -2532,7 +2570,7 @@ impl Render for AgentPanel {
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
                     .child(content)
                     .into_any()

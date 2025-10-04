@@ -347,7 +347,7 @@ pub(crate) fn commit_message_editor(
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
         EditorMode::AutoHeight {
-            min_lines: 1,
+            min_lines: max_lines,
             max_lines: Some(max_lines),
         },
         buffer,
@@ -2085,7 +2085,7 @@ impl GitPanel {
                             .to_string()
                             .into()
                     } else {
-                        worktree_abs_path.to_string_lossy().to_string().into()
+                        worktree_abs_path.to_string_lossy().into_owned().into()
                     }
                 })
                 .collect_vec();
@@ -3458,7 +3458,7 @@ impl GitPanel {
                         if can_commit {
                             Tooltip::with_meta_in(
                                 tooltip,
-                                Some(&git::Commit),
+                                Some(if amend { &git::Amend } else { &git::Commit }),
                                 format!(
                                     "git commit{}{}",
                                     if amend { " --amend" } else { "" },
@@ -3527,7 +3527,7 @@ impl GitPanel {
                     div()
                         .flex_grow()
                         .overflow_hidden()
-                        .max_w(relative(0.85))
+                        .line_clamp(1)
                         .child(
                             Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)

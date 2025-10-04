@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
-    Bias, Editor, SelectionEffects, ToPoint,
+    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
@@ -16,6 +16,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
+use settings::{Settings, SettingsStore};
 use std::{
     iter::Peekable,
     ops::{Deref, Range},
@@ -80,6 +81,7 @@ pub enum VimOption {
     Wrap(bool),
     Number(bool),
     RelativeNumber(bool),
+    IgnoreCase(bool),
 }
 
 impl VimOption {
@@ -122,6 +124,10 @@ impl VimOption {
             (None, VimOption::RelativeNumber(false)),
             (Some("rnu"), VimOption::RelativeNumber(true)),
             (Some("nornu"), VimOption::RelativeNumber(false)),
+            (None, VimOption::IgnoreCase(true)),
+            (None, VimOption::IgnoreCase(false)),
+            (Some("ic"), VimOption::IgnoreCase(true)),
+            (Some("noic"), VimOption::IgnoreCase(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -143,6 +149,11 @@ impl VimOption {
             "norelativenumber" => Some(Self::RelativeNumber(false)),
             "nornu" => Some(Self::RelativeNumber(false)),
 
+            "ignorecase" => Some(Self::IgnoreCase(true)),
+            "ic" => Some(Self::IgnoreCase(true)),
+            "noignorecase" => Some(Self::IgnoreCase(false)),
+            "noic" => Some(Self::IgnoreCase(false)),
+
             _ => None,
         }
     }
@@ -155,6 +166,8 @@ impl VimOption {
             VimOption::Number(false) => "nonumber",
             VimOption::RelativeNumber(true) => "relativenumber",
             VimOption::RelativeNumber(false) => "norelativenumber",
+            VimOption::IgnoreCase(true) => "ignorecase",
+            VimOption::IgnoreCase(false) => "noignorecase",
         }
     }
 }
@@ -256,6 +269,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 }
                 VimOption::RelativeNumber(enabled) => {
                     editor.set_relative_line_number(Some(*enabled), cx);
+                }
+                VimOption::IgnoreCase(enabled) => {
+                    let mut settings = EditorSettings::get_global(cx).clone();
+                    settings.search.case_sensitive = !*enabled;
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    });
                 }
             });
         }
@@ -2045,9 +2065,10 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Editor;
+    use editor::{Editor, EditorSettings};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use settings::Settings;
     use util::path;
     use workspace::Workspace;
 
@@ -2603,6 +2624,54 @@ mod test {
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ignorecase_command(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should be `false` by default."
+            );
+        });
+        cx.simulate_keystrokes(": set space noignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space noic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noic`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ic`."
+            );
         });
     }
 }
