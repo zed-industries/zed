@@ -12,6 +12,9 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
+#[cfg(feature = "load-grammars")]
+pub use crate::comment::Comment;
+
 use crate::{
     json::JsonTaskProvider,
     python::{BasedPyrightLspAdapter, RuffLspAdapter},
@@ -19,6 +22,8 @@ use crate::{
 
 mod bash;
 mod c;
+#[cfg(feature = "load-grammars")]
+mod comment;
 mod css;
 mod go;
 mod json;
@@ -61,6 +66,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
         ("c", tree_sitter_c::LANGUAGE),
+        ("comment", tree_sitter_comment::LANGUAGE),
         ("cpp", tree_sitter_cpp::LANGUAGE),
         ("css", tree_sitter_css::LANGUAGE),
         ("diff", tree_sitter_diff::LANGUAGE),
@@ -428,5 +434,10 @@ fn load_queries(name: &str) -> LanguageQueries {
             }
         }
     }
+    LanguageInfo::update_injections(&paths::injections_dir(), name, &mut result);
     result
 }
+
+// Enable updating injection queries based on user configuration.
+// `LanguageInfo` represents a language built into Zed.
+impl UpdateInjections for LanguageInfo {}

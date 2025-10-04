@@ -79,3 +79,8 @@
   arguments: (arguments (template_string (string_fragment) @injection.content
                               (#set! injection.language "isograph")))
 )
+
+((comment) @injection.content
+    ; Do not match JSDoc comments starting with `/**`.
+    (#match? @injection.content "^/(?:/|[*][^*])")
+    (#set! injection.language "comment"))
