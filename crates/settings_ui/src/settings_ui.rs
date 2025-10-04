@@ -2853,10 +2853,14 @@ impl SettingsPageItem {
                     .gap_2()
                     .flex_wrap()
                     .justify_between()
-                    .when(!is_last, |this| {
-                        this.pb_4()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                    .map(|this| {
+                        if is_last {
+                            this.pb_6()
+                        } else {
+                            this.pb_4()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                        }
                     })
                     .child(
                         v_flex()
@@ -2866,10 +2870,7 @@ impl SettingsPageItem {
                                 h_flex()
                                     .w_full()
                                     .gap_4()
-                                    .child(
-                                        Label::new(SharedString::new_static(setting_item.title))
-                                            .size(LabelSize::Default),
-                                    )
+                                    .child(Label::new(SharedString::new_static(setting_item.title)))
                                     .when_some(
                                         file_set_in.filter(|file_set_in| file_set_in != &file),
                                         |elem, file_set_in| {
@@ -2910,15 +2911,18 @@ impl SettingsPageItem {
                         .border_color(cx.theme().colors().border_variant)
                 })
                 .child(
-                    v_flex().max_w_1_2().flex_shrink().child(
-                        Label::new(SharedString::new_static(sub_page_link.title))
-                            .size(LabelSize::Default),
-                    ),
+                    v_flex()
+                        .max_w_1_2()
+                        .flex_shrink()
+                        .child(Label::new(SharedString::new_static(sub_page_link.title))),
                 )
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
-                        .icon(Some(IconName::ChevronRight))
-                        .icon_position(Some(IconPosition::End))
+                        .size(ButtonSize::Medium)
+                        .icon(IconName::ChevronRight)
+                        .icon_position(IconPosition::End)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::Small)
                         .style(ButtonStyle::Outlined),
                 )
                 .on_click({
@@ -3371,6 +3375,7 @@ impl SettingsWindow {
 
         let mut page_content = v_flex()
             .id("settings-ui-page")
+            .size_full()
             .gap_4()
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle);
@@ -3402,20 +3407,35 @@ impl SettingsWindow {
                         ),
                 )
             } else {
-                page_content =
-                    page_content.children(items.into_iter().enumerate().map(|(index, item)| {
-                        let is_last = index == items_len - 1;
+                let last_non_header_index = items
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
+                    .map(|(index, _)| index);
+
+                page_content = page_content.children(items.clone().into_iter().enumerate().map(
+                    |(index, item)| {
+                        let no_bottom_border = items
+                            .get(index + 1)
+                            .map(|next_item| {
+                                matches!(next_item, SettingsPageItem::SectionHeader(_))
+                            })
+                            .unwrap_or(false);
+                        let is_last = Some(index) == last_non_header_index;
+
                         if let SettingsPageItem::SectionHeader(header) = item {
                             section_header = Some(*header);
                         }
                         item.render(
                             self.current_file.clone(),
                             section_header.expect("All items rendered after a section header"),
-                            is_last,
+                            no_bottom_border || is_last,
                             window,
                             cx,
                         )
-                    }))
+                    },
+                ))
             }
         } else {
             page = page.child(
@@ -3649,7 +3669,12 @@ where
             menu
         }),
     )
+    .trigger_size(ButtonSize::Medium)
     .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
     .into_any_element()
 }
 
