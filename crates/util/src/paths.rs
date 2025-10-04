@@ -62,6 +62,7 @@ pub trait PathExt {
     }
     fn local_to_wsl(&self) -> Option<PathBuf>;
     fn multiple_extensions(&self) -> Option<String>;
+    fn try_shell_safe(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -152,6 +153,29 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         Some(parts.into_iter().join("."))
+    }
+
+    /// Try to make a shell-safe representation of the path.
+    ///
+    /// For Unix, the path is escaped to be safe for POSIX shells
+    fn try_shell_safe(&self) -> anyhow::Result<String> {
+        #[cfg(target_os = "windows")]
+        {
+            Ok(self.as_ref().to_string_lossy().to_string())
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let path_str = self
+                .as_ref()
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+
+            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+            // errors are introduced in the future :(
+            Ok(shlex::try_quote(path_str)?.to_string())
+        }
     }
 }
 

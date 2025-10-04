@@ -20216,6 +20216,7 @@ dependencies = [
  "agent_ui",
  "anyhow",
  "ashpd 0.11.0",
+ "askpass",
  "assets",
  "assistant_tools",
  "audio",

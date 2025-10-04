@@ -290,26 +290,13 @@ fn load_shell_from_passwd() -> Result<()> {
 
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    let zed_path = std::env::current_exe()
-        .context("Failed to determine current zed executable path.")?
-        .to_string_lossy()
-        .trim_end_matches(" (deleted)") // see https://github.com/rust-lang/rust/issues/69343
-        .to_string();
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    #[cfg(target_os = "windows")]
-    {
-        Ok(zed_path)
-    }
-
-    // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
-    // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
-    // errors are introduced in the future :(
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(shlex::try_quote(&zed_path)
-            .context("Failed to shell-escape Zed executable path.")?
-            .to_string())
-    }
+    Ok(zed_path
+        .try_shell_safe()?
+        .trim_end_matches(" (deleted)") // See https://github.com/rust-lang/rust/issues/69343
+        .to_string())
 }
 
 /// Returns a shell escaped path for the zed cli executable, this function
@@ -1004,6 +991,8 @@ pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<
 pub fn default<D: Default>() -> D {
     Default::default()
 }
+
+use crate::paths::PathExt;
 
 pub use self::shell::{get_default_system_shell, get_system_shell};
 
