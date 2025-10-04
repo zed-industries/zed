@@ -289,6 +289,7 @@ pub struct AcpThreadView {
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
+    resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 5],
 }
@@ -398,7 +399,14 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
-            thread_state: Self::initial_state(agent, resume_thread, workspace, project, window, cx),
+            thread_state: Self::initial_state(
+                agent.clone(),
+                resume_thread.clone(),
+                workspace.clone(),
+                project.clone(),
+                window,
+                cx,
+            ),
             login: None,
             message_editor,
             model_selector: None,
@@ -427,13 +435,14 @@ impl AcpThreadView {
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
+            resume_thread_metadata: resume_thread,
         }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_state = Self::initial_state(
             self.agent.clone(),
-            None,
+            self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
             window,
