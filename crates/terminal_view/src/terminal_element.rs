@@ -392,7 +392,8 @@ impl TerminalElement {
                     continue;
                 }
                 // Update tracking for next iteration
-                previous_cell_had_extras = matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
+                previous_cell_had_extras =
+                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
                 //Layout current cell text
                 {
