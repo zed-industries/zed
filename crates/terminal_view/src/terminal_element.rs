@@ -114,8 +114,20 @@ impl BatchedTextRun {
     }
 
     fn append_char(&mut self, c: char) {
+        self.append_char_internal(c, true);
+    }
+
+    fn append_zero_width_chars(&mut self, chars: &[char]) {
+        for &c in chars {
+            self.append_char_internal(c, false);
+        }
+    }
+
+    fn append_char_internal(&mut self, c: char, counts_cell: bool) {
         self.text.push(c);
-        self.cell_count += 1;
+        if counts_cell {
+            self.cell_count += 1;
+        }
         self.style.len += c.len_utf8();
     }
 
@@ -380,7 +392,8 @@ impl TerminalElement {
                     continue;
                 }
                 // Update tracking for next iteration
-                previous_cell_had_extras = cell.extra.is_some();
+                previous_cell_had_extras =
+                    matches!(cell.zerowidth(), Some(chars) if !chars.is_empty());
 
                 //Layout current cell text
                 {
@@ -397,6 +410,7 @@ impl TerminalElement {
                         );
 
                         let cell_point = AlacPoint::new(alac_line, cell.point.column.0 as i32);
+                        let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
                         if let Some(ref mut batch) = current_batch {
@@ -406,25 +420,36 @@ impl TerminalElement {
                                     == cell_point.column
                             {
                                 batch.append_char(cell.c);
+                                if let Some(chars) = zero_width_chars {
+                                    batch.append_zero_width_chars(chars);
+                                }
                             } else {
                                 // Flush current batch and start new one
                                 let old_batch = current_batch.take().unwrap();
                                 batched_runs.push(old_batch);
-                                current_batch = Some(BatchedTextRun::new_from_char(
+                                let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
                                     cell.c,
                                     cell_style,
                                     text_style.font_size,
-                                ));
+                                );
+                                if let Some(chars) = zero_width_chars {
+                                    new_batch.append_zero_width_chars(chars);
+                                }
+                                current_batch = Some(new_batch);
                             }
                         } else {
                             // Start new batch
-                            current_batch = Some(BatchedTextRun::new_from_char(
+                            let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
                                 cell.c,
                                 cell_style,
                                 text_style.font_size,
-                            ));
+                            );
+                            if let Some(chars) = zero_width_chars {
+                                new_batch.append_zero_width_chars(chars);
+                            }
+                            current_batch = Some(new_batch);
                         }
                     };
                 }
@@ -1911,6 +1936,28 @@ mod tests {
         assert_eq!(batch.text, "xy😀");
         assert_eq!(batch.cell_count, 3);
         assert_eq!(batch.style.len, 6); // 1 + 1 + 4 bytes for emoji
+    }
+
+    #[test]
+    fn test_batched_text_run_append_zero_width_char() {
+        let style = TextRun {
+            len: 1,
+            font: font("Helvetica"),
+            color: Hsla::red(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+
+        let font_size = AbsoluteLength::Pixels(px(12.0));
+        let mut batch = BatchedTextRun::new_from_char(AlacPoint::new(0, 0), 'x', style, font_size);
+
+        let combining = '\u{0301}';
+        batch.append_zero_width_chars(&[combining]);
+
+        assert_eq!(batch.text, format!("x{}", combining));
+        assert_eq!(batch.cell_count, 1);
+        assert_eq!(batch.style.len, 1 + combining.len_utf8());
     }
 
     #[test]
