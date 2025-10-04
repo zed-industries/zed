@@ -123,6 +123,8 @@ use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 
+struct LanguageServerPrompt;
+
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
@@ -1241,11 +1243,19 @@ impl Workspace {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
-                project::Event::LanguageServerPrompt(request) => {
-                    struct LanguageServerPrompt;
-
+                project::Event::WillFormatWith(name) => {
                     let mut hasher = DefaultHasher::new();
-                    request.lsp_name.as_str().hash(&mut hasher);
+                    name.hash(&mut hasher);
+                    let id = hasher.finish();
+                    this.dismiss_notification(
+                        &NotificationId::composite::<LanguageServerPrompt>(id as usize),
+                        cx,
+                    );
+                }
+
+                project::Event::LanguageServerPrompt(request) => {
+                    let mut hasher = DefaultHasher::new();
+                    request.lsp_name.hash(&mut hasher);
                     let id = hasher.finish();
 
                     this.show_notification(

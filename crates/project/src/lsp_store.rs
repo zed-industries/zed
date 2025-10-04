@@ -1473,6 +1473,11 @@ impl LocalLspStore {
                         continue;
                     };
 
+                    let lsp_name = language_server.name().clone();
+                    lsp_store.update(cx, |_, cx| {
+                        cx.emit(LspStoreEvent::WillFormatWith(lsp_name));
+                    })?;
+
                     zlog::trace!(
                         logger =>
                         "Formatting buffer '{:?}' using language server '{:?}'",
@@ -3537,12 +3542,20 @@ pub enum LspFetchStrategy {
 pub enum LspStoreEvent {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
+    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
+    WillFormatWith(LanguageServerName),
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
         name: Option<LanguageServerName>,
         message: proto::update_language_server::Variant,
     },
-    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
+    LanguageServerBufferRegistered {
+        server_id: LanguageServerId,
+        buffer_id: BufferId,
+        buffer_abs_path: PathBuf,
+        name: Option<LanguageServerName>,
+    },
+
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageDetected {
         buffer: Entity<Buffer>,
