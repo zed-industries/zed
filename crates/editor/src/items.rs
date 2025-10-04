@@ -1278,6 +1278,12 @@ impl SerializableItem for Editor {
 
         let snapshot = buffer.read(cx).snapshot();
 
+        let serialize_dirty_buffers = self.serialize_dirty_buffers;
+
+        if abs_path.is_none() && !(serialize_dirty_buffers && is_dirty) {
+            return None;
+        }
+
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
