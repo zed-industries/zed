@@ -295,10 +295,9 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    Ok(zed_path
+    zed_path
         .try_shell_safe()
-        .context("Failed to shell-escape Zed executable path.")?
-        .to_string())
+        .context("Failed to shell-escape Zed executable path.")
 }
 
 /// Returns a path for the zed cli executable, this function
