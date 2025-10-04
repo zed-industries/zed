@@ -125,6 +125,12 @@ impl VsCodeSettings {
         }
     }
 
+    pub fn from_f32_setting<T: From<f32>>(&self, key: &str, setting: &mut Option<T>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
+            *setting = Some(T::from(s as f32))
+        }
+    }
+
     pub fn enum_setting<T>(
         &self,
         key: &str,

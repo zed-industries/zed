@@ -44,7 +44,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_size: Option<f32>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
-    pub buffer_font_weight: Option<f32>,
+    pub buffer_font_weight: Option<FontWeight>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,

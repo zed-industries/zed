@@ -606,7 +606,14 @@ impl DerefMut for LineWrapperHandle {
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
 pub struct FontWeight(pub f32);
+
+impl From<f32> for FontWeight {
+    fn from(weight: f32) -> Self {
+        FontWeight(weight)
+    }
+}
 
 impl Default for FontWeight {
     #[inline]

@@ -57,7 +57,8 @@ merge_from_overwrites!(
     gpui::SharedString,
     std::path::PathBuf,
     gpui::Modifiers,
-    gpui::FontFeatures
+    gpui::FontFeatures,
+    gpui::FontWeight
 );
 
 impl<T: Clone + MergeFrom> MergeFrom for Option<T> {
