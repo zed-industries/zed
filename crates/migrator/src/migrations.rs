@@ -105,3 +105,15 @@ pub(crate) mod m_2025_10_01 {
 
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
+
+pub(crate) mod m_2025_10_02 {
+    mod settings;
+
+    pub(crate) use settings::remove_formatters_on_save;
+}
+
+pub(crate) mod m_2025_10_03 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}

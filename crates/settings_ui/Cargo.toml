@@ -24,6 +24,7 @@ fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
+paths.workspace = true
 project.workspace = true
 serde.workspace = true
 settings.workspace = true
@@ -45,6 +46,7 @@ paths.workspace = true
 session.workspace = true
 settings.workspace = true
 zlog.workspace = true
+pretty_assertions.workspace = true
 
 [[example]]
 name = "ui"

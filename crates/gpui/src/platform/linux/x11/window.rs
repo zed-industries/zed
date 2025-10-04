@@ -1204,7 +1204,7 @@ impl PlatformWindow for X11Window {
             self.0.xcb.query_pointer(self.0.x_window),
         )
         .log_err()
-        .map_or(Point::new(Pixels(0.0), Pixels(0.0)), |reply| {
+        .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
             Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
         })
     }

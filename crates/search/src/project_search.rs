@@ -4047,7 +4047,7 @@ pub mod tests {
 
                     // Scroll results all the way down
                     results_editor.scroll(
-                        Point::new(0., f32::MAX),
+                        Point::new(0., f64::MAX),
                         Some(Axis::Vertical),
                         window,
                         cx,

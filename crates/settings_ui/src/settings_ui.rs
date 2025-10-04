@@ -1,11 +1,12 @@
 //! # settings_ui
 mod components;
+use anyhow::Result;
 use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    ScrollHandle, Stateful, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
     WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
@@ -25,7 +26,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
     prelude::*,
 };
-use util::{paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
 
@@ -143,7 +144,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General Page",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -302,7 +302,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
@@ -662,7 +661,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Editor",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
@@ -1358,8 +1356,39 @@ fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Languages & Frameworks",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Language Server",
+                    description: "Whether to use language servers to provide code intelligence",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .enable_language_server
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .enable_language_server
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Languages"),
+                SettingsPageItem::SubPageLink(SubPageLink {
+                    title: "JSON",
+                    render: Rc::new(|_, _, _| "A settings page!".into_any_element()),
+                }),
+            ],
+        },
+        SettingsPage {
             title: "Workbench & Window",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Workbench"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1384,7 +1413,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     description: "Whether to show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                            if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.active_language_button
                             } else {
                                 &None
@@ -1392,7 +1421,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .editor
                                 .status_bar
                                 .get_or_insert_default()
                                 .active_language_button
@@ -1405,7 +1433,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     description: "Whether to show the cursor position button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                            if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.cursor_position_button
                             } else {
                                 &None
@@ -1413,7 +1441,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .editor
                                 .status_bar
                                 .get_or_insert_default()
                                 .cursor_position_button
@@ -1463,7 +1490,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Panels & Tools",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Project Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1668,7 +1694,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Version Control",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Git"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1831,7 +1856,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "System & Network",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
                 // todo(settings_ui): Proxy needs a default
@@ -1871,7 +1895,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Diagnostics & Errors",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Display"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2089,7 +2112,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Collaboration",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Calls"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2169,7 +2191,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "AI",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2192,7 +2213,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "Project",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2212,7 +2232,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Appearance & Behavior",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2284,7 +2303,6 @@ fn project_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Editing",
-            expanded: false,
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
@@ -2741,18 +2759,28 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
+    /// The current sub page path that is selected.
+    /// If this is empty the selected page is rendered,
+    /// otherwise the last sub page gets rendered.
+    sub_page_stack: Vec<SubPage>,
+}
+
+struct SubPage {
+    link: SubPageLink,
+    section_header: &'static str,
 }
 
 #[derive(PartialEq, Debug)]
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
+    expanded: bool,
     page_index: usize,
+    item_index: Option<usize>,
 }
 
 struct SettingsPage {
     title: &'static str,
-    expanded: bool,
     items: Vec<SettingsPageItem>,
 }
 
@@ -2760,6 +2788,7 @@ struct SettingsPage {
 enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
+    SubPageLink(SubPageLink),
 }
 
 impl std::fmt::Debug for SettingsPageItem {
@@ -2769,6 +2798,9 @@ impl std::fmt::Debug for SettingsPageItem {
             SettingsPageItem::SettingItem(setting_item) => {
                 write!(f, "SettingItem({})", setting_item.title)
             }
+            SettingsPageItem::SubPageLink(sub_page_link) => {
+                write!(f, "SubPageLink({})", sub_page_link.title)
+            }
         }
     }
 }
@@ -2777,9 +2809,10 @@ impl SettingsPageItem {
     fn render(
         &self,
         file: SettingsUiFile,
+        section_header: &'static str,
         is_last: bool,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
@@ -2849,6 +2882,36 @@ impl SettingsPageItem {
                     ))
                     .into_any_element()
             }
+            SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
+                .id(sub_page_link.title)
+                .w_full()
+                .gap_2()
+                .flex_wrap()
+                .justify_between()
+                .when(!is_last, |this| {
+                    this.pb_4()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border_variant)
+                })
+                .child(
+                    v_flex().max_w_1_2().flex_shrink().child(
+                        Label::new(SharedString::new_static(sub_page_link.title))
+                            .size(LabelSize::Default),
+                    ),
+                )
+                .child(
+                    Button::new(("sub-page".into(), sub_page_link.title), "Configure")
+                        .icon(Some(IconName::ChevronRight))
+                        .icon_position(Some(IconPosition::End))
+                        .style(ButtonStyle::Outlined),
+                )
+                .on_click({
+                    let sub_page_link = sub_page_link.clone();
+                    cx.listener(move |this, _, _, cx| {
+                        this.push_sub_page(sub_page_link.clone(), section_header, cx)
+                    })
+                })
+                .into_any_element(),
         }
     }
 }
@@ -2869,6 +2932,18 @@ impl PartialEq for SettingItem {
                 (Some(m1), Some(m2)) => m1.placeholder == m2.placeholder,
                 _ => false,
             })
+    }
+}
+
+#[derive(Clone)]
+struct SubPageLink {
+    title: &'static str,
+    render: Rc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) -> AnyElement>,
+}
+
+impl PartialEq for SubPageLink {
+    fn eq(&self, other: &Self) -> bool {
+        self.title == other.title
     }
 }
 
@@ -2952,6 +3027,7 @@ impl SettingsWindow {
             search_bar,
             search_task: None,
             search_matches: vec![],
+            sub_page_stack: vec![],
         };
 
         this.fetch_files(cx);
@@ -2969,64 +3045,78 @@ impl SettingsWindow {
         let toggle_page_index = self.page_index_from_navbar_index(ix);
         let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
 
-        let expanded = &mut self.page_for_navbar_index(ix).expanded;
+        let expanded = &mut self.navbar_entries[ix].expanded;
         *expanded = !*expanded;
-        let expanded = *expanded;
         // if currently selected page is a child of the parent page we are folding,
         // set the current page to the parent page
-        if selected_page_index == toggle_page_index {
+        if !*expanded && selected_page_index == toggle_page_index {
             self.navbar_entry = ix;
-        } else if selected_page_index > toggle_page_index {
-            let sub_items_count = self.pages[toggle_page_index]
-                .items
-                .iter()
-                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-                .count();
-            if expanded {
-                self.navbar_entry += sub_items_count;
-            } else {
-                self.navbar_entry -= sub_items_count;
-            }
         }
-
-        self.build_navbar();
     }
 
     fn build_navbar(&mut self) {
         let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
         for (page_index, page) in self.pages.iter().enumerate() {
-            if !self.search_matches[page_index]
-                .iter()
-                .any(|is_match| *is_match)
-                && !self.search_matches[page_index].is_empty()
-            {
-                continue;
-            }
             navbar_entries.push(NavBarEntry {
                 title: page.title,
                 is_root: true,
+                expanded: false,
                 page_index,
+                item_index: None,
             });
-            if !page.expanded {
-                continue;
-            }
 
             for (item_index, item) in page.items.iter().enumerate() {
                 let SettingsPageItem::SectionHeader(title) = item else {
                     continue;
                 };
-                if !self.search_matches[page_index][item_index] {
-                    continue;
-                }
-
                 navbar_entries.push(NavBarEntry {
                     title,
                     is_root: false,
+                    expanded: false,
                     page_index,
+                    item_index: Some(item_index),
                 });
             }
         }
         self.navbar_entries = navbar_entries;
+    }
+
+    fn visible_navbar_entries(&self) -> impl Iterator<Item = (usize, &NavBarEntry)> {
+        let mut index = 0;
+        let entries = &self.navbar_entries;
+        let search_matches = &self.search_matches;
+        std::iter::from_fn(move || {
+            while index < entries.len() {
+                let entry = &entries[index];
+                let included_in_search = if let Some(item_index) = entry.item_index {
+                    search_matches[entry.page_index][item_index]
+                } else {
+                    search_matches[entry.page_index].iter().any(|b| *b)
+                        || search_matches[entry.page_index].is_empty()
+                };
+                if included_in_search {
+                    break;
+                }
+                index += 1;
+            }
+            if index >= self.navbar_entries.len() {
+                return None;
+            }
+            let entry = &entries[index];
+            let entry_index = index;
+
+            index += 1;
+            if entry.is_root && !entry.expanded {
+                while index < entries.len() {
+                    if entries[index].is_root {
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+
+            return Some((entry_index, entry));
+        })
     }
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -3036,7 +3126,6 @@ impl SettingsWindow {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
-            self.build_navbar();
             cx.notify();
             return;
         }
@@ -3062,6 +3151,9 @@ impl SettingsWindow {
                         candidates.push(StringMatchCandidate::new(key_index, header));
                         header_index = item_index;
                     }
+                    SettingsPageItem::SubPageLink(sub_page_link) => {
+                        candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
+                    }
                 }
                 key_lut.push(ItemKey {
                     page_index,
@@ -3077,7 +3169,7 @@ impl SettingsWindow {
                 candidates.as_slice(),
                 &query,
                 false,
-                false,
+                true,
                 candidates.len(),
                 &atomic_bool,
                 cx.background_executor().clone(),
@@ -3099,21 +3191,29 @@ impl SettingsWindow {
                     page[header_index] = true;
                     page[item_index] = true;
                 }
-                this.build_navbar();
-                this.navbar_entry = 0;
+                let first_navbar_entry_index = this
+                    .visible_navbar_entries()
+                    .next()
+                    .map(|e| e.0)
+                    .unwrap_or(0);
+                this.navbar_entry = first_navbar_entry_index;
                 cx.notify();
             })
             .ok();
         }));
     }
 
-    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.pages = self.current_file.pages();
+    fn build_search_matches(&mut self) {
         self.search_matches = self
             .pages
             .iter()
             .map(|page| vec![true; page.items.len()])
             .collect::<Vec<_>>();
+    }
+
+    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.pages = self.current_file.pages();
+        self.build_search_matches();
         self.build_navbar();
 
         if !self.search_bar.read(cx).is_empty(cx) {
@@ -3191,25 +3291,20 @@ impl SettingsWindow {
                     "settings-ui-nav-bar",
                     self.navbar_entries.len(),
                     cx.processor(|this, range: Range<usize>, _, cx| {
-                        range
-                            .into_iter()
-                            .map(|ix| {
-                                let entry = &this.navbar_entries[ix];
-
+                        this.visible_navbar_entries()
+                            .skip(range.start.saturating_sub(1))
+                            .take(range.len())
+                            .map(|(ix, entry)| {
                                 TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
                                     .root_item(entry.is_root)
                                     .toggle_state(this.is_navbar_entry_selected(ix))
                                     .when(entry.is_root, |item| {
-                                        item.toggle(
-                                            this.pages[this.page_index_from_navbar_index(ix)]
-                                                .expanded,
-                                        )
-                                        .on_toggle(
-                                            cx.listener(move |this, _, _, cx| {
+                                        item.expanded(entry.expanded).on_toggle(cx.listener(
+                                            move |this, _, _, cx| {
                                                 this.toggle_navbar_entry(ix);
                                                 cx.notify();
-                                            }),
-                                        )
+                                            },
+                                        ))
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.navbar_entry = ix;
@@ -3238,23 +3333,81 @@ impl SettingsWindow {
             })
     }
 
-    fn render_page(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Stateful<Div> {
-        let items: Vec<_> = self.page_items().collect();
-        let items_len = items.len();
+    fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+        let mut items = vec![];
+        items.push(self.current_page().title);
+        items.extend(
+            self.sub_page_stack
+                .iter()
+                .flat_map(|page| [page.section_header, page.link.title]),
+        );
 
-        v_flex()
+        let last = items.pop().unwrap();
+        h_flex()
+            .gap_1()
+            .children(
+                items
+                    .into_iter()
+                    .flat_map(|item| [item, "/"])
+                    .map(|item| Label::new(item).color(Color::Muted)),
+            )
+            .child(Label::new(last))
+    }
+
+    fn render_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+        let mut page = v_flex()
+            .w_full()
+            .pt_4()
+            .px_6()
+            .gap_4()
+            .bg(cx.theme().colors().editor_background);
+        let mut page_content = v_flex()
             .id("settings-ui-page")
             .gap_4()
-            .children(items.into_iter().enumerate().map(|(index, item)| {
-                let is_last = index == items_len - 1;
-                item.render(self.current_file.clone(), is_last, window, cx)
-            }))
             .overflow_y_scroll()
             .track_scroll(
                 window
                     .use_state(cx, |_, _| ScrollHandle::default())
                     .read(cx),
-            )
+            );
+        if self.sub_page_stack.len() == 0 {
+            page = page.child(self.render_files(window, cx));
+
+            let items: Vec<_> = self.page_items().collect();
+            let items_len = items.len();
+            let mut section_header = None;
+
+            page_content =
+                page_content.children(items.into_iter().enumerate().map(|(index, item)| {
+                    let is_last = index == items_len - 1;
+                    if let SettingsPageItem::SectionHeader(header) = item {
+                        section_header = Some(*header);
+                    }
+                    item.render(
+                        self.current_file.clone(),
+                        section_header.expect("All items rendered after a section header"),
+                        is_last,
+                        window,
+                        cx,
+                    )
+                }))
+        } else {
+            page = page.child(
+                h_flex()
+                    .gap_2()
+                    .child(IconButton::new("back-btn", IconName::ChevronLeft).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.pop_sub_page(cx);
+                        }),
+                    ))
+                    .child(self.render_sub_page_breadcrumbs()),
+            );
+
+            let active_page_render_fn = self.sub_page_stack.last().unwrap().link.render.clone();
+            page_content = page_content.child((active_page_render_fn)(self, window, cx));
+        }
+
+        return page.child(page_content);
     }
 
     fn current_page_index(&self) -> usize {
@@ -3273,13 +3426,26 @@ impl SettingsWindow {
         self.navbar_entries[index].page_index
     }
 
-    fn page_for_navbar_index(&mut self, index: usize) -> &mut SettingsPage {
-        let index = self.page_index_from_navbar_index(index);
-        &mut self.pages[index]
-    }
-
     fn is_navbar_entry_selected(&self, ix: usize) -> bool {
         ix == self.navbar_entry
+    }
+
+    fn push_sub_page(
+        &mut self,
+        sub_page_link: SubPageLink,
+        section_header: &'static str,
+        cx: &mut Context<SettingsWindow>,
+    ) {
+        self.sub_page_stack.push(SubPage {
+            link: sub_page_link,
+            section_header,
+        });
+        cx.notify();
+    }
+
+    fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.sub_page_stack.pop();
+        cx.notify();
     }
 }
 
@@ -3295,16 +3461,56 @@ impl Render for SettingsWindow {
             .bg(cx.theme().colors().background)
             .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx))
-            .child(
-                v_flex()
-                    .w_full()
-                    .pt_4()
-                    .px_6()
-                    .gap_4()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(self.render_files(window, cx))
-                    .child(self.render_page(window, cx)),
-            )
+            .child(self.render_page(window, cx))
+    }
+}
+
+fn update_settings_file(
+    file: SettingsUiFile,
+    cx: &mut App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) -> Result<()> {
+    match file {
+        SettingsUiFile::Local((worktree_id, rel_path)) => {
+            fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+                workspace::AppState::global(cx)
+                    .upgrade()
+                    .map(|app_state| {
+                        app_state
+                            .workspace_store
+                            .read(cx)
+                            .workspaces()
+                            .iter()
+                            .filter_map(|workspace| {
+                                Some(workspace.read(cx).ok()?.project().clone())
+                            })
+                    })
+                    .into_iter()
+                    .flatten()
+            }
+            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
+            let project = all_projects(cx).find(|project| {
+                project.read_with(cx, |project, cx| {
+                    project.contains_local_settings_file(worktree_id, &rel_path, cx)
+                })
+            });
+            let Some(project) = project else {
+                anyhow::bail!(
+                    "Could not find worktree containing settings file: {}",
+                    &rel_path.display(PathStyle::local())
+                );
+            };
+            project.update(cx, |project, cx| {
+                project.update_local_settings_file(worktree_id, rel_path, cx, update);
+            });
+            return Ok(());
+        }
+        SettingsUiFile::User => {
+            // todo(settings_ui) error?
+            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            Ok(())
+        }
+        SettingsUiFile::Server(_) => unimplemented!(),
     }
 }
 
@@ -3326,12 +3532,13 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
             metadata.and_then(|metadata| metadata.placeholder),
             |editor, placeholder| editor.with_placeholder(placeholder),
         )
-        .on_confirm(move |new_text, cx: &mut App| {
-            cx.update_global(move |store: &mut SettingsStore, cx| {
-                store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
+        .on_confirm({
+            move |new_text, cx| {
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = new_text.map(Into::into);
-                });
-            });
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            }
         })
         .into_any_element()
 }
@@ -3354,12 +3561,10 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                let field = field;
-                cx.update_global(move |store: &mut SettingsStore, cx| {
-                    store.update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _cx| {
-                        *(field.pick_mut)(settings) = Some(state.into());
-                    });
-                });
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(state.into());
+                })
+                .log_err(); // todo(settings_ui) don't log err
             }
         })
         .color(SwitchColor::Accent)
@@ -3373,7 +3578,7 @@ fn render_dropdown<T>(
     cx: &mut App,
 ) -> AnyElement
 where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + 'static,
+    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
 {
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
@@ -3388,11 +3593,8 @@ where
         "dropdown",
         current_value_label,
         ContextMenu::build(window, cx, move |mut menu, _, _| {
-            for (value, label) in variants()
-                .into_iter()
-                .copied()
-                .zip(labels().into_iter().copied())
-            {
+            for (&value, &label) in std::iter::zip(variants(), labels()) {
+                let file = file.clone();
                 menu = menu.toggleable_entry(
                     label,
                     value == current_value,
@@ -3402,14 +3604,10 @@ where
                         if value == current_value {
                             return;
                         }
-                        cx.update_global(move |store: &mut SettingsStore, cx| {
-                            store.update_settings_file(
-                                <dyn fs::Fs>::global(cx),
-                                move |settings, _cx| {
-                                    *(field.pick_mut)(settings) = Some(value);
-                                },
-                            );
-                        });
+                        update_settings_file(file.clone(), cx, move |settings, _cx| {
+                            *(field.pick_mut)(settings) = Some(value);
+                        })
+                        .log_err(); // todo(settings_ui) don't log err
                     },
                 );
             }
@@ -3426,10 +3624,6 @@ mod test {
     use super::*;
 
     impl SettingsWindow {
-        fn navbar(&self) -> &[NavBarEntry] {
-            self.navbar_entries.as_slice()
-        }
-
         fn navbar_entry(&self) -> usize {
             self.navbar_entry
         }
@@ -3442,6 +3636,7 @@ mod test {
         }
 
         fn build(mut self) -> Self {
+            self.build_search_matches();
             self.build_navbar();
             self
         }
@@ -3453,7 +3648,6 @@ mod test {
         ) -> Self {
             let page = SettingsPage {
                 title,
-                expanded: false,
                 items: Vec::default(),
             };
 
@@ -3471,13 +3665,25 @@ mod test {
 
         fn assert_search_results(&self, other: &Self) {
             // page index could be different because of filtered out pages
-            assert!(
-                self.navbar_entries
-                    .iter()
-                    .zip(other.navbar_entries.iter())
-                    .all(|(entry, other)| {
-                        entry.is_root == other.is_root && entry.title == other.title
+            #[derive(Debug, PartialEq)]
+            struct EntryMinimal {
+                is_root: bool,
+                title: &'static str,
+            }
+            pretty_assertions::assert_eq!(
+                other
+                    .visible_navbar_entries()
+                    .map(|(_, entry)| EntryMinimal {
+                        is_root: entry.is_root,
+                        title: entry.title,
                     })
+                    .collect::<Vec<_>>(),
+                self.visible_navbar_entries()
+                    .map(|(_, entry)| EntryMinimal {
+                        is_root: entry.is_root,
+                        title: entry.title,
+                    })
+                    .collect::<Vec<_>>(),
             );
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
@@ -3519,55 +3725,50 @@ mod test {
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
         let mut pages: Vec<SettingsPage> = Vec::new();
-        let mut current_page = None;
+        let mut expanded_pages = Vec::new();
         let mut selected_idx = None;
-        let mut ix = 0;
-        let mut in_closed_subentry = false;
+        let mut index = 0;
+        let mut in_expanded_section = false;
 
         for mut line in input
             .lines()
             .map(|line| line.trim())
             .filter(|line| !line.is_empty())
         {
-            let mut is_selected = false;
-            if line.ends_with("*") {
-                assert!(
-                    selected_idx.is_none(),
-                    "Can only have one selected navbar entry at a time"
-                );
-                selected_idx = Some(ix);
-                line = &line[..line.len() - 1];
-                is_selected = true;
+            if let Some(pre) = line.strip_suffix('*') {
+                assert!(selected_idx.is_none(), "Only one selected entry allowed");
+                selected_idx = Some(index);
+                line = pre;
             }
-
-            if line.starts_with("v") || line.starts_with(">") {
-                if let Some(current_page) = current_page.take() {
-                    pages.push(current_page);
-                }
-
-                let expanded = line.starts_with("v");
-                in_closed_subentry = !expanded;
-                ix += 1;
-
-                current_page = Some(SettingsPage {
-                    title: line.split_once(" ").unwrap().1,
-                    expanded,
-                    items: Vec::default(),
+            let (kind, title) = line.split_once(" ").unwrap();
+            assert_eq!(kind.len(), 1);
+            let kind = kind.chars().next().unwrap();
+            if kind == 'v' {
+                let page_idx = pages.len();
+                expanded_pages.push(page_idx);
+                pages.push(SettingsPage {
+                    title,
+                    items: vec![],
                 });
-            } else if line.starts_with("-") {
-                if !in_closed_subentry {
-                    ix += 1;
-                } else if is_selected && in_closed_subentry {
-                    panic!("Can't select sub entry if it's parent is closed");
+                index += 1;
+                in_expanded_section = true;
+            } else if kind == '>' {
+                pages.push(SettingsPage {
+                    title,
+                    items: vec![],
+                });
+                index += 1;
+                in_expanded_section = false;
+            } else if kind == '-' {
+                pages
+                    .last_mut()
+                    .unwrap()
+                    .items
+                    .push(SettingsPageItem::SectionHeader(title));
+                if selected_idx == Some(index) && !in_expanded_section {
+                    panic!("Items in unexpanded sections cannot be selected");
                 }
-
-                let Some(current_page) = current_page.as_mut() else {
-                    panic!("Sub entries must be within a page");
-                };
-
-                current_page.items.push(SettingsPageItem::SectionHeader(
-                    line.split_once(" ").unwrap().1,
-                ));
+                index += 1;
             } else {
                 panic!(
                     "Entries must start with one of 'v', '>', or '-'\n line: {}",
@@ -3575,15 +3776,6 @@ mod test {
                 );
             }
         }
-
-        if let Some(current_page) = current_page.take() {
-            pages.push(current_page);
-        }
-
-        let search_matches = pages
-            .iter()
-            .map(|page| vec![true; page.items.len()])
-            .collect::<Vec<_>>();
 
         let mut settings_window = SettingsWindow {
             files: Vec::default(),
@@ -3593,42 +3785,70 @@ mod test {
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
             list_handle: UniformListScrollHandle::default(),
-            search_matches,
+            search_matches: vec![],
             search_task: None,
+            sub_page_stack: vec![],
         };
 
+        settings_window.build_search_matches();
         settings_window.build_navbar();
+        for expanded_page_index in expanded_pages {
+            for entry in &mut settings_window.navbar_entries {
+                if entry.page_index == expanded_page_index && entry.is_root {
+                    entry.expanded = true;
+                }
+            }
+        }
         settings_window
     }
 
     #[track_caller]
     fn check_navbar_toggle(
         before: &'static str,
-        toggle_idx: usize,
+        toggle_page: &'static str,
         after: &'static str,
         window: &mut Window,
         cx: &mut App,
     ) {
         let mut settings_window = parse(before, window, cx);
+        let toggle_page_idx = settings_window
+            .pages
+            .iter()
+            .position(|page| page.title == toggle_page)
+            .expect("page not found");
+        let toggle_idx = settings_window
+            .navbar_entries
+            .iter()
+            .position(|entry| entry.page_index == toggle_page_idx)
+            .expect("page not found");
         settings_window.toggle_navbar_entry(toggle_idx);
 
         let expected_settings_window = parse(after, window, cx);
 
-        assert_eq!(settings_window.navbar(), expected_settings_window.navbar());
-        assert_eq!(
-            settings_window.navbar_entry(),
-            expected_settings_window.navbar_entry()
+        pretty_assertions::assert_eq!(
+            settings_window
+                .visible_navbar_entries()
+                .map(|(_, entry)| entry)
+                .collect::<Vec<_>>(),
+            expected_settings_window
+                .visible_navbar_entries()
+                .map(|(_, entry)| entry)
+                .collect::<Vec<_>>(),
+        );
+        pretty_assertions::assert_eq!(
+            settings_window.navbar_entries[settings_window.navbar_entry()],
+            expected_settings_window.navbar_entries[expected_settings_window.navbar_entry()],
         );
     }
 
     macro_rules! check_navbar_toggle {
-        ($name:ident, before: $before:expr, toggle_idx: $toggle_idx:expr, after: $after:expr) => {
+        ($name:ident, before: $before:expr, toggle_page: $toggle_page:expr, after: $after:expr) => {
             #[gpui::test]
             fn $name(cx: &mut gpui::TestAppContext) {
                 let window = cx.add_empty_window();
                 window.update(|window, cx| {
                     register_settings(cx);
-                    check_navbar_toggle($before, $toggle_idx, $after, window, cx);
+                    check_navbar_toggle($before, $toggle_page, $after, window, cx);
                 });
             }
         };
@@ -3643,7 +3863,7 @@ mod test {
         v Project
         - Project Settings
         ",
-        toggle_idx: 0,
+        toggle_page: "General",
         after: r"
         > General*
         v Project
@@ -3660,7 +3880,7 @@ mod test {
         v Project
         - Project Settings
         ",
-        toggle_idx: 0,
+        toggle_page: "General",
         after: r"
         v General*
         - General
@@ -3679,7 +3899,7 @@ mod test {
         v Project
         - Project Settings*
         ",
-        toggle_idx: 1,
+        toggle_page: "Project",
         after: r"
         > General
         > Project*
@@ -3698,7 +3918,7 @@ mod test {
         - General
         > Appearance & Behavior
         ",
-        toggle_idx: 3,
+        toggle_page: "Project",
         after: r"
         v General Page
         - General
@@ -3722,7 +3942,7 @@ mod test {
         - General*
         > Appearance & Behavior
         ",
-        toggle_idx: 0,
+        toggle_page: "General Page",
         after: r"
         > General Page
         v Project
@@ -3745,34 +3965,9 @@ mod test {
         - General*
         > Appearance & Behavior
         ",
-        toggle_idx: 0,
+        toggle_page: "General Page",
         after: r"
         v General Page
-        - General
-        - Privacy
-        v Project
-        - Worktree Settings Content
-        v AI
-        - General*
-        > Appearance & Behavior
-        "
-    );
-
-    check_navbar_toggle!(
-        navbar_toggle_sub_entry_does_nothing,
-        before: r"
-        > General Page
-        - General
-        - Privacy
-        v Project
-        - Worktree Settings Content
-        v AI
-        - General*
-        > Appearance & Behavior
-        ",
-        toggle_idx: 4,
-        after: r"
-        > General Page
         - General
         - Privacy
         v Project

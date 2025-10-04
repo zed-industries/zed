@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 1;
-const TRACKED_NAMESPACE: u32 = 2;
-const NEW_NAMESPACE: u32 = 3;
+const CONFLICT_NAMESPACE: u64 = 1;
+const TRACKED_NAMESPACE: u64 = 2;
+const NEW_NAMESPACE: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -243,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -397,7 +397,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -531,11 +531,12 @@ impl ProjectDiff {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn excerpt_paths(&self, cx: &App) -> Vec<String> {
+    pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string())
+            .map(|key| key.path())
+            .cloned()
             .collect()
     }
 }
@@ -1361,7 +1362,7 @@ mod tests {
     use settings::SettingsStore;
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use super::*;
 
@@ -1467,7 +1468,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "foo".into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1488,7 +1489,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "bar".into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
                 window,
                 cx,
             );

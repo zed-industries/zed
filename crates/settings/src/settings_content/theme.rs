@@ -52,9 +52,12 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
-    /// The font size for the agent panel. Falls back to the UI font size if unset.
+    /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<f32>,
+    pub agent_ui_font_size: Option<f32>,
+    /// The font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+    #[serde(default)]
+    pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
