@@ -10,9 +10,19 @@ pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 
 #[derive(Clone, Debug, Default)]
 pub struct Chunk {
+    /// If bit[i] is set, then the character at index i is the start of a UTF-8 character in the
+    /// text.
     chars: u128,
+    /// The number of set bits is the number of UTF-16 code units it would take to represent the
+    /// text.
+    ///
+    /// Bit[i] is set if text[i] is the start of a UTF-8 character. If the character would
+    /// take two UTF-16 code units, then bit[i+1] is also set. (Rust chars never take more
+    /// than two UTF-16 code units.)
     chars_utf16: u128,
+    /// If bit[i] is set, then the character at index i is an ascii newline.
     newlines: u128,
+    /// If bit[i] is set, then the character at index i is an ascii tab.
     pub tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
@@ -144,6 +154,12 @@ impl<'a> ChunkSlice<'a> {
         let mask = if range.end == MAX_BASE {
             u128::MAX
         } else {
+            debug_assert!(
+                self.is_char_boundary(range.end),
+                "Invalid range end {} in {:?}",
+                range.end,
+                self
+            );
             (1u128 << range.end) - 1
         };
         if range.start == MAX_BASE {
@@ -155,6 +171,12 @@ impl<'a> ChunkSlice<'a> {
                 text: "",
             }
         } else {
+            debug_assert!(
+                self.is_char_boundary(range.start),
+                "Invalid range start {} in {:?}",
+                range.start,
+                self
+            );
             Self {
                 chars: (self.chars & mask) >> range.start,
                 chars_utf16: (self.chars_utf16 & mask) >> range.start,
@@ -617,19 +639,17 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_chunks(mut rng: StdRng) {
-        let chunk_len = rng.random_range(0..=MAX_BASE);
-        let text = RandomCharIter::new(&mut rng)
-            .take(chunk_len)
-            .collect::<String>();
-        let mut ix = chunk_len;
-        while !text.is_char_boundary(ix) {
-            ix -= 1;
-        }
-        let text = &text[..ix];
-
+        let text = random_string_with_utf8_len(&mut rng, MAX_BASE);
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::new(text);
-        verify_chunk(chunk.as_slice(), text);
+        let chunk = Chunk::new(&text);
+        verify_chunk(chunk.as_slice(), &text);
+
+        // Verify Chunk::chars() bitmap
+        let expected_chars = char_offsets(&text)
+            .into_iter()
+            .inspect(|i| assert!(*i < 128))
+            .fold(0u128, |acc, i| acc | (1 << i));
+        assert_eq!(chunk.chars(), expected_chars);
 
         for _ in 0..10 {
             let mut start = rng.random_range(0..=chunk.text.len());
@@ -646,6 +666,20 @@ mod tests {
             let chunk_slice = chunk.slice(range);
             verify_chunk(chunk_slice, text_slice);
         }
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_split_chunk_slice(mut rng: StdRng) {
+        let text = &random_string_with_utf8_len(&mut rng, MAX_BASE);
+        let chunk = Chunk::new(text);
+        let offset = char_offsets_with_end(text)
+            .into_iter()
+            .choose(&mut rng)
+            .unwrap();
+        let (a, b) = chunk.as_slice().split_at(offset);
+        let (a_str, b_str) = text.split_at(offset);
+        verify_chunk(a, a_str);
+        verify_chunk(b, b_str);
     }
 
     #[gpui::test(iterations = 1000)]
@@ -668,6 +702,51 @@ mod tests {
                 ix
             );
         }
+    }
+
+    /// Returns a (biased) random string whose UTF-8 length is no more than `len`.
+    fn random_string_with_utf8_len(rng: &mut StdRng, len: usize) -> String {
+        let mut str = String::new();
+        let mut chars = RandomCharIter::new(rng);
+        loop {
+            let ch = chars.next().unwrap();
+            if str.len() + ch.len_utf8() > len {
+                break;
+            }
+            str.push(ch);
+        }
+        str
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_append_random_strings(mut rng: StdRng) {
+        let len1 = rng.random_range(0..=MAX_BASE);
+        let len2 = rng.random_range(0..=MAX_BASE).saturating_sub(len1);
+        let str1 = random_string_with_utf8_len(&mut rng, len1);
+        let str2 = random_string_with_utf8_len(&mut rng, len2);
+        let mut chunk1 = Chunk::new(&str1);
+        let chunk2 = Chunk::new(&str2);
+        let char_offsets = char_offsets_with_end(&str2);
+        let start_index = rng.random_range(0..char_offsets.len());
+        let start_offset = char_offsets[start_index];
+        let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
+        chunk1.append(chunk2.slice(start_offset..end_offset));
+        verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_offset..end_offset]));
+    }
+
+    /// Return the byte offsets for each character in a string.
+    ///
+    /// These are valid offsets to split the string.
+    fn char_offsets(text: &str) -> Vec<usize> {
+        text.char_indices().map(|(i, _c)| i).collect()
+    }
+
+    /// Return the byte offsets for each character in a string, plus the offset
+    /// past the end of the string.
+    fn char_offsets_with_end(text: &str) -> Vec<usize> {
+        let mut v = char_offsets(text);
+        v.push(text.len());
+        v
     }
 
     fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
