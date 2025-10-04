@@ -164,6 +164,7 @@ pub struct BreakpointStore {
 
 impl BreakpointStore {
     pub fn init(client: &AnyProtoClient) {
+        log::error!("breakpoint store init");
         client.add_entity_request_handler(Self::handle_toggle_breakpoint);
         client.add_entity_message_handler(Self::handle_breakpoints_for_file);
     }

@@ -148,6 +148,23 @@ impl RemoteConnection for SshRemoteConnection {
         )
     }
 
+    fn build_forward_port_command(
+        &self,
+        local_port: u16,
+        host: String,
+        remote_port: u16,
+    ) -> Result<CommandTemplate> {
+        Ok(CommandTemplate {
+            program: "ssh".into(),
+            args: vec![
+                "-N".into(),
+                "-L".into(),
+                format!("{local_port}:{host}:{remote_port}"),
+            ],
+            env: Default::default(),
+        })
+    }
+
     fn upload_directory(
         &self,
         src_path: PathBuf,

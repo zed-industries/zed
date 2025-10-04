@@ -438,6 +438,15 @@ impl RemoteConnection for WslRemoteConnection {
         })
     }
 
+    fn build_forward_port_command(
+        &self,
+        _: u16,
+        _: String,
+        _: u16,
+    ) -> anyhow::Result<CommandTemplate> {
+        Err(anyhow!("WSL shares a network interface with the host"))
+    }
+
     fn connection_options(&self) -> RemoteConnectionOptions {
         RemoteConnectionOptions::Wsl(self.connection_options.clone())
     }

@@ -46,6 +46,7 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
+    fn is_headless(&self) -> bool;
 }
 
 #[derive(

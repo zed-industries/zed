@@ -120,6 +120,13 @@ impl JsDebugAdapter {
             configuration
                 .entry("sourceMapRenames")
                 .or_insert(true.into());
+
+            // Set up remote browser debugging
+            if delegate.is_headless() {
+                configuration
+                    .entry("browserLaunchLocation")
+                    .or_insert("ui".into());
+            }
         }
 
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
