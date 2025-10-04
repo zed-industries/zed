@@ -302,7 +302,7 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         .to_string())
 }
 
-/// Returns a shell escaped path for the zed cli executable, this function
+/// Returns a path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
 pub fn get_zed_cli_path() -> Result<PathBuf> {
     let zed_path =

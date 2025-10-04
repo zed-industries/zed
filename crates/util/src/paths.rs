@@ -1,3 +1,4 @@
+use anyhow::Context;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
@@ -48,7 +49,6 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
-            use anyhow::Context as _;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -169,12 +169,12 @@ impl<T: AsRef<Path>> PathExt for T {
             let path_str = self
                 .as_ref()
                 .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
+                .with_context(|| "Path contains invalid UTF-8")?;
 
             // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
             // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
             // errors are introduced in the future :(
-            Ok(shlex::try_quote(path_str)?.to_string())
+            Ok(shlex::try_quote(path_str)?.into())
         }
     }
 }

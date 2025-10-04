@@ -14,7 +14,7 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 
 use crate::encrypted_password::decrypt;
 
@@ -264,7 +264,7 @@ pub fn main(socket: &str) {
 
 pub fn set_askpass_program(path: std::path::PathBuf) {
     if ASKPASS_PROGRAM.set(path).is_err() {
-        panic!("askpass program has already been set");
+        debug_panic!("askpass program has already been set");
     }
 }
 
@@ -273,7 +273,6 @@ pub fn set_askpass_program(path: std::path::PathBuf) {
 fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Path) -> String {
     format!(
         "{shebang}\n{print_args} | {askpass_program} --askpass={askpass_socket} 2> /dev/null \n",
-        askpass_program = askpass_program,
         askpass_socket = askpass_socket.display(),
         print_args = "printf '%s\\0' \"$@\"",
         shebang = "#!/bin/sh",
@@ -288,7 +287,6 @@ fn generate_askpass_script(askpass_program: &str, askpass_socket: &std::path::Pa
         $ErrorActionPreference = 'Stop';
         ($args -join [char]0) | & "{askpass_program}" --askpass={askpass_socket} 2> $null
         "#,
-        askpass_program = askpass_program,
         askpass_socket = askpass_socket.display(),
     )
 }
