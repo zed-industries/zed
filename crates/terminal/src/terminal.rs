@@ -41,7 +41,7 @@ use mappings::mouse::{
 
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
-use pty_info::PtyProcessInfo;
+use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
@@ -371,7 +371,7 @@ impl TerminalBuilder {
 
         let terminal = Terminal {
             task: None,
-            pty_tx: None,
+            terminal_type: TerminalType::DisplayOnly,
             completion_tx: None,
             term,
             term_config: config,
@@ -381,7 +381,6 @@ impl TerminalBuilder {
             last_mouse: None,
             matches: Vec::new(),
             selection_head: None,
-            pty_info: PtyProcessInfo::default(),
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
@@ -581,7 +580,10 @@ impl TerminalBuilder {
 
         let mut terminal = Terminal {
             task,
-            pty_tx: Some(Notifier(pty_tx)),
+            terminal_type: TerminalType::Pty {
+                pty_tx: Notifier(pty_tx),
+                info: pty_info,
+            },
             completion_tx,
             term,
             term_config: config,
@@ -591,7 +593,6 @@ impl TerminalBuilder {
             last_mouse: None,
             matches: Vec::new(),
             selection_head: None,
-            pty_info,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
@@ -781,8 +782,16 @@ pub enum SelectionPhase {
     Ended,
 }
 
+enum TerminalType {
+    Pty {
+        pty_tx: Notifier,
+        info: PtyProcessInfo,
+    },
+    DisplayOnly,
+}
+
 pub struct Terminal {
-    pty_tx: Option<Notifier>,
+    terminal_type: TerminalType,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
@@ -793,7 +802,6 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
     scroll_px: Pixels,
     next_link_id: usize,
@@ -910,8 +918,10 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if self.pty_info.has_changed() {
-                    cx.emit(Event::TitleChanged);
+                if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+                    if info.has_changed() {
+                        cx.emit(Event::TitleChanged);
+                    }
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -953,7 +963,7 @@ impl Terminal {
 
                 self.last_content.terminal_bounds = new_bounds;
 
-                if let Some(pty_tx) = &self.pty_tx {
+                if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
                     pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
                 }
 
@@ -1341,7 +1351,7 @@ impl Terminal {
     /// Write the Input payload to the PTY, if applicable.
     /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        if let Some(pty_tx) = &self.pty_tx {
+        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
             pty_tx.notify(input.into());
         }
     }
@@ -1932,10 +1942,12 @@ impl Terminal {
     /// This does *not* return the working directory of the shell that runs on the
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
-        self.pty_info
-            .current
-            .as_ref()
-            .map(|process| process.cwd.clone())
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => {
+                info.current.as_ref().map(|process| process.cwd.clone())
+            }
+            TerminalType::DisplayOnly => None,
+        }
     }
 
     pub fn title(&self, truncate: bool) -> String {
@@ -1952,8 +1964,8 @@ impl Terminal {
                 .title_override
                 .as_ref()
                 .map(|title_override| title_override.to_string())
-                .unwrap_or_else(|| {
-                    self.pty_info
+                .unwrap_or_else(|| match &self.terminal_type {
+                    TerminalType::Pty { info, .. } => info
                         .current
                         .as_ref()
                         .map(|fpi| {
@@ -1983,7 +1995,8 @@ impl Terminal {
                             };
                             format!("{process_file} — {process_name}")
                         })
-                        .unwrap_or_else(|| "Terminal".to_string())
+                        .unwrap_or_else(|| "Terminal".to_string()),
+                    TerminalType::DisplayOnly => "Terminal".to_string(),
                 }),
         }
     }
@@ -1992,7 +2005,23 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            self.pty_info.kill_current_process();
+            if let TerminalType::Pty { info, .. } = &mut self.terminal_type {
+                info.kill_current_process();
+            }
+        }
+    }
+
+    pub fn pid(&self) -> Option<sysinfo::Pid> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info.pid(),
+            TerminalType::DisplayOnly => None,
+        }
+    }
+
+    pub fn pid_getter(&self) -> Option<&ProcessIdGetter> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => Some(info.pid_getter()),
+            TerminalType::DisplayOnly => None,
         }
     }
 
@@ -2187,7 +2216,7 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if let Some(pty_tx) = &self.pty_tx {
+        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
             pty_tx.0.send(Msg::Shutdown).ok();
         }
     }
