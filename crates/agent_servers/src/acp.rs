@@ -719,12 +719,10 @@ impl acp::Client for ClientDelegate {
                         // Create a minimal display-only lower-level terminal and register it.
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                             let builder = TerminalBuilder::new_display_only(
-                                None,
                                 CursorShape::default(),
                                 AlternateScroll::On,
                                 None,
                                 0,
-                                cx,
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(

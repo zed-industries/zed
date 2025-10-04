@@ -340,12 +340,10 @@ pub struct TerminalBuilder {
 
 impl TerminalBuilder {
     pub fn new_display_only(
-        working_directory: Option<PathBuf>,
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         window_id: u64,
-        cx: &App,
     ) -> Result<TerminalBuilder> {
         // Create a display-only terminal (no actual PTY).
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
