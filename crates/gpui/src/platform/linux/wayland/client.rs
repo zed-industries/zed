@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
     timer::{TimeoutAction, Timer},
@@ -857,6 +858,25 @@ impl LinuxClient for WaylandClient {
 
     fn compositor_name(&self) -> &'static str {
         "Wayland"
+    }
+
+    fn window_identifier(&self) -> futures::channel::oneshot::Receiver<Option<WindowIdentifier>> {
+        let (done_tx, done_rx) = futures::channel::oneshot::channel();
+        let client_state = self.0.borrow();
+        let executor = &client_state.common.foreground_executor;
+
+        if let Some(active_window) = client_state.keyboard_focused_window.as_ref() {
+            let surface = active_window.surface();
+            executor
+                .spawn(async move {
+                    let window_identifier = ashpd::WindowIdentifier::from_wayland(&surface).await;
+                    done_tx.send(window_identifier).ok();
+                })
+                .detach();
+        } else {
+            done_tx.send(None).ok();
+        }
+        done_rx
     }
 }
 

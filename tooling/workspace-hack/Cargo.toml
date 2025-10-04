@@ -408,6 +408,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 [target.x86_64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -446,12 +447,15 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -488,12 +492,16 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
+zbus_macros = { version = "5", features = ["gvariant"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.aarch64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -532,12 +540,15 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.aarch64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -574,6 +585,9 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
+zbus_macros = { version = "5", features = ["gvariant"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
@@ -631,6 +645,7 @@ windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", feat
 [target.x86_64-unknown-linux-musl.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -669,12 +684,15 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-unknown-linux-musl.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
 ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std", "wayland"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
@@ -711,6 +729,9 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["loggin
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
+wayland-backend = { version = "0.3", default-features = false, features = ["client_system", "dlopen"] }
+wayland-sys = { version = "0.31", default-features = false, features = ["client", "dlopen"] }
+zbus_macros = { version = "5", features = ["gvariant"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
