@@ -1649,7 +1649,7 @@ impl Terminal {
                 && let Some(bytes) =
                     mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                self.write_to_pty(bytes);
             }
         } else if e.modifiers.secondary() {
             self.word_from_position(e.position);
@@ -1756,7 +1756,7 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                self.write_to_pty(bytes);
             }
         } else {
             match e.button {
@@ -1815,7 +1815,7 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, false, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                self.write_to_pty(bytes);
             }
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
@@ -1854,7 +1854,7 @@ impl Terminal {
                 if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
                     for scroll in scrolls {
-                        self.pty_tx.notify(scroll);
+                        self.write_to_pty(scroll);
                     }
                 };
             } else if self
@@ -1863,7 +1863,7 @@ impl Terminal {
                 .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                 && !e.shift
             {
-                self.pty_tx.notify(alt_scroll(scroll_lines))
+                self.write_to_pty(alt_scroll(scroll_lines));
             } else if scroll_lines != 0 {
                 let scroll = AlacScroll::Delta(scroll_lines);
 
