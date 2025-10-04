@@ -17,6 +17,8 @@ use crate::text_similarity::Occurrences;
 // TODO:
 //
 // * Distinguish different types of paths? (whether they are always relative)
+//
+// * Sort out how to get trace logs to automatically appear in test failures
 
 // Future improvements:
 //
@@ -749,23 +751,45 @@ mod test {
             cx,
         );
 
-        /*
-        check_imports(
-            Some(&parent_abs_path),
-                &TYPESCRIPT,
-                r#"import "./maths.js";"#,
-                &[&["/home/user/project/maths.js", "WILDCARD"]],
-                cx,
-            );
-
-        check_imports(
+        check_imports_with_file_abs_path(
             Some(&parent_abs_path),
             &TYPESCRIPT,
-            r#"import * as math from "./maths.js";"#,
-            &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
+            r#"import "./maths.js";"#,
+            &[&["/home/user/project/maths.js", "WILDCARD"]],
             cx,
         );
-        */
+
+        // TODO: Consider supporting binding a module import to a name
+        //
+        // ``scm
+        // (import_statement
+        //     import_clause: (import_clause
+        //         (namespace_import (identifier) @namespace_alias)
+        //     source: (_) @namespace))
+        // ```
+        //
+        // check_imports_with_file_abs_path(
+        //     Some(&parent_abs_path),
+        //     &TYPESCRIPT,
+        //     r#"import * as math from "./maths.js";"#,
+        //     &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
+        //     cx,
+        // );
+        //
+        // ```scm
+        // (import_statement
+        //     import_clause: (import_require_clause
+        //         (identifier) @namespace_alias
+        //         source: (_) @namespace))
+        // ```
+        //
+        // check_imports_with_file_abs_path(
+        //     Some(&parent_abs_path),
+        //     &TYPESCRIPT,
+        //     r#"import math = require("./maths");"#,
+        //     &[&["/home/user/project/maths", "WILDCARD AS math"]],
+        //     cx,
+        // );
     }
 
     fn check_imports(
