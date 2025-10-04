@@ -806,6 +806,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "gpui",
+ "log",
  "net",
  "proto",
  "smol",
