@@ -347,20 +347,70 @@ impl TerminalBuilder {
         window_id: u64,
         cx: &App,
     ) -> Result<TerminalBuilder> {
-        Self::new(
-            working_directory,
-            None,
-            Shell::System,
-            HashMap::default(),
-            cursor_shape,
-            alternate_scroll,
-            max_scroll_history_lines,
-            false,
-            window_id,
-            None,
-            cx,
-            Vec::new(),
-        )
+        // Create a display-only terminal (no actual PTY).
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
+        let scrolling_history = max_scroll_history_lines
+            .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
+            .min(MAX_SCROLL_HISTORY_LINES);
+        let config = Config {
+            scrolling_history,
+            default_cursor_style,
+            ..Config::default()
+        };
+
+        let (events_tx, events_rx) = unbounded();
+        let mut term = Term::new(
+            config.clone(),
+            &TerminalBounds::default(),
+            ZedListener(events_tx.clone()),
+        );
+
+        if let AlternateScroll::Off = alternate_scroll {
+            term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
+        }
+
+        let term = Arc::new(FairMutex::new(term));
+
+        let terminal = Terminal {
+            task: None,
+            pty_tx: None,
+            completion_tx: None,
+            term,
+            term_config: config,
+            title_override: None,
+            events: VecDeque::with_capacity(10),
+            last_content: Default::default(),
+            last_mouse: None,
+            matches: Vec::new(),
+            selection_head: None,
+            pty_info: PtyProcessInfo::default(),
+            breadcrumb_text: String::new(),
+            scroll_px: px(0.),
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
+            hyperlink_regex_searches: RegexSearches::new(),
+            vi_mode_enabled: false,
+            is_ssh_terminal: false,
+            last_mouse_move_time: Instant::now(),
+            last_hyperlink_search_position: None,
+            #[cfg(windows)]
+            shell_program: None,
+            activation_script: Vec::new(),
+            template: CopyTemplate {
+                shell: Shell::System,
+                env: HashMap::default(),
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                window_id,
+            },
+            child_exited: None,
+        };
+
+        Ok(TerminalBuilder {
+            terminal,
+            events_rx,
+        })
     }
     pub fn new(
         working_directory: Option<PathBuf>,
