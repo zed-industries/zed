@@ -87,13 +87,38 @@
             name: (array_pattern
                 (identifier) @name @item))))
 
+; Anonymous functions assigned to variables at program level
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: [(function_expression) (arrow_function)]) @item))
+
 (program
     (lexical_declaration
         ["let" "const"] @context
         ; Multiple names may be defined - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (identifier) @name) @item))
+            name: (identifier) @name
+            value: [
+                (string)
+                (number)
+                (true)
+                (false)
+                (null)
+                (undefined)
+                (identifier)
+                (call_expression)
+                (new_expression)
+                (await_expression)
+                (binary_expression)
+                (unary_expression)
+                (template_string)
+                (array)
+                (object)
+            ]) @item))
 
 ; Object destructuring patterns
 (statement_block
@@ -119,11 +144,36 @@
             name: (array_pattern
                 (identifier) @name @item))))
 
+; Anonymous functions assigned to variables in statement blocks
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (identifier) @name) @item))
+            name: (identifier) @name
+            value: [(function_expression) (arrow_function)]) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            value: [
+                (string)
+                (number)
+                (true)
+                (false)
+                (null)
+                (undefined)
+                (identifier)
+                (call_expression)
+                (new_expression)
+                (await_expression)
+                (binary_expression)
+                (unary_expression)
+                (template_string)
+                (array)
+                (object)
+            ]) @item))
 
 (class_declaration
     "class" @context
@@ -160,9 +210,46 @@
     ]* @context
     name: (_) @name) @item
 
+; Object pairs with arrow functions
 (pair
     key: (_) @name
     value: (arrow_function)) @item
+
+; Object pairs with function expressions
+(pair
+    key: (_) @name
+    value: (function_expression)) @item
+
+; Object property pairs for non-function values
+(pair
+    key: (_) @name
+    value: [
+        (string)
+        (number)
+        (true)
+        (false)
+        (null)
+        (undefined)
+        (identifier)
+        (call_expression)
+        (new_expression)
+        (await_expression)
+        (binary_expression)
+        (unary_expression)
+        (template_string)
+        (array)
+        (object)
+        (member_expression)
+    ]) @item
+
+(expression_statement
+    (assignment_expression
+        left: (member_expression
+            object: (member_expression
+                property: (property_identifier) @_prototype)
+            property: (property_identifier) @name)
+        (#eq? @_prototype "prototype")
+        right: [(function_expression) (arrow_function)]) @item)
 
 ; Add support for (node:test, bun:test and Jest) runnable
 (
