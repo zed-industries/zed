@@ -1083,12 +1083,15 @@ impl<'a> SyntaxMapCaptures<'a> {
 
 #[derive(Default)]
 pub struct TreeSitterOptions {
-    max_start_depth: Option<u32>,
+    pub max_start_depth: Option<u32>,
+    pub max_distance_from_inclusion_byte_range: Option<usize>,
 }
+
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
+            max_distance_from_inclusion_byte_range: None,
         }
     }
 }
@@ -1121,6 +1124,12 @@ impl<'a> SyntaxMapMatches<'a> {
                 )
             };
             cursor.set_max_start_depth(options.max_start_depth);
+
+            if let Some(window) = options.max_distance_from_inclusion_byte_range {
+                let containing_range =
+                    range.start.saturating_sub(window)..range.end.saturating_add(window);
+                cursor.set_containing_byte_range(containing_range);
+            }
 
             cursor.set_byte_range(range.clone());
             let matches = cursor.matches(query, layer.node(), TextProvider(text));
@@ -1616,6 +1625,9 @@ impl<'a> SyntaxLayer<'a> {
 
         let mut query_cursor = QueryCursorHandle::new();
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
+        query_cursor.set_containing_byte_range(
+            offset.saturating_sub(10 * 1024)..offset.saturating_add(10 * 1024),
+        );
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);
@@ -1902,6 +1914,8 @@ impl Drop for QueryCursorHandle {
         let mut cursor = self.0.take().unwrap();
         cursor.set_byte_range(0..usize::MAX);
         cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
+        cursor.set_containing_byte_range(0..usize::MAX);
+        cursor.set_containing_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         QUERY_CURSORS.lock().push(cursor)
     }
 }
