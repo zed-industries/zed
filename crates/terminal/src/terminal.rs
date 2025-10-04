@@ -1340,7 +1340,8 @@ impl Terminal {
         }
     }
 
-    ///Write the Input payload to the tty.
+    /// Write the Input payload to the PTY, if applicable.
+    /// (This is a no-op for display-only terminals.)
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         if let Some(pty_tx) = &self.pty_tx {
             pty_tx.notify(input.into());
