@@ -1119,6 +1119,120 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_tsx_outline(cx: &mut TestAppContext) {
+        let language = crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+        let text = r#"
+            function a() {
+              // local variables are omitted
+              let a1 = 1;
+              // all functions are included
+              async function a2() {}
+            }
+            // top-level variables are included
+            let b: C
+            function getB() {}
+            // exported variables are included
+            export const d = e;
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("function a()", 0),
+                ("let a1", 1),
+                ("async function a2()", 1),
+                ("let b", 0),
+                ("function getB()", 0),
+                ("const d", 0),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_nested_outline(cx: &mut TestAppContext) {
+        let language = crate::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+
+        let text = r#"
+            export default function Test() {
+              function a() {
+                let a1 = 1;
+                async function a2() { }
+              }
+              let b: C
+              function getB() { }
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("function Test()", 0),
+                ("function a()", 1),
+                ("let a1", 2),
+                ("async function a2()", 2),
+                ("let b", 1),
+                ("function getB()", 1),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tsx_nested_outline(cx: &mut TestAppContext) {
+        let language = crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+        let text = r#"
+            export default function Test() {
+              function a() {
+                // local variables are omitted
+                let a1 = 1;
+                // all functions are included
+                async function a2() { }
+              }
+              // variables inside function body
+              let b: C
+              function getB() { }
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("function Test()", 0),
+                ("function a()", 1),
+                ("let a1", 2),
+                ("async function a2()", 2),
+                ("let b", 1),
+                ("function getB()", 1),
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_package_json_discovery(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);

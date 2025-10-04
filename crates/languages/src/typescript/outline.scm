@@ -120,6 +120,13 @@
                 (object)
             ]) @item))
 
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            !value) @item))
+
 ; Object destructuring patterns
 (statement_block
     (lexical_declaration
@@ -174,6 +181,13 @@
                 (array)
                 (object)
             ]) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            !value) @item))
 
 (class_declaration
     "class" @context

@@ -56,25 +56,10 @@
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: (call_expression)) @item))
-
-(export_statement
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: (object)) @item))
-
-(export_statement
-    (lexical_declaration
-        ["let" "const"] @context
         ; Multiple names may be exported - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (identifier) @name
-            !value) @item))
+            name: (identifier) @name) @item))
 
 (program
     (lexical_declaration
@@ -111,15 +96,27 @@
         ["let" "const"] @context
         (variable_declarator
             name: (identifier) @name
-            value: (call_expression)) @item))
+            value: [
+                (string)
+                (number)
+                (true)
+                (false)
+                (null)
+                (undefined)
+                (identifier)
+                (call_expression)
+                (new_expression)
+                (await_expression)
+                (binary_expression)
+                (unary_expression)
+                (template_string)
+                (array)
+                (object)
+                (jsx_element)
+                (jsx_self_closing_element)
+            ]) @item))
 
-(program
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: (object)) @item))
-
+; Program-level lexical declarations without values (e.g., let b: C)
 (program
     (lexical_declaration
         ["let" "const"] @context
@@ -180,7 +177,16 @@
                 (template_string)
                 (array)
                 (object)
+                (jsx_element)
+                (jsx_self_closing_element)
             ]) @item))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (identifier) @name
+            !value) @item))
 
 (class_declaration
     "class" @context
