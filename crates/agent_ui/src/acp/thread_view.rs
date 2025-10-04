@@ -290,7 +290,7 @@ pub struct AcpThreadView {
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
 }
 
 enum ThreadState {
@@ -380,11 +380,17 @@ impl AcpThreadView {
             )
         });
 
+        let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = [
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
             cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
+            cx.subscribe_in(
+                &agent_server_store,
+                window,
+                Self::handle_agent_servers_updated,
+            ),
         ];
 
         Self {
@@ -773,6 +779,20 @@ impl AcpThreadView {
             self.focus_handle.focus(window)
         }
         cx.notify();
+    }
+
+    fn handle_agent_servers_updated(
+        &mut self,
+        _agent_server_store: &Entity<project::AgentServerStore>,
+        _event: &project::AgentServersUpdated,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // If we're in a LoadError state, retry loading the thread
+        // This handles the case where a thread is restored before authentication completes.
+        if let ThreadState::LoadError(_) = &self.thread_state {
+            self.reset(window, cx);
+        }
     }
 
     pub fn workspace(&self) -> &WeakEntity<Workspace> {
