@@ -23,8 +23,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
-    prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, Switch, SwitchColor,
+    TreeViewItem, WithScrollbar, prelude::*,
 };
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
@@ -2763,6 +2763,7 @@ pub struct SettingsWindow {
     /// If this is empty the selected page is rendered,
     /// otherwise the last sub page gets rendered.
     sub_page_stack: Vec<SubPage>,
+    scroll_handle: ScrollHandle,
 }
 
 struct SubPage {
@@ -2837,10 +2838,14 @@ impl SettingsPageItem {
                     .gap_2()
                     .flex_wrap()
                     .justify_between()
-                    .when(!is_last, |this| {
-                        this.pb_4()
-                            .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                    .map(|this| {
+                        if is_last {
+                            this.pb_6()
+                        } else {
+                            this.pb_4()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                        }
                     })
                     .child(
                         v_flex()
@@ -2850,10 +2855,7 @@ impl SettingsPageItem {
                                 h_flex()
                                     .w_full()
                                     .gap_4()
-                                    .child(
-                                        Label::new(SharedString::new_static(setting_item.title))
-                                            .size(LabelSize::Default),
-                                    )
+                                    .child(Label::new(SharedString::new_static(setting_item.title)))
                                     .when_some(
                                         file_set_in.filter(|file_set_in| file_set_in != &file),
                                         |elem, file_set_in| {
@@ -2894,15 +2896,18 @@ impl SettingsPageItem {
                         .border_color(cx.theme().colors().border_variant)
                 })
                 .child(
-                    v_flex().max_w_1_2().flex_shrink().child(
-                        Label::new(SharedString::new_static(sub_page_link.title))
-                            .size(LabelSize::Default),
-                    ),
+                    v_flex()
+                        .max_w_1_2()
+                        .flex_shrink()
+                        .child(Label::new(SharedString::new_static(sub_page_link.title))),
                 )
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
-                        .icon(Some(IconName::ChevronRight))
-                        .icon_position(Some(IconPosition::End))
+                        .size(ButtonSize::Medium)
+                        .icon(IconName::ChevronRight)
+                        .icon_position(IconPosition::End)
+                        .icon_color(Color::Muted)
+                        .icon_size(IconSize::Small)
                         .style(ButtonStyle::Outlined),
                 )
                 .on_click({
@@ -3028,6 +3033,7 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             sub_page_stack: vec![],
+            scroll_handle: ScrollHandle::new(),
         };
 
         this.fetch_files(cx);
@@ -3354,22 +3360,27 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
-    fn render_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_page(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
         let mut page = v_flex()
             .w_full()
             .pt_4()
+            .pb_6()
             .px_6()
             .gap_4()
-            .bg(cx.theme().colors().editor_background);
+            .bg(cx.theme().colors().editor_background)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
+
         let mut page_content = v_flex()
             .id("settings-ui-page")
+            .size_full()
             .gap_4()
             .overflow_y_scroll()
-            .track_scroll(
-                window
-                    .use_state(cx, |_, _| ScrollHandle::default())
-                    .read(cx),
-            );
+            .track_scroll(&self.scroll_handle);
+
         if self.sub_page_stack.len() == 0 {
             page = page.child(self.render_files(window, cx));
 
@@ -3377,29 +3388,69 @@ impl SettingsWindow {
             let items_len = items.len();
             let mut section_header = None;
 
-            page_content =
-                page_content.children(items.into_iter().enumerate().map(|(index, item)| {
-                    let is_last = index == items_len - 1;
-                    if let SettingsPageItem::SectionHeader(header) = item {
-                        section_header = Some(*header);
-                    }
-                    item.render(
-                        self.current_file.clone(),
-                        section_header.expect("All items rendered after a section header"),
-                        is_last,
-                        window,
-                        cx,
-                    )
-                }))
+            let search_query = self.search_bar.read(cx).text(cx);
+            let has_active_search = !search_query.is_empty();
+            let has_no_results = items_len == 0 && has_active_search;
+
+            if has_no_results {
+                page_content = page_content.child(
+                    v_flex()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .gap_1()
+                        .child(div().child("No Results"))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(format!("No settings match \"{}\"", search_query)),
+                        ),
+                )
+            } else {
+                let last_non_header_index = items
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
+                    .map(|(index, _)| index);
+
+                page_content = page_content.children(items.clone().into_iter().enumerate().map(
+                    |(index, item)| {
+                        let no_bottom_border = items
+                            .get(index + 1)
+                            .map(|next_item| {
+                                matches!(next_item, SettingsPageItem::SectionHeader(_))
+                            })
+                            .unwrap_or(false);
+                        let is_last = Some(index) == last_non_header_index;
+
+                        if let SettingsPageItem::SectionHeader(header) = item {
+                            section_header = Some(*header);
+                        }
+                        item.render(
+                            self.current_file.clone(),
+                            section_header.expect("All items rendered after a section header"),
+                            no_bottom_border || is_last,
+                            window,
+                            cx,
+                        )
+                    },
+                ))
+            }
         } else {
             page = page.child(
                 h_flex()
-                    .gap_2()
-                    .child(IconButton::new("back-btn", IconName::ChevronLeft).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            this.pop_sub_page(cx);
-                        }),
-                    ))
+                    .ml_neg_1p5()
+                    .gap_1()
+                    .child(
+                        IconButton::new("back-btn", IconName::ArrowLeft)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.pop_sub_page(cx);
+                            })),
+                    )
                     .child(self.render_sub_page_breadcrumbs()),
             );
 
@@ -3614,7 +3665,12 @@ where
             menu
         }),
     )
+    .trigger_size(ButtonSize::Medium)
     .style(DropdownStyle::Outlined)
+    .offset(gpui::Point {
+        x: px(0.0),
+        y: px(2.0),
+    })
     .into_any_element()
 }
 
@@ -3788,6 +3844,7 @@ mod test {
             search_matches: vec![],
             search_task: None,
             sub_page_stack: vec![],
+            scroll_handle: ScrollHandle::new(),
         };
 
         settings_window.build_search_matches();
