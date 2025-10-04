@@ -1104,7 +1104,8 @@
     "context": "StashList || (StashList > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem",
+      "ctrl-shift-v": "stash_picker::ShowStashItem"
     }
   },
   {
@@ -1261,6 +1262,15 @@
       "ctrl-enter": "onboarding::Finish",
       "alt-shift-l": "onboarding::SignIn",
       "shift-alt-a": "onboarding::OpenAccount"
+    }
+  },
+  {
+    "context": "StashDiff > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-space": "git::ApplyCurrentStash",
+      "ctrl-shift-space": "git::PopCurrentStash",
+      "ctrl-shift-backspace": "git::DropCurrentStash"
     }
   }
 ]
