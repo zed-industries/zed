@@ -5771,13 +5771,14 @@ impl Render for ProjectPanel {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .on_click(cx.listener(|this, event, _, cx| {
+                                .on_click(cx.listener(|this, event, window, cx| {
                                     if matches!(event, gpui::ClickEvent::Keyboard(_)) {
                                         return;
                                     }
                                     cx.stop_propagation();
                                     this.state.selection = None;
                                     this.marked_entries.clear();
+                                    this.focus_handle(cx).focus(window);
                                 }))
                                 .on_mouse_down(
                                     MouseButton::Right,
