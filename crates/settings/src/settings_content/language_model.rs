@@ -12,6 +12,7 @@ pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
+    pub zai: Option<ZaiSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
@@ -284,6 +285,22 @@ pub struct GoogleAvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub mode: Option<ModelMode>,
+}
+
+#[skip_serializing_none]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct ZaiSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<ZaiAvailableModel>>,
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ZaiAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
 }
 
 #[skip_serializing_none]
