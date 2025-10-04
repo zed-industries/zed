@@ -452,10 +452,6 @@ impl Item for CommitView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,

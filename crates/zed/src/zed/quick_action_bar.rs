@@ -23,6 +23,7 @@ use ui::{
     IconName, IconSize, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
+use workspace::item::ItemBufferKind;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
 };
@@ -131,7 +132,7 @@ impl Render for QuickActionBar {
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 
-        let search_button = editor.is_singleton(cx).then(|| {
+        let search_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
                 search::SEARCH_ICON,

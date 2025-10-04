@@ -730,10 +730,6 @@ impl Item for BufferDiagnosticsEditor {
         self.multibuffer.read(cx).is_dirty(cx)
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
-    }
-
     fn navigate(
         &mut self,
         data: Box<dyn Any>,

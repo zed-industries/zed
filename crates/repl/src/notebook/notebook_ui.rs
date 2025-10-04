@@ -724,10 +724,6 @@ impl Item for NotebookEditor {
         f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
-    }
-
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         Label::new(self.tab_content_text(params.detail.unwrap_or(0), cx))
             .single_line()

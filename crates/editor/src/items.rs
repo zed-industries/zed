@@ -43,7 +43,7 @@ use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_buffer_view::InvalidBufferView,
-    item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
+    item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
         Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
     },
@@ -747,8 +747,11 @@ impl Item for Editor {
             .for_each_buffer(|buffer| f(buffer.entity_id(), buffer.read(cx)));
     }
 
-    fn is_singleton(&self, cx: &App) -> bool {
-        self.buffer.read(cx).is_singleton()
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
+        match self.buffer.read(cx).is_singleton() {
+            true => ItemBufferKind::Singleton,
+            false => ItemBufferKind::Multibuffer,
+        }
     }
 
     fn can_save_as(&self, cx: &App) -> bool {

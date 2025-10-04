@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, EntityId, EventEmitter, Subscription};
 use ui::{IconButtonShape, Tooltip, prelude::*};
-use workspace::item::{ItemEvent, ItemHandle};
+use workspace::item::{ItemBufferKind, ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct MultibufferHint {
@@ -79,7 +79,7 @@ impl MultibufferHint {
             return ToolbarItemLocation::Hidden;
         };
 
-        if active_pane_item.is_singleton(cx)
+        if active_pane_item.buffer_kind(cx) == ItemBufferKind::Singleton
             || active_pane_item.breadcrumbs(cx.theme(), cx).is_none()
             || !active_pane_item.can_save(cx)
         {
