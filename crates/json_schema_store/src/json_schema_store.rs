@@ -61,7 +61,9 @@ impl SchemaStore {
                 return false;
             };
             project::lsp_store::json_language_server_ext::notify_schema_changed(
-                lsp_store, &uri, cx,
+                lsp_store,
+                uri.clone(),
+                cx,
             );
             true
         })
