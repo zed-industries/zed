@@ -62,14 +62,14 @@ impl ScrollableHandle for TerminalScrollHandle {
         let state = self.state.borrow();
         let scroll_offset = state.total_lines - state.viewport_lines - state.display_offset;
         Point::new(
-            px(0.),
-            -px(scroll_offset as f32 * self.state.borrow().line_height.0),
+            Pixels::ZERO,
+            -(scroll_offset as f32 * self.state.borrow().line_height),
         )
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
         let state = self.state.borrow();
-        let offset_delta = (point.y.0 / state.line_height.0).round() as i32;
+        let offset_delta = (point.y / state.line_height).round() as i32;
 
         let max_offset = state.total_lines - state.viewport_lines;
         let display_offset = (max_offset as i32 + offset_delta).clamp(0, max_offset as i32);
@@ -83,8 +83,8 @@ impl ScrollableHandle for TerminalScrollHandle {
         Bounds::new(
             Point::new(px(0.), px(0.)),
             size(
-                px(0.),
-                px(state.viewport_lines as f32 * state.line_height.0),
+                Pixels::ZERO,
+                state.viewport_lines as f32 * state.line_height,
             ),
         )
     }

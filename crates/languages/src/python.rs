@@ -26,6 +26,7 @@ use std::env::consts;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
 
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -36,8 +37,6 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -154,11 +153,16 @@ impl LspAdapter for TyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
-        _cx: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut ret = json!({});
+        let mut ret = cx
+            .update(|cx| {
+                language_server_settings(delegate.as_ref(), &self.name(), cx)
+                    .and_then(|s| s.settings.clone())
+            })?
+            .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
         }) {
@@ -171,10 +175,9 @@ impl LspAdapter for TyLspAdapter {
                         "sysPrefix": sys_prefix
                     }
                 });
-                ret.as_object_mut()?.insert(
-                    "pythonExtension".into(),
-                    json!({ "activeEnvironment": environment }),
-                );
+                ret.as_object_mut()?
+                    .entry("pythonExtension")
+                    .or_insert_with(|| json!({ "activeEnvironment": environment }));
                 Some(())
             });
         }
@@ -268,7 +271,7 @@ impl LspInstaller for TyLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -463,7 +466,6 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1184,11 +1186,13 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
-                        ShellKind::Posix => "source",
+                        ShellKind::Tcsh => "source",
+                        ShellKind::Posix | ShellKind::Rc => "source",
                     };
                     let activate_script_name = match shell {
-                        ShellKind::Posix => "activate",
+                        ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
+                        ShellKind::Tcsh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
@@ -1217,7 +1221,9 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
+                    ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
+                    ShellKind::Rc => None,
                 })
             }
             _ => {}
@@ -2109,7 +2115,7 @@ impl LspInstaller for RuffLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,

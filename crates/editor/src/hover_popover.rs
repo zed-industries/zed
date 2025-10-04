@@ -371,7 +371,7 @@ fn show_hover(
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
                 let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic,
+                    diagnostic: local_diagnostic.diagnostic.to_owned(),
                     range: snapshot
                         .buffer_snapshot
                         .anchor_before(local_diagnostic.range.start)
@@ -1785,7 +1785,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len()..": ".len() + new_type_label.len(),
                 }),
                 "Popover range should match the new type label part"
@@ -1840,7 +1840,7 @@ mod tests {
                 popover.symbol_range,
                 RangeInEditor::Inlay(InlayHighlight {
                     inlay: InlayId::Hint(0),
-                    inlay_position: buffer_snapshot.anchor_at(inlay_range.start, Bias::Right),
+                    inlay_position: buffer_snapshot.anchor_after(inlay_range.start),
                     range: ": ".len() + new_type_label.len() + "<".len()
                         ..": ".len() + new_type_label.len() + "<".len() + struct_label.len(),
                 }),

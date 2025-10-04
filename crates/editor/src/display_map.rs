@@ -1176,7 +1176,7 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
-    pub fn sticky_header_excerpt(&self, row: f32) -> Option<StickyHeaderExcerpt<'_>> {
+    pub fn sticky_header_excerpt(&self, row: f64) -> Option<StickyHeaderExcerpt<'_>> {
         self.block_snapshot.sticky_header_excerpt(row)
     }
 
@@ -1877,33 +1877,33 @@ pub mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(x.0),
+                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    language::SelectionGoal::HorizontalPosition(x.0)
+                    language::SelectionGoal::HorizontalPosition(f64::from(x))
                 )
             );
 
@@ -1920,7 +1920,7 @@ pub mod tests {
 
             // Re-wrap on font size changes
             map.update(cx, |map, cx| {
-                map.set_font(font("Helvetica"), px(font_size.0 + 3.), cx)
+                map.set_font(font("Helvetica"), font_size + Pixels::from(3.), cx)
             });
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));

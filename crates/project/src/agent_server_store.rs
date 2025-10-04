@@ -8,12 +8,15 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
+use client::Client;
 use collections::HashMap;
+use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
+use http_client::github::AssetKind;
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -123,6 +126,7 @@ enum AgentServerStoreState {
 pub struct AgentServerStore {
     state: AgentServerStoreState,
     external_agents: HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>,
+    _feature_flag_subscription: Option<gpui::Subscription>,
 }
 
 pub struct AgentServersUpdated;
@@ -182,6 +186,32 @@ impl AgentServerStore {
                     .unwrap_or(true),
             }),
         );
+        self.external_agents
+            .extend(new_settings.custom.iter().map(|(name, settings)| {
+                (
+                    ExternalAgentServerName(name.clone()),
+                    Box::new(LocalCustomAgent {
+                        command: settings.command.clone(),
+                        project_environment: project_environment.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            }));
+
+        use feature_flags::FeatureFlagAppExt as _;
+        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() || new_settings.codex.is_some() {
+            self.external_agents.insert(
+                CODEX_NAME.into(),
+                Box::new(LocalCodex {
+                    fs: fs.clone(),
+                    project_environment: project_environment.clone(),
+                    custom_command: new_settings
+                        .codex
+                        .clone()
+                        .and_then(|settings| settings.custom_command()),
+                }),
+            );
+        }
+
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
@@ -194,16 +224,6 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
-        self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
-                (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
-                        project_environment: project_environment.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            }));
 
         *old_settings = Some(new_settings.clone());
 
@@ -214,6 +234,7 @@ impl AgentServerStore {
                     names: self
                         .external_agents
                         .keys()
+                        .filter(|name| name.0 != CODEX_NAME)
                         .map(|name| name.to_string())
                         .collect(),
                 })
@@ -231,6 +252,13 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
+        let this_handle = cx.weak_entity();
+        let feature_flags_subscription =
+            cx.observe_flag::<feature_flags::CodexAcpFeatureFlag, _>(move |_enabled, cx| {
+                let _ = this_handle.update(cx, |this, cx| {
+                    this.agent_servers_settings_changed(cx);
+                });
+            });
         let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
@@ -241,6 +269,7 @@ impl AgentServerStore {
                 _subscriptions: [subscription],
             },
             external_agents: Default::default(),
+            _feature_flag_subscription: Some(feature_flags_subscription),
         };
         this.agent_servers_settings_changed(cx);
         this
@@ -285,6 +314,7 @@ impl AgentServerStore {
                 upstream_client,
             },
             external_agents,
+            _feature_flag_subscription: None,
         }
     }
 
@@ -292,6 +322,7 @@ impl AgentServerStore {
         Self {
             state: AgentServerStoreState::Collab,
             external_agents: Default::default(),
+            _feature_flag_subscription: None,
         }
     }
 
@@ -609,7 +640,7 @@ fn get_or_npm_install_builtin_agent(
                     if let Ok(latest_version) = latest_version
                         && &latest_version != &file_name.to_string_lossy()
                     {
-                        download_latest_version(
+                        let download_result = download_latest_version(
                             fs,
                             dir.clone(),
                             node_runtime,
@@ -617,7 +648,9 @@ fn get_or_npm_install_builtin_agent(
                         )
                         .await
                         .log_err();
-                        if let Some(mut new_version_available) = new_version_available {
+                        if let Some(mut new_version_available) = new_version_available
+                            && download_result.is_some()
+                        {
                             new_version_available.send(Some(latest_version)).ok();
                         }
                     }
@@ -702,7 +735,7 @@ async fn download_latest_version(
         &dir.join(&version),
         RenameOptions {
             ignore_if_exists: true,
-            overwrite: false,
+            overwrite: true,
         },
     )
     .await?;
@@ -907,7 +940,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                     "claude-code-acp".into(),
                     "@zed-industries/claude-code-acp".into(),
                     "node_modules/@zed-industries/claude-code-acp/dist/index.js".into(),
-                    Some("0.2.5".parse().unwrap()),
+                    Some("0.5.2".parse().unwrap()),
                     status_tx,
                     new_version_available_tx,
                     fs,
@@ -926,7 +959,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                         command: Some(command.path.to_string_lossy().into_owned()),
                         args: vec![
                             Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-code/cli.js")
+                                .join("@anthropic-ai/claude-agent-sdk/cli.js")
                                 .to_string_lossy()
                                 .to_string(),
                             "/login".into(),
@@ -946,6 +979,147 @@ impl ExternalAgentServer for LocalClaudeCode {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+struct LocalCodex {
+    fs: Arc<dyn Fs>,
+    project_environment: Entity<ProjectEnvironment>,
+    custom_command: Option<AgentServerCommand>,
+}
+
+impl ExternalAgentServer for LocalCodex {
+    fn get_command(
+        &mut self,
+        root_dir: Option<&str>,
+        extra_env: HashMap<String, String>,
+        _status_tx: Option<watch::Sender<SharedString>>,
+        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
+        let fs = self.fs.clone();
+        let project_environment = self.project_environment.downgrade();
+        let custom_command = self.custom_command.clone();
+        let root_dir: Arc<Path> = root_dir
+            .map(|root_dir| Path::new(root_dir))
+            .unwrap_or(paths::home_dir())
+            .into();
+
+        cx.spawn(async move |cx| {
+            let mut env = project_environment
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_directory_environment(root_dir.clone(), cx)
+                })?
+                .await
+                .unwrap_or_default();
+
+            let mut command = if let Some(mut custom_command) = custom_command {
+                env.extend(custom_command.env.unwrap_or_default());
+                custom_command.env = Some(env);
+                custom_command
+            } else {
+                let dir = paths::data_dir().join("external_agents").join(CODEX_NAME);
+                fs.create_dir(&dir).await?;
+
+                // Find or install the latest Codex release (no update checks for now).
+                let http = cx.update(|cx| Client::global(cx).http_client())?;
+                let release = ::http_client::github::latest_github_release(
+                    CODEX_ACP_REPO,
+                    true,
+                    false,
+                    http.clone(),
+                )
+                .await
+                .context("fetching Codex latest release")?;
+
+                let version_dir = dir.join(&release.tag_name);
+                if !fs.is_dir(&version_dir).await {
+                    let tag = release.tag_name.clone();
+                    let version_number = tag.trim_start_matches('v');
+                    let asset_name = asset_name(version_number)
+                        .context("codex acp is not supported for this architecture")?;
+                    let asset = release
+                        .assets
+                        .into_iter()
+                        .find(|asset| asset.name == asset_name)
+                        .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+                    ::http_client::github_download::download_server_binary(
+                        &*http,
+                        &asset.browser_download_url,
+                        asset.digest.as_deref(),
+                        &version_dir,
+                        if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+                            AssetKind::Zip
+                        } else {
+                            AssetKind::TarGz
+                        },
+                    )
+                    .await?;
+                }
+
+                let bin_name = if cfg!(windows) {
+                    "codex-acp.exe"
+                } else {
+                    "codex-acp"
+                };
+                let bin_path = version_dir.join(bin_name);
+                anyhow::ensure!(
+                    fs.is_file(&bin_path).await,
+                    "Missing Codex binary at {} after installation",
+                    bin_path.to_string_lossy()
+                );
+
+                let mut cmd = AgentServerCommand {
+                    path: bin_path,
+                    args: Vec::new(),
+                    env: None,
+                };
+                cmd.env = Some(env);
+                cmd
+            };
+
+            command.env.get_or_insert_default().extend(extra_env);
+            Ok((command, root_dir.to_string_lossy().into_owned(), None))
+        })
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+pub const CODEX_ACP_REPO: &str = "zed-industries/codex-acp";
+
+/// Assemble Codex release URL for the current OS/arch and the given version number.
+/// Returns None if the current target is unsupported.
+/// Example output:
+/// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
+fn asset_name(version: &str) -> Option<String> {
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        return None;
+    };
+
+    let platform = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(target_os = "windows") {
+        "pc-windows-msvc"
+    } else if cfg!(target_os = "linux") {
+        "unknown-linux-gnu"
+    } else {
+        return None;
+    };
+
+    // Only Windows x86_64 uses .zip in release assets
+    let ext = if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+
+    Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
 struct LocalCustomAgent {
@@ -987,13 +1161,51 @@ impl ExternalAgentServer for LocalCustomAgent {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn assembles_codex_release_url_for_current_target() {
+        let version_number = "0.1.0";
+
+        // This test fails the build if we are building a version of Zed
+        // which does not have a known build of codex-acp, to prevent us
+        // from accidentally doing a release on a new target without
+        // realizing that codex-acp support will not work on that target!
+        //
+        // Additionally, it verifies that our logic for assembling URLs
+        // correctly resolves to a known-good URL on each of our targets.
+        let allowed = [
+            "codex-acp-0.1.0-aarch64-apple-darwin.tar.gz",
+            "codex-acp-0.1.0-aarch64-pc-windows-msvc.tar.gz",
+            "codex-acp-0.1.0-aarch64-unknown-linux-gnu.tar.gz",
+            "codex-acp-0.1.0-x86_64-apple-darwin.tar.gz",
+            "codex-acp-0.1.0-x86_64-pc-windows-msvc.zip",
+            "codex-acp-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+        ];
+
+        if let Some(url) = super::asset_name(version_number) {
+            assert!(
+                allowed.contains(&url.as_str()),
+                "Assembled asset name {} not in allowed list",
+                url
+            );
+        } else {
+            panic!(
+                "This target does not have a known codex-acp release! We should fix this by building a release of codex-acp for this target, as otherwise codex-acp will not be usable with this Zed build."
+            );
+        }
+    }
+}
+
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
+pub const CODEX_NAME: &'static str = "codex";
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
+    pub codex: Option<BuiltinAgentServerSettings>,
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
@@ -1068,6 +1280,7 @@ impl settings::Settings for AllAgentServersSettings {
         Self {
             gemini: agent_settings.gemini.map(Into::into),
             claude: agent_settings.claude.map(Into::into),
+            codex: agent_settings.codex.map(Into::into),
             custom: agent_settings
                 .custom
                 .into_iter()

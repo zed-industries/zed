@@ -1525,6 +1525,11 @@ fn wrapping_right_single(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayP
     }
 }
 
+/// Given a point, returns the start of the buffer row that is a given number of
+/// buffer rows away from the current position.
+///
+/// This moves by buffer rows instead of display rows, a distinction that is
+/// important when soft wrapping is enabled.
 pub(crate) fn start_of_relative_buffer_row(
     map: &DisplaySnapshot,
     point: DisplayPoint,
@@ -1573,12 +1578,12 @@ fn up_down_buffer_rows(
 
     let (goal_wrap, goal_x) = match goal {
         SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
-        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
-        SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
+        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end as f32),
+        SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x as f32),
         _ => {
             let x = map.x_for_display_point(point, text_layout_details);
-            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x.0));
-            (select_nth_wrapped_row, x.0)
+            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x.into()));
+            (select_nth_wrapped_row, x.into())
         }
     };
 

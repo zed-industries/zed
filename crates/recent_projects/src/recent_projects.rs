@@ -688,8 +688,8 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |div, _, _| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |div, _| {
             self.highlighted_location.render_paths_children(div)
         })
     }

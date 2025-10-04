@@ -26,7 +26,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::initial_server_settings_content;
+use settings::{Settings as _, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -69,6 +69,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 

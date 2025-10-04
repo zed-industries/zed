@@ -630,7 +630,7 @@
           "hint": {
             "color": "#8ca7c2ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#fa8d3eff",
@@ -1021,7 +1021,7 @@
           "hint": {
             "color": "#7399a3ff",
             "font_style": null,
-            "font_weight": 700
+            "font_weight": null
           },
           "keyword": {
             "color": "#ffad65ff",

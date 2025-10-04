@@ -212,9 +212,7 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/ruff",
     "extensions/slash-commands-example",
-    "extensions/snippets",
     "extensions/test-extension",
 
     #
@@ -474,9 +472,9 @@ backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-graphics = { version = "0.7.0" }
+blade-macros = { version = "0.3.0" }
+blade-util = { version = "0.3.0" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -550,6 +548,7 @@ nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
 num-format = "0.4.4"
+num-traits = "0.2"
 objc = "0.2"
 objc2-foundation = { version = "0.3", default-features = false, features = [
     "NSArray",
@@ -620,7 +619,6 @@ runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804
     "async-dispatcher-runtime",
 ] }
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
@@ -714,7 +712,6 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 windows-core = "0.61"
-windows-sys = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"

@@ -1,4 +1,5 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -11,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
 };
+
+use crate::rel_path::RelPath;
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -58,6 +61,7 @@ pub trait PathExt {
         }
     }
     fn local_to_wsl(&self) -> Option<PathBuf>;
+    fn multiple_extensions(&self) -> Option<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -101,7 +105,9 @@ impl<T: AsRef<Path>> PathExt for T {
     /// Converts a local path to one that can be used inside of WSL.
     /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf> {
-        let mut new_path = PathBuf::new();
+        // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
+        // todo: ideally rework them..?
+        let mut new_path = std::ffi::OsString::new();
         for component in self.as_ref().components() {
             match component {
                 std::path::Component::Prefix(prefix) => {
@@ -111,11 +117,41 @@ impl<T: AsRef<Path>> PathExt for T {
                     new_path.push(format!("/mnt/{}", drive_letter));
                 }
                 std::path::Component::RootDir => {}
-                _ => new_path.push(component),
+                std::path::Component::CurDir => {
+                    new_path.push("/.");
+                }
+                std::path::Component::ParentDir => {
+                    new_path.push("/..");
+                }
+                std::path::Component::Normal(os_str) => {
+                    new_path.push("/");
+                    new_path.push(os_str);
+                }
             }
         }
 
-        Some(new_path)
+        Some(new_path.into())
+    }
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
+    fn multiple_extensions(&self) -> Option<String> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
+
+        let parts: Vec<&str> = file_name
+            .split('.')
+            // Skip the part with the file name extension
+            .skip(1)
+            .collect();
+
+        if parts.len() < 2 {
+            return None;
+        }
+
+        Some(parts.into_iter().join("."))
     }
 }
 
@@ -792,6 +828,81 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
                     }
                 }
             }
+        }
+    }
+}
+pub fn compare_rel_paths(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+        if filename.is_empty() {
+            return (None, None);
+        }
+
+        match filename.rsplit_once('.') {
+            // Case 1: No dot was found. The entire name is the stem.
+            None => (Some(filename), None),
+
+            // Case 2: A dot was found.
+            Some((before, after)) => {
+                // This is the crucial check for dotfiles like ".bashrc".
+                // If `before` is empty, the dot was the first character.
+                // In that case, we revert to the "whole name is the stem" logic.
+                if before.is_empty() {
+                    (Some(filename), None)
+                } else {
+                    // Otherwise, we have a standard stem and extension.
+                    (Some(before), Some(after))
+                }
+            }
+        }
+    }
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = a_is_file && components_a.rest().is_empty();
+                let b_is_file = b_is_file && components_b.rest().is_empty();
+
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let (a_stem, a_extension) = a_is_file
+                        .then(|| stem_and_extension(component_a))
+                        .unwrap_or_default();
+                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
+
+                    let (b_stem, b_extension) = b_is_file
+                        .then(|| stem_and_extension(component_b))
+                        .unwrap_or_default();
+                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
+
+                    let compare_components = match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => natural_sort(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    };
+
+                    compare_components.then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = a_extension.unwrap_or_default();
+                            let ext_b = b_extension.unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                });
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
         }
     }
 }
@@ -1638,5 +1749,24 @@ mod tests {
         assert_eq!(natural_sort("file-1a", "file-1b"), Ordering::Less);
         assert_eq!(natural_sort("file-1.2", "file-1.10"), Ordering::Less);
         assert_eq!(natural_sort("file-1.10", "file-1.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_multiple_extensions() {
+        // No extensions
+        let path = Path::new("/a/b/c/file_name");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Only one extension
+        let path = Path::new("/a/b/c/file_name.tsx");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Stories sample extension
+        let path = Path::new("/a/b/c/file_name.stories.tsx");
+        assert_eq!(path.multiple_extensions(), Some("stories.tsx".to_string()));
+
+        // Longer sample extension
+        let path = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
     }
 }

@@ -122,7 +122,7 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
     IndentSize, Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal,
     TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
@@ -210,6 +210,7 @@ use crate::{
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
     hover_links::{find_url, find_url_from_range},
+    scroll::{ScrollOffset, ScrollPixelOffset},
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
@@ -404,7 +405,7 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
 pub trait DiagnosticRenderer {
     fn render_group(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
         snapshot: EditorSnapshot,
         editor: WeakEntity<Editor>,
@@ -413,7 +414,7 @@ pub trait DiagnosticRenderer {
 
     fn render_hover(
         &self,
-        diagnostic_group: Vec<DiagnosticEntry<Point>>,
+        diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         range: Range<Point>,
         buffer_id: BufferId,
         cx: &mut App,
@@ -3211,22 +3212,27 @@ impl Editor {
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 self.serialize_selections = cx.background_spawn(async move {
-                            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                            let db_selections = selections
-                                .iter()
-                                .map(|selection| {
-                                    (
-                                        selection.start.to_offset(&snapshot),
-                                        selection.end.to_offset(&snapshot),
-                                    )
-                                })
-                                .collect();
+                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                    let db_selections = selections
+                        .iter()
+                        .map(|selection| {
+                            (
+                                selection.start.to_offset(&snapshot),
+                                selection.end.to_offset(&snapshot),
+                            )
+                        })
+                        .collect();
 
-                            DB.save_editor_selections(editor_id, workspace_id, db_selections)
-                                .await
-                                .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
-                                .log_err();
-                        });
+                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "persisting editor selections for editor {editor_id}, \
+                                workspace {workspace_id:?}"
+                            )
+                        })
+                        .log_err();
+                });
             }
         }
 
@@ -6871,17 +6877,7 @@ impl Editor {
                                 continue;
                             }
 
-                            let range = Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: start,
-                                diff_base_anchor: None,
-                            }..Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: end,
-                                diff_base_anchor: None,
-                            };
+                            let range = Anchor::range_in_buffer(excerpt_id, buffer_id, start..end);
                             if highlight.kind == lsp::DocumentHighlightKind::WRITE {
                                 write_ranges.push(range);
                             } else {
@@ -8626,8 +8622,8 @@ impl Editor {
         self.context_menu_options = Some(options);
     }
 
-    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
-    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = Pixels(2.);
+    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = px(24.);
+    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = px(2.);
 
     fn render_edit_prediction_popover(
         &mut self,
@@ -8636,11 +8632,12 @@ impl Editor {
         right_margin: Pixels,
         editor_snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
-        scroll_top: f32,
-        scroll_bottom: f32,
+        scroll_top: ScrollOffset,
+        scroll_bottom: ScrollOffset,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
@@ -8732,6 +8729,7 @@ impl Editor {
                 visible_row_range,
                 line_layouts,
                 line_height,
+                scroll_position,
                 scroll_pixel_position,
                 newest_selection_head,
                 editor_width,
@@ -8774,14 +8772,14 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         newest_selection_head: Option<DisplayPoint>,
         target_display_point: DisplayPoint,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         let scrolled_content_origin =
-            content_origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
+            content_origin - gpui::Point::new(scroll_pixel_position.x.into(), Pixels::ZERO);
 
         const SCROLL_PADDING_Y: Pixels = px(12.);
 
@@ -8816,8 +8814,8 @@ impl Editor {
         let target_column = target_display_point.column() as usize;
 
         let target_x = line_layout.x_for_index(target_column);
-        let target_y =
-            (target_display_point.row().as_f32() * line_height) - scroll_pixel_position.y;
+        let target_y = (target_display_point.row().as_f64() * f64::from(line_height))
+            - scroll_pixel_position.y;
 
         let flag_on_right = target_x < text_bounds.size.width / 2.;
 
@@ -8845,7 +8843,7 @@ impl Editor {
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        let mut origin = scrolled_content_origin + point(target_x, target_y)
+        let mut origin = scrolled_content_origin + point(target_x, target_y.into())
             - point(
                 if flag_on_right {
                     POLE_WIDTH
@@ -8898,16 +8896,16 @@ impl Editor {
         content_origin: gpui::Point<Pixels>,
         editor_snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
-        scroll_top: f32,
-        scroll_bottom: f32,
+        scroll_top: ScrollOffset,
+        scroll_bottom: ScrollOffset,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         target_display_point: DisplayPoint,
         editor_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if target_display_point.row().as_f32() < scroll_top {
+        if target_display_point.row().as_f64() < scroll_top {
             let mut element = self
                 .render_edit_prediction_line_popover(
                     "Jump to Edit",
@@ -8926,7 +8924,7 @@ impl Editor {
             let origin = text_bounds.origin + offset;
             element.prepaint_at(origin, window, cx);
             Some((element, origin))
-        } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
+        } else if (target_display_point.row().as_f64() + 1.) > scroll_bottom {
             let mut element = self
                 .render_edit_prediction_line_popover(
                     "Jump to Edit",
@@ -8968,7 +8966,7 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         target_display_point: DisplayPoint,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         editor_width: Pixels,
         window: &mut Window,
@@ -8987,7 +8985,7 @@ impl Editor {
 
         let line_origin = self.display_to_pixel_point(target_line_end, editor_snapshot, window)?;
 
-        let start_point = content_origin - point(scroll_pixel_position.x, Pixels::ZERO);
+        let start_point = content_origin - point(scroll_pixel_position.x.into(), Pixels::ZERO);
         let mut origin = start_point
             + line_origin
             + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
@@ -9028,7 +9026,8 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
@@ -9141,9 +9140,11 @@ impl Editor {
                 ..Default::default()
             });
 
-        let x_after_longest =
-            text_bounds.origin.x + longest_line_width + Self::EDIT_PREDICTION_POPOVER_PADDING_X
-                - scroll_pixel_position.x;
+        let x_after_longest = Pixels::from(
+            ScrollPixelOffset::from(
+                text_bounds.origin.x + longest_line_width + Self::EDIT_PREDICTION_POPOVER_PADDING_X,
+            ) - scroll_pixel_position.x,
+        );
 
         let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
@@ -9155,8 +9156,11 @@ impl Editor {
         let mut origin = if can_position_to_the_right {
             point(
                 x_after_longest,
-                text_bounds.origin.y + edit_start.row().as_f32() * line_height
-                    - scroll_pixel_position.y,
+                text_bounds.origin.y
+                    + Pixels::from(
+                        edit_start.row().as_f64() * ScrollPixelOffset::from(line_height)
+                            - scroll_pixel_position.y,
+                    ),
             )
         } else {
             let cursor_row = newest_selection_head.map(|head| head.row());
@@ -9186,8 +9190,10 @@ impl Editor {
 
             content_origin
                 + point(
-                    -scroll_pixel_position.x,
-                    row_target.as_f32() * line_height - scroll_pixel_position.y,
+                    Pixels::from(-scroll_pixel_position.x),
+                    Pixels::from(
+                        (row_target.as_f64() - scroll_position.y) * f64::from(line_height),
+                    ),
                 )
         };
 
@@ -12886,7 +12892,7 @@ impl Editor {
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| (movement::right(map, head), SelectionGoal::None));
-        })
+        });
     }
 
     pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -14255,7 +14261,7 @@ impl Editor {
                     let mut row = range.start.row();
                     let positions =
                         if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            px(start)..px(end)
+                            Pixels::from(start)..Pixels::from(end)
                         } else {
                             let start_x =
                                 display_map.x_for_display_point(range.start, &text_layout_details);
@@ -15873,7 +15879,7 @@ impl Editor {
             let snapshot = multi_buffer.snapshot(cx);
             if let Some(buffer_id) = snapshot.buffer_id_for_excerpt(excerpt)
                 && let Some(buffer) = multi_buffer.buffer(buffer_id)
-                && let Some(excerpt_range) = snapshot.buffer_range_for_excerpt(excerpt)
+                && let Some(excerpt_range) = snapshot.context_range_for_excerpt(excerpt)
             {
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 let excerpt_end_row = Point::from_anchor(&excerpt_range.end, &buffer_snapshot).row;
@@ -15889,7 +15895,7 @@ impl Editor {
 
         if should_scroll_up {
             let new_scroll_position =
-                current_scroll_position + gpui::Point::new(0.0, lines_to_expand as f32);
+                current_scroll_position + gpui::Point::new(0.0, lines_to_expand as ScrollOffset);
             self.set_scroll_position(new_scroll_position, window, cx);
         }
     }
@@ -15970,11 +15976,11 @@ impl Editor {
             active_group_id = Some(active_group.group_id);
         }
 
-        fn filtered(
+        fn filtered<'a>(
             snapshot: EditorSnapshot,
             severity: GoToDiagnosticSeverityFilter,
-            diagnostics: impl Iterator<Item = DiagnosticEntry<usize>>,
-        ) -> impl Iterator<Item = DiagnosticEntry<usize>> {
+            diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, usize>>,
+        ) -> impl Iterator<Item = DiagnosticEntryRef<'a, usize>> {
             diagnostics
                 .filter(move |entry| severity.matches(entry.diagnostic.severity))
                 .filter(|entry| entry.range.start != entry.range.end)
@@ -15998,7 +16004,7 @@ impl Editor {
                 .filter(|entry| entry.range.start >= selection.start),
         );
 
-        let mut found: Option<DiagnosticEntry<usize>> = None;
+        let mut found: Option<DiagnosticEntryRef<usize>> = None;
         if direction == Direction::Prev {
             'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
             {
@@ -17521,7 +17527,7 @@ impl Editor {
     fn activate_diagnostics(
         &mut self,
         buffer_id: BufferId,
-        diagnostic: DiagnosticEntry<usize>,
+        diagnostic: DiagnosticEntryRef<'_, usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -17710,7 +17716,7 @@ impl Editor {
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::from(diagnostic_entry.diagnostic.message)
+                                SharedString::new(&*diagnostic_entry.diagnostic.message)
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -18120,6 +18126,13 @@ impl Editor {
         let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_row().0, 1)];
 
+        let row_ranges_to_keep: Vec<Range<u32>> = self
+            .selections
+            .all::<Point>(cx)
+            .into_iter()
+            .map(|sel| sel.start.row..sel.end.row)
+            .collect();
+
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
                 match self
@@ -18133,7 +18146,13 @@ impl Editor {
                         if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
                         } else if current_level == fold_at_level {
-                            to_fold.push(crease);
+                            // Fold iff there is no selection completely contained within the fold region
+                            if !row_ranges_to_keep.iter().any(|selection| {
+                                selection.end >= nested_start_row
+                                    && selection.start <= nested_end_row
+                            }) {
+                                to_fold.push(crease);
+                            }
                         }
 
                         start_row = nested_end_row + 1;
@@ -18840,7 +18859,12 @@ impl Editor {
     ) {
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
         let snapshot = self.snapshot(window, cx);
-        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx));
+        let hunks = snapshot.hunks_for_ranges(
+            self.selections
+                .all(cx)
+                .into_iter()
+                .map(|selection| selection.range()),
+        );
         let mut ranges_by_buffer = HashMap::default();
         self.transact(window, cx, |editor, _window, cx| {
             for hunk in hunks {
@@ -21742,11 +21766,11 @@ impl Editor {
             .scroll_position(editor_snapshot)
             .y;
 
-        if source.row().as_f32() < scroll_top.floor() {
+        if source.row().as_f64() < scroll_top.floor() {
             return None;
         }
         let source_x = editor_snapshot.x_for_display_point(source, &text_layout_details);
-        let source_y = line_height * (source.row().as_f32() - scroll_top);
+        let source_y = line_height * (source.row().as_f64() - scroll_top) as f32;
         Some(gpui::Point::new(source_x, source_y))
     }
 
@@ -22400,7 +22424,14 @@ fn wrap_with_prefix(
                     continue;
                 }
                 if !preserve_existing_whitespace {
-                    token = " ";
+                    // Keep a single whitespace grapheme as-is
+                    if let Some(first) =
+                        unicode_segmentation::UnicodeSegmentation::graphemes(token, true).next()
+                    {
+                        token = first;
+                    } else {
+                        token = " ";
+                    }
                     grapheme_len = 1;
                 }
                 let current_prefix_len = if is_first_line {
@@ -22501,6 +22532,17 @@ fn test_wrap_with_prefix() {
             false,
         ),
         "这是什\n么 钢\n笔"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            String::new(),
+            format!("foo{}bar", '\u{2009}'), // thin space
+            80,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        format!("foo{}bar", '\u{2009}')
     );
 }
 
@@ -23310,7 +23352,7 @@ impl EditorSnapshot {
             .map(|display_map| display_map.text())
     }
 
-    pub fn scroll_position(&self) -> gpui::Point<f32> {
+    pub fn scroll_position(&self) -> gpui::Point<ScrollOffset> {
         self.scroll_anchor.scroll_position(&self.display_snapshot)
     }
 
@@ -23876,12 +23918,16 @@ impl EntityInputHandler for Editor {
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
-        let scroll_left = scroll_position.x * em_advance;
+        let scroll_left = scroll_position.x * ScrollOffset::from(em_advance);
 
         let start = OffsetUtf16(range_utf16.start).to_display_point(&snapshot);
-        let x = snapshot.x_for_display_point(start, &text_layout_details) - scroll_left
-            + self.gutter_dimensions.full_width();
-        let y = line_height * (start.row().as_f32() - scroll_position.y);
+        let x = Pixels::from(
+            ScrollOffset::from(
+                snapshot.x_for_display_point(start, &text_layout_details)
+                    + self.gutter_dimensions.full_width(),
+            ) - scroll_left,
+        );
+        let y = line_height * (start.row().as_f64() - scroll_position.y) as f32;
 
         Some(Bounds {
             origin: element_bounds.origin + point(x, y),
@@ -24148,7 +24194,7 @@ impl<T: ToOffset> RangeToAnchorExt for Range<T> {
 }
 
 pub trait RowExt {
-    fn as_f32(&self) -> f32;
+    fn as_f64(&self) -> f64;
 
     fn next_row(&self) -> Self;
 
@@ -24158,8 +24204,8 @@ pub trait RowExt {
 }
 
 impl RowExt for DisplayRow {
-    fn as_f32(&self) -> f32 {
-        self.0 as f32
+    fn as_f64(&self) -> f64 {
+        self.0 as _
     }
 
     fn next_row(&self) -> Self {
@@ -24176,8 +24222,8 @@ impl RowExt for DisplayRow {
 }
 
 impl RowExt for MultiBufferRow {
-    fn as_f32(&self) -> f32 {
-        self.0 as f32
+    fn as_f64(&self) -> f64 {
+        self.0 as _
     }
 
     fn next_row(&self) -> Self {
@@ -24448,8 +24494,8 @@ fn all_edits_insertions_or_deletions(
 struct MissingEditPredictionKeybindingTooltip;
 
 impl Render for MissingEditPredictionKeybindingTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::tooltip_container(cx, |container, cx| {
             container
                 .flex_shrink_0()
                 .max_w_80()

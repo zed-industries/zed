@@ -333,7 +333,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
                 ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
                     write_keymap_base(BaseKeymap::VSCode, cx);
                 }),
-                ToggleButtonWithIcon::new("Jetbrains", IconName::EditorJetBrains, |_, _, cx| {
+                ToggleButtonWithIcon::new("JetBrains", IconName::EditorJetBrains, |_, _, cx| {
                     write_keymap_base(BaseKeymap::JetBrains, cx);
                 }),
                 ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {

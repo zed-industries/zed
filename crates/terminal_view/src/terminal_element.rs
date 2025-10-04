@@ -809,12 +809,11 @@ impl Element for TerminalElement {
                 total_lines: _,
             } => {
                 let rem_size = window.rem_size();
-                let line_height = window.text_style().font_size.to_pixels(rem_size)
+                let line_height = f32::from(window.text_style().font_size.to_pixels(rem_size))
                     * TerminalSettings::get_global(cx)
                         .line_height
                         .value()
-                        .to_pixels(rem_size)
-                        .0;
+                        .to_pixels(rem_size);
                 (displayed_lines * line_height).into()
             }
             ContentMode::Scrollable => {
@@ -939,7 +938,7 @@ impl Element for TerminalElement {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     // TODO: line_height should be an f32 not an AbsoluteLength.
-                    let line_height = font_pixels * line_height.to_pixels(rem_size).0;
+                    let line_height = f32::from(font_pixels) * line_height.to_pixels(rem_size);
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system

@@ -167,6 +167,7 @@ enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
+    Codex,
     NativeAgent,
     Custom {
         name: SharedString,
@@ -188,6 +189,7 @@ impl ExternalAgent {
             Self::NativeAgent => "zed",
             Self::Gemini => "gemini-cli",
             Self::ClaudeCode => "claude-code",
+            Self::Codex => "codex",
             Self::Custom { .. } => "custom",
         }
     }
@@ -200,6 +202,7 @@ impl ExternalAgent {
         match self {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            Self::Codex => Rc::new(agent_servers::Codex),
             Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
             Self::Custom { name, command: _ } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))

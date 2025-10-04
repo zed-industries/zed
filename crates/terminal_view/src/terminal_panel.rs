@@ -19,7 +19,7 @@ use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, TerminalDockPosition};
-use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
@@ -543,7 +543,15 @@ impl TerminalPanel {
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
 
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &task.shell);
+        let shell = if let Some(remote_shell) = remote_shell
+            && task.shell == Shell::System
+        {
+            Shell::Program(remote_shell)
+        } else {
+            task.shell.clone()
+        };
+
+        let builder = ShellBuilder::new(&shell);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 

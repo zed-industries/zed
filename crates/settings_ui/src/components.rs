@@ -49,6 +49,8 @@ impl RenderOnce for SettingsEditor {
                 if let Some(placeholder) = self.placeholder {
                     editor.set_placeholder_text(placeholder, window, cx);
                 }
+                // todo(settings_ui): We should have an observe global use for settings store
+                // so whenever a settings file is updated, the settings ui updates too
                 editor
             }
         });
@@ -57,11 +59,14 @@ impl RenderOnce for SettingsEditor {
         let theme_colors = cx.theme().colors();
 
         div()
-            .child(editor)
-            .bg(theme_colors.editor_background)
+            .py_1()
+            .px_2()
+            .min_w_64()
+            .rounded_md()
             .border_1()
-            .rounded_lg()
             .border_color(theme_colors.border)
+            .bg(theme_colors.editor_background)
+            .child(editor)
             .when_some(self.confirm, |this, confirm| {
                 this.on_action::<menu::Confirm>({
                     move |_, _, cx| {

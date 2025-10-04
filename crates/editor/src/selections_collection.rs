@@ -332,6 +332,9 @@ impl SelectionsCollection {
         self.all(cx).last().unwrap().clone()
     }
 
+    /// Returns a list of (potentially backwards!) ranges representing the selections.
+    /// Useful for test assertions, but prefer `.all()` instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &mut App,
@@ -438,6 +441,15 @@ pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
     selections_changed: bool,
     cx: &'a mut App,
+}
+
+impl<'a> fmt::Debug for MutableSelectionsCollection<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MutableSelectionsCollection")
+            .field("collection", &self.collection)
+            .field("selections_changed", &self.selections_changed)
+            .finish()
+    }
 }
 
 impl<'a> MutableSelectionsCollection<'a> {

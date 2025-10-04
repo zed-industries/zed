@@ -1340,7 +1340,7 @@ impl LocalLspStore {
 
         // Formatter for `code_actions_on_format` that runs before
         // the rest of the formatters
-        let mut code_actions_on_format_formatter = None;
+        let mut code_actions_on_format_formatters = None;
         let should_run_code_actions_on_format = !matches!(
             (trigger, &settings.format_on_save),
             (FormatTrigger::Save, &FormatOnSave::Off)
@@ -1352,15 +1352,20 @@ impl LocalLspStore {
                 .any(|enabled| *enabled);
             if have_code_actions_to_run_on_format {
                 zlog::trace!(logger => "going to run code actions on format");
-                code_actions_on_format_formatter = Some(Formatter::CodeActions(
-                    settings.code_actions_on_format.clone(),
-                ));
+                code_actions_on_format_formatters = Some(
+                    settings
+                        .code_actions_on_format
+                        .iter()
+                        .filter_map(|(action, enabled)| enabled.then_some(action))
+                        .cloned()
+                        .map(Formatter::CodeAction)
+                        .collect::<Vec<_>>(),
+                );
             }
         }
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
                 match &settings.formatter {
                     SelectedFormatter::Auto => {
@@ -1377,7 +1382,10 @@ impl LocalLspStore {
             }
         };
 
-        let formatters = code_actions_on_format_formatter.iter().chain(formatters);
+        let formatters = code_actions_on_format_formatters
+            .iter()
+            .flatten()
+            .chain(formatters);
 
         for formatter in formatters {
             match formatter {
@@ -1512,7 +1520,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::CodeActions(code_actions) => {
+                Formatter::CodeAction(code_action_name) => {
                     let logger = zlog::scoped!(logger => "code-actions");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using code actions");
@@ -1521,17 +1529,9 @@ impl LocalLspStore {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using code actions. Skipping");
                         continue;
                     };
-                    let code_action_kinds = code_actions
-                        .iter()
-                        .filter_map(|(action_kind, enabled)| {
-                            enabled.then_some(action_kind.clone().into())
-                        })
-                        .collect::<Vec<_>>();
-                    if code_action_kinds.is_empty() {
-                        zlog::trace!(logger => "No code action kinds enabled, skipping");
-                        continue;
-                    }
-                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kinds);
+
+                    let code_action_kind: CodeActionKind = code_action_name.clone().into();
+                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kind);
 
                     let mut actions_and_servers = Vec::new();
 
@@ -1539,23 +1539,25 @@ impl LocalLspStore {
                         let actions_result = Self::get_server_code_actions_from_action_kinds(
                             &lsp_store,
                             language_server.server_id(),
-                            code_action_kinds.clone(),
+                            vec![code_action_kind.clone()],
                             &buffer.handle,
                             cx,
                         )
                         .await
-                        .with_context(
-                            || format!("Failed to resolve code actions with kinds {:?} for language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
-                                language_server.name())
-                        );
+                        .with_context(|| {
+                            format!(
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
+                                language_server.name()
+                            )
+                        });
                         let Ok(actions) = actions_result else {
                             // note: it may be better to set result to the error and break formatters here
                             // but for now we try to execute the actions that we can resolve and skip the rest
                             zlog::error!(
                                 logger =>
-                                "Failed to resolve code actions with kinds {:?} with language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
                                 language_server.name()
                             );
                             continue;
@@ -1600,7 +1602,7 @@ impl LocalLspStore {
 
                         if let Some(edit) = action.lsp_action.edit().cloned() {
                             // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
-                            // but filters out and logs warnings for code actions that cause unreasonably
+                            // but filters out and logs warnings for code actions that require unreasonably
                             // difficult handling on our part, such as:
                             // - applying edits that call commands
                             //   which can result in arbitrary workspace edits being sent from the server that
@@ -1740,7 +1742,12 @@ impl LocalLspStore {
                                 formatting_transaction_id,
                                 cx,
                                 |buffer, cx| {
+                                    zlog::info!(
+                                        "Applying edits {edits:?}. Content: {:?}",
+                                        buffer.text()
+                                    );
                                     buffer.edit(edits, None, cx);
+                                    zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                                 },
                             )?;
                         }
@@ -12750,7 +12757,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        let worktree_abs_path = self.worktree.abs_path();
+        let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&worktree_abs_path).await {
+            worktree_abs_path.pop();
+        }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
@@ -12764,7 +12774,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
-        let working_dir = self.worktree_root_path();
+        let mut working_dir = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&working_dir).await {
+            working_dir.pop();
+        }
         let output = util::command::new_smol_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())

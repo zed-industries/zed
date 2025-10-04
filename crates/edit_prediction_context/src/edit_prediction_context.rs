@@ -4,10 +4,11 @@ mod excerpt;
 mod outline;
 mod reference;
 mod syntax_index;
-mod text_similarity;
+pub mod text_similarity;
 
 use std::sync::Arc;
 
+use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 use text::{Point, ToOffset as _};
@@ -55,6 +56,26 @@ impl EditPredictionContext {
         excerpt_options: &EditPredictionExcerptOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
+        Self::gather_context_with_references_fn(
+            cursor_point,
+            buffer,
+            excerpt_options,
+            index_state,
+            references_in_excerpt,
+        )
+    }
+
+    pub fn gather_context_with_references_fn(
+        cursor_point: Point,
+        buffer: &BufferSnapshot,
+        excerpt_options: &EditPredictionExcerptOptions,
+        index_state: Option<&SyntaxIndexState>,
+        get_references: impl FnOnce(
+            &EditPredictionExcerpt,
+            &EditPredictionExcerptText,
+            &BufferSnapshot,
+        ) -> HashMap<Identifier, Vec<Reference>>,
+    ) -> Option<Self> {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
@@ -77,7 +98,7 @@ impl EditPredictionContext {
         let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
         let declarations = if let Some(index_state) = index_state {
-            let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
+            let references = get_references(&excerpt, &excerpt_text, buffer);
 
             scored_declarations(
                 &index_state,

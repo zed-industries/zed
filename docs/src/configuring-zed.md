@@ -410,7 +410,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values from `6` to `100` pixels (inclusive)
+A font size from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -1502,6 +1502,14 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 },
 ```
 
+There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
+
+```json
+"status_bar": {
+  "experimental.show": false
+}
+```
+
 ## LSP
 
 - Description: Configuration for language servers.
@@ -1570,6 +1578,10 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: The debounce delay in milliseconds before querying highlights from the language server based on the current cursor location.
 - Setting: `lsp_highlight_debounce`
 - Default: `75`
+
+**Options**
+
+`integer` values representing milliseconds
 
 ## Features
 
