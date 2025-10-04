@@ -2331,12 +2331,10 @@ mod tests {
         // Create a display-only terminal and then send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2410,12 +2408,10 @@ mod tests {
         // Now create a display-only lower-level terminal and send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)

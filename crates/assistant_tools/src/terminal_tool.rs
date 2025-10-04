@@ -477,7 +477,7 @@ impl ToolCard for TerminalToolCard {
             .as_ref()
             .cloned()
             .or_else(|| env::current_dir().ok())
-            .map(|path| format!("{}", path.display()))
+            .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
         let header = h_flex()
