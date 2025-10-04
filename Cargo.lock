@@ -14551,6 +14551,7 @@ dependencies = [
  "menu",
  "node_runtime",
  "paths",
+ "pretty_assertions",
  "project",
  "serde",
  "session",
