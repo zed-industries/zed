@@ -1654,6 +1654,7 @@
       }
     },
     "CSS": {
+      "language_servers": ["tailwindcss-language-server"],
       "prettier": {
         "allowed": true
       }
