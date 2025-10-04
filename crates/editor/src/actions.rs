@@ -267,6 +267,51 @@ pub struct CutToEndOfLine {
 #[action(namespace = editor)]
 pub struct FoldAtLevel(pub u32);
 
+/// Folds all code blocks at level 1.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel1;
+
+/// Folds all code blocks at level 2.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel2;
+
+/// Folds all code blocks at level 3.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel3;
+
+/// Folds all code blocks at level 4.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel4;
+
+/// Folds all code blocks at level 5.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel5;
+
+/// Folds all code blocks at level 6.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel6;
+
+/// Folds all code blocks at level 7.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel7;
+
+/// Folds all code blocks at level 8.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel8;
+
+/// Folds all code blocks at level 9.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct FoldAtLevel9;
+
 /// Spawns the nearest available task from the current cursor position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
