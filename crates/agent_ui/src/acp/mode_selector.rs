@@ -62,20 +62,15 @@ impl ModeSelector {
         self.error_message = None;
         cx.notify();
 
-        let mode_id_clone = mode.clone();
         cx.spawn(async move |this: WeakEntity<ModeSelector>, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 this.setting_mode = false;
                 if let Err(err) = result {
                     let error_string = err.to_string();
-                    log::error!(
-                        "Failed to set session mode '{}': {}",
-                        mode_id_clone.0,
-                        error_string
-                    );
+                    log::error!("Failed to set session mode '{}': {}", mode.0, error_string);
 
-                    if mode_id_clone.0.as_ref() == "bypassPermissions"
+                    if mode.0.as_ref() == "bypassPermissions"
                         && error_string.contains("is not available")
                     {
                         this.error_message =
