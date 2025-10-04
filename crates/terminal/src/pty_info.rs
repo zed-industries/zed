@@ -160,3 +160,34 @@ impl PtyProcessInfo {
         self.pid_getter.pid()
     }
 }
+
+impl Default for PtyProcessInfo {
+    fn default() -> Self {
+        let process_refresh_kind = ProcessRefreshKind::new()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always)
+            .with_exe(UpdateKind::Always);
+        let refresh_kind = RefreshKind::new().with_processes(process_refresh_kind);
+        let system = System::new_with_specifics(refresh_kind);
+
+        // Create a dummy ProcessIdGetter for display-only terminals
+        #[cfg(unix)]
+        let pid_getter = ProcessIdGetter {
+            handle: -1,
+            fallback_pid: 0,
+        };
+
+        #[cfg(windows)]
+        let pid_getter = ProcessIdGetter {
+            handle: -1,
+            fallback_pid: 0,
+        };
+
+        PtyProcessInfo {
+            system,
+            refresh_kind: process_refresh_kind,
+            pid_getter,
+            current: None,
+        }
+    }
+}
