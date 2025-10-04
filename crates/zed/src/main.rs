@@ -168,9 +168,6 @@ pub fn main() {
     #[cfg(unix)]
     util::prevent_root_execution();
 
-    #[cfg(target_os = "windows")]
-    askpass::set_askpass_program(util::get_shell_safe_zed_cli_path());
-
     let args = Args::parse();
 
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
@@ -219,6 +216,15 @@ pub fn main() {
 
         if args.foreground {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    match util::get_zed_cli_path() {
+        Ok(path) => askpass::set_askpass_program(path),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            process::exit(1);
         }
     }
 

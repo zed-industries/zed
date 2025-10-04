@@ -3,7 +3,6 @@ mod encrypted_password;
 pub use encrypted_password::{EncryptedPassword, ProcessExt};
 use util::paths::PathExt;
 
-#[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 use std::{ffi::OsStr, time::Duration};
 
@@ -15,11 +14,14 @@ use futures::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
-use std::sync::OnceLock;
 use util::ResultExt as _;
 
 use crate::encrypted_password::decrypt;
 
+/// Path to the program used for askpass
+///
+/// On Unix and remote servers, this defaults to the current executable
+/// On Windows, this is set to the CLI variant of zed
 static ASKPASS_PROGRAM: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 #[derive(PartialEq, Eq)]
@@ -95,7 +97,7 @@ impl AskPassSession {
         let askpass_program = ASKPASS_PROGRAM
             .get_or_init(|| current_exec)
             .try_shell_safe()
-            .context("Failed to shell-escape Zed executable path.")?
+            .context("Failed to shell-escape Askpass program path.")?
             .trim_end_matches(" (deleted)") // See https://github.com/rust-lang/rust/issues/69343
             .to_string();
 

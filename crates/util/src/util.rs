@@ -18,7 +18,9 @@ pub mod time;
 use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
+use paths::PathExt;
 use regex::Regex;
+use std::path::PathBuf;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -294,14 +296,15 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     Ok(zed_path
-        .try_shell_safe()?
+        .try_shell_safe()
+        .context("Failed to shell-escape Zed executable path.")?
         .trim_end_matches(" (deleted)") // See https://github.com/rust-lang/rust/issues/69343
         .to_string())
 }
 
 /// Returns a shell escaped path for the zed cli executable, this function
 /// should be called from the zed executable, not zed-cli.
-pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+pub fn get_zed_cli_path() -> Result<PathBuf> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
     let parent = zed_path
@@ -322,7 +325,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
         anyhow::bail!("unsupported platform for determining zed-cli path");
     };
 
-    let zed_cli_path = possible_locations
+    possible_locations
         .iter()
         .find_map(|p| {
             parent
@@ -336,20 +339,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
                 "could not find zed-cli from any of: {}",
                 possible_locations.join(", ")
             )
-        })?
-        .to_string_lossy()
-        .to_string();
-
-    #[cfg(target_os = "windows")]
-    {
-        Ok(zed_cli_path)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(shlex::try_quote(&zed_cli_path)
-            .context("Failed to shell-escape Zed executable path.")?
-            .to_string())
-    }
+        })
 }
 
 #[cfg(unix)]
@@ -991,8 +981,6 @@ pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<
 pub fn default<D: Default>() -> D {
     Default::default()
 }
-
-use crate::paths::PathExt;
 
 pub use self::shell::{get_default_system_shell, get_system_shell};
 
