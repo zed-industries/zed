@@ -3428,11 +3428,6 @@ impl SettingsWindow {
         self.navbar_entries[index].page_index
     }
 
-    fn page_for_navbar_index(&mut self, index: usize) -> &mut SettingsPage {
-        let index = self.page_index_from_navbar_index(index);
-        &mut self.pages[index]
-    }
-
     fn is_navbar_entry_selected(&self, ix: usize) -> bool {
         ix == self.navbar_entry
     }
