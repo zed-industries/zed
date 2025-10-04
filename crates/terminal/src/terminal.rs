@@ -360,7 +360,7 @@ impl TerminalBuilder {
         let mut term = Term::new(
             config.clone(),
             &TerminalBounds::default(),
-            ZedListener(events_tx.clone()),
+            ZedListener(events_tx),
         );
 
         if let AlternateScroll::Off = alternate_scroll {
