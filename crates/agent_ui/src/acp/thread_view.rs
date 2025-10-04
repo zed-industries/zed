@@ -797,9 +797,14 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // If we're in a LoadError state, retry loading the thread
+        // If we're in a LoadError state OR have a thread_error set (which can happen
+        // when agent.connect() fails during loading), retry loading the thread.
         // This handles the case where a thread is restored before authentication completes.
-        if let ThreadState::LoadError(_) = &self.thread_state {
+        let should_retry =
+            matches!(&self.thread_state, ThreadState::LoadError(_)) || self.thread_error.is_some();
+
+        if should_retry {
+            self.thread_error = None;
             self.reset(window, cx);
         }
     }
