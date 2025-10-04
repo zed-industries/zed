@@ -298,7 +298,6 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     Ok(zed_path
         .try_shell_safe()
         .context("Failed to shell-escape Zed executable path.")?
-        .trim_end_matches(" (deleted)") // See https://github.com/rust-lang/rust/issues/69343
         .to_string())
 }
 

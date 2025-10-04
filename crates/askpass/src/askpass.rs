@@ -94,11 +94,11 @@ impl AskPassSession {
 
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
+
         let askpass_program = ASKPASS_PROGRAM
             .get_or_init(|| current_exec)
             .try_shell_safe()
             .context("Failed to shell-escape Askpass program path.")?
-            .trim_end_matches(" (deleted)") // See https://github.com/rust-lang/rust/issues/69343
             .to_string();
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
