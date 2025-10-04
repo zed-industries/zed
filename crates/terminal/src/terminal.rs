@@ -583,7 +583,7 @@ impl TerminalBuilder {
 
         let mut terminal = Terminal {
             task,
-            pty_tx: Notifier(pty_tx),
+            pty_tx: Some(Notifier(pty_tx)),
             completion_tx,
             term,
             term_config: config,
@@ -784,7 +784,7 @@ pub enum SelectionPhase {
 }
 
 pub struct Terminal {
-    pty_tx: Notifier,
+    pty_tx: Option<Notifier>,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
@@ -955,7 +955,9 @@ impl Terminal {
 
                 self.last_content.terminal_bounds = new_bounds;
 
-                self.pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                if let Some(pty_tx) = &self.pty_tx {
+                    pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                }
 
                 term.resize(new_bounds);
             }
@@ -1340,7 +1342,9 @@ impl Terminal {
 
     ///Write the Input payload to the tty.
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        self.pty_tx.notify(input.into());
+        if let Some(pty_tx) = &self.pty_tx {
+            pty_tx.notify(input.into());
+        }
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
