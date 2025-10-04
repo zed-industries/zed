@@ -46,5 +46,8 @@ project = {workspace= true, features = ["test-support"]}
 serde_json.workspace = true
 settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
+tree-sitter-c.workspace = true
+tree-sitter-cpp.workspace = true
+tree-sitter-go.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

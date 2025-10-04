@@ -584,7 +584,8 @@ mod test {
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust, tree_sitter_typescript,
+        Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tree_sitter_rust,
+        tree_sitter_typescript,
     };
 
     #[gpui::test]
@@ -721,8 +722,11 @@ mod test {
             &TYPESCRIPT,
             r#"import RandomNumberGenerator, { pi as π } from "./maths.js";"#,
             &[
-                &["/home/user/project/maths.js", "RandomNumberGenerator"],
-                &["/home/user/project/maths.js", "pi AS π"],
+                &[
+                    "SOURCE /home/user/project/maths.js",
+                    "RandomNumberGenerator",
+                ],
+                &["SOURCE /home/user/project/maths.js", "pi AS π"],
             ],
             cx,
         );
@@ -732,9 +736,9 @@ mod test {
             &TYPESCRIPT,
             r#"import { pi, phi, absolute } from "./maths.js";"#,
             &[
-                &["/home/user/project/maths.js", "pi"],
-                &["/home/user/project/maths.js", "phi"],
-                &["/home/user/project/maths.js", "absolute"],
+                &["SOURCE /home/user/project/maths.js", "pi"],
+                &["SOURCE /home/user/project/maths.js", "phi"],
+                &["SOURCE /home/user/project/maths.js", "absolute"],
             ],
             cx,
         );
@@ -744,9 +748,9 @@ mod test {
             &TYPESCRIPT,
             r#"import { pi, phi, absolute } from "./maths/index.js";"#,
             &[
-                &["/home/user/project/maths/index.js", "pi"],
-                &["/home/user/project/maths/index.js", "phi"],
-                &["/home/user/project/maths/index.js", "absolute"],
+                &["SOURCE /home/user/project/maths/index.js", "pi"],
+                &["SOURCE /home/user/project/maths/index.js", "phi"],
+                &["SOURCE /home/user/project/maths/index.js", "absolute"],
             ],
             cx,
         );
@@ -755,7 +759,7 @@ mod test {
             Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import "./maths.js";"#,
-            &[&["/home/user/project/maths.js", "WILDCARD"]],
+            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
             cx,
         );
 
@@ -792,6 +796,99 @@ mod test {
         // );
     }
 
+    #[gpui::test]
+    fn test_python_imports(cx: &mut TestAppContext) {
+        check_imports(&PYTHON, "import math", &[&["math"]], cx);
+
+        check_imports(&PYTHON, "import math as maths", &[&["math AS maths"]], cx);
+
+        // check_imports(&PYTHON, "from math import pi", &[&["math", "pi"]], cx);
+
+        // check_imports(&PYTHON, "from math import *", &[&["math", "WILDCARD"]], cx);
+
+        // check_imports(
+        //     &PYTHON,
+        //     "from math import pi as PI",
+        //     &[&["math", "pi AS PI"]],
+        //     cx,
+        // );
+
+        // check_imports(
+        //     &PYTHON,
+        //     "from serializers.json import JsonSerializer",
+        //     &[&["serializers", "json", "JsonSerializer"]],
+        //     cx,
+        // );
+
+        // check_imports(
+        //     &PYTHON,
+        //     "from serializers.json import JsonSerializer",
+        //     &[&["serializers", "json", "JsonSerializer"]],
+        //     cx,
+        // );
+
+        // check_imports(
+        //     &PYTHON,
+        //     "from custom.serializers import json, xml, yaml",
+        //     &[
+        //         &["custom", "serializers", "json"],
+        //         &["custom", "serializers", "xml"],
+        //         &["custom", "serializers", "yaml"],
+        //     ],
+        //     cx,
+        // );
+
+        // todo!
+        //
+        // from . import math
+        // from .subpackage import math
+        // from ..subpackage import math
+        // from ...subpackage import math
+    }
+
+    #[gpui::test]
+    fn test_c_imports(cx: &mut TestAppContext) {
+        let parent_abs_path = PathBuf::from("/home/user/project");
+
+        // TODO: how to handle < and > in paths?
+        //
+        // TODO: Distinguish that these are not relative to current path
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &C,
+            r#"#include <math.h>"#,
+            &[&["SOURCE <math.h>", "WILDCARD"]],
+            cx,
+        );
+
+        // TODO: These should be treated as relative, but don't start with ./ or ../
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &C,
+            r#"#include "math.h""#,
+            &[&["SOURCE math.h", "WILDCARD"]],
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_imports(cx: &mut TestAppContext) {
+        check_imports(
+            &GO,
+            r#"import . "lib/math""#,
+            &[&["lib/math", "WILDCARD"]],
+            cx,
+        );
+
+        // TODO: Should be included, but module imports aren't yet used
+        check_imports(&GO, r#"import "lib/math""#, &[], cx);
+        check_imports(&GO, r#"import m "lib/math""#, &[], cx);
+
+        // not included, these are only for side-effects
+        check_imports(&GO, r#"import _ "lib/math""#, &[], cx);
+    }
+
+    #[track_caller]
     fn check_imports(
         language: &Arc<Language>,
         source: &str,
@@ -801,6 +898,7 @@ mod test {
         check_imports_with_file_abs_path(None, language, source, expected, cx);
     }
 
+    #[track_caller]
     fn check_imports_with_file_abs_path(
         parent_abs_path: Option<&Path>,
         language: &Arc<Language>,
@@ -894,10 +992,6 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "Rust".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
-                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -912,15 +1006,69 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "TypeScript".into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec!["ts".to_string()],
-                        ..Default::default()
-                    },
                     ..Default::default()
                 },
                 Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
             )
             .with_imports_query(include_str!("../../languages/src/typescript/imports.scm"))
+            .unwrap(),
+        )
+    });
+
+    static PYTHON: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Python".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_python::LANGUAGE.into()),
+            )
+            .with_imports_query(include_str!("../../languages/src/python/imports.scm"))
+            .unwrap(),
+        )
+    });
+
+    static C: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "C".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_c::LANGUAGE.into()),
+            )
+            .with_imports_query(include_str!("../../languages/src/c/imports.scm"))
+            .unwrap(),
+        )
+    });
+
+    /*
+    static CPP: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "C++".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_cpp::LANGUAGE.into()),
+            )
+            .with_imports_query(include_str!("../../languages/src/cpp/imports.scm"))
+            .unwrap(),
+        )
+    });
+    */
+
+    static GO: LazyLock<Arc<Language>> = LazyLock::new(|| {
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Go".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_go::LANGUAGE.into()),
+            )
+            .with_imports_query(include_str!("../../languages/src/go/imports.scm"))
             .unwrap(),
         )
     });
@@ -943,7 +1091,9 @@ mod test {
         fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
             match self {
                 Self::Namespace(namespace) => namespace.to_identifier_parts(identifier),
-                Self::Source(path) => vec![path.display().to_string(), identifier.to_string()],
+                Self::Source(path) => {
+                    vec![format!("SOURCE {}", path.display()), identifier.to_string()]
+                }
             }
         }
     }
