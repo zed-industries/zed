@@ -31,7 +31,11 @@ use std::{
 };
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
-use util::{ResultExt, rel_path::RelPath};
+use util::{
+    ResultExt,
+    paths::PathStyle,
+    rel_path::{RelPath, RelPathBuf},
+};
 use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
@@ -821,22 +825,31 @@ impl VimCommand {
                 .or_else(std::env::home_dir)
                 .unwrap_or_else(|| PathBuf::from(""));
 
-            let path = if args.ends_with(|c| matches!(c, '\\' | '/')) {
-                prefix.join(&args)
+            let rel_path = match RelPath::new(Path::new(&args), PathStyle::local()) {
+                Ok(path) => path.to_rel_path_buf(),
+                Err(_) => {
+                    return (Task::ready(Ok(Vec::new())), RelPathBuf::new());
+                }
+            };
+
+            let rel_path = if args.ends_with(PathStyle::local().separator()) {
+                rel_path
             } else {
-                prefix.join(PathBuf::from(args).parent().unwrap_or(Path::new("")))
+                rel_path
+                    .parent()
+                    .map(|rel_path| rel_path.to_rel_path_buf())
+                    .unwrap_or(RelPathBuf::new())
             };
 
             let task = workspace.project().update(cx, |project, cx| {
-                project.list_directory(path.to_string_lossy().to_string(), cx)
+                let path = prefix
+                    .join(rel_path.as_std_path())
+                    .to_string_lossy()
+                    .to_string();
+                project.list_directory(path, cx)
             });
 
-            let args_path = path
-                .strip_prefix(prefix)
-                .unwrap_or(Path::new(""))
-                .to_path_buf();
-
-            (task, args_path)
+            (task, rel_path)
         });
 
         cx.background_spawn(async move {
@@ -844,12 +857,17 @@ impl VimCommand {
             directories
                 .iter()
                 .map(|dir| {
-                    let mut path = args_path.join(dir.path.clone());
+                    let path = RelPath::new(dir.path.as_path(), PathStyle::local())
+                        .map(|cow| cow.into_owned())
+                        .unwrap_or(RelPathBuf::new());
+                    let mut path_string = args_path
+                        .join(&path)
+                        .display(PathStyle::local())
+                        .to_string();
                     if dir.is_dir {
-                        // this adds a slash to the end of the path
-                        path.push("")
+                        path_string.push_str(PathStyle::local().separator());
                     }
-                    path.to_string_lossy().to_string()
+                    path_string
                 })
                 .collect()
         })
@@ -1169,7 +1187,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             Some(
                 VimSplit {
                     vertical: false,
-                    filename: filename,
+                    filename,
                 }
                 .boxed_clone(),
             )
