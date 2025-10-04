@@ -34,19 +34,30 @@ impl AgentProfile {
         let base_profile =
             base_profile_id.and_then(|id| AgentSettings::get_global(cx).profiles.get(&id).cloned());
 
+        // Carry over settings from the base profile so the new profile feels consistent.
+        let tools = base_profile
+            .as_ref()
+            .map(|profile| profile.tools.clone())
+            .unwrap_or_default();
+        let enable_all_context_servers = base_profile
+            .as_ref()
+            .map(|profile| profile.enable_all_context_servers)
+            .unwrap_or_default();
+        let context_servers = base_profile
+            .as_ref()
+            .map(|profile| profile.context_servers.clone())
+            .unwrap_or_default();
+        // Preserve the base profile's preferred model when cloning profiles.
+        let default_model = base_profile
+            .as_ref()
+            .and_then(|profile| profile.default_model.clone());
+
         let profile_settings = AgentProfileSettings {
             name: name.into(),
-            tools: base_profile
-                .as_ref()
-                .map(|profile| profile.tools.clone())
-                .unwrap_or_default(),
-            enable_all_context_servers: base_profile
-                .as_ref()
-                .map(|profile| profile.enable_all_context_servers)
-                .unwrap_or_default(),
-            context_servers: base_profile
-                .map(|profile| profile.context_servers)
-                .unwrap_or_default(),
+            tools,
+            enable_all_context_servers,
+            context_servers,
+            default_model,
         };
 
         update_settings_file(fs, cx, {
@@ -251,6 +262,7 @@ mod tests {
                     tools: IndexMap::default(),
                     enable_all_context_servers: false,
                     context_servers: IndexMap::from_iter([("mcp".into(), context_server_preset())]),
+                    default_model: None,
                 },
             );
             AgentSettings::override_global(agent_settings, cx);
