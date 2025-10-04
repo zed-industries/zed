@@ -9096,8 +9096,8 @@ impl Element for EditorElement {
                     });
 
                     let scroll_pixel_position = point(
-                        scroll_position.x * f64::from(em_advance),
-                        scroll_position.y * f64::from(line_height),
+                        (scroll_position.x * f64::from(em_advance)).round(),
+                        (scroll_position.y * f64::from(line_height)).round(),
                     );
                     let indent_guides = self.layout_indent_guides(
                         content_origin,

@@ -3048,7 +3048,8 @@ impl ScrollHandle {
 
     /// Get the current scroll offset.
     pub fn offset(&self) -> Point<Pixels> {
-        *self.0.borrow().offset.borrow()
+        let offset = *self.0.borrow().offset.borrow();
+        point(offset.x.round(), offset.y.round())
     }
 
     /// Get the maximum scroll offset.
@@ -3136,7 +3137,7 @@ impl ScrollHandle {
     /// As you scroll further down the offset becomes more negative.
     pub fn set_offset(&self, mut position: Point<Pixels>) {
         let state = self.0.borrow();
-        *state.offset.borrow_mut() = position;
+        *state.offset.borrow_mut() = point(position.x.round(), position.y.round());
     }
 
     /// Get the logical scroll top, based on a child index and a pixel offset.
