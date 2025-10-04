@@ -1418,7 +1418,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     description: "Whether to show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                            if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.active_language_button
                             } else {
                                 &None
@@ -1426,7 +1426,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .editor
                                 .status_bar
                                 .get_or_insert_default()
                                 .active_language_button
@@ -1439,7 +1438,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     description: "Whether to show the cursor position button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
-                            if let Some(status_bar) = &settings_content.editor.status_bar {
+                            if let Some(status_bar) = &settings_content.status_bar {
                                 &status_bar.cursor_position_button
                             } else {
                                 &None
@@ -1447,7 +1446,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content
-                                .editor
                                 .status_bar
                                 .get_or_insert_default()
                                 .cursor_position_button
