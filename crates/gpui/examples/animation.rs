@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::Result;
 use gpui::{
     Animation, AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
-    Transformation, Window, WindowBounds, WindowOptions, black, bounce, div, ease_in_out,
-    percentage, prelude::*, px, rgb, size, svg,
+    Transformation, Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, percentage,
+    prelude::*, px, size, svg,
 };
 
 struct Assets {}
@@ -37,37 +37,66 @@ struct AnimationExample {}
 
 impl Render for AnimationExample {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_col().size_full().justify_around().child(
-            div().flex().flex_row().w_full().justify_around().child(
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(gpui::white())
+            .text_color(gpui::black())
+            .justify_around()
+            .child(
                 div()
                     .flex()
-                    .bg(rgb(0x2e7d32))
-                    .size(px(300.0))
-                    .justify_center()
-                    .items_center()
-                    .shadow_lg()
-                    .text_xl()
-                    .text_color(black())
-                    .child("hello")
+                    .flex_col()
+                    .size_full()
+                    .justify_around()
                     .child(
-                        svg()
-                            .size_8()
-                            .path(ARROW_CIRCLE_SVG)
-                            .text_color(black())
-                            .with_animation(
-                                "image_circle",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(bounce(ease_in_out)),
-                                |svg, delta| {
-                                    svg.with_transformation(Transformation::rotate(percentage(
-                                        delta,
-                                    )))
-                                },
+                        div()
+                            .id("content")
+                            .flex()
+                            .flex_col()
+                            .h(px(150.))
+                            .overflow_y_scroll()
+                            .w_full()
+                            .flex_1()
+                            .justify_center()
+                            .items_center()
+                            .text_xl()
+                            .gap_4()
+                            .child("Hello Animation")
+                            .child(
+                                svg()
+                                    .size_20()
+                                    .overflow_hidden()
+                                    .path(ARROW_CIRCLE_SVG)
+                                    .text_color(gpui::black())
+                                    .with_animation(
+                                        "image_circle",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(bounce(ease_in_out)),
+                                        |svg, delta| {
+                                            svg.with_transformation(Transformation::rotate(
+                                                percentage(delta),
+                                            ))
+                                        },
+                                    ),
                             ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .h(px(64.))
+                            .w_full()
+                            .p_2()
+                            .justify_center()
+                            .items_center()
+                            .border_t_1()
+                            .border_color(gpui::black().opacity(0.1))
+                            .bg(gpui::black().opacity(0.05))
+                            .child("Other Panel"),
                     ),
-            ),
-        )
+            )
     }
 }
 
