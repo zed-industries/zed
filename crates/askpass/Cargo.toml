@@ -18,6 +18,7 @@ gpui.workspace = true
 net.workspace = true
 proto.workspace = true
 smol.workspace = true
+log.workspace = true
 tempfile.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
@@ -25,3 +26,6 @@ zeroize.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["log"]
