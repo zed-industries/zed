@@ -2716,8 +2716,8 @@ impl AcpThreadView {
 
         let working_dir = working_dir
             .as_ref()
-            .map(|path| format!("{}", path.display()))
-            .unwrap_or_else(|| "current directory".to_string());
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| ".".to_string());
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
 

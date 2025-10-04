@@ -712,6 +712,9 @@ impl acp::Client for ClientDelegate {
                     if let Some(id_str) = terminal_info.get("terminal_id").and_then(|v| v.as_str())
                     {
                         let terminal_id = acp::TerminalId(id_str.into());
+                        let cwd = terminal_info
+                            .get("cwd")
+                            .and_then(|v| v.as_str().map(PathBuf::from));
 
                         // Create a minimal display-only lower-level terminal and register it.
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
@@ -728,7 +731,7 @@ impl acp::Client for ClientDelegate {
                                 TerminalProviderEvent::Created {
                                     terminal_id: terminal_id.clone(),
                                     label: tc.title.clone(),
-                                    cwd: None,
+                                    cwd,
                                     output_byte_limit: None,
                                     terminal: lower,
                                 },
