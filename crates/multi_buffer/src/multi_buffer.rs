@@ -4959,24 +4959,20 @@ impl MultiBufferSnapshot {
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
             let excerpt_id = self.latest_excerpt_id(anchor.excerpt_id);
-            let excerpt_anchors = iter::from_fn(|| {
-                let anchor = anchors.peek()?;
-                if self.latest_excerpt_id(anchor.excerpt_id) == excerpt_id {
-                    Some(anchors.next().unwrap())
-                } else {
-                    None
-                }
+
+            let excerpt_anchors = anchors.peeking_take_while(|anchor| {
+                self.latest_excerpt_id(anchor.excerpt_id) == excerpt_id
             });
 
             let locator = self.excerpt_locator_for_id(excerpt_id);
             cursor.seek_forward(locator, Bias::Left);
-            if cursor.item().is_none() {
-                cursor.next();
+            if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
+                cursor.prev();
             }
 
             let excerpt_start_position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
-                if excerpt.id != excerpt_id {
+                if excerpt.id != excerpt_id && excerpt_id != ExcerptId::max() {
                     let position = self.resolve_summary_for_anchor(
                         &Anchor::min(),
                         excerpt_start_position,
@@ -6203,7 +6199,7 @@ impl MultiBufferSnapshot {
             .cursor::<Dimensions<Option<&Locator>, ExcerptDimension<Point>>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         let mut sought_exact = cursor.seek(&Some(locator), Bias::Left);
-        if excerpt_id == ExcerptId::max() {
+        if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
             sought_exact = true;
             cursor.prev();
         } else if excerpt_id == ExcerptId::min() {
@@ -6235,7 +6231,7 @@ impl MultiBufferSnapshot {
             && excerpt.id == excerpt_id
         {
             return Some(excerpt);
-        } else if excerpt_id == ExcerptId::max() {
+        } else if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
             cursor.prev();
             return cursor.item();
         }

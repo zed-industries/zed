@@ -1562,6 +1562,14 @@
   "auto_install_extensions": {
     "html": true
   },
+  // The capabilities granted to extensions.
+  //
+  // This list can be customized to restrict what extensions are able to do.
+  "granted_extension_capabilities": [
+    { "kind": "process:exec", "command": "*", "args": ["**"] },
+    { "kind": "download_file", "host": "*", "path": ["**"] },
+    { "kind": "npm:install", "package": "*" }
+  ],
   // Controls how completions are processed for this language.
   "completions": {
     // Controls how words are completed.
