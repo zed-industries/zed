@@ -19,6 +19,12 @@ impl Debug for EncodingWrapper {
     }
 }
 
+impl Default for EncodingWrapper {
+    fn default() -> Self {
+        EncodingWrapper(encoding_rs::UTF_8)
+    }
+}
+
 pub struct EncodingWrapperVisitor;
 
 impl PartialEq for EncodingWrapper {
@@ -71,10 +77,15 @@ impl EncodingWrapper {
 
         let (cow, _had_errors) = self.0.decode_with_bom_removal(&input);
 
-        // `encoding_rs` handles invalid bytes by replacing them with replacement characters
-        // in the output string, so we return the result even if there were errors.
-        // This preserves the original behaviour where files with invalid bytes could still be opened.
-        Ok(cow.into_owned())
+        if !_had_errors {
+            Ok(cow.to_string())
+        } else {
+            // If there were decoding errors, return an error.
+            Err(anyhow::anyhow!(
+                "The file contains invalid bytes for the specified encoding: {}. This usually menas that the file is not a regular text file, or is encoded in a different encoding. Continuing to open it may result in data loss if saved.",
+                self.0.name()
+            ))
+        }
     }
 
     pub async fn encode(&self, input: String) -> Result<Vec<u8>> {
