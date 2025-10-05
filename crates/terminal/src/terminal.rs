@@ -1217,12 +1217,14 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
-
-        // Convert LF to CRLF to ensure proper line wrapping.
-        // When output comes from piped commands (not a PTY), it only contains LF (\n),
-        // which moves the cursor down but not back to the left, creating a diagonal
-        // staircase effect. We need to insert CR (\r) before each LF.
-        // Skip insertion if CR is already present (to avoid double CR with CRLF).
+        //
+        // We first convert LF to CRLF, to get the expected line wrapping in Alacritty.
+        // When output comes from piped commands (not a PTY) such as codex-acp, and that
+        // output only contains LF (\n) without a CR (\r) after it, such as the output
+        // of the `ls` command when running outside a PTY, Alacritty moves the cursor
+        // cursor down a line but does not move it back to the initial column. This makes
+        // the rendered output look ridiculous. To prevent this, we insert a CR (\r) before
+        // each LF that didn't already have one. (Alacritty doesn't have a setting for this.)
         let mut converted = Vec::with_capacity(bytes.len());
         let mut prev_byte = 0u8;
         for &byte in bytes {
