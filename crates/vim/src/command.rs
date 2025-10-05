@@ -734,7 +734,6 @@ struct VimCommand {
     has_filename: bool,
 }
 
-#[derive(Clone)]
 struct ParsedQuery {
     args: String,
     has_bang: bool,
@@ -797,7 +796,7 @@ impl VimCommand {
     }
 
     fn generate_filename_completions(
-        parsed_query: ParsedQuery,
+        parsed_query: &ParsedQuery,
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
@@ -1588,57 +1587,50 @@ pub fn command_interceptor(
         }]);
     }
 
-    let (mut results, filenames) = {
-        let Some((results, filenames)) =
-            commands(cx).iter().enumerate().find_map(|(idx, command)| {
-                let action = command.parse(query, &range, cx)?;
-                let parsed_query = command.get_parsed_query(query.into())?;
-                let ParsedQuery {
-                    args,
-                    has_bang,
-                    has_space,
-                } = parsed_query.clone();
-                let display_string = ":".to_owned()
-                    + &range_prefix
-                    + command.prefix
-                    + command.suffix
-                    + if has_bang { "!" } else { "" };
-                let space = if has_space { " " } else { "" };
+    let Some((mut results, filenames)) =
+        commands(cx).iter().enumerate().find_map(|(idx, command)| {
+            let action = command.parse(query, &range, cx)?;
+            let parsed_query = command.get_parsed_query(query.into())?;
+            let display_string = ":".to_owned()
+                + &range_prefix
+                + command.prefix
+                + command.suffix
+                + if parsed_query.has_bang { "!" } else { "" };
+            let space = if parsed_query.has_space { " " } else { "" };
 
-                let string = format!("{}{}{}", &display_string, &space, &args);
-                let positions = generate_positions(&string, &(range_prefix.clone() + query));
+            let string = format!("{}{}{}", &display_string, &space, &parsed_query.args);
+            let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
-                let results = vec![CommandInterceptResult {
-                    action,
-                    string,
-                    positions,
-                }];
+            let results = vec![CommandInterceptResult {
+                action,
+                string,
+                positions,
+            }];
 
-                let no_args_positions =
-                    generate_positions(&display_string, &(range_prefix.clone() + query));
+            let no_args_positions =
+                generate_positions(&display_string, &(range_prefix.clone() + query));
 
-                // The following are valid autocomplete scenarios
-                // :w!filename.txt
-                // :w filename.txt
-                // :w[space]
-                if !command.has_filename || (!has_trailing_space && !has_bang && args.is_empty()) {
-                    return Some((results, None));
-                }
+            // The following are valid autocomplete scenarios:
+            // :w!filename.txt
+            // :w filename.txt
+            // :w[space]
+            if !command.has_filename
+                || (!has_trailing_space && !parsed_query.has_bang && parsed_query.args.is_empty())
+            {
+                return Some((results, None));
+            }
 
-                Some((
-                    results,
-                    Some((idx, parsed_query, args, display_string, no_args_positions)),
-                ))
-            })
-        else {
-            return Task::ready(Vec::new());
-        };
-
-        (results, filenames)
+            Some((
+                results,
+                Some((idx, parsed_query, display_string, no_args_positions)),
+            ))
+        })
+    else {
+        return Task::ready(Vec::new());
     };
 
-    if let Some((cmd_idx, parsed_query, args, display_string, no_args_positions)) = filenames {
-        let filenames = VimCommand::generate_filename_completions(parsed_query, workspace, cx);
+    if let Some((cmd_idx, parsed_query, display_string, no_args_positions)) = filenames {
+        let filenames = VimCommand::generate_filename_completions(&parsed_query, workspace, cx);
         cx.spawn(async move |cx| {
             let filenames = filenames.await;
             const MAX_RESULTS: usize = 100;
@@ -1650,7 +1642,7 @@ pub fn command_interceptor(
             }
             let filenames = fuzzy::match_strings(
                 &candidates,
-                &args,
+                &parsed_query.args,
                 false,
                 true,
                 MAX_RESULTS,
