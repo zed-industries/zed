@@ -463,7 +463,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file("one/node_modules/b/b1.js".as_ref(), cx)
+            tree.load_file("one/node_modules/b/b1.js".as_ref(), None, cx)
         })
         .await
         .unwrap();
@@ -503,7 +503,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     let prev_read_dir_count = fs.read_dir_call_count();
     let loaded = tree
         .update(cx, |tree, cx| {
-            tree.load_file("one/node_modules/a/a2.js".as_ref(), cx)
+            tree.load_file("one/node_modules/a/a2.js".as_ref(), None, cx)
         })
         .await
         .unwrap();
@@ -1986,7 +1986,7 @@ async fn test_rename_file_to_new_directory(cx: &mut TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file("dir1/dir2/dir3/test.txt".as_ref(), cx)
+                worktree.load_file("dir1/dir2/dir3/test.txt".as_ref(), None, cx)
             })
             .await
             .unwrap()
@@ -2024,7 +2024,7 @@ async fn test_rename_file_to_new_directory(cx: &mut TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file("dir1/dir2/test.txt".as_ref(), cx)
+                worktree.load_file("dir1/dir2/test.txt".as_ref(), None, cx)
             })
             .await
             .unwrap()

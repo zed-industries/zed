@@ -326,7 +326,7 @@ impl SyntaxIndex {
         let language_registry = project.languages().clone();
 
         let snapshot_task = worktree.update(cx, |worktree, cx| {
-            let load_task = worktree.load_file(&project_path.path, cx);
+            let load_task = worktree.load_file(&project_path.path, None, cx);
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
                 let language = language_registry
