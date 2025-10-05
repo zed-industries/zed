@@ -168,8 +168,9 @@ impl BackgroundExecutor {
         label: Option<TaskLabel>,
     ) -> Task<R> {
         let dispatcher = self.dispatcher.clone();
-        let (runnable, task) =
-            async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
+        let (runnable, task) = async_task::spawn(tracy_client::fiber!(future), move |runnable| {
+            dispatcher.dispatch(runnable, label)
+        });
         runnable.schedule();
         Task(TaskState::Spawned(task))
     }

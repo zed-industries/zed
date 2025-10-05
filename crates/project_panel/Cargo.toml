@@ -36,6 +36,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
+profiling.workspace = true
 rayon.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -45,6 +46,7 @@ workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
+tracy-client.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

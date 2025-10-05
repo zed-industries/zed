@@ -58,6 +58,7 @@ async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec
 }
 
 /// Parse the output of `git diff --name-status -z`
+#[profiling::function]
 pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, StatusCode)> {
     let mut parts = content.split('\0');
     std::iter::from_fn(move || {

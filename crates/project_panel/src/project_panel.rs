@@ -3175,6 +3175,7 @@ impl ProjectPanel {
         }
     }
 
+    #[profiling::function]
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -3207,6 +3208,7 @@ impl ProjectPanel {
         self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
+                    let _zone = tracy_client::span_unchecked!();
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
@@ -4227,6 +4229,7 @@ impl ProjectPanel {
         false
     }
 
+    #[profiling::function]
     fn render_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -5152,6 +5155,7 @@ impl ProjectPanel {
         None
     }
 
+    #[profiling::function]
     fn render_sticky_entries(
         &self,
         child: StickyProjectPanelCandidate,
@@ -5288,6 +5292,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 }
 
 impl Render for ProjectPanel {
+    #[profiling::function]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
@@ -6041,6 +6046,7 @@ pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
     entries.sort_by(|lhs, rhs| cmp(lhs, rhs));
 }
 
+#[profiling::function]
 pub fn par_sort_worktree_entries(entries: &mut Vec<GitEntry>) {
     entries.par_sort_by(|lhs, rhs| cmp(lhs, rhs));
 }

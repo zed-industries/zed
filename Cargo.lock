@@ -7112,6 +7112,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
+ "tracy-client",
  "tracy-client-sys",
  "unicode-segmentation",
  "usvg",
@@ -12079,6 +12080,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eb8486b569e12e2c32ad3e204dbaba5e4b5b216e9367044f25f1dba42341773"
 dependencies = [
  "profiling-procmacros",
+ "tracy-client",
 ]
 
 [[package]]
@@ -12185,6 +12187,7 @@ dependencies = [
  "language",
  "menu",
  "pretty_assertions",
+ "profiling",
  "project",
  "rayon",
  "schemars 1.0.1",
@@ -12195,6 +12198,7 @@ dependencies = [
  "smallvec",
  "telemetry",
  "theme",
+ "tracy-client",
  "ui",
  "util",
  "workspace",
@@ -13960,6 +13964,7 @@ dependencies = [
  "futures 0.3.31",
  "parking_lot",
  "rand 0.9.1",
+ "tracy-client-sys",
  "workspace-hack",
 ]
 

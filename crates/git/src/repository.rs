@@ -701,130 +701,118 @@ impl GitRepository for RealGitRepository {
         };
         dbg!("Load commit");
         let git_binary_path = self.any_git_binary_path.clone();
-        let _zone = tracy_client::span!("load_commit");
-        cx.background_spawn(
-            tracy_client::Client::running()
-                .expect("tracy client not running")
-                .with_fiber("load_commit", async move {
-                    println!("Starting...");
+        cx.background_spawn(async move {
+            let _zone = tracy_client::span_unchecked!();
+            let show_output = util::command::new_smol_command(&git_binary_path)
+                .current_dir(&working_directory)
+                .args([
+                    "--no-optional-locks",
+                    "show",
+                    "--format=%P",
+                    "-z",
+                    "--no-renames",
+                    "--name-status",
+                ])
+                .arg(&commit)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .context("starting git show process")?;
 
-                    let show_output = util::command::new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args([
-                            "--no-optional-locks",
-                            "show",
-                            "--format=%P",
-                            "-z",
-                            "--no-renames",
-                            "--name-status",
-                        ])
-                        .arg(&commit)
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .output()
-                        .await
-                        .context("starting git show process")?;
+            let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+            let mut lines = show_stdout.split('\n');
+            let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
+            let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
 
-                    let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-                    let mut lines = show_stdout.split('\n');
-                    let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
-                    let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
+            let mut cat_file_process = util::command::new_smol_command(&git_binary_path)
+                .current_dir(&working_directory)
+                .args(["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("starting git cat-file process")?;
 
-                    let mut cat_file_process = util::command::new_smol_command(&git_binary_path)
-                        .current_dir(&working_directory)
-                        .args(["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn()
-                        .context("starting git cat-file process")?;
+            let mut files = Vec::<CommitFile>::new();
+            let mut stdin = BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
+            let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
+            let mut info_line = String::new();
+            let mut newline = [b'\0'];
+            for (path, status_code) in changes {
+                // git-show outputs `/`-delimited paths even on Windows.
+                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                    continue;
+                };
 
-                    let mut files = Vec::<CommitFile>::new();
-                    let mut stdin =
-                        BufWriter::with_capacity(512, cat_file_process.stdin.take().unwrap());
-                    let mut stdout = BufReader::new(cat_file_process.stdout.take().unwrap());
-                    let mut info_line = String::new();
-                    let mut newline = [b'\0'];
-                    for (path, status_code) in changes {
-                        // git-show outputs `/`-delimited paths even on Windows.
-                        let Some(rel_path) = RelPath::unix(path).log_err() else {
-                            continue;
-                        };
+                match status_code {
+                    StatusCode::Modified => {
+                        stdin.write_all(commit.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                        stdin.write_all(parent_sha.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                    }
+                    StatusCode::Added => {
+                        stdin.write_all(commit.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                    }
+                    StatusCode::Deleted => {
+                        stdin.write_all(parent_sha.as_bytes()).await?;
+                        stdin.write_all(b":").await?;
+                        stdin.write_all(path.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                    }
+                    _ => continue,
+                }
+                stdin.flush().await?;
 
-                        match status_code {
-                            StatusCode::Modified => {
-                                stdin.write_all(commit.as_bytes()).await?;
-                                stdin.write_all(b":").await?;
-                                stdin.write_all(path.as_bytes()).await?;
-                                stdin.write_all(b"\n").await?;
-                                stdin.write_all(parent_sha.as_bytes()).await?;
-                                stdin.write_all(b":").await?;
-                                stdin.write_all(path.as_bytes()).await?;
-                                stdin.write_all(b"\n").await?;
-                            }
-                            StatusCode::Added => {
-                                stdin.write_all(commit.as_bytes()).await?;
-                                stdin.write_all(b":").await?;
-                                stdin.write_all(path.as_bytes()).await?;
-                                stdin.write_all(b"\n").await?;
-                            }
-                            StatusCode::Deleted => {
-                                stdin.write_all(parent_sha.as_bytes()).await?;
-                                stdin.write_all(b":").await?;
-                                stdin.write_all(path.as_bytes()).await?;
-                                stdin.write_all(b"\n").await?;
-                            }
-                            _ => continue,
-                        }
-                        stdin.flush().await?;
+                info_line.clear();
+                stdout.read_line(&mut info_line).await?;
 
+                let len = info_line.trim_end().parse().with_context(|| {
+                    format!("invalid object size output from cat-file {info_line}")
+                })?;
+                let mut text = vec![0; len];
+                stdout.read_exact(&mut text).await?;
+                stdout.read_exact(&mut newline).await?;
+                let text = String::from_utf8_lossy(&text).to_string();
+
+                let mut old_text = None;
+                let mut new_text = None;
+                match status_code {
+                    StatusCode::Modified => {
                         info_line.clear();
                         stdout.read_line(&mut info_line).await?;
-
                         let len = info_line.trim_end().parse().with_context(|| {
-                            format!("invalid object size output from cat-file {info_line}")
+                            format!("invalid object size output from cat-file {}", info_line)
                         })?;
-                        let mut text = vec![0; len];
-                        stdout.read_exact(&mut text).await?;
+                        let mut parent_text = vec![0; len];
+                        stdout.read_exact(&mut parent_text).await?;
                         stdout.read_exact(&mut newline).await?;
-                        let text = String::from_utf8_lossy(&text).to_string();
-
-                        let mut old_text = None;
-                        let mut new_text = None;
-                        match status_code {
-                            StatusCode::Modified => {
-                                info_line.clear();
-                                stdout.read_line(&mut info_line).await?;
-                                let len = info_line.trim_end().parse().with_context(|| {
-                                    format!(
-                                        "invalid object size output from cat-file {}",
-                                        info_line
-                                    )
-                                })?;
-                                let mut parent_text = vec![0; len];
-                                stdout.read_exact(&mut parent_text).await?;
-                                stdout.read_exact(&mut newline).await?;
-                                old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
-                                new_text = Some(text);
-                            }
-                            StatusCode::Added => new_text = Some(text),
-                            StatusCode::Deleted => old_text = Some(text),
-                            _ => continue,
-                        }
-
-                        files.push(CommitFile {
-                            path: rel_path.into(),
-                            old_text,
-                            new_text,
-                        })
+                        old_text = Some(String::from_utf8_lossy(&parent_text).to_string());
+                        new_text = Some(text);
                     }
+                    StatusCode::Added => new_text = Some(text),
+                    StatusCode::Deleted => old_text = Some(text),
+                    _ => continue,
+                }
 
-                    println!("Stopping...");
+                files.push(CommitFile {
+                    path: rel_path.into(),
+                    old_text,
+                    new_text,
+                })
+            }
 
-                    Ok(CommitDiff { files })
-                }),
-        )
+            Ok(CommitDiff { files })
+        })
         .boxed()
     }
 
