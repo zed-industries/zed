@@ -902,7 +902,7 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
         assert_eq!(
             highlights
                 .iter()
-                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot()))
                 .collect::<Vec<_>>(),
             ranges
         )
@@ -962,7 +962,7 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             highlights
                 .iter()
-                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
+                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot()))
                 .collect::<Vec<_>>(),
             vec![0..1]
         )
