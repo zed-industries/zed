@@ -749,13 +749,11 @@ impl Fs for RealFs {
                         events
                             .into_iter()
                             .map(|event| {
-                                dbg!(&event);
                                 let kind = if event.flags.contains(StreamFlags::ITEM_REMOVED) {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
                                     Some(PathEventKind::Created)
                                 } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
-                                // TODO kb is this correct? What about other platforms?
                                     | event.flags.contains(StreamFlags::ITEM_RENAMED)
                                 {
                                     Some(PathEventKind::Changed)
@@ -1335,7 +1333,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, Some(PathEventKind::Changed))]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
     }
 
     fn write_file_internal(
@@ -2061,7 +2059,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, Some(PathEventKind::Changed))]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
 
         Ok(())
     }

@@ -8841,6 +8841,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -8872,11 +8873,10 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     git_commit("Initial commit", &repo);
 
     let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
-    let repo_events = Arc::new(Mutex::new(Vec::new()));
+    let repository_updates = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
-
     project.update(cx, |project, cx| {
-        let repo_events = repo_events.clone();
+        let repo_events = repository_updates.clone();
         cx.subscribe(project.git_store(), move |_, _, e, _| {
             if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
                 repo_events.lock().push(e.clone());
@@ -8885,16 +8885,20 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
         .detach();
         let project_events = project_events.clone();
         cx.subscribe_self(move |_, e, _| {
-            project_events.lock().push(e.clone());
+            if let Event::WorktreeUpdatedEntries(_, updates) = e {
+                project_events.lock().extend(
+                    updates
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change))
+                        .filter(|(path, _)| path != "fs-event-sentinel"),
+                );
+            }
         })
         .detach();
     });
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-
     tree.flush_fs_events(cx).await;
-    // Emulate the situation, where `target/debug` is a loaded directory,
-    // this may happen if certain paths inside are reported as sources by langserver and opened by that server.
     tree.update(cx, |tree, cx| {
         tree.load_file(rel_path("project/target/debug/important_text.txt"), cx)
     })
@@ -8918,10 +8922,8 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let initial_events = repo_events.lock().clone();
-    // dbg!(project_events.lock().as_slice());
     assert_eq!(
-        initial_events,
+        repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
             RepositoryEvent::Updated {
                 full_scan: true,
@@ -8931,9 +8933,19 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
         ],
         "Initial worktree scan should produce a repo update event"
     );
+    assert_eq!(
+        project_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            ("project/target".to_string(), PathChange::Loaded),
+            ("project/target/debug".to_string(), PathChange::Loaded),
+            (
+                "project/target/debug/important_text.txt".to_string(),
+                PathChange::Loaded
+            ),
+        ],
+        "Initial project changes should show that all not-ignored and all opened files are loaded"
+    );
 
-    // Emulate a flycheck spawn: it creates target/debug/deps with some temporary files, and clears it.
-    // This may happen multiple times during a single flycheck, but once is enough for testing.
     let deps_dir = work_dir.join("target").join("debug").join("deps");
     std::fs::create_dir_all(&deps_dir).unwrap();
     tree.flush_fs_events(cx).await;
@@ -8974,11 +8986,19 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     });
 
     assert_eq!(
-        repo_events.lock().as_slice(),
-        initial_events,
+        repository_updates.lock().as_slice(),
+        Vec::new(),
         "No further repo events should happen, as only ignored dirs' contents was changed",
     );
-    dbg!(project_events.lock().as_slice());
+    assert_eq!(
+        project_events.lock().as_slice(),
+        vec![
+            ("project/target/debug/deps".to_string(), PathChange::Added),
+            ("project/target/debug/deps".to_string(), PathChange::Removed),
+        ],
+        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        No updates for more nested directories should happen as those are ignored",
+    );
 }
 
 #[gpui::test]
@@ -9014,20 +9034,26 @@ async fn test_odd_events_for_ignored_dirs(
     );
 
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-    let repo_events = Arc::new(Mutex::new(Vec::new()));
+    let repository_updates = Arc::new(Mutex::new(Vec::new()));
     let project_events = Arc::new(Mutex::new(Vec::new()));
-
     project.update(cx, |project, cx| {
-        let repo_events = repo_events.clone();
+        let repository_updates = repository_updates.clone();
         cx.subscribe(project.git_store(), move |_, _, e, _| {
-            if let crate::git_store::GitStoreEvent::RepositoryUpdated(_, e, _) = e {
-                repo_events.lock().push(e.clone());
+            if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
+                repository_updates.lock().push(e.clone());
             }
         })
         .detach();
         let project_events = project_events.clone();
         cx.subscribe_self(move |_, e, _| {
-            project_events.lock().push(e.clone());
+            if let Event::WorktreeUpdatedEntries(_, updates) = e {
+                project_events.lock().extend(
+                    updates
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change))
+                        .filter(|(path, _)| path != "fs-event-sentinel"),
+                );
+            }
         })
         .detach();
     });
@@ -9061,11 +9087,30 @@ async fn test_odd_events_for_ignored_dirs(
         );
     });
 
-    dbg!("~~~~~~~~~~~~~~~~~~~~~~~~");
-    log::error!("@@@@@@");
-    dbg!(repo_events.lock().drain(..).collect::<Vec<_>>());
-    dbg!(project_events.lock().drain(..).collect::<Vec<_>>());
+    assert_eq!(
+        repository_updates.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            RepositoryEvent::Updated {
+                full_scan: true,
+                new_instance: false,
+            },
+            RepositoryEvent::MergeHeadsChanged,
+        ],
+        "Initial worktree scan should produce a repo update event"
+    );
+    assert_eq!(
+        project_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            ("target".to_string(), PathChange::Loaded),
+            ("target/debug".to_string(), PathChange::Loaded),
+            ("target/debug/deps".to_string(), PathChange::Loaded),
+            ("target/debug/foo.txt".to_string(), PathChange::Loaded),
+        ],
+        "All non-ignored entries and all opened firs should be getting a project event",
+    );
 
+    // Emulate a flycheck spawn: it emits a `INODE_META_MOD`-flagged FS event on target/debug/deps, then creates and removes temp files inside.
+    // This may happen multiple times during a single flycheck, but once is enough for testing.
     fs.emit_fs_event("/root/target/debug/deps", None);
     tree.flush_fs_events(cx).await;
     project
@@ -9073,11 +9118,19 @@ async fn test_odd_events_for_ignored_dirs(
         .await;
     cx.executor().run_until_parked();
 
-    dbg!(repo_events.lock().as_slice());
-    dbg!(project_events.lock().as_slice());
+    assert_eq!(
+        repository_updates.lock().as_slice(),
+        Vec::new(),
+        "No further repo events should happen, as only ignored dirs received FS events",
+    );
+    assert_eq!(
+        project_events.lock().as_slice(),
+        Vec::new(),
+        "No further project events should happen, as only ignored dirs received FS events",
+    );
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_repos_in_invisible_worktrees(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
