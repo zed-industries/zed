@@ -20156,6 +20156,9 @@ name = "zed-http-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-compression",
+ "async-fs",
+ "async-tar",
  "bytes 1.10.1",
  "derive_more",
  "futures 0.3.31",
@@ -20165,9 +20168,12 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "url",
  "workspace-hack",
  "zed-reqwest",
+ "zed-util",
 ]
 
 [[package]]
