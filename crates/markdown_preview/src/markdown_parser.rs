@@ -1626,19 +1626,19 @@ mod tests {
                     list_item(
                         0..216,
                         1,
-                        ParsedMarkdownListItemType::Ordered(2),
+                        ParsedMarkdownListItemType::Unordered,
                         vec![
                             ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
                             list_item(
                                 0..216,
                                 2,
-                                ParsedMarkdownListItemType::Ordered(1),
+                                ParsedMarkdownListItemType::Unordered,
                                 vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
                             ),
                             list_item(
                                 0..216,
                                 2,
-                                ParsedMarkdownListItemType::Ordered(2),
+                                ParsedMarkdownListItemType::Unordered,
                                 vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 2", 0..216))]
                             ),
                         ]
