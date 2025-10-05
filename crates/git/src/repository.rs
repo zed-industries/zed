@@ -706,21 +706,7 @@ impl GitRepository for RealGitRepository {
             tracy_client::Client::running()
                 .expect("tracy client not running")
                 .with_fiber("load_commit", async move {
-                    // let name = std::ffi::CString::new("fiber_load_bytes").unwrap();
-                    // let loc = ___tracy_source_location_data {
-                    //     name: name.as_ptr(),
-                    //     function: name.as_ptr(),
-                    //     file: name.as_ptr(),
-                    //     line: 0,
-                    //     color: 0,
-                    // };
-                    // let zone = unsafe {
-                    //     // tracy_client_sys::___tracy_fiber_enter(name.as_ptr());
-                    //     tracy_client_sys::___tracy_emit_zone_begin(
-                    //         std::mem::transmute(&loc as *const _),
-                    //         1,
-                    //     )
-                    // };
+                    println!("Starting...");
 
                     let show_output = util::command::new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
@@ -834,10 +820,7 @@ impl GitRepository for RealGitRepository {
                         })
                     }
 
-                    // unsafe {
-                    //     tracy_client_sys::___tracy_emit_zone_end(zone);
-                    //     // tracy_client_sys::___tracy_fiber_leave();
-                    // }
+                    println!("Stopping...");
 
                     Ok(CommitDiff { files })
                 }),
