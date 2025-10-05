@@ -2480,10 +2480,10 @@ dependencies = [
  "rand 0.9.1",
  "rope",
  "serde_json",
- "sum_tree",
  "text",
  "unindent",
  "workspace-hack",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -3385,7 +3385,6 @@ dependencies = [
  "rpc",
  "scrypt",
  "sea-orm",
- "semantic_version",
  "semver",
  "serde",
  "serde_json",
@@ -3415,6 +3414,7 @@ dependencies = [
  "worktree",
  "zed-collections",
  "zed-http-client",
+ "zed-semantic-version",
  "zed-util",
  "zlog",
 ]
@@ -3684,7 +3684,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sum_tree",
  "task",
  "theme",
  "ui",
@@ -3692,6 +3691,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -5217,7 +5217,6 @@ dependencies = [
  "smallvec",
  "smol",
  "snippet",
- "sum_tree",
  "task",
  "telemetry",
  "tempfile",
@@ -5242,6 +5241,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zed_actions",
  "zlog",
@@ -5651,7 +5651,6 @@ dependencies = [
  "lsp",
  "parking_lot",
  "pretty_assertions",
- "semantic_version",
  "serde",
  "serde_json",
  "task",
@@ -5662,6 +5661,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-semantic-version",
  "zed-util",
 ]
 
@@ -5718,7 +5718,6 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
- "semantic_version",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -5736,6 +5735,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-semantic-version",
  "zed-util",
  "zlog",
 ]
@@ -5759,7 +5759,6 @@ dependencies = [
  "picker",
  "project",
  "release_channel",
- "semantic_version",
  "serde",
  "settings",
  "smallvec",
@@ -5771,6 +5770,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-semantic-version",
  "zed-util",
  "zed_actions",
 ]
@@ -6026,30 +6026,6 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "font-kit"
-version = "0.14.1"
-source = "git+https://github.com/zed-industries/font-kit?rev=5474cfad4b719a72ec8ed2cb7327b2b01fd10568#5474cfad4b719a72ec8ed2cb7327b2b01fd10568"
-dependencies = [
- "bitflags 2.9.0",
- "byteorder",
- "core-foundation 0.10.0",
- "core-graphics 0.24.0",
- "core-text",
- "dirs 5.0.1",
- "dwrote",
- "float-ord",
- "freetype-sys",
- "lazy_static",
- "libc",
- "log",
- "pathfinder_geometry",
- "pathfinder_simd",
- "walkdir",
- "winapi",
- "yeslogic-fontconfig-sys",
-]
 
 [[package]]
 name = "font-types"
@@ -6781,7 +6757,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "sum_tree",
  "tempfile",
  "text",
  "thiserror 2.0.12",
@@ -6792,6 +6767,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
 ]
 
@@ -7011,7 +6987,7 @@ dependencies = [
 
 [[package]]
 name = "gpui"
-version = "0.1.0"
+version = "0.1.0-test"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -7041,7 +7017,6 @@ dependencies = [
  "etagere",
  "filedescriptor",
  "flume",
- "font-kit",
  "foreign-types 0.5.0",
  "futures 0.3.31",
  "gpui-macros",
@@ -7051,7 +7026,6 @@ dependencies = [
  "libc",
  "log",
  "lyon",
- "media",
  "metal",
  "naga",
  "num_cpus",
@@ -7070,10 +7044,8 @@ dependencies = [
  "raw-window-handle",
  "reqwest_client",
  "resvg",
- "scap",
  "schemars 1.0.1",
  "seahash",
- "semantic_version",
  "serde",
  "serde_json",
  "slotmap",
@@ -7081,7 +7053,6 @@ dependencies = [
  "smol",
  "stacksafe",
  "strum 0.27.1",
- "sum_tree",
  "taffy",
  "thiserror 2.0.12",
  "unicode-segmentation",
@@ -7100,13 +7071,18 @@ dependencies = [
  "workspace-hack",
  "x11-clipboard",
  "x11rb",
- "xim",
  "xkbcommon",
  "zed-collections",
+ "zed-font-kit",
  "zed-http-client",
+ "zed-media",
  "zed-refineable",
+ "zed-scap",
+ "zed-semantic-version",
+ "zed-sum-tree",
  "zed-util",
  "zed-util-macros",
+ "zed-xim",
 ]
 
 [[package]]
@@ -8566,7 +8542,6 @@ dependencies = [
  "smol",
  "streaming-iterator",
  "strsim",
- "sum_tree",
  "task",
  "text",
  "theme",
@@ -8588,6 +8563,7 @@ dependencies = [
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -9168,7 +9144,6 @@ dependencies = [
  "parking_lot",
  "postage",
  "rodio",
- "scap",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -9180,6 +9155,7 @@ dependencies = [
  "ui",
  "workspace-hack",
  "zed-collections",
+ "zed-scap",
  "zed-util",
 ]
 
@@ -9412,11 +9388,11 @@ dependencies = [
  "node_runtime",
  "pulldown-cmark 0.12.2",
  "settings",
- "sum_tree",
  "theme",
  "ui",
  "workspace-hack",
  "zed-collections",
+ "zed-sum-tree",
  "zed-util",
 ]
 
@@ -9568,21 +9544,6 @@ dependencies = [
  "topological-sort",
  "walkdir",
  "warp",
-]
-
-[[package]]
-name = "media"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bindgen 0.71.1",
- "core-foundation 0.10.0",
- "core-video",
- "ctor",
- "foreign-types 0.5.0",
- "metal",
- "objc",
- "workspace-hack",
 ]
 
 [[package]]
@@ -9858,12 +9819,12 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "sum_tree",
  "text",
  "theme",
  "tree-sitter",
  "workspace-hack",
  "zed-collections",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -10112,12 +10073,12 @@ dependencies = [
  "gpui",
  "rpc",
  "settings",
- "sum_tree",
  "time",
  "ui",
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-sum-tree",
  "zed-util",
  "zed_actions",
 ]
@@ -12083,7 +12044,6 @@ dependencies = [
  "smol",
  "snippet",
  "snippet_provider",
- "sum_tree",
  "task",
  "tempfile",
  "terminal",
@@ -12097,6 +12057,7 @@ dependencies = [
  "worktree",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zeroize",
  "zlog",
@@ -13336,9 +13297,9 @@ dependencies = [
  "rand 0.9.1",
  "rayon",
  "smallvec",
- "sum_tree",
  "unicode-segmentation",
  "workspace-hack",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -13797,27 +13758,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scap"
-version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=808aa5c45b41e8f44729d02e38fd00a2fe2722e7#808aa5c45b41e8f44729d02e38fd00a2fe2722e7"
-dependencies = [
- "anyhow",
- "cocoa 0.25.0",
- "core-graphics-helmer-fork",
- "log",
- "objc",
- "rand 0.8.5",
- "screencapturekit",
- "screencapturekit-sys",
- "sysinfo",
- "tao-core-video-sys",
- "windows 0.61.1",
- "windows-capture",
- "x11",
- "xcb",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14152,15 +14092,6 @@ name = "self_cell"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f7d95a54511e0c7be3f51e8867aa8cf35148d7b9445d44de2f943e2b206e749"
-
-[[package]]
-name = "semantic_version"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
- "workspace-hack",
-]
 
 [[package]]
 name = "semver"
@@ -15272,19 +15203,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "sum_tree"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "ctor",
- "log",
- "rand 0.9.1",
- "rayon",
- "workspace-hack",
- "zlog",
-]
-
-[[package]]
 name = "supermaven"
 version = "0.1.0"
 dependencies = [
@@ -15935,10 +15853,10 @@ dependencies = [
 name = "telemetry_events"
 version = "0.1.0"
 dependencies = [
- "semantic_version",
  "serde",
  "serde_json",
  "workspace-hack",
+ "zed-semantic-version",
 ]
 
 [[package]]
@@ -16068,10 +15986,10 @@ dependencies = [
  "regex",
  "rope",
  "smallvec",
- "sum_tree",
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -19705,11 +19623,11 @@ dependencies = [
  "settings",
  "smallvec",
  "smol",
- "sum_tree",
  "text",
  "workspace-hack",
  "zed-collections",
  "zed-http-client",
+ "zed-sum-tree",
  "zed-util",
  "zlog",
 ]
@@ -19813,22 +19731,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ef33da6b1660b4ddbfb3aef0ade110c8b8a781a3b6382fa5f2b5b040fd55f61"
 
 [[package]]
-name = "xim"
-version = "0.4.0"
-source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
-dependencies = [
- "ahash 0.8.11",
- "hashbrown 0.14.5",
- "log",
- "x11rb",
- "xim-ctext",
- "xim-parser",
-]
-
-[[package]]
 name = "xim-ctext"
 version = "0.3.0"
-source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
+source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
 dependencies = [
  "encoding_rs",
 ]
@@ -19836,7 +19741,7 @@ dependencies = [
 [[package]]
 name = "xim-parser"
 version = "0.2.1"
-source = "git+https://github.com/zed-industries/xim-rs?rev=c0a70c1bd2ce197364216e5e818a2cb3adb99a8d#c0a70c1bd2ce197364216e5e818a2cb3adb99a8d"
+source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
 dependencies = [
  "bitflags 2.9.0",
 ]
@@ -20215,6 +20120,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-font-kit"
+version = "0.14.1-zed"
+source = "git+https://github.com/zed-industries/font-kit?rev=110523127440aefb11ce0cf280ae7c5071337ec5#110523127440aefb11ce0cf280ae7c5071337ec5"
+dependencies = [
+ "bitflags 2.9.0",
+ "byteorder",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
+ "core-text",
+ "dirs 5.0.1",
+ "dwrote",
+ "float-ord",
+ "freetype-sys",
+ "lazy_static",
+ "libc",
+ "log",
+ "pathfinder_geometry",
+ "pathfinder_simd",
+ "walkdir",
+ "winapi",
+ "yeslogic-fontconfig-sys",
+]
+
+[[package]]
 name = "zed-http-client"
 version = "0.1.0"
 dependencies = [
@@ -20231,6 +20160,21 @@ dependencies = [
  "url",
  "workspace-hack",
  "zed-reqwest",
+]
+
+[[package]]
+name = "zed-media"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bindgen 0.71.1",
+ "core-foundation 0.10.0",
+ "core-video",
+ "ctor",
+ "foreign-types 0.5.0",
+ "metal",
+ "objc",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -20301,6 +20245,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed-scap"
+version = "0.0.8-zed"
+source = "git+https://github.com/zed-industries/scap?rev=4afea48c3b002197176fb19cd0f9b180dd36eaac#4afea48c3b002197176fb19cd0f9b180dd36eaac"
+dependencies = [
+ "anyhow",
+ "cocoa 0.25.0",
+ "core-graphics-helmer-fork",
+ "log",
+ "objc",
+ "rand 0.8.5",
+ "screencapturekit",
+ "screencapturekit-sys",
+ "sysinfo",
+ "tao-core-video-sys",
+ "windows 0.61.1",
+ "windows-capture",
+ "x11",
+ "xcb",
+]
+
+[[package]]
+name = "zed-semantic-version"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "workspace-hack",
+]
+
+[[package]]
+name = "zed-sum-tree"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "ctor",
+ "log",
+ "rand 0.9.1",
+ "rayon",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
 name = "zed-util"
 version = "0.1.0"
 dependencies = [
@@ -20347,6 +20334,19 @@ dependencies = [
  "syn 2.0.101",
  "workspace-hack",
  "zed-perf",
+]
+
+[[package]]
+name = "zed-xim"
+version = "0.4.0-zed"
+source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
+dependencies = [
+ "ahash 0.8.11",
+ "hashbrown 0.14.5",
+ "log",
+ "x11rb",
+ "xim-ctext",
+ "xim-parser",
 ]
 
 [[package]]
