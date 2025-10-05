@@ -1217,12 +1217,30 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
+        //
+        // We first convert LF to CRLF, to get the expected line wrapping in Alacritty.
+        // When output comes from piped commands (not a PTY) such as codex-acp, and that
+        // output only contains LF (\n) without a CR (\r) after it, such as the output
+        // of the `ls` command when running outside a PTY, Alacritty moves the cursor
+        // cursor down a line but does not move it back to the initial column. This makes
+        // the rendered output look ridiculous. To prevent this, we insert a CR (\r) before
+        // each LF that didn't already have one. (Alacritty doesn't have a setting for this.)
+        let mut converted = Vec::with_capacity(bytes.len());
+        let mut prev_byte = 0u8;
+        for &byte in bytes {
+            if byte == b'\n' && prev_byte != b'\r' {
+                converted.push(b'\r');
+            }
+            converted.push(byte);
+            prev_byte = byte;
+        }
+
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
             alacritty_terminal::vte::ansi::StdSyncHandler,
         >::new();
         {
             let mut term = self.term.lock();
-            processor.advance(&mut *term, bytes);
+            processor.advance(&mut *term, &converted);
         }
         cx.emit(Event::Wakeup);
     }
@@ -2680,5 +2698,117 @@ mod tests {
             terminal_bounds,
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    async fn test_write_output_converts_lf_to_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test simple LF conversion
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\nline2\n", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        // If LF is properly converted to CRLF, each line should start at column 0
+        // The diagonal staircase bug would cause increasing column positions
+
+        // Get the cells and check that lines start at column 0
+        let cells = &content.cells;
+        let mut line1_col0 = false;
+        let mut line2_col0 = false;
+
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                if cell.point.line.0 == 0 && !line1_col0 {
+                    line1_col0 = true;
+                } else if cell.point.line.0 == 1 && !line2_col0 {
+                    line2_col0 = true;
+                }
+            }
+        }
+
+        assert!(line1_col0, "First line should start at column 0");
+        assert!(line2_col0, "Second line should start at column 0");
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_existing_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test that existing CRLF doesn't get doubled
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\r\nline2\r\n", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        let cells = &content.cells;
+
+        // Check that both lines start at column 0
+        let mut found_lines_at_column_0 = 0;
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                found_lines_at_column_0 += 1;
+            }
+        }
+
+        assert!(
+            found_lines_at_column_0 >= 2,
+            "Both lines should start at column 0"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_bare_cr(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test that bare CR (without LF) is preserved
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"hello\rworld", cx);
+        });
+
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
+        let cells = &content.cells;
+
+        // Check that we have "world" at the beginning of the line
+        let mut text = String::new();
+        for cell in cells.iter().take(5) {
+            if cell.point.line.0 == 0 {
+                text.push(cell.c);
+            }
+        }
+
+        assert!(
+            text.starts_with("world"),
+            "Bare CR should allow overwriting: got '{}'",
+            text
+        );
     }
 }
