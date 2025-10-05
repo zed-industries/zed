@@ -460,6 +460,8 @@ pub mod encoding {
                 });
             } else {
                 workspace.update(cx, |workspace, cx| {
+                    *workspace.encoding.lock().unwrap() =
+                        encoding_from_name(self.matches[self.current_selection].string.as_str());
                     workspace
                         .open_abs_path(
                             self.selector
