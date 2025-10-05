@@ -19,6 +19,7 @@ mod workspace_settings;
 
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
+use encoding_rs::Encoding;
 use encoding_rs::UTF_8;
 use fs::encodings::EncodingWrapper;
 pub use path_list::PathList;
@@ -1148,6 +1149,7 @@ pub struct Workspace {
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
     scheduled_tasks: Vec<Task<()>>,
+    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1490,8 +1492,8 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
-
             scheduled_tasks: Vec::new(),
+            encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
         }
     }
 
