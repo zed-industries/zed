@@ -520,6 +520,39 @@ fn test_anchors_at_start_and_end() {
 }
 
 #[test]
+fn test_offset_from_version_add() {
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "bc");
+
+    let before = buffer.version();
+    buffer.edit([(0..0, "a")]);
+
+    assert_eq!(buffer.offset_to_version(0, &before), 0);
+    assert_eq!(buffer.offset_to_version(1, &before), 0);
+    assert_eq!(buffer.offset_to_version(2, &before), 1);
+    assert_eq!(buffer.offset_to_version(3, &before), 2);
+
+    assert_eq!(buffer.offset_from_version(0, &before), 1);
+    assert_eq!(buffer.offset_from_version(1, &before), 2);
+    assert_eq!(buffer.offset_from_version(2, &before), 3);
+}
+
+#[test]
+fn test_offset_from_version_remove() {
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "abc");
+
+    let before = buffer.version();
+    buffer.edit([(0..1, "")]);
+
+    assert_eq!(buffer.offset_to_version(0, &before), 1);
+    assert_eq!(buffer.offset_to_version(1, &before), 2);
+    assert_eq!(buffer.offset_to_version(2, &before), 3);
+
+    assert_eq!(buffer.offset_from_version(0, &before), 0);
+    assert_eq!(buffer.offset_from_version(1, &before), 0);
+    assert_eq!(buffer.offset_from_version(2, &before), 1);
+}
+
+#[test]
 fn test_undo_redo() {
     let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "1234");
     // Set group interval to zero so as to not group edits in the undo stack.
