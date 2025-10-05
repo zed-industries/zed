@@ -1,9 +1,10 @@
 [package]
-name = "http_client"
+name = "zed-http-client"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "A HTTP client library for Zed and GPUI"
 
 [lints]
 workspace = true

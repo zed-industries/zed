@@ -157,7 +157,6 @@ dependencies = [
  "git",
  "gpui",
  "heed",
- "http_client",
  "icons",
  "indoc",
  "itertools 0.14.0",
@@ -188,6 +187,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_env_vars",
  "zstd",
@@ -240,7 +240,6 @@ dependencies = [
  "gpui_tokio",
  "handlebars 4.5.0",
  "html_to_markdown",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -278,6 +277,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_env_vars",
  "zlog",
@@ -301,7 +301,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
- "http_client",
  "indoc",
  "language",
  "language_model",
@@ -322,6 +321,7 @@ dependencies = [
  "watch",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -385,7 +385,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "html_to_markdown",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "jsonschema",
@@ -440,6 +439,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_actions",
 ]
@@ -658,7 +658,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
@@ -666,6 +665,7 @@ dependencies = [
  "strum 0.27.1",
  "thiserror 2.0.12",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -912,7 +912,6 @@ dependencies = [
  "globset",
  "gpui",
  "html_to_markdown",
- "http_client",
  "language",
  "pretty_assertions",
  "project",
@@ -928,6 +927,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -988,7 +988,6 @@ dependencies = [
  "gpui_tokio",
  "handlebars 4.5.0",
  "html_to_markdown",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -1028,6 +1027,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -1439,7 +1439,6 @@ dependencies = [
  "client",
  "db",
  "gpui",
- "http_client",
  "log",
  "paths",
  "release_channel",
@@ -1451,6 +1450,7 @@ dependencies = [
  "which 6.0.3",
  "workspace",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -1474,7 +1474,6 @@ dependencies = [
  "client",
  "editor",
  "gpui",
- "http_client",
  "markdown_preview",
  "release_channel",
  "serde",
@@ -1482,6 +1481,7 @@ dependencies = [
  "smol",
  "workspace",
  "workspace-hack",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -2009,8 +2009,8 @@ version = "0.1.0"
 dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
- "http_client",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -2627,7 +2627,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
- "http_client",
  "language",
  "livekit_client",
  "log",
@@ -2638,6 +2637,7 @@ dependencies = [
  "telemetry",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -2939,7 +2939,6 @@ dependencies = [
  "clock",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "language",
  "log",
  "postage",
@@ -2950,6 +2949,7 @@ dependencies = [
  "time",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -3121,7 +3121,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
- "http_client",
  "http_client_tls",
  "httparse",
  "log",
@@ -3155,6 +3154,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -3177,11 +3177,11 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
- "http_client",
  "parking_lot",
  "serde_json",
  "workspace-hack",
  "yawc",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -3356,7 +3356,6 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "hex",
- "http_client",
  "hyper 0.14.32",
  "indoc",
  "language",
@@ -3415,6 +3414,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -3433,7 +3433,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "http_client",
  "log",
  "menu",
  "notifications",
@@ -3457,6 +3456,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -3669,7 +3669,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -3692,6 +3691,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -4410,7 +4410,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "language",
  "libc",
  "log",
@@ -4430,6 +4429,7 @@ dependencies = [
  "tree-sitter-go",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -4685,11 +4685,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -4765,16 +4765,6 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "derive_refineable"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -5202,7 +5192,6 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -5252,6 +5241,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_actions",
  "zlog",
@@ -5656,7 +5646,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "heck 0.5.0",
- "http_client",
  "language",
  "log",
  "lsp",
@@ -5672,6 +5661,7 @@ dependencies = [
  "wasmparser 0.221.3",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -5715,7 +5705,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "language",
  "language_extension",
  "log",
@@ -5746,6 +5735,7 @@ dependencies = [
  "wasmtime-wasi",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -6781,7 +6771,6 @@ dependencies = [
  "futures 0.3.31",
  "git2",
  "gpui",
- "http_client",
  "log",
  "parking_lot",
  "pretty_assertions",
@@ -6802,6 +6791,7 @@ dependencies = [
  "uuid",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -6827,7 +6817,6 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "gpui",
- "http_client",
  "indoc",
  "pretty_assertions",
  "regex",
@@ -6836,6 +6825,7 @@ dependencies = [
  "settings",
  "url",
  "workspace-hack",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -6980,13 +6970,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
  "strum 0.27.1",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -7054,8 +7044,7 @@ dependencies = [
  "font-kit",
  "foreign-types 0.5.0",
  "futures 0.3.31",
- "gpui_macros",
- "http_client",
+ "gpui-macros",
  "image",
  "inventory",
  "itertools 0.14.0",
@@ -7079,7 +7068,6 @@ dependencies = [
  "profiling",
  "rand 0.9.1",
  "raw-window-handle",
- "refineable",
  "reqwest_client",
  "resvg",
  "scap",
@@ -7098,7 +7086,6 @@ dependencies = [
  "thiserror 2.0.12",
  "unicode-segmentation",
  "usvg",
- "util_macros",
  "uuid",
  "waker-fn",
  "wayland-backend",
@@ -7116,11 +7103,14 @@ dependencies = [
  "xim",
  "xkbcommon",
  "zed-collections",
+ "zed-http-client",
+ "zed-refineable",
  "zed-util",
+ "zed-util-macros",
 ]
 
 [[package]]
-name = "gpui_macros"
+name = "gpui-macros"
 version = "0.1.0"
 dependencies = [
  "gpui",
@@ -7543,25 +7533,6 @@ name = "http-range-header"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "add0ab9360ddbd88cfeb3bd9574a1d85cfdfa14db10b3e21d3700dbc4328758f"
-
-[[package]]
-name = "http_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes 1.10.1",
- "derive_more",
- "futures 0.3.31",
- "http 1.3.1",
- "http-body 1.0.1",
- "log",
- "parking_lot",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
- "serde",
- "serde_json",
- "url",
- "workspace-hack",
-]
 
 [[package]]
 name = "http_client_tls"
@@ -8077,10 +8048,10 @@ dependencies = [
  "serde_json_lenient",
  "theme",
  "ui",
- "util_macros",
  "workspace",
  "workspace-hack",
  "zed-util",
+ "zed-util-macros",
  "zed_actions",
 ]
 
@@ -8420,7 +8391,7 @@ dependencies = [
  "referencing",
  "regex",
  "regex-syntax",
- "reqwest 0.12.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "reqwest 0.12.15",
  "serde",
  "serde_json",
  "uuid-simd",
@@ -8575,7 +8546,6 @@ dependencies = [
  "fuzzy",
  "globset",
  "gpui",
- "http_client",
  "imara-diff",
  "indoc",
  "itertools 0.14.0",
@@ -8617,6 +8587,7 @@ dependencies = [
  "watch",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -8654,7 +8625,6 @@ dependencies = [
  "cloud_llm_client",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "icons",
  "image",
  "log",
@@ -8670,6 +8640,7 @@ dependencies = [
  "thiserror 2.0.12",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -8698,7 +8669,6 @@ dependencies = [
  "google_ai",
  "gpui",
  "gpui_tokio",
- "http_client",
  "language",
  "language_model",
  "lmstudio",
@@ -8726,6 +8696,7 @@ dependencies = [
  "workspace-hack",
  "x_ai",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_env_vars",
 ]
@@ -8805,7 +8776,6 @@ dependencies = [
  "chrono",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "itertools 0.14.0",
  "json_schema_store",
  "language",
@@ -8860,6 +8830,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -9167,9 +9138,9 @@ dependencies = [
  "prost 0.9.0",
  "prost-build 0.9.0",
  "prost-types 0.9.0",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "serde",
  "workspace-hack",
+ "zed-reqwest",
 ]
 
 [[package]]
@@ -9229,11 +9200,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -9829,12 +9800,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
  "strum 0.27.1",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -10082,7 +10053,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "futures 0.3.31",
- "http_client",
  "log",
  "paths",
  "semver",
@@ -10092,6 +10062,7 @@ dependencies = [
  "watch",
  "which 6.0.3",
  "workspace-hack",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -10586,12 +10557,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -10694,7 +10665,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "log",
  "schemars 1.0.1",
  "serde",
@@ -10702,6 +10672,7 @@ dependencies = [
  "settings",
  "strum 0.27.1",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -10710,7 +10681,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "schemars 1.0.1",
  "serde",
  "serde_json",
@@ -10718,6 +10688,7 @@ dependencies = [
  "strum 0.27.1",
  "thiserror 2.0.12",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -11164,16 +11135,6 @@ name = "percent-encoding"
 version = "2.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
-
-[[package]]
-name = "perf"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "workspace-hack",
- "zed-collections",
-]
 
 [[package]]
 name = "pest"
@@ -12092,7 +12053,6 @@ dependencies = [
  "git_hosting_providers",
  "globset",
  "gpui",
- "http_client",
  "image",
  "indexmap 2.9.0",
  "itertools 0.14.0",
@@ -12136,6 +12096,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zeroize",
  "zlog",
@@ -12922,14 +12883,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "refineable"
-version = "0.1.0"
-dependencies = [
- "derive_refineable",
- "workspace-hack",
-]
-
-[[package]]
 name = "regalloc2"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13048,7 +13001,6 @@ dependencies = [
  "git_hosting_providers",
  "gpui",
  "gpui_tokio",
- "http_client",
  "json_schema_store",
  "language",
  "language_extension",
@@ -13081,6 +13033,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -13111,7 +13064,6 @@ dependencies = [
  "file_icons",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "image",
  "indoc",
  "jupyter-protocol",
@@ -13142,6 +13094,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -13227,55 +13180,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reqwest"
-version = "0.12.15"
-source = "git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415#951c770a32f1998d6e999cef3e59e0013e6c4415"
-dependencies = [
- "base64 0.22.1",
- "bytes 1.10.1",
- "encoding_rs",
- "futures-core",
- "futures-util",
- "h2 0.4.9",
- "http 1.3.1",
- "http-body 1.0.1",
- "http-body-util",
- "hyper 1.6.0",
- "hyper-rustls 0.27.5",
- "hyper-util",
- "ipnet",
- "js-sys",
- "log",
- "mime",
- "mime_guess",
- "once_cell",
- "percent-encoding",
- "pin-project-lite",
- "quinn",
- "rustls 0.23.26",
- "rustls-native-certs 0.8.1",
- "rustls-pemfile 2.2.0",
- "rustls-pki-types",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "sync_wrapper 1.0.2",
- "system-configuration 0.6.1",
- "tokio",
- "tokio-rustls 0.26.2",
- "tokio-socks",
- "tokio-util",
- "tower 0.5.2",
- "tower-service",
- "url",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-streams",
- "web-sys",
- "windows-registry 0.4.0",
-]
-
-[[package]]
 name = "reqwest_client"
 version = "0.1.0"
 dependencies = [
@@ -13283,14 +13187,14 @@ dependencies = [
  "bytes 1.10.1",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "http_client_tls",
  "log",
  "regex",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "serde",
  "tokio",
  "workspace-hack",
+ "zed-http-client",
+ "zed-reqwest",
 ]
 
 [[package]]
@@ -15391,7 +15295,6 @@ dependencies = [
  "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "language",
  "log",
  "postage",
@@ -15407,6 +15310,7 @@ dependencies = [
  "unicode-segmentation",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -15416,12 +15320,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
- "http_client",
  "paths",
  "serde",
  "serde_json",
  "smol",
  "workspace-hack",
+ "zed-http-client",
  "zed-util",
 ]
 
@@ -16157,7 +16061,6 @@ dependencies = [
  "clock",
  "ctor",
  "gpui",
- "http_client",
  "log",
  "parking_lot",
  "postage",
@@ -16168,6 +16071,7 @@ dependencies = [
  "sum_tree",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -16184,7 +16088,6 @@ dependencies = [
  "log",
  "palette",
  "parking_lot",
- "refineable",
  "schemars 1.0.1",
  "serde",
  "serde_json",
@@ -16195,6 +16098,7 @@ dependencies = [
  "uuid",
  "workspace-hack",
  "zed-collections",
+ "zed-refineable",
  "zed-util",
 ]
 
@@ -16465,7 +16369,6 @@ dependencies = [
  "cloud_llm_client",
  "db",
  "gpui",
- "http_client",
  "notifications",
  "pretty_assertions",
  "project",
@@ -16484,6 +16387,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_actions",
 ]
@@ -17279,7 +17183,7 @@ dependencies = [
  "component",
  "documented",
  "gpui",
- "gpui_macros",
+ "gpui-macros",
  "icons",
  "itertools 0.14.0",
  "menu",
@@ -17515,16 +17419,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
-name = "util_macros"
-version = "0.1.0"
-dependencies = [
- "perf",
- "quote",
- "syn 2.0.101",
- "workspace-hack",
-]
-
-[[package]]
 name = "uuid"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17653,7 +17547,6 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
- "perf",
  "picker",
  "project",
  "project_panel",
@@ -17669,12 +17562,13 @@ dependencies = [
  "theme",
  "tokio",
  "ui",
- "util_macros",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-perf",
  "zed-util",
+ "zed-util-macros",
  "zed_actions",
 ]
 
@@ -18432,12 +18326,12 @@ dependencies = [
  "cloud_llm_client",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "language_model",
  "serde",
  "serde_json",
  "web_search",
  "workspace-hack",
+ "zed-http-client",
 ]
 
 [[package]]
@@ -19559,7 +19453,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "itertools 0.14.0",
  "language",
  "log",
@@ -19587,6 +19480,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_actions",
  "zlog",
@@ -19797,7 +19691,6 @@ dependencies = [
  "git",
  "git2",
  "gpui",
- "http_client",
  "ignore",
  "language",
  "log",
@@ -19816,6 +19709,7 @@ dependencies = [
  "text",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zlog",
 ]
@@ -20199,7 +20093,6 @@ dependencies = [
  "go_to_line",
  "gpui",
  "gpui_tokio",
- "http_client",
  "image_viewer",
  "inspector_ui",
  "install_cli",
@@ -20243,7 +20136,6 @@ dependencies = [
  "release_channel",
  "remote",
  "repl",
- "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "reqwest_client",
  "rope",
  "search",
@@ -20280,11 +20172,6 @@ dependencies = [
  "ui_prompt",
  "url",
  "urlencoding",
-<<<<<<< HEAD
- "util",
-=======
- "util_macros",
->>>>>>> f7ae85ff97 (WIP: Update crate names)
  "uuid",
  "vim",
  "vim_mode_setting",
@@ -20296,6 +20183,8 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-collections",
+ "zed-http-client",
+ "zed-reqwest",
  "zed-util",
  "zed_actions",
  "zed_env_vars",
@@ -20308,11 +20197,107 @@ dependencies = [
 
 [[package]]
 name = "zed-collections"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "indexmap 2.9.0",
  "rustc-hash 2.1.1",
  "workspace-hack",
+]
+
+[[package]]
+name = "zed-derive-refineable"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+ "workspace-hack",
+]
+
+[[package]]
+name = "zed-http-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes 1.10.1",
+ "derive_more",
+ "futures 0.3.31",
+ "http 1.3.1",
+ "http-body 1.0.1",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "url",
+ "workspace-hack",
+ "zed-reqwest",
+]
+
+[[package]]
+name = "zed-perf"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "workspace-hack",
+ "zed-collections",
+]
+
+[[package]]
+name = "zed-refineable"
+version = "0.1.0"
+dependencies = [
+ "workspace-hack",
+ "zed-derive-refineable",
+]
+
+[[package]]
+name = "zed-reqwest"
+version = "0.12.15-zed"
+source = "git+https://github.com/zed-industries/reqwest.git?rev=c15662463bda39148ba154100dd44d3fba5873a4#c15662463bda39148ba154100dd44d3fba5873a4"
+dependencies = [
+ "base64 0.22.1",
+ "bytes 1.10.1",
+ "encoding_rs",
+ "futures-core",
+ "futures-util",
+ "h2 0.4.9",
+ "http 1.3.1",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.6.0",
+ "hyper-rustls 0.27.5",
+ "hyper-util",
+ "ipnet",
+ "js-sys",
+ "log",
+ "mime",
+ "mime_guess",
+ "once_cell",
+ "percent-encoding",
+ "pin-project-lite",
+ "quinn",
+ "rustls 0.23.26",
+ "rustls-native-certs 0.8.1",
+ "rustls-pemfile 2.2.0",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sync_wrapper 1.0.2",
+ "system-configuration 0.6.1",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tokio-socks",
+ "tokio-util",
+ "tower 0.5.2",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-streams",
+ "web-sys",
+ "windows-registry 0.4.0",
 ]
 
 [[package]]
@@ -20348,10 +20333,20 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
- "util_macros",
  "walkdir",
  "workspace-hack",
  "zed-collections",
+ "zed-util-macros",
+]
+
+[[package]]
+name = "zed-util-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.101",
+ "workspace-hack",
+ "zed-perf",
 ]
 
 [[package]]
@@ -20587,7 +20582,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -20618,6 +20612,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed-collections",
+ "zed-http-client",
  "zed-util",
  "zed_actions",
  "zlog",
