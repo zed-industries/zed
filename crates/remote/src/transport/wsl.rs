@@ -98,11 +98,6 @@ impl WslRemoteConnection {
             .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
             .ok()
-            .and_then(|shell_path| {
-                Path::new(shell_path.trim())
-                    .file_name()
-                    .map(|it| it.to_str().unwrap().to_owned())
-            })
             .unwrap_or_else(|| "bash".to_string()))
     }
 
