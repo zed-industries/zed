@@ -1225,7 +1225,7 @@ impl Item for TerminalView {
                 let cwd = project
                     .active_project_directory(cx)
                     .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+                project.clone_terminal(self.terminal(), cx, cwd)
             })
             .ok()?
             .log_err()?;
