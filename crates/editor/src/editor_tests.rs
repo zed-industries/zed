@@ -4243,8 +4243,8 @@ fn test_delete_line(cx: &mut TestAppContext) {
         assert_eq!(
             editor.selections.display_ranges(cx),
             vec![
-                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
-                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1)
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
             ]
         );
     });
