@@ -971,6 +971,29 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_cpp_imports(cx: &mut TestAppContext) {
+        let parent_abs_path = PathBuf::from("/home/user/project");
+
+        // TODO: Distinguish that these are not relative to current path
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &CPP,
+            r#"#include <math.h>"#,
+            &[&["SOURCE math.h", "WILDCARD"]],
+            cx,
+        );
+
+        // TODO: These should be treated as relative, but don't start with ./ or ../
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &CPP,
+            r#"#include "math.h""#,
+            &[&["SOURCE math.h", "WILDCARD"]],
+            cx,
+        );
+    }
+
+    #[gpui::test]
     fn test_go_imports(cx: &mut TestAppContext) {
         check_imports(
             &GO,
@@ -1157,7 +1180,6 @@ mod test {
         )
     });
 
-    /*
     static CPP: LazyLock<Arc<Language>> = LazyLock::new(|| {
         Arc::new(
             Language::new(
@@ -1171,7 +1193,6 @@ mod test {
             .unwrap(),
         )
     });
-    */
 
     static GO: LazyLock<Arc<Language>> = LazyLock::new(|| {
         Arc::new(
