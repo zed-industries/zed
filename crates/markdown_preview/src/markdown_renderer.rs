@@ -465,10 +465,10 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
-
+    let content_padding = 2;
     for (index, cell) in parsed.header.children.iter().enumerate() {
         let length = paragraph_len(cell);
-        max_lengths[index] = length;
+        max_lengths[index] = length + content_padding;
     }
 
     for row in &parsed.body {
@@ -476,7 +476,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
             let length = paragraph_len(cell);
 
             if length > max_lengths[index] {
-                max_lengths[index] = length;
+                max_lengths[index] = length + content_padding;
             }
         }
     }
@@ -510,7 +510,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .collect();
 
     cx.with_common_p(v_flex())
-        .w_full()
+        .max_w(cx.scaled_rems(total_max_length as f32))
         .child(header)
         .children(body)
         .into_any()
@@ -545,7 +545,7 @@ fn render_markdown_table_row(
             .w(Length::Definite(relative(*max_width)))
             .h_full()
             .children(contents)
-            .px_2()
+            .px(cx.scaled_rems(0.5_f32))
             .py_1()
             .border_color(cx.border_color)
             .border_l_1();
