@@ -9,7 +9,7 @@ use encoding_rs::Encoding;
 
 /// A wrapper around `encoding_rs::Encoding` to implement `Send` and `Sync`.
 /// Since the reference is static, it is safe to send it across threads.
-pub struct EncodingWrapper(&'static Encoding);
+pub struct EncodingWrapper(pub &'static Encoding);
 
 impl Debug for EncodingWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
