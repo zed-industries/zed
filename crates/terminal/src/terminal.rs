@@ -2697,4 +2697,103 @@ mod tests {
             ..Default::default()
         }
     }
+
+    #[gpui::test]
+    async fn test_write_output_converts_lf_to_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Test simple LF conversion
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\nline2\n", cx);
+        });
+
+        // Verify cursor is at column 0 after each line
+        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        // If LF is properly converted to CRLF, each line should start at column 0
+        // The diagonal staircase bug would cause increasing column positions
+
+        // Get the cells and check that lines start at column 0
+        let cells = &content.cells;
+        let mut found_line1 = false;
+        let mut found_line2 = false;
+
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                if !found_line1 {
+                    found_line1 = true;
+                } else if !found_line2 {
+                    found_line2 = true;
+                }
+            }
+        }
+
+        assert!(found_line1, "First line should start at column 0");
+        assert!(found_line2, "Second line should start at column 0");
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_existing_crlf(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Existing CRLF shouldn't get doubled
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"line1\r\nline2\r\n", cx);
+        });
+
+        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        let cells = &content.cells;
+
+        // Count carriage returns - there should only be one before each line feed
+        let mut found_lines_at_column_0 = 0;
+        for cell in cells {
+            if cell.c == 'l' && cell.point.column.0 == 0 {
+                found_lines_at_column_0 += 1;
+            }
+        }
+
+        assert!(
+            found_lines_at_column_0 >= 2,
+            "Both lines should start at column 0"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_write_output_preserves_bare_cr(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(CursorShape::default(), AlternateScroll::On, None, 0)
+                .unwrap()
+                .subscribe(cx)
+        });
+
+        // Bare CR (without LF) should be preserved
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"hello\rworld", cx);
+        });
+
+        // With a bare CR, "world" should overwrite "hello"
+        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        let cells = &content.cells;
+
+        // Check that we have "world" at the beginning of the line
+        let mut text = String::new();
+        for cell in cells.iter().take(5) {
+            if cell.point.line.0 == 0 {
+                text.push(cell.c);
+            }
+        }
+
+        assert!(
+            text.starts_with("world"),
+            "Bare CR should allow overwriting: got '{}'",
+            text
+        );
+    }
 }
