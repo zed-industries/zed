@@ -1222,12 +1222,15 @@ impl Terminal {
         // When output comes from piped commands (not a PTY), it only contains LF (\n),
         // which moves the cursor down but not back to the left, creating a diagonal
         // staircase effect. We need to insert CR (\r) before each LF.
+        // Skip insertion if CR is already present (to avoid double CR with CRLF).
         let mut converted = Vec::with_capacity(bytes.len());
+        let mut prev_byte = 0u8;
         for &byte in bytes {
-            if byte == b'\n' {
+            if byte == b'\n' && prev_byte != b'\r' {
                 converted.push(b'\r');
             }
             converted.push(byte);
+            prev_byte = byte;
         }
 
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
