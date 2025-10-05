@@ -3,18 +3,18 @@ use std::{path::Path, pin::Pin, task::Poll};
 use anyhow::{Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, io::BufReader};
-use http_client::github::AssetKind;
-use language::LspAdapterDelegate;
 use sha2::{Digest, Sha256};
 
+use crate::{HttpClient, github::AssetKind};
+
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
-pub(crate) struct GithubBinaryMetadata {
-    pub(crate) metadata_version: u64,
-    pub(crate) digest: Option<String>,
+pub struct GithubBinaryMetadata {
+    pub metadata_version: u64,
+    pub digest: Option<String>,
 }
 
 impl GithubBinaryMetadata {
-    pub(crate) async fn read_from_file(metadata_path: &Path) -> Result<GithubBinaryMetadata> {
+    pub async fn read_from_file(metadata_path: &Path) -> Result<GithubBinaryMetadata> {
         let metadata_content = async_fs::read_to_string(metadata_path)
             .await
             .with_context(|| format!("reading metadata file at {metadata_path:?}"))?;
@@ -22,7 +22,7 @@ impl GithubBinaryMetadata {
             .with_context(|| format!("parsing metadata file at {metadata_path:?}"))
     }
 
-    pub(crate) async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
+    pub async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
         let metadata_content = serde_json::to_string(self)
             .with_context(|| format!("serializing metadata for {metadata_path:?}"))?;
         async_fs::write(metadata_path, metadata_content.as_bytes())
@@ -32,16 +32,15 @@ impl GithubBinaryMetadata {
     }
 }
 
-pub(crate) async fn download_server_binary(
-    delegate: &dyn LspAdapterDelegate,
+pub async fn download_server_binary(
+    http_client: &dyn HttpClient,
     url: &str,
     digest: Option<&str>,
     destination_path: &Path,
     asset_kind: AssetKind,
 ) -> Result<(), anyhow::Error> {
     log::info!("downloading github artifact from {url}");
-    let mut response = delegate
-        .http_client()
+    let mut response = http_client
         .get(url, Default::default(), true)
         .await
         .with_context(|| format!("downloading release from {url}"))?;
@@ -143,7 +142,7 @@ async fn extract_gz(
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
     let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let mut file = smol::fs::File::create(&destination_path)
+    let mut file = async_fs::File::create(&destination_path)
         .await
         .with_context(|| {
             format!("creating a file {destination_path:?} for a download from {url}")

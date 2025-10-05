@@ -27,6 +27,7 @@ use std::{
     time::{Duration, Instant},
 };
 use task::{Shell, ShellBuilder};
+use terminal::terminal_settings::TerminalSettings;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
@@ -119,17 +120,20 @@ impl Tool for TerminalTool {
         };
 
         let cwd = working_dir.clone();
-        let env = match &working_dir {
+        let env = match &cwd {
             Some(dir) => project.update(cx, |project, cx| {
-                project.directory_environment(dir.as_path().into(), cx)
+                let shell = TerminalSettings::get_global(cx).shell.clone();
+                project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
         };
-        let remote_shell = project.update(cx, |project, cx| {
-            project
-                .remote_client()
-                .and_then(|r| r.read(cx).default_system_shell())
-        });
+        let shell = project
+            .update(cx, |project, cx| {
+                project
+                    .remote_client()
+                    .and_then(|r| r.read(cx).default_system_shell())
+            })
+            .unwrap_or_else(|| get_default_system_shell());
 
         let env = cx.spawn(async move |_| {
             let mut env = env.await.unwrap_or_default();
@@ -142,12 +146,9 @@ impl Tool for TerminalTool {
         let build_cmd = {
             let input_command = input.command.clone();
             move || {
-                ShellBuilder::new(
-                    remote_shell.as_deref(),
-                    &Shell::Program(get_default_system_shell()),
-                )
-                .redirect_stdin_to_dev_null()
-                .build(Some(input_command.clone()), &[])
+                ShellBuilder::new(&Shell::Program(shell))
+                    .redirect_stdin_to_dev_null()
+                    .build(Some(input_command), &[])
             }
         };
 
@@ -476,7 +477,7 @@ impl ToolCard for TerminalToolCard {
             .as_ref()
             .cloned()
             .or_else(|| env::current_dir().ok())
-            .map(|path| format!("{}", path.display()))
+            .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
         let header = h_flex()

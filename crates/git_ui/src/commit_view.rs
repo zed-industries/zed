@@ -43,8 +43,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: u32 = 0;
-const FILE_NAMESPACE: u32 = 1;
+const COMMIT_METADATA_NAMESPACE: u64 = 0;
+const FILE_NAMESPACE: u64 = 1;
 
 impl CommitView {
     pub fn open(
@@ -145,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.as_unix_str().into()),
+                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -193,7 +193,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path.as_unix_str().into()),
+                            PathKey::namespaced(FILE_NAMESPACE, path),
                             buffer,
                             diff_hunk_ranges,
                             multibuffer_context_lines(cx),

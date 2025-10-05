@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use text::LineEnding;
-use util::{ResultExt, get_system_shell, rel_path::RelPath};
+use util::{ResultExt, get_default_system_shell, rel_path::RelPath};
 
 use crate::UserPromptId;
 
@@ -43,7 +43,7 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
+            shell: get_default_system_shell(),
         }
     }
 }

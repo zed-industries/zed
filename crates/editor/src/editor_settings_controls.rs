@@ -5,8 +5,7 @@ use project::project_settings::ProjectSettings;
 use settings::{EditableSettingControl, Settings, SettingsContent};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
-    prelude::*,
+    CheckboxWithLabel, ContextMenu, DropdownMenu, SettingsContainer, SettingsGroup, prelude::*,
 };
 
 use crate::EditorSettings;
@@ -129,21 +128,12 @@ impl EditableSettingControl for BufferFontSizeControl {
 
 impl RenderOnce for BufferFontSizeControl {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let value = Self::read(cx);
+        let _value = Self::read(cx);
 
         h_flex()
             .gap_2()
             .child(Icon::new(IconName::FontSize))
-            .child(NumericStepper::new(
-                "buffer-font-size",
-                value.to_string(),
-                move |_, _, cx| {
-                    Self::write(value - px(1.), cx);
-                },
-                move |_, _, cx| {
-                    Self::write(value + px(1.), cx);
-                },
-            ))
+            .child(div()) // TODO: Re-evaluate this whole crate once settings UI is complete
     }
 }
 

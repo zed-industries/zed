@@ -222,3 +222,30 @@ impl Settings for TabBarSettings {
         }
     }
 }
+
+#[derive(Deserialize)]
+pub struct StatusBarSettings {
+    pub show: bool,
+    pub active_language_button: bool,
+    pub cursor_position_button: bool,
+}
+
+impl Settings for StatusBarSettings {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let status_bar = content.status_bar.clone().unwrap();
+        StatusBarSettings {
+            show: status_bar.show.unwrap(),
+            active_language_button: status_bar.active_language_button.unwrap(),
+            cursor_position_button: status_bar.cursor_position_button.unwrap(),
+        }
+    }
+
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
+        if let Some(show) = vscode.read_bool("workbench.statusBar.visible") {
+            current.status_bar.get_or_insert_default().show = Some(show);
+        }
+    }
+}

@@ -1380,7 +1380,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     cx.executor().run_until_parked();
     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
-    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
 
     let mut new_watched_paths = fs.watched_paths();
     new_watched_paths.retain(|path| {
@@ -7797,7 +7797,9 @@ async fn test_staging_random_hunks(
         path!("/dir/.git").as_ref(),
         &[("file.txt", index_text.clone())],
     );
-    let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let buffer = project

@@ -316,8 +316,10 @@ dependencies = [
  "smol",
  "task",
  "tempfile",
+ "terminal",
  "thiserror 2.0.12",
  "ui",
+ "uuid",
  "watch",
  "workspace-hack",
  "zed-collections",
@@ -417,7 +419,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "shlex",
  "smol",
  "streaming_diff",
  "task",
@@ -8775,11 +8776,9 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "sha2",
  "shlex",
  "smol",
  "task",
- "tempfile",
  "text",
  "theme",
  "toml 0.8.20",
@@ -9611,9 +9610,13 @@ dependencies = [
  "convert_case 0.8.0",
  "log",
  "pretty_assertions",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
  "streaming-iterator",
  "tree-sitter",
  "tree-sitter-json",
+ "unindent",
  "workspace-hack",
  "zed-collections",
 ]
@@ -10554,6 +10557,7 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "ui_input",
  "vim_mode_setting",
  "workspace",
  "workspace-hack",
@@ -12006,6 +12010,7 @@ dependencies = [
  "dap_adapters",
  "extension",
  "fancy-regex 0.14.0",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12070,6 +12075,7 @@ dependencies = [
  "anyhow",
  "client",
  "command_palette_hooks",
+ "criterion",
  "db",
  "editor",
  "file_icons",
@@ -12080,6 +12086,7 @@ dependencies = [
  "menu",
  "pretty_assertions",
  "project",
+ "rayon",
  "schemars 1.0.1",
  "search",
  "serde",
@@ -13451,9 +13458,9 @@ dependencies = [
 
 [[package]]
 name = "rust_decimal"
-version = "1.37.1"
+version = "1.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faa7de2ba56ac291bd90c6b9bece784a52ae1411f9506544b3eae36dd2356d50"
+checksum = "c8975fc98059f365204d635119cf9c5a60ae67b841ed49b5422a9a7e56cdfac0"
 dependencies = [
  "arrayvec",
  "borsh",
@@ -14364,6 +14371,7 @@ dependencies = [
  "menu",
  "node_runtime",
  "paths",
+ "pretty_assertions",
  "project",
  "serde",
  "session",
@@ -17125,6 +17133,7 @@ dependencies = [
  "component",
  "editor",
  "gpui",
+ "menu",
  "settings",
  "theme",
  "ui",
@@ -19445,7 +19454,6 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "cranelift-codegen",
- "crc32fast",
  "crossbeam-channel",
  "crossbeam-epoch",
  "crossbeam-utils",

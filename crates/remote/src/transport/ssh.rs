@@ -512,16 +512,7 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command(
-                    "sh",
-                    &[
-                        "-c",
-                        &shell_script!(
-                            "mkdir -p {parent}",
-                            parent = parent.display(self.path_style()).as_ref()
-                        ),
-                    ],
-                )
+                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
                 .await?;
         }
 
@@ -592,16 +583,7 @@ impl SshRemoteConnection {
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
-                .run_command(
-                    "sh",
-                    &[
-                        "-c",
-                        &shell_script!(
-                            "mkdir -p {parent}",
-                            parent = parent.display(self.path_style()).as_ref()
-                        ),
-                    ],
-                )
+                .run_command("mkdir", &["-p", parent.display(self.path_style()).as_ref()])
                 .await?;
         }
 
@@ -735,6 +717,7 @@ impl SshSocket {
         log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
+            .arg("-T")
             .arg(to_run);
         command
     }
@@ -795,7 +778,7 @@ impl SshSocket {
     }
 
     async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("sh", &["-c", "uname -sm"]).await?;
+        let uname = self.run_command("uname", &["-sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
@@ -1072,17 +1055,14 @@ fn build_command(
         }
     }
 
-    write!(exec, "{ssh_shell} ").unwrap();
     if let Some(input_program) = input_program {
-        let mut script = shlex::try_quote(&input_program)?.into_owned();
+        write!(exec, "{}", shlex::try_quote(&input_program).unwrap()).unwrap();
         for arg in input_args {
             let arg = shlex::try_quote(&arg)?;
-            script.push_str(" ");
-            script.push_str(&arg);
+            write!(exec, " {}", &arg).unwrap();
         }
-        write!(exec, "-c {}", shlex::try_quote(&script).unwrap()).unwrap();
     } else {
-        write!(exec, "-l").unwrap();
+        write!(exec, "{ssh_shell} -l").unwrap();
     };
 
     let mut args = Vec::new();
@@ -1132,7 +1112,7 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
-                "exec env -C \"$HOME/work\" INPUT_VA=val /bin/fish -c 'remote_program arg1 arg2'"
+                "exec env -C \"$HOME/work\" INPUT_VA=val remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
