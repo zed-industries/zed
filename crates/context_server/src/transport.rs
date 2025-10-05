@@ -1,5 +1,4 @@
 pub mod http;
-pub mod sse;
 mod stdio_transport;
 
 use anyhow::{Result, anyhow};
@@ -12,7 +11,6 @@ use std::{pin::Pin, sync::Arc};
 use url::Url;
 
 pub use self::http::*;
-pub use self::sse::*;
 pub use stdio_transport::*;
 
 /// Authentication configuration for HTTP transports
@@ -85,13 +83,6 @@ pub fn build_transport(
                 transport
             };
             Ok(Arc::new(transport))
-        }
-        "sse" => {
-            log::info!("Using SSE transport for {}", endpoint);
-            Ok(Arc::new(SseTransport::new(
-                http_client,
-                endpoint.to_string(),
-            )))
         }
         _ => {
             log::error!("Unsupported URL scheme: {}", endpoint.scheme());
