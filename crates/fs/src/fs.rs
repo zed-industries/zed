@@ -58,6 +58,7 @@ use smol::io::AsyncReadExt;
 #[cfg(any(test, feature = "test-support"))]
 use std::ffi::OsStr;
 
+use crate::encodings::to_utf8;
 use crate::encodings::EncodingWrapper;
 use crate::encodings::from_utf8;
 
@@ -114,6 +115,15 @@ pub trait Fs: Send + Sync {
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
+    }
+
+    async fn load_with_encoding(
+        &self,
+        path: &Path,
+        encoding: EncodingWrapper,
+        detect_utf16: bool,
+    ) -> Result<String> {
+        Ok(to_utf8(self.load_bytes(path).await?, encoding, detect_utf16, None).await?)
     }
 
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
