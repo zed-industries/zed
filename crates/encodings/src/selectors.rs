@@ -125,6 +125,7 @@ pub mod save_or_reopen {
                                 Action::Save,
                                 Some(buffer.downgrade()),
                                 weak_workspace,
+                                None,
                             );
                             selector
                         })
@@ -149,6 +150,7 @@ pub mod save_or_reopen {
                                 Action::Reopen,
                                 Some(buffer.downgrade()),
                                 weak_workspace,
+                                None,
                             );
                             selector
                         });
@@ -275,7 +277,7 @@ pub mod save_or_reopen {
 
 /// This module contains the encoding selector for choosing an encoding to save or reopen a file with.
 pub mod encoding {
-    use std::sync::atomic::AtomicBool;
+    use std::{path::PathBuf, sync::atomic::AtomicBool};
 
     use fuzzy::{StringMatch, StringMatchCandidate};
     use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, WeakEntity};
@@ -294,6 +296,7 @@ pub mod encoding {
     pub struct EncodingSelector {
         picker: Entity<Picker<EncodingSelectorDelegate>>,
         workspace: WeakEntity<Workspace>,
+        path: Option<PathBuf>,
     }
 
     pub struct EncodingSelectorDelegate {
@@ -497,11 +500,16 @@ pub mod encoding {
             action: Action,
             buffer: Option<WeakEntity<Buffer>>,
             workspace: WeakEntity<Workspace>,
+            path: Option<PathBuf>,
         ) -> EncodingSelector {
             let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer, action);
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
-            EncodingSelector { picker, workspace }
+            EncodingSelector {
+                picker,
+                workspace,
+                path,
+            }
         }
     }
 
