@@ -2110,7 +2110,10 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass.ask_password(envelope.payload.prompt).await?;
+        let response = askpass
+            .ask_password(envelope.payload.prompt)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
 
         delegates
             .lock()
