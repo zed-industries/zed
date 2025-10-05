@@ -2713,28 +2713,32 @@ mod tests {
             terminal.write_output(b"line1\nline2\n", cx);
         });
 
-        // Verify cursor is at column 0 after each line
-        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
         // If LF is properly converted to CRLF, each line should start at column 0
         // The diagonal staircase bug would cause increasing column positions
 
         // Get the cells and check that lines start at column 0
         let cells = &content.cells;
-        let mut found_line1 = false;
-        let mut found_line2 = false;
+        let mut line1_col0 = false;
+        let mut line2_col0 = false;
 
         for cell in cells {
             if cell.c == 'l' && cell.point.column.0 == 0 {
-                if !found_line1 {
-                    found_line1 = true;
-                } else if !found_line2 {
-                    found_line2 = true;
+                if cell.point.line.0 == 0 && !line1_col0 {
+                    line1_col0 = true;
+                } else if cell.point.line.0 == 1 && !line2_col0 {
+                    line2_col0 = true;
                 }
             }
         }
 
-        assert!(found_line1, "First line should start at column 0");
-        assert!(found_line2, "Second line should start at column 0");
+        assert!(line1_col0, "First line should start at column 0");
+        assert!(line2_col0, "Second line should start at column 0");
     }
 
     #[gpui::test]
@@ -2745,15 +2749,20 @@ mod tests {
                 .subscribe(cx)
         });
 
-        // Existing CRLF shouldn't get doubled
+        // Test that existing CRLF doesn't get doubled
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"line1\r\nline2\r\n", cx);
         });
 
-        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
         let cells = &content.cells;
 
-        // Count carriage returns - there should only be one before each line feed
+        // Check that both lines start at column 0
         let mut found_lines_at_column_0 = 0;
         for cell in cells {
             if cell.c == 'l' && cell.point.column.0 == 0 {
@@ -2775,13 +2784,17 @@ mod tests {
                 .subscribe(cx)
         });
 
-        // Bare CR (without LF) should be preserved
+        // Test that bare CR (without LF) is preserved
         terminal.update(cx, |terminal, cx| {
             terminal.write_output(b"hello\rworld", cx);
         });
 
-        // With a bare CR, "world" should overwrite "hello"
-        let content = terminal.update(cx, |terminal, _cx| terminal.last_content().clone());
+        // Get the content by directly accessing the term
+        let content = terminal.update(cx, |terminal, _cx| {
+            let term = terminal.term.lock_unfair();
+            Terminal::make_content(&term, &terminal.last_content)
+        });
+
         let cells = &content.cells;
 
         // Check that we have "world" at the beginning of the line
