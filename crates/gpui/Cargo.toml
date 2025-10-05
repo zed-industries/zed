@@ -217,9 +217,8 @@ xkbcommon = { version = "0.8.0", features = [
     "wayland",
     "x11",
 ], optional = true }
-# TODO!: move this back to the zed-industries repo
 # WARNING: If you change this, you must also publish a new version of zed-xim to crates.io
-xim = { git = "https://github.com/mikayla-maki/xim-rs.git", rev = "471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec" , features = [
+xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8" , features = [
     "x11rb-xcb",
     "x11rb-client",
 ], package = "zed-xim", version = "0.4.0-zed", optional = true }

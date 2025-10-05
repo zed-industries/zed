@@ -19741,7 +19741,7 @@ checksum = "0ef33da6b1660b4ddbfb3aef0ade110c8b8a781a3b6382fa5f2b5b040fd55f61"
 [[package]]
 name = "xim-ctext"
 version = "0.3.0"
-source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
+source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
 dependencies = [
  "encoding_rs",
 ]
@@ -19749,7 +19749,7 @@ dependencies = [
 [[package]]
 name = "xim-parser"
 version = "0.2.1"
-source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
+source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
 dependencies = [
  "bitflags 2.9.0",
 ]
@@ -20353,7 +20353,7 @@ dependencies = [
 [[package]]
 name = "zed-xim"
 version = "0.4.0-zed"
-source = "git+https://github.com/mikayla-maki/xim-rs.git?rev=471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec#471c10cdf97b3fcc2b7e0b3060f0085d1a7a27ec"
+source = "git+https://github.com/zed-industries/xim-rs.git?rev=16f35a2c881b815a2b6cdfd6687988e84f8447d8#16f35a2c881b815a2b6cdfd6687988e84f8447d8"
 dependencies = [
  "ahash 0.8.11",
  "hashbrown 0.14.5",
