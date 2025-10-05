@@ -367,6 +367,11 @@ impl TerminalBuilder {
             term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
         }
 
+        // Enable LineFeedNewLine mode (LNM) for display-only terminals.
+        // This automatically converts LF (\n) to CRLF (\r\n) to ensure proper
+        // line wrapping when output comes from piped commands (not a PTY).
+        term.mode |= TermMode::LINE_FEED_NEW_LINE;
+
         let term = Arc::new(FairMutex::new(term));
 
         let terminal = Terminal {
@@ -1217,28 +1222,14 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
-
-        // Convert LF to CRLF to ensure proper line wrapping.
-        // When output comes from piped commands (not a PTY), it only contains LF (\n),
-        // which moves the cursor down but not back to the left, creating a diagonal
-        // staircase effect. We need to insert CR (\r) before each LF.
-        // Skip insertion if CR is already present (to avoid double CR with CRLF).
-        let mut converted = Vec::with_capacity(bytes.len());
-        let mut prev_byte = 0u8;
-        for &byte in bytes {
-            if byte == b'\n' && prev_byte != b'\r' {
-                converted.push(b'\r');
-            }
-            converted.push(byte);
-            prev_byte = byte;
-        }
-
+        // LineFeedNewLine mode is enabled, so alacritty will automatically
+        // convert LF to CRLF for us.
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
             alacritty_terminal::vte::ansi::StdSyncHandler,
         >::new();
         {
             let mut term = self.term.lock();
-            processor.advance(&mut *term, &converted);
+            processor.advance(&mut *term, bytes);
         }
         cx.emit(Event::Wakeup);
     }
