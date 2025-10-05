@@ -3851,7 +3851,7 @@ impl Render for Pane {
                                 placeholder
                             } else {
                                 placeholder.child(
-                                    Label::new("Open a file or project to get started.")
+                                    Label::new("Drag a file or folder here to get started.")
                                         .color(Color::Muted),
                                 )
                             }
