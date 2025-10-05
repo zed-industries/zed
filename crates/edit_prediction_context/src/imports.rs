@@ -6,7 +6,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 use std::{borrow::Cow, ops::Range};
-use text::OffsetRangeExt;
+use text::OffsetRangeExt as _;
 use util::RangeExt;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -36,6 +36,12 @@ use crate::text_similarity::Occurrences;
 // qualification.
 //
 // * Consider deferring path normalization
+//
+// * When the same import statement is matched multiple times (once for each identifier), it is
+// currently creating new strings for each namespace component. Cache of range to Arc<str> could
+// be used.
+//
+//   - Alternative: Multiple content captures in the same query match
 
 // Things to document (for extension authors)
 //
@@ -182,7 +188,7 @@ impl Imports {
 
             let mut new_import_range = None;
             let mut alias_range = None;
-            let mut module = None;
+            let mut modules = Vec::new();
             let mut content: Option<(Range<usize>, NodeKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
@@ -190,10 +196,9 @@ impl Imports {
                 if capture.index == *import_ix {
                     new_import_range = Some(capture_range);
                 } else if Some(capture.index) == *namespace_ix {
-                    module = Some(ModuleRange::Namespace(capture_range));
+                    modules.push(ModuleRange::Namespace(capture_range));
                 } else if Some(capture.index) == *source_ix {
-                    // todo! check we didn't alreay have this and warn
-                    module = Some(ModuleRange::Source(capture_range));
+                    modules.push(ModuleRange::Source(capture_range));
                 } else if Some(capture.index) == *alias_ix {
                     alias_range = Some(capture_range);
                 } else {
@@ -248,8 +253,7 @@ impl Imports {
                     .is_some_and(|import_range| import_range.contains_inclusive(&content))
                 {
                     detached_nodes.push(DetachedNode {
-                        // todo! have an empty module variant
-                        module: module.unwrap_or(ModuleRange::Namespace(0..0)),
+                        modules,
                         content: content.clone(),
                         alias: alias_range.unwrap_or(0..0),
                         language_id,
@@ -293,7 +297,7 @@ impl Imports {
             if let Some(node) = Self::attach_node(detached_node.into(), &mut trees) {
                 trees.push(node);
             }
-            log::trace!(
+            println!(
                 "Attached node to tree\n{:#?}\nAttach result:\n{:#?}",
                 detached_node,
                 trees
@@ -326,10 +330,11 @@ impl Imports {
                 //
                 // TODO: Log warnings when both have some information and there is a mismatch.
                 if tree.module.is_empty() {
-                    tree.module = node.module.clone();
+                    tree.module = node.module;
+                    tree.module_children = node.module_children;
                 }
                 if tree.alias.is_empty() {
-                    tree.alias = node.alias.clone();
+                    tree.alias = node.alias;
                 }
                 return None;
             } else if node.module.contains_inclusive(&tree.range()) {
@@ -473,13 +478,14 @@ fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Arc<str> {
 
 #[derive(Debug)]
 struct DetachedNode {
-    module: ModuleRange,
+    modules: Vec<ModuleRange>,
     content: Range<usize>,
     alias: Range<usize>,
     language_id: LanguageId,
     kind: NodeKind,
 }
 
+// todo! rename
 #[derive(Debug, Clone, Copy)]
 enum NodeKind {
     Name,
@@ -520,13 +526,50 @@ impl ImportTree {
             snapshot,
         }
     }
+
+    fn from_module_range(module: &ModuleRange, language_id: LanguageId) -> Self {
+        ImportTree {
+            module: module.clone(),
+            module_children: Vec::new(),
+            // todo! does this make sense?
+            content: 0..0,
+            content_children: Vec::new(),
+            alias: 0..0,
+            language_id,
+            kind: NodeKind::Name,
+        }
+    }
 }
 
 impl From<&DetachedNode> for ImportTree {
     fn from(value: &DetachedNode) -> Self {
+        let module;
+        let module_children;
+        match value.modules.len() {
+            0 => {
+                // todo! empty variant?
+                module = ModuleRange::Namespace(0..0);
+                module_children = Vec::new();
+            }
+            1 => {
+                module = value.modules[0].clone();
+                module_children = Vec::new();
+            }
+            _ => {
+                module = ModuleRange::Namespace(
+                    value.modules.first().unwrap().start..value.modules.last().unwrap().end,
+                );
+                module_children = value
+                    .modules
+                    .iter()
+                    .map(|module| ImportTree::from_module_range(module, value.language_id))
+                    .collect();
+            }
+        }
+
         ImportTree {
-            module: value.module.clone(),
-            module_children: Vec::new(),
+            module,
+            module_children,
             content: value.content.clone(),
             content_children: Vec::new(),
             alias: value.alias.clone(),
@@ -584,7 +627,7 @@ mod test {
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tree_sitter_rust,
+        Buffer, Language, LanguageConfig, tree_sitter_python, tree_sitter_rust,
         tree_sitter_typescript,
     };
 
@@ -715,6 +758,8 @@ mod test {
 
     #[gpui::test]
     fn test_typescript_imports(cx: &mut TestAppContext) {
+        // todo! type imports
+
         let parent_abs_path = PathBuf::from("/home/user/project");
 
         check_imports_with_file_abs_path(
@@ -802,41 +847,48 @@ mod test {
 
         check_imports(&PYTHON, "import math as maths", &[&["math AS maths"]], cx);
 
-        // check_imports(&PYTHON, "from math import pi", &[&["math", "pi"]], cx);
+        check_imports(&PYTHON, "from math import pi", &[&["math", "pi"]], cx);
 
-        // check_imports(&PYTHON, "from math import *", &[&["math", "WILDCARD"]], cx);
+        check_imports(
+            &PYTHON,
+            "from math import pi, sin, cos",
+            &[&["math", "pi"], &["math", "sin"], &["math", "cos"]],
+            cx,
+        );
 
-        // check_imports(
-        //     &PYTHON,
-        //     "from math import pi as PI",
-        //     &[&["math", "pi AS PI"]],
-        //     cx,
-        // );
+        check_imports(&PYTHON, "from math import *", &[&["math", "WILDCARD"]], cx);
 
-        // check_imports(
-        //     &PYTHON,
-        //     "from serializers.json import JsonSerializer",
-        //     &[&["serializers", "json", "JsonSerializer"]],
-        //     cx,
-        // );
+        check_imports(
+            &PYTHON,
+            "from math import foo.bar.baz",
+            &[&["math", "foo", "bar", "baz"]],
+            cx,
+        );
 
-        // check_imports(
-        //     &PYTHON,
-        //     "from serializers.json import JsonSerializer",
-        //     &[&["serializers", "json", "JsonSerializer"]],
-        //     cx,
-        // );
+        check_imports(
+            &PYTHON,
+            "from math import pi as PI",
+            &[&["math", "pi AS PI"]],
+            cx,
+        );
 
-        // check_imports(
-        //     &PYTHON,
-        //     "from custom.serializers import json, xml, yaml",
-        //     &[
-        //         &["custom", "serializers", "json"],
-        //         &["custom", "serializers", "xml"],
-        //         &["custom", "serializers", "yaml"],
-        //     ],
-        //     cx,
-        // );
+        check_imports(
+            &PYTHON,
+            "from serializers.json import JsonSerializer",
+            &[&["serializers", "json", "JsonSerializer"]],
+            cx,
+        );
+
+        check_imports(
+            &PYTHON,
+            "from custom.serializers import json, xml, yaml",
+            &[
+                &["custom", "serializers", "json"],
+                &["custom", "serializers", "xml"],
+                &["custom", "serializers", "yaml"],
+            ],
+            cx,
+        );
 
         // todo!
         //

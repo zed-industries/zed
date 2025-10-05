@@ -1,16 +1,27 @@
-(import_statement) @import
-
-(import_from_statement) @import
-
-(dotted_name
-    (identifier)* @namespace
-    (identifier) @name .)
+(import_statement
+    name: [
+        (dotted_name
+            (identifier)* @namespace
+            (identifier) @name .)
+        (aliased_import
+            name: (dotted_name
+                ((identifier) ".")* @namespace
+                (identifier) @name .)
+            alias: (identifier) @alias)
+    ]) @import
 
 (import_from_statement
-    module_name: (_) @namespace
-    name: (_)+ @name
-    (wildcard_import)? @wildcard)
-
-(aliased_import
-    name: (_) @name
-    alias: (_) @alias)
+    module_name: (dotted_name
+        ((identifier) @namespace ".")*
+        (identifier) @namespace .)
+    (wildcard_import)? @wildcard
+    name: [
+        (dotted_name
+            ((identifier) @namespace ".")*
+            (identifier) @name .)
+        (aliased_import
+            name: (dotted_name
+                ((identifier) @namespace ".")*
+                (identifier) @name .)
+            alias: (identifier) @alias)
+    ]?) @import
