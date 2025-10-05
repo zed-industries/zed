@@ -112,7 +112,7 @@ pub fn scored_declarations(
     let wildcard_imports_ocurrences = imports
         .wildcard_modules
         .iter()
-        .map(|module| module.into_occurrences())
+        .map(|module| module.occurrences())
         .collect::<Vec<_>>();
 
     let mut declarations = identifier_to_references
@@ -127,7 +127,7 @@ pub fn scored_declarations(
                 .into_iter()
                 .flat_map(|imports| {
                     imports.iter().filter_map(|import| match import {
-                        Import::Direct { module } => Some(module.into_occurrences()),
+                        Import::Direct { module } => Some(module.occurrences()),
                         // TODO: Handle aliased imports
                         Import::Alias { .. } => None,
                     })

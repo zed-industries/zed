@@ -19,8 +19,15 @@ use crate::text_similarity::Occurrences;
 // * Distinguish different types of paths? (whether they are always relative)
 //
 // * Sort out how to get trace logs to automatically appear in test failures
+//
+// * Write documentation for extension authors
+//
+//     - the @import capture must match before or in the same pattern as all all captures it contains
 
 // Future improvements:
+//
+// * Provide the name used when importing whole modules (see tests with "named_module" in the name).
+// To be useful, will require parsing of identifier qualification.
 //
 // * Scoping for imports that aren't at the top level
 //
@@ -32,9 +39,6 @@ use crate::text_similarity::Occurrences;
 //
 // * Only use the top syntax layer?
 //
-// * Support for importing namespaces (`self` in Rust, etc). Requires parsing of identifier
-// qualification.
-//
 // * Consider deferring path normalization
 //
 // * When the same import statement is matched multiple times (once for each identifier), it is
@@ -42,17 +46,17 @@ use crate::text_similarity::Occurrences;
 // be used.
 //
 //   - Alternative: Multiple content captures in the same query match
-
-// Things to document (for extension authors)
 //
-// * the @import capture must match before all others it contains
+// * Distinguish different types of namespaces when known. E.g. "name.type" capture. Once capture
+// names are more open-ended like this may make sense to build and cache a jump table (direct
+// dispatch from capture index).
+//
+// * There are a few "Language specific:" comments on behavior that gets applied to all languages.
+// Would be cleaner to be conditional on the language or otherwise configured.
 
 #[derive(Debug, Clone)]
 pub struct Imports {
-    // TODO: this is not so meaningful when imports come from anywhere in the file
-    pub all_imports_range: Option<Range<usize>>,
     pub identifier_to_imports: HashMap<Identifier, Vec<Import>>,
-    // todo!
     pub wildcard_modules: Vec<Module>,
 }
 
@@ -94,7 +98,16 @@ impl Module {
                     && namespace.0.is_empty()
                 {
                     let path = snapshot.text_for_range(range.clone()).collect::<Cow<str>>();
-                    let path = Path::new(path.as_ref());
+
+                    let path = if let Some(without_lt) = path.strip_prefix("<")
+                        && let Some(without_angle_brackets) = without_lt.strip_suffix(">")
+                    {
+                        // Language specific: removes angle brackets from C/C++ #include
+                        Path::new(without_angle_brackets)
+                    } else {
+                        Path::new(path.as_ref())
+                    };
+
                     if (path.starts_with(".") || path.starts_with(".."))
                         && let Some(parent_abs_path) = parent_abs_path
                         && let Ok(abs_path) =
@@ -104,8 +117,12 @@ impl Module {
                     } else {
                         *self = Self::Source(path.into());
                     };
+                } else if let Self::Source(_) = self {
+                    log::warn!("bug in imports query: encountered multiple @source matches");
                 } else {
-                    // todo: warn!
+                    log::warn!(
+                        "bug in imports query: encountered both @namespace and @source match"
+                    );
                 }
             }
             ModuleRange::Namespace(range) => {
@@ -113,7 +130,9 @@ impl Module {
                     namespace.0.push(range_text(snapshot, range));
                     return 1;
                 } else {
-                    // todo: warn!
+                    log::warn!(
+                        "bug in imports query: encountered both @namespace and @source match"
+                    );
                 }
             }
         }
@@ -139,8 +158,7 @@ impl Deref for ModuleRange {
 }
 
 impl Module {
-    // todo! rename
-    pub fn into_occurrences(&self) -> Occurrences {
+    pub fn occurrences(&self) -> Occurrences {
         // todo! compare paths directly
         match self {
             Module::Source(path) => Occurrences::from_worktree_path(
@@ -168,7 +186,6 @@ impl Imports {
         let mut detached_nodes: Vec<DetachedNode> = Vec::new();
         let mut identifier_to_imports = HashMap::default();
         let mut wildcard_modules = Vec::new();
-        let mut all_imports_range: Option<Range<usize>> = None;
         let mut import_range = None;
 
         while let Some(query_match) = matches.peek() {
@@ -189,7 +206,7 @@ impl Imports {
             let mut new_import_range = None;
             let mut alias_range = None;
             let mut modules = Vec::new();
-            let mut content: Option<(Range<usize>, NodeKind)> = None;
+            let mut content: Option<(Range<usize>, ContentKind)> = None;
             for capture in query_match.captures {
                 let capture_range = capture.node.byte_range();
 
@@ -204,11 +221,11 @@ impl Imports {
                 } else {
                     let mut found_content = None;
                     if Some(capture.index) == *name_ix {
-                        found_content = Some((capture_range, NodeKind::Name));
+                        found_content = Some((capture_range, ContentKind::Name));
                     } else if Some(capture.index) == *list_ix {
-                        found_content = Some((capture_range, NodeKind::List));
+                        found_content = Some((capture_range, ContentKind::List));
                     } else if Some(capture.index) == *wildcard_ix {
-                        found_content = Some((capture_range, NodeKind::Wildcard));
+                        found_content = Some((capture_range, ContentKind::Wildcard));
                     }
                     if let Some((found_content_range, found_kind)) = found_content {
                         if let Some((_, old_kind)) = content {
@@ -241,13 +258,10 @@ impl Imports {
                     &mut wildcard_modules,
                 );
                 detached_nodes.clear();
-                all_imports_range
-                    .get_or_insert_with(|| new_import_range.clone())
-                    .end = new_import_range.end;
                 import_range = Some(new_import_range.clone());
             }
 
-            if let Some((content, kind)) = content {
+            if let Some((content, content_kind)) = content {
                 if import_range
                     .as_ref()
                     .is_some_and(|import_range| import_range.contains_inclusive(&content))
@@ -255,13 +269,13 @@ impl Imports {
                     detached_nodes.push(DetachedNode {
                         modules,
                         content: content.clone(),
+                        content_kind,
                         alias: alias_range.unwrap_or(0..0),
                         language_id,
-                        kind,
                     });
                 } else {
                     log::trace!(
-                        "filtered out match not inside import range: {kind:?} at {content:?}"
+                        "filtered out match not inside import range: {content_kind:?} at {content:?}"
                     );
                 }
             }
@@ -278,7 +292,6 @@ impl Imports {
         );
 
         Imports {
-            all_imports_range,
             identifier_to_imports,
             wildcard_modules,
         }
@@ -324,11 +337,9 @@ impl Imports {
         let mut tree_index = 0;
         while tree_index < trees.len() {
             let tree = &mut trees[tree_index];
-            if tree.content == node.content {
+            if !node.content.is_empty() && node.content == tree.content {
                 // multiple matches can apply to the same name/list/wildcard. This keeps the queries
                 // simpler by combining info from these matches.
-                //
-                // TODO: Log warnings when both have some information and there is a mismatch.
                 if tree.module.is_empty() {
                     tree.module = node.module;
                     tree.module_children = node.module_children;
@@ -337,13 +348,13 @@ impl Imports {
                     tree.alias = node.alias;
                 }
                 return None;
-            } else if node.module.contains_inclusive(&tree.range()) {
+            } else if !node.module.is_empty() && node.module.contains_inclusive(&tree.range()) {
                 node.module_children.push(trees.remove(tree_index));
                 continue;
-            } else if node.content.contains_inclusive(&tree.content) {
+            } else if !node.content.is_empty() && node.content.contains_inclusive(&tree.content) {
                 node.content_children.push(trees.remove(tree_index));
                 continue;
-            } else if tree.content.contains_inclusive(&node.content) {
+            } else if !tree.content.is_empty() && tree.content.contains_inclusive(&node.content) {
                 if let Some(node) = Self::attach_node(node, &mut tree.content_children) {
                     tree.content_children.push(node);
                 }
@@ -377,9 +388,9 @@ impl Imports {
             }
         };
 
-        if tree.content_children.is_empty() {
-            match tree.kind {
-                NodeKind::Name | NodeKind::List => {
+        if tree.content_children.is_empty() && !tree.content.is_empty() {
+            match tree.content_kind {
+                ContentKind::Name | ContentKind::List => {
                     if tree.alias.is_empty() {
                         identifier_to_imports
                             .entry(Identifier {
@@ -393,7 +404,7 @@ impl Imports {
                     } else {
                         let alias_name: Arc<str> = range_text(snapshot, &tree.alias);
                         let external_name = range_text(snapshot, &tree.content);
-                        // TODO: Make this special case be language-specific / configured?
+                        // Language specific: skip "_" aliases for Rust
                         if alias_name.as_ref() != "_" {
                             identifier_to_imports
                                 .entry(Identifier {
@@ -411,7 +422,7 @@ impl Imports {
                         }
                     }
                 }
-                NodeKind::Wildcard => wildcard_modules.push(current_module.clone()),
+                ContentKind::Wildcard => wildcard_modules.push(current_module.clone()),
             }
         } else {
             for child in &tree.content_children {
@@ -429,7 +440,9 @@ impl Imports {
         if pop_count > 0 {
             match current_module {
                 Module::Source(_path) => {
-                    // todo! warn
+                    log::warn!(
+                        "bug in imports query: encountered both @namespace and @source match"
+                    );
                 }
                 Module::Namespace(namespace) => {
                     namespace.0.drain(namespace.0.len() - pop_count..);
@@ -480,25 +493,24 @@ fn range_text(snapshot: &BufferSnapshot, range: &Range<usize>) -> Arc<str> {
 struct DetachedNode {
     modules: Vec<ModuleRange>,
     content: Range<usize>,
+    content_kind: ContentKind,
     alias: Range<usize>,
     language_id: LanguageId,
-    kind: NodeKind,
 }
 
-// todo! rename
 #[derive(Debug, Clone, Copy)]
-enum NodeKind {
+enum ContentKind {
     Name,
     Wildcard,
     List,
 }
 
-impl NodeKind {
+impl ContentKind {
     fn capture_name(&self) -> &'static str {
         match self {
-            NodeKind::Name => "name",
-            NodeKind::Wildcard => "wildcard",
-            NodeKind::List => "list",
+            ContentKind::Name => "name",
+            ContentKind::Wildcard => "wildcard",
+            ContentKind::List => "list",
         }
     }
 }
@@ -506,12 +518,14 @@ impl NodeKind {
 #[derive(Debug)]
 struct ImportTree {
     module: ModuleRange,
+    /// When non-empty, provides namespace / source info which should be used instead of `module`.
     module_children: Vec<ImportTree>,
     content: Range<usize>,
+    /// When non-empty, provides content which should be used instead of `content`.
     content_children: Vec<ImportTree>,
+    content_kind: ContentKind,
     alias: Range<usize>,
     language_id: LanguageId,
-    kind: NodeKind,
 }
 
 impl ImportTree {
@@ -531,12 +545,11 @@ impl ImportTree {
         ImportTree {
             module: module.clone(),
             module_children: Vec::new(),
-            // todo! does this make sense?
             content: 0..0,
             content_children: Vec::new(),
+            content_kind: ContentKind::Name,
             alias: 0..0,
             language_id,
-            kind: NodeKind::Name,
         }
     }
 }
@@ -547,7 +560,6 @@ impl From<&DetachedNode> for ImportTree {
         let module_children;
         match value.modules.len() {
             0 => {
-                // todo! empty variant?
                 module = ModuleRange::Namespace(0..0);
                 module_children = Vec::new();
             }
@@ -572,9 +584,9 @@ impl From<&DetachedNode> for ImportTree {
             module_children,
             content: value.content.clone(),
             content_children: Vec::new(),
+            content_kind: value.content_kind,
             alias: value.alias.clone(),
             language_id: value.language_id,
-            kind: value.kind,
         }
     }
 }
@@ -612,6 +624,7 @@ impl std::fmt::Debug for ImportTreeDebug<'_> {
                     .map(|child| child.debug(&self.snapshot))
                     .collect::<Vec<Self>>(),
             )
+            .field("content_kind", &self.tree.content_kind)
             .field("alias_range", &self.tree.alias)
             .field("alias_text", &range_text(self.snapshot, &self.tree.alias))
             .finish()
@@ -758,8 +771,6 @@ mod test {
 
     #[gpui::test]
     fn test_typescript_imports(cx: &mut TestAppContext) {
-        // todo! type imports
-
         let parent_abs_path = PathBuf::from("/home/user/project");
 
         check_imports_with_file_abs_path(
@@ -808,45 +819,52 @@ mod test {
             cx,
         );
 
-        // TODO: Consider supporting binding a module import to a name
-        //
-        // ``scm
-        // (import_statement
-        //     import_clause: (import_clause
-        //         (namespace_import (identifier) @namespace_alias)
-        //     source: (_) @namespace))
-        // ```
-        //
-        // check_imports_with_file_abs_path(
-        //     Some(&parent_abs_path),
-        //     &TYPESCRIPT,
-        //     r#"import * as math from "./maths.js";"#,
-        //     &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
-        //     cx,
-        // );
-        //
-        // ```scm
-        // (import_statement
-        //     import_clause: (import_require_clause
-        //         (identifier) @namespace_alias
-        //         source: (_) @namespace))
-        // ```
-        //
-        // check_imports_with_file_abs_path(
-        //     Some(&parent_abs_path),
-        //     &TYPESCRIPT,
-        //     r#"import math = require("./maths");"#,
-        //     &[&["/home/user/project/maths", "WILDCARD AS math"]],
-        //     cx,
-        // );
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import type { SomeThing } from "./some-module.js";"#,
+            &[&["SOURCE /home/user/project/some-module.js", "SomeThing"]],
+            cx,
+        );
+
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import { type SomeThing, OtherThing } from "./some-module.js";"#,
+            &[
+                &["SOURCE /home/user/project/some-module.js", "SomeThing"],
+                &["SOURCE /home/user/project/some-module.js", "OtherThing"],
+            ],
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_typescript_named_module_imports(cx: &mut TestAppContext) {
+        let parent_abs_path = PathBuf::from("/home/user/project");
+
+        // TODO: These should provide the name that the module is bound to.
+        // For now instead these are treated as unqualified wildcard imports.
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import * as math from "./maths.js";"#,
+            // &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
+            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
+            cx,
+        );
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import math = require("./maths");"#,
+            // &[&["/home/user/project/maths", "WILDCARD AS math"]],
+            &[&["SOURCE /home/user/project/maths", "WILDCARD"]],
+            cx,
+        );
     }
 
     #[gpui::test]
     fn test_python_imports(cx: &mut TestAppContext) {
-        check_imports(&PYTHON, "import math", &[&["math"]], cx);
-
-        check_imports(&PYTHON, "import math as maths", &[&["math AS maths"]], cx);
-
         check_imports(&PYTHON, "from math import pi", &[&["math", "pi"]], cx);
 
         check_imports(
@@ -899,17 +917,46 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_python_named_module_imports(cx: &mut TestAppContext) {
+        // TODO: These should provide the name that the module is bound to.
+        // For now instead these are treated as unqualified wildcard imports.
+        //
+        // check_imports(&PYTHON, "import math", &[&["math", "WILDCARD as math"]], cx);
+        // check_imports(&PYTHON, "import math as maths", &[&["math", "WILDCARD AS maths"]], cx);
+        //
+        // Something like:
+        //
+        // (import_statement
+        //     name: [
+        //         (dotted_name
+        //             (identifier)* @namespace
+        //             (identifier) @name.module .)
+        //         (aliased_import
+        //             name: (dotted_name
+        //                 ((identifier) ".")* @namespace
+        //                 (identifier) @name.module .)
+        //             alias: (identifier) @alias)
+        //     ]) @import
+
+        check_imports(&PYTHON, "import math", &[&["math", "WILDCARD"]], cx);
+        check_imports(
+            &PYTHON,
+            "import math as maths",
+            &[&["math", "WILDCARD"]],
+            cx,
+        );
+    }
+
+    #[gpui::test]
     fn test_c_imports(cx: &mut TestAppContext) {
         let parent_abs_path = PathBuf::from("/home/user/project");
 
-        // TODO: how to handle < and > in paths?
-        //
         // TODO: Distinguish that these are not relative to current path
         check_imports_with_file_abs_path(
             Some(&parent_abs_path),
             &C,
             r#"#include <math.h>"#,
-            &[&["SOURCE <math.h>", "WILDCARD"]],
+            &[&["SOURCE math.h", "WILDCARD"]],
             cx,
         );
 
@@ -932,12 +979,27 @@ mod test {
             cx,
         );
 
-        // TODO: Should be included, but module imports aren't yet used
-        check_imports(&GO, r#"import "lib/math""#, &[], cx);
-        check_imports(&GO, r#"import m "lib/math""#, &[], cx);
-
         // not included, these are only for side-effects
         check_imports(&GO, r#"import _ "lib/math""#, &[], cx);
+    }
+
+    #[gpui::test]
+    fn test_go_named_module_imports(cx: &mut TestAppContext) {
+        // TODO: These should provide the name that the module is bound to.
+        // For now instead these are treated as unqualified wildcard imports.
+
+        check_imports(
+            &GO,
+            r#"import "lib/math""#,
+            &[&["lib/math", "WILDCARD"]],
+            cx,
+        );
+        check_imports(
+            &GO,
+            r#"import m "lib/math""#,
+            &[&["lib/math", "WILDCARD"]],
+            cx,
+        );
     }
 
     #[track_caller]
