@@ -354,10 +354,6 @@ impl Item for StackTraceView {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
