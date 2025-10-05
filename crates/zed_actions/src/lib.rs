@@ -300,10 +300,14 @@ pub mod settings_profile_selector {
 }
 
 pub mod encodings {
-    use gpui::Action;
+    use std::sync::Arc;
 
-    #[derive(PartialEq, Debug, Clone, Action)]
-    pub struct Toggle;
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Debug, Clone, Action, JsonSchema, Deserialize)]
+    pub struct Toggle(pub Arc<std::path::Path>);
 }
 
 pub mod agent {
