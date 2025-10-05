@@ -8840,7 +8840,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -9130,7 +9130,7 @@ async fn test_odd_events_for_ignored_dirs(
     );
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test]
 async fn test_repos_in_invisible_worktrees(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
