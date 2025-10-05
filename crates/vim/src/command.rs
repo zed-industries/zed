@@ -24,7 +24,6 @@ use std::{
     ops::{Deref, Range},
     path::{Path, PathBuf},
     process::Stdio,
-    rc::Rc,
     str::Chars,
     sync::OnceLock,
     time::Instant,
@@ -721,10 +720,10 @@ struct VimCommand {
     action_name: Option<&'static str>,
     bang_action: Option<Box<dyn Action>>,
     args: Option<
-        Rc<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
+        Box<dyn Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static>,
     >,
     range: Option<
-        Rc<
+        Box<
             dyn Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>>
                 + Send
                 + Sync
@@ -735,6 +734,7 @@ struct VimCommand {
     has_filename: bool,
 }
 
+#[derive(Clone)]
 struct ParsedQuery {
     args: String,
     has_bang: bool,
@@ -770,7 +770,7 @@ impl VimCommand {
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
-        self.args = Some(Rc::new(f));
+        self.args = Some(Box::new(f));
         self
     }
 
@@ -778,7 +778,7 @@ impl VimCommand {
         mut self,
         f: impl Fn(Box<dyn Action>, String) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
-        self.args = Some(Rc::new(f));
+        self.args = Some(Box::new(f));
         self.has_filename = true;
         self
     }
@@ -787,7 +787,7 @@ impl VimCommand {
         mut self,
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
     ) -> Self {
-        self.range = Some(Rc::new(f));
+        self.range = Some(Box::new(f));
         self
     }
 
@@ -797,20 +797,15 @@ impl VimCommand {
     }
 
     fn generate_filename_completions(
-        &self,
-        query: &str,
+        parsed_query: ParsedQuery,
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
-        let Some(ParsedQuery {
+        let ParsedQuery {
             args,
             has_bang: _,
             has_space: _,
-        }) = self.get_parsed_query(query.to_string())
-        else {
-            return Task::ready(Vec::new());
-        };
-
+        } = parsed_query;
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Vec::new());
         };
@@ -1454,12 +1449,9 @@ struct VimCommands(Vec<VimCommand>);
 // safety: we only ever access this from the main thread (as ensured by the cx argument)
 // actions are not Sync so we can't otherwise use a OnceLock.
 unsafe impl Sync for VimCommands {}
-
-// todo!() remove once the lifecycle stuff is sorted out
-unsafe impl Send for VimCommands {}
 impl Global for VimCommands {}
 
-fn commands(cx: &App) -> &'static Vec<VimCommand> {
+fn commands(cx: &App) -> &Vec<VimCommand> {
     static COMMANDS: OnceLock<VimCommands> = OnceLock::new();
     &COMMANDS
         .get_or_init(|| VimCommands(generate_commands(cx)))
@@ -1596,57 +1588,58 @@ pub fn command_interceptor(
         }]);
     }
 
-    if let Some((
-        command,
-        action,
-        ParsedQuery {
-            args,
-            has_bang,
-            has_space,
-        },
-    )) = commands(cx)
-        .iter()
-        .find_map(|command: &'static VimCommand| {
-            let action = command.parse(query, &range, cx)?;
-            let parsed_query = command.get_parsed_query(query.into())?;
-            Some((command, action, parsed_query))
-        })
-    {
-        let display_string = ":".to_owned()
-            + &range_prefix
-            + command.prefix
-            + command.suffix
-            + if has_bang { "!" } else { "" };
-        let space = if has_space { " " } else { "" };
+    let (mut results, filenames) = {
+        let Some((results, filenames)) =
+            commands(cx).iter().enumerate().find_map(|(idx, command)| {
+                let action = command.parse(query, &range, cx)?;
+                let parsed_query = command.get_parsed_query(query.into())?;
+                let ParsedQuery {
+                    args,
+                    has_bang,
+                    has_space,
+                } = parsed_query.clone();
+                let display_string = ":".to_owned()
+                    + &range_prefix
+                    + command.prefix
+                    + command.suffix
+                    + if has_bang { "!" } else { "" };
+                let space = if has_space { " " } else { "" };
 
-        let string = format!("{}{}{}", &display_string, &space, &args);
-        let positions = generate_positions(&string, &(range_prefix.clone() + query));
+                let string = format!("{}{}{}", &display_string, &space, &args);
+                let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
-        let mut results = vec![CommandInterceptResult {
-            action,
-            string,
-            positions,
-        }];
+                let results = vec![CommandInterceptResult {
+                    action,
+                    string,
+                    positions,
+                }];
 
-        let no_args_positions = generate_positions(&display_string, &(range_prefix + query));
+                let no_args_positions =
+                    generate_positions(&display_string, &(range_prefix.clone() + query));
 
-        // The following are valid autocomplete scenarios
-        // :w!filename.txt
-        // :w filename.txt
-        // :w[space]
-        if !command.has_filename || (!has_trailing_space && !has_bang && args.is_empty()) {
-            return Task::ready(results);
-        }
+                // The following are valid autocomplete scenarios
+                // :w!filename.txt
+                // :w filename.txt
+                // :w[space]
+                if !command.has_filename || (!has_trailing_space && !has_bang && args.is_empty()) {
+                    return Some((results, None));
+                }
 
-        let query = query.to_owned();
+                Some((
+                    results,
+                    Some((idx, parsed_query, args, display_string, no_args_positions)),
+                ))
+            })
+        else {
+            return Task::ready(Vec::new());
+        };
+
+        (results, filenames)
+    };
+
+    if let Some((cmd_idx, parsed_query, args, display_string, no_args_positions)) = filenames {
+        let filenames = VimCommand::generate_filename_completions(parsed_query, workspace, cx);
         cx.spawn(async move |cx| {
-            let query = query.as_str();
-            let Ok(filenames) =
-                cx.update(|cx| command.generate_filename_completions(query, workspace, cx))
-            else {
-                return results;
-            };
-
             let filenames = filenames.await;
             const MAX_RESULTS: usize = 100;
             let executor = cx.background_executor().clone();
@@ -1677,7 +1670,9 @@ pub fn command_interceptor(
                 let mut positions: Vec<_> = positions.iter().map(|&pos| pos + offset).collect();
                 positions.splice(0..0, no_args_positions.clone());
                 let string = format!("{display_string} {string}");
-                let action = match cx.update(|cx| command.parse(&string[1..], &range, cx)) {
+                let action = match cx
+                    .update(|cx| commands(cx).get(cmd_idx)?.parse(&string[1..], &range, cx))
+                {
                     Ok(Some(action)) => action,
                     _ => continue,
                 };
@@ -1690,7 +1685,7 @@ pub fn command_interceptor(
             results
         })
     } else {
-        Task::ready(Vec::new())
+        Task::ready(results)
     }
 }
 
