@@ -26,6 +26,7 @@ mod project_tests;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
+use encoding_rs::Encoding;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
@@ -215,6 +216,7 @@ pub struct Project {
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
+    pub encoding: Arc<std::sync::Mutex<&'static Encoding>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1225,6 +1227,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
 
                 agent_location: None,
+                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
             }
         })
     }
@@ -1410,6 +1413,7 @@ impl Project {
 
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
+                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
             };
 
             // remote server -> local machine handlers
@@ -1663,6 +1667,7 @@ impl Project {
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
                 agent_location: None,
+                encoding: Arc::new(std::sync::Mutex::new(encoding_rs::UTF_8)),
             };
             project.set_role(role, cx);
             for worktree in worktrees {

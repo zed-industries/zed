@@ -624,6 +624,7 @@ type BuildProjectItemForPathFn =
     fn(
         &Entity<Project>,
         &ProjectPath,
+        Option<EncodingWrapper>,
         &mut Window,
         &mut App,
     ) -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
@@ -645,8 +646,12 @@ impl ProjectItemRegistry {
             },
         );
         self.build_project_item_for_path_fns
-            .push(|project, project_path, window, cx| {
+            .push(|project, project_path, encoding, window, cx| {
                 let project_path = project_path.clone();
+                let EncodingWrapper(encoding) = encoding.unwrap_or_default();
+
+                project.update(cx, |project, _| {*project.encoding.lock().unwrap() = encoding});
+
                 let is_file = project
                     .read(cx)
                     .entry_for_path(&project_path, cx)
@@ -715,14 +720,17 @@ impl ProjectItemRegistry {
         &self,
         project: &Entity<Project>,
         path: &ProjectPath,
+        encoding: Option<EncodingWrapper>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let Some(open_project_item) = self
-            .build_project_item_for_path_fns
-            .iter()
-            .rev()
-            .find_map(|open_project_item| open_project_item(project, path, window, cx))
+        let Some(open_project_item) =
+            self.build_project_item_for_path_fns
+                .iter()
+                .rev()
+                .find_map(|open_project_item| {
+                    open_project_item(project, path, encoding.clone(), window, cx)
+                })
         else {
             return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
         };
@@ -3566,7 +3574,13 @@ impl Workspace {
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
         let registry = cx.default_global::<ProjectItemRegistry>().clone();
-        registry.open_path(self.project(), &path, window, cx)
+        registry.open_path(
+            self.project(),
+            &path,
+            Some(EncodingWrapper::new(*self.encoding.lock().unwrap())),
+            window,
+            cx,
+        )
     }
 
     pub fn find_project_item<T>(
