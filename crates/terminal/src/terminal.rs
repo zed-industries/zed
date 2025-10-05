@@ -22,8 +22,7 @@ use alacritty_terminal::{
     tty::{self},
     vi_mode::{ViModeCursor, ViMotion},
     vte::ansi::{
-        ClearMode, CursorStyle as AlacCursorStyle, Handler, Mode, NamedMode, NamedPrivateMode,
-        PrivateMode,
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
 };
 use anyhow::{Context as _, Result, bail};
@@ -371,7 +370,7 @@ impl TerminalBuilder {
         // Enable LineFeedNewLine mode (LNM) for display-only terminals.
         // This automatically converts LF (\n) to CRLF (\r\n) to ensure proper
         // line wrapping when output comes from piped commands (not a PTY).
-        term.set_mode(Mode::Named(NamedMode::LineFeedNewLine));
+        term.mode |= TermMode::LINE_FEED_NEW_LINE;
 
         let term = Arc::new(FairMutex::new(term));
 
