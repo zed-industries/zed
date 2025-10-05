@@ -707,9 +707,14 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    pub fn load_file(
+        &self,
+        path: &Path,
+        encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => this.load_file(path, encoding, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1316,7 +1321,12 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &Path,
+        encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1339,7 +1349,17 @@ impl LocalWorktree {
                     anyhow::bail!("File is too large to load");
                 }
             }
-            let text = fs.load(&abs_path).await?;
+            let text = fs
+                .load_with_encoding(
+                    &abs_path,
+                    if let Some(encoding) = encoding {
+                        EncodingWrapper::new(*encoding.lock().unwrap())
+                    } else {
+                        EncodingWrapper::new(encoding_rs::UTF_8)
+                    },
+                    false,
+                )
+                .await?;
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {

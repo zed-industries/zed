@@ -633,7 +633,26 @@ impl LocalBufferStore {
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
+        let load_buffer = worktree.update(cx, |worktree, cx| {
+            let load_file = worktree.load_file(path.as_ref(), None, cx);
+            let reservation = cx.reserve_entity();
+            let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
+            let path = path.clone();
+            cx.spawn(async move |_, cx| {
+                let loaded = load_file.await.with_context(|| {
+                    format!("Could not open path: {}", path.display(PathStyle::local()))
+                })?;
+                let text_buffer = cx
+                    .background_spawn(async move {
+                        text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
+                    })
+                    .await;
+                cx.insert_entity(reservation, |_| {
+                    Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
+                })
+            })
+        });
+
         cx.spawn(async move |this, cx| {
             let buffer = match load_buffer.await {
                 Ok(buffer) => {
