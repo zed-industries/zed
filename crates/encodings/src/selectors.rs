@@ -426,6 +426,15 @@ pub mod encoding {
         }
 
         fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+            let workspace = self
+                .selector
+                .upgrade()
+                .unwrap()
+                .read(cx)
+                .workspace
+                .upgrade()
+                .unwrap();
+
             if let Some(buffer) = &self.buffer
                 && let Some(buffer) = buffer.upgrade()
             {
@@ -440,15 +449,6 @@ pub mod encoding {
                     } else if self.action == Action::Save {
                         let executor = cx.background_executor().clone();
 
-                        let workspace = self
-                            .selector
-                            .upgrade()
-                            .unwrap()
-                            .read(cx)
-                            .workspace
-                            .upgrade()
-                            .unwrap();
-
                         executor
                             .spawn(workspace.update(cx, |workspace, cx| {
                                 workspace
@@ -458,6 +458,24 @@ pub mod encoding {
                             .detach();
                     }
                 });
+            } else {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_abs_path(
+                            self.selector
+                                .upgrade()
+                                .unwrap()
+                                .read(cx)
+                                .path
+                                .as_ref()
+                                .unwrap()
+                                .clone(),
+                            Default::default(),
+                            window,
+                            cx,
+                        )
+                        .detach();
+                })
             }
             self.dismissed(window, cx);
         }
