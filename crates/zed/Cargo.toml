@@ -19,7 +19,7 @@ name = "zed"
 path = "src/main.rs"
 
 [features]
-profile-with-tracy = ["dep:tracy-client", "profiling/profile-with-tracy"]
+profile-with-tracy = ["dep:tracy-client"]#, "profiling/profile-with-tracy"]
 profile-with-tracy-memory = ["profile-with-tracy"]
 
 [dependencies]
