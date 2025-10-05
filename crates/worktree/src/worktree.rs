@@ -3115,11 +3115,19 @@ impl language::LocalFile for File {
         self.worktree.read(cx).absolutize(&self.path)
     }
 
-    fn load(&self, cx: &App) -> Task<Result<String>> {
+    fn load(
+        &self,
+        cx: &App,
+        encoding: EncodingWrapper,
+        detect_utf16: bool,
+    ) -> Task<Result<String>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_spawn(async move { fs.load(&abs_path).await })
+        cx.background_spawn(async move {
+            fs.load_with_encoding(&abs_path?, encoding, detect_utf16)
+                .await
+        })
     }
 
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
