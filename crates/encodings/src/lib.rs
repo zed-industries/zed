@@ -8,6 +8,7 @@ use language::Buffer;
 use ui::{App, Button, ButtonCommon, Context, LabelSize, Render, Tooltip, Window, div};
 use ui::{Clickable, ParentElement};
 use workspace::{ItemHandle, StatusItemView, Workspace, with_active_or_new_workspace};
+use zed_actions::encodings::Toggle;
 
 use crate::selectors::encoding::EncodingSelector;
 use crate::selectors::save_or_reopen::EncodingSaveOrReopenSelector;
@@ -76,6 +77,7 @@ impl Render for EncodingIndicator {
                                     Action::Save,
                                     Some(buffer.downgrade()),
                                     weak_workspace,
+                                    None,
                                 );
                                 selector
                             })
@@ -291,11 +293,14 @@ pub fn encoding_from_name(name: &str) -> &'static Encoding {
 }
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &zed_actions::encodings::Toggle, cx: &mut App| {
+    cx.on_action(|action: &Toggle, cx: &mut App| {
+        let Toggle(path) = action.clone();
+        let path = path.to_path_buf();
+
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             let weak_workspace = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
-                EncodingSelector::new(window, cx, Action::Reopen, None, weak_workspace)
+                EncodingSelector::new(window, cx, Action::Reopen, None, weak_workspace, Some(path))
             });
         });
     });

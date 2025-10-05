@@ -77,6 +77,8 @@ impl Focusable for InvalidBufferView {
 impl Render for InvalidBufferView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl gpui::IntoElement {
         let abs_path = self.abs_path.clone();
+        let path = self.abs_path.clone();
+
         v_flex()
             .size_full()
             .track_focus(&self.focus_handle(cx))
@@ -119,9 +121,11 @@ impl Render for InvalidBufferView {
                                         )
                                         .style(ButtonStyle::Outlined)
                                         .on_click(
-                                            |_, window, cx| {
+                                            move |_, window, cx| {
                                                 window.dispatch_action(
-                                                    Box::new(zed_actions::encodings::Toggle),
+                                                    Box::new(zed_actions::encodings::Toggle(
+                                                        path.clone(),
+                                                    )),
                                                     cx,
                                                 )
                                             },
