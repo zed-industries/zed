@@ -1217,12 +1217,25 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
+
+        // Convert LF to CRLF to ensure proper line wrapping.
+        // When output comes from piped commands (not a PTY), it only contains LF (\n),
+        // which moves the cursor down but not back to the left, creating a diagonal
+        // staircase effect. We need to insert CR (\r) before each LF.
+        let mut converted = Vec::with_capacity(bytes.len());
+        for &byte in bytes {
+            if byte == b'\n' {
+                converted.push(b'\r');
+            }
+            converted.push(byte);
+        }
+
         let mut processor = alacritty_terminal::vte::ansi::Processor::<
             alacritty_terminal::vte::ansi::StdSyncHandler,
         >::new();
         {
             let mut term = self.term.lock();
-            processor.advance(&mut *term, bytes);
+            processor.advance(&mut *term, &converted);
         }
         cx.emit(Event::Wakeup);
     }
