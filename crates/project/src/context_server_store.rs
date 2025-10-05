@@ -22,6 +22,23 @@ pub fn init(cx: &mut App) {
     extension::init(cx);
 }
 
+fn convert_auth_to_transport(auth: &settings::ContextServerAuth) -> context_server::transport::AuthType {
+    match auth {
+        settings::ContextServerAuth::Bearer { token } => {
+            context_server::transport::AuthType::Bearer(token.clone())
+        }
+        settings::ContextServerAuth::ApiKey { header, value } => {
+            context_server::transport::AuthType::ApiKey {
+                header_name: header.clone(),
+                value: value.clone(),
+            }
+        }
+        settings::ContextServerAuth::Custom { headers } => {
+            context_server::transport::AuthType::Custom(headers.clone())
+        }
+    }
+}
+
 actions!(
     context_server,
     [
@@ -101,6 +118,7 @@ pub enum ContextServerConfiguration {
     },
     Remote {
         url: url::Url,
+        auth: Option<settings::ContextServerAuth>,
     },
 }
 
@@ -138,9 +156,9 @@ impl ContextServerConfiguration {
 
                 Some(ContextServerConfiguration::Extension { command, settings })
             }
-            ContextServerSettings::Remote { enabled: _, url } => {
+            ContextServerSettings::Remote { enabled: _, url, auth } => {
                 let url = url::Url::parse(&url).log_err()?;
-                Some(ContextServerConfiguration::Remote { url })
+                Some(ContextServerConfiguration::Remote { url, auth })
             }
         }
     }
@@ -485,8 +503,9 @@ impl ContextServerStore {
         }
 
         match configuration.as_ref() {
-            ContextServerConfiguration::Remote { url } => {
-                match ContextServer::from_url(id.clone(), url, cx) {
+            ContextServerConfiguration::Remote { url, auth } => {
+                let transport_auth = auth.as_ref().map(|a| convert_auth_to_transport(a));
+                match ContextServer::from_url(id.clone(), url, transport_auth, cx) {
                     Ok(server) => Arc::new(server),
                     Err(e) => {
                         log::error!("Failed to create remote context server {}: {}", id, e);
@@ -1263,6 +1282,7 @@ mod tests {
                 ContextServerSettings::Remote {
                     enabled: true,
                     url: server_url.to_string(),
+                    auth: None,
                 },
             )],
         )
@@ -1275,8 +1295,9 @@ mod tests {
                 Box::new(move |id, config| {
                     assert_eq!(id.0.as_ref(), SERVER_ID);
                     match config.as_ref() {
-                        ContextServerConfiguration::Remote { url } => {
+                        ContextServerConfiguration::Remote { url, auth } => {
                             assert_eq!(url.as_str(), server_url);
+                            assert!(auth.is_none());
                         }
                         _ => panic!("Expected remote configuration"),
                     }

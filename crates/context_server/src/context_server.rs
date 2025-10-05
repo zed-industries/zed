@@ -53,9 +53,15 @@ impl ContextServer {
         }
     }
 
-    pub fn from_url(id: ContextServerId, endpoint: &Url, cx: &App) -> Result<Self> {
+    pub fn from_url(
+        id: ContextServerId,
+        endpoint: &Url,
+        auth: Option<transport::AuthType>,
+        cx: &App,
+    ) -> Result<Self> {
         let http_client = cx.http_client();
-        let transport = transport::build_transport(http_client, endpoint, cx)?;
+        let config = auth.map(|auth| transport::TransportConfig { auth: Some(auth) });
+        let transport = transport::build_transport(http_client, endpoint, config, cx)?;
         Ok(Self::new(id, transport))
     }
 

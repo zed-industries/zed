@@ -1,6 +1,7 @@
 // zed/crates/context_server/src/transport/http.rs
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{Stream, StreamExt};
 use gpui::{App, BackgroundExecutor};
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
@@ -12,7 +13,6 @@ use crate::transport::Transport;
 
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
-const HEADER_LAST_EVENT_ID: &str = "Last-Event-ID";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
 
@@ -28,6 +28,8 @@ pub struct HttpTransport {
     error_rx: channel::Receiver<String>,
     // Track if we've sent the initialize response
     initialized: Arc<SyncMutex<bool>>,
+    // Authentication headers to include in requests
+    auth_headers: Option<HashMap<String, String>>,
 }
 
 impl HttpTransport {
@@ -45,7 +47,14 @@ impl HttpTransport {
             error_tx,
             error_rx,
             initialized: Arc::new(SyncMutex::new(false)),
+            auth_headers: None,
         }
+    }
+
+    /// Add authentication headers to this transport
+    pub fn with_auth_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.auth_headers = Some(headers);
+        self
     }
 
     /// Send a message and handle the response based on content type
@@ -63,6 +72,13 @@ impl HttpTransport {
                 "Accept",
                 format!("{}, {}", JSON_MIME_TYPE, EVENT_STREAM_MIME_TYPE),
             );
+
+        // Add authentication headers if present
+        if let Some(ref headers) = self.auth_headers {
+            for (key, value) in headers {
+                request_builder = request_builder.header(key.as_str(), value.as_str());
+            }
+        }
 
         // Add session ID if we have one (except for initialize)
         if !is_initialize {
@@ -239,15 +255,24 @@ impl Drop for HttpTransport {
         let http_client = self.http_client.clone();
         let endpoint = self.endpoint.clone();
         let session_id = self.session_id.lock().clone();
+        let auth_headers = self.auth_headers.clone();
 
         if let Some(session_id) = session_id {
             self.executor
                 .spawn(async move {
-                    let request = Request::builder()
+                    let mut request_builder = Request::builder()
                         .method(Method::DELETE)
                         .uri(&endpoint)
-                        .header(HEADER_SESSION_ID, &session_id)
-                        .body(AsyncBody::empty());
+                        .header(HEADER_SESSION_ID, &session_id);
+
+                    // Add authentication headers if present
+                    if let Some(ref headers) = auth_headers {
+                        for (key, value) in headers {
+                            request_builder = request_builder.header(key.as_str(), value.as_str());
+                        }
+                    }
+
+                    let request = request_builder.body(AsyncBody::empty());
 
                     if let Ok(request) = request {
                         let _ = http_client.send(request).await;
