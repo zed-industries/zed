@@ -491,6 +491,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         &parsed.header,
         &parsed.column_alignments,
         &max_column_widths,
+        total_max_length,
         true,
         cx,
     );
@@ -503,6 +504,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
                 row,
                 &parsed.column_alignments,
                 &max_column_widths,
+                total_max_length,
                 false,
                 cx,
             )
@@ -520,6 +522,7 @@ fn render_markdown_table_row(
     parsed: &ParsedMarkdownTableRow,
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
+    total_max_length: usize,
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
@@ -569,7 +572,9 @@ fn render_markdown_table_row(
         row = row.border_b_1();
     }
 
-    row.children(items).into_any_element()
+    let char_based_width = cx.scaled_rems(total_max_length as f32 * 0.7);
+
+    row.children(items).max_w(char_based_width).into_any_element()
 }
 
 fn render_markdown_block_quote(
