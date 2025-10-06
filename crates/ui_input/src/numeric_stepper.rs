@@ -8,6 +8,7 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
+use settings::CodeFade;
 use ui::{IconButtonShape, prelude::*};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +61,30 @@ impl NumericStepperType for gpui::FontWeight {
     }
     fn saturating_sub(self, rhs: Self) -> Self {
         FontWeight((self.0 - rhs.0).max(Self::min_value().0))
+    }
+}
+
+impl NumericStepperType for settings::CodeFade {
+    fn default_step() -> Self {
+        CodeFade(0.10)
+    }
+    fn large_step() -> Self {
+        CodeFade(0.20)
+    }
+    fn small_step() -> Self {
+        CodeFade(0.05)
+    }
+    fn min_value() -> Self {
+        CodeFade(0.0)
+    }
+    fn max_value() -> Self {
+        CodeFade(0.9)
+    }
+    fn saturating_add(self, rhs: Self) -> Self {
+        CodeFade((self.0 + rhs.0).min(Self::max_value().0)).0.
+    }
+    fn saturating_sub(self, rhs: Self) -> Self {
+        CodeFade((self.0 - rhs.0).max(Self::min_value().0))
     }
 }
 
@@ -133,8 +158,6 @@ macro_rules! impl_numeric_stepper_nonzero_int {
     };
 }
 
-impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
-impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 macro_rules! impl_numeric_stepper_float {
     ($type:ident) => {
         impl NumericStepperType for $type {
@@ -181,6 +204,9 @@ impl_numeric_stepper_int!(i32);
 impl_numeric_stepper_int!(u32);
 impl_numeric_stepper_int!(i64);
 impl_numeric_stepper_int!(u64);
+
+impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
+impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 
 #[derive(RegisterComponent)]
 pub struct NumericStepper<T = usize> {

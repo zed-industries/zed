@@ -11,7 +11,7 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CursorShape, OnLastWindowClosed,
+    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
     RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
 };
 use std::{
@@ -496,15 +496,17 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
                 // todo(settings_ui): numeric stepper and validator is needed for this
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Unnecessary Code Fade",
-                //     description: "How much to fade out unused code (0.0 - 0.9)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
-                //         pick_mut: |settings_content| &mut settings_content.theme.unnecessary_code_fade,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Unnecessary Code Fade",
+                    description: "How much to fade out unused code (0.0 - 0.9)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.theme.unnecessary_code_fade
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
                     description: "How to highlight the current line",
@@ -2735,6 +2737,9 @@ fn init_renderers(cx: &mut App) {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<CodeFade>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {

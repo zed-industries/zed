@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use settings_macros::MergeFrom;
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 use serde_with::skip_serializing_none;
 
@@ -75,7 +75,8 @@ pub struct ThemeSettingsContent {
 
     /// How much to fade out unused code.
     #[serde(default)]
-    pub unnecessary_code_fade: Option<f32>,
+    #[schemars(range(min = 0.0, max = 0.9))]
+    pub unnecessary_code_fade: Option<CodeFade>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -88,6 +89,27 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the specified theme
     #[serde(default)]
     pub theme_overrides: HashMap<String, ThemeStyleContent>,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct CodeFade(pub f32);
+
+impl Display for CodeFade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
 }
 
 fn default_font_features() -> Option<FontFeatures> {

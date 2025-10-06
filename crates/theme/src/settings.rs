@@ -850,7 +850,7 @@ impl settings::Settings for ThemeSettings {
                 .unwrap(),
             icon_theme_selection: Some(icon_theme_selection),
             ui_density: content.ui_density.unwrap_or_default().into(),
-            unnecessary_code_fade: content.unnecessary_code_fade.unwrap().clamp(0.0, 0.9),
+            unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         };
         this.apply_theme_overrides();
         this
