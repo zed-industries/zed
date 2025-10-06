@@ -2,7 +2,6 @@ use collections::HashMap;
 use extension::{
     DownloadFileCapability, ExtensionCapability, NpmInstallPackageCapability, ProcessExecCapability,
 };
-use gpui::App;
 use settings::Settings;
 use std::sync::Arc;
 

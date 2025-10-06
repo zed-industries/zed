@@ -230,7 +230,7 @@ pub struct StatusBarSettings {
 }
 
 impl Settings for StatusBarSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let status_bar = content.status_bar.clone().unwrap();
         StatusBarSettings {
             show: status_bar.show.unwrap(),
