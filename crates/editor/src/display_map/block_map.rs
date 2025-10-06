@@ -33,8 +33,8 @@ const BULLETS: &[u8; u128::BITS as usize] = &[b'*'; _];
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct BlockMap {
+    pub(super) wrap_snapshot: RefCell<WrapSnapshot>,
     next_block_id: AtomicUsize,
-    wrap_snapshot: RefCell<WrapSnapshot>,
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
@@ -53,7 +53,7 @@ pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
 #[derive(Clone)]
 pub struct BlockSnapshot {
-    wrap_snapshot: WrapSnapshot,
+    pub(super) wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     pub(super) buffer_header_height: u32,
@@ -1395,7 +1395,7 @@ impl BlockSnapshot {
         })
     }
 
-    pub fn sticky_header_excerpt(&self, position: f32) -> Option<StickyHeaderExcerpt<'_>> {
+    pub(crate) fn sticky_header_excerpt(&self, position: f64) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(());
         cursor.seek(&BlockRow(top_row), Bias::Right);

@@ -1312,9 +1312,8 @@ impl Buffer {
         mtime: Option<MTime>,
         cx: &mut Context<Self>,
     ) {
-        self.saved_version = version;
-        self.has_unsaved_edits
-            .set((self.saved_version().clone(), false));
+        self.saved_version = version.clone();
+        self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();

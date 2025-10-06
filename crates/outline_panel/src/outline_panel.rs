@@ -1157,7 +1157,7 @@ impl OutlinePanel {
                         && multi_buffer_snapshot.as_singleton().is_none()
                         && !active_editor.read(cx).is_buffer_folded(buffer_id, cx)
                     {
-                        offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                        offset.y = -(active_editor.read(cx).file_header_size() as f64);
                     }
 
                     active_editor.update(cx, |editor, cx| {

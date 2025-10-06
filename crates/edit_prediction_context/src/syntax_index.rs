@@ -37,6 +37,10 @@ use crate::outline::declarations_in_buffer;
 //
 // * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
 // references are present and their scores.
+//
+// * Include single-file worktrees / non visible worktrees? E.g. go to definition that resolves to a
+// file in a build dependency. Should not be editable in that case - but how to distinguish the case
+// where it should be editable?
 
 // Potential future optimizations:
 //
@@ -181,6 +185,39 @@ impl SyntaxIndex {
                         ));
                     }
                     futures::future::join_all(tasks).await;
+
+                    log::info!("Finished initial file indexing");
+                    *initial_file_indexing_done_tx.borrow_mut() = true;
+
+                    let Ok(state) = this.read_with(cx, |this, _cx| this.state.clone()) else {
+                        return;
+                    };
+                    while dirty_files_rx.next().await.is_some() {
+                        let mut state = state.lock().await;
+                        let was_underused = state.dirty_files.capacity() > 255
+                            && state.dirty_files.len() * 8 < state.dirty_files.capacity();
+                        let dirty_files = state.dirty_files.drain().collect::<Vec<_>>();
+                        if was_underused {
+                            state.dirty_files.shrink_to_fit();
+                        }
+                        drop(state);
+                        if dirty_files.is_empty() {
+                            continue;
+                        }
+
+                        let chunk_size = dirty_files.len().div_ceil(file_indexing_parallelism);
+                        let chunk_count = dirty_files.len().div_ceil(chunk_size);
+                        let mut tasks = Vec::with_capacity(chunk_count);
+                        let chunks = dirty_files.into_iter().chunks(chunk_size);
+                        for chunk in chunks.into_iter() {
+                            tasks.push(Self::update_dirty_files(
+                                &this,
+                                chunk.into_iter().collect(),
+                                cx.clone(),
+                            ));
+                        }
+                        futures::future::join_all(tasks).await;
+                    }
                 }
             }));
 

@@ -98,11 +98,6 @@ impl WslRemoteConnection {
             .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
             .ok()
-            .and_then(|shell_path| {
-                Path::new(shell_path.trim())
-                    .file_name()
-                    .map(|it| it.to_str().unwrap().to_owned())
-            })
             .unwrap_or_else(|| "bash".to_string()))
     }
 
@@ -473,6 +468,27 @@ async fn windows_path_to_wsl_path_impl(
     run_wsl_command_impl(options, "wslpath", &["-u", &source]).await
 }
 
+async fn run_wsl_command_impl(
+    options: &WslConnectionOptions,
+    program: &str,
+    args: &[&str],
+) -> Result<String> {
+    let output = wsl_command_impl(options, program, args).output().await?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Command '{}' failed: {}",
+            program,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+/// Creates a new `wsl.exe` command that runs the given program with the given arguments.
+///
+/// If `exec` is true, the command will be executed in the WSL environment without spawning a new shell.
 fn wsl_command_impl(
     options: &WslConnectionOptions,
     program: &str,
@@ -492,26 +508,9 @@ fn wsl_command_impl(
         .arg(&options.distro_name)
         .arg("--cd")
         .arg("~")
+        .arg("--exec")
         .arg(program)
         .args(args);
 
     command
-}
-
-async fn run_wsl_command_impl(
-    options: &WslConnectionOptions,
-    program: &str,
-    args: &[&str],
-) -> Result<String> {
-    let output = wsl_command_impl(options, program, args).output().await?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "Command '{}' failed: {}",
-            program,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
