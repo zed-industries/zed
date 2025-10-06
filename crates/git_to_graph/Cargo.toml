@@ -16,5 +16,6 @@ doctest = false
 indexmap = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
