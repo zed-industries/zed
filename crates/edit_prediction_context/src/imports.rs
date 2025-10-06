@@ -1091,7 +1091,7 @@ mod test {
         let mut cursor = node.walk();
         let mut result = String::new();
         let mut depth = 0;
-        loop {
+        'outer: loop {
             result.push_str(&"  ".repeat(depth));
             if let Some(field_name) = cursor.field_name() {
                 result.push_str(field_name);
@@ -1113,10 +1113,10 @@ mod test {
             if cursor.goto_next_sibling() {
                 continue;
             }
-            if cursor.goto_parent() {
+            while cursor.goto_parent() {
                 depth -= 1;
                 if cursor.goto_next_sibling() {
-                    continue;
+                    continue 'outer;
                 }
             }
             break;
