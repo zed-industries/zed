@@ -19803,6 +19803,9 @@ dependencies = [
  "cargo_metadata",
  "cargo_toml",
  "clap",
+ "indoc",
+ "toml 0.8.20",
+ "toml_edit",
  "workspace-hack",
 ]
 
