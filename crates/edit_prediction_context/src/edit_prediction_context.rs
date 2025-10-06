@@ -22,6 +22,13 @@ pub use syntax_index::*;
 
 use crate::imports::Imports;
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditPredictionContextOptions {
+    pub use_imports: bool,
+    pub excerpt: EditPredictionExcerptOptions,
+    pub score: EditPredictionScoreOptions,
+}
+
 #[derive(Clone, Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
@@ -34,7 +41,7 @@ impl EditPredictionContext {
     pub fn gather_context_in_background(
         cursor_point: Point,
         buffer: BufferSnapshot,
-        excerpt_options: EditPredictionExcerptOptions,
+        options: EditPredictionContextOptions,
         syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
@@ -54,20 +61,14 @@ impl EditPredictionContext {
                     cursor_point,
                     &buffer,
                     parent_abs_path,
-                    &excerpt_options,
+                    &options,
                     Some(&index_state),
                 )
             })
         } else {
             cx.background_spawn(async move {
                 let parent_abs_path = parent_abs_path.as_deref();
-                Self::gather_context(
-                    cursor_point,
-                    &buffer,
-                    parent_abs_path,
-                    &excerpt_options,
-                    None,
-                )
+                Self::gather_context(cursor_point, &buffer, parent_abs_path, &options, None)
             })
         }
     }
@@ -76,14 +77,14 @@ impl EditPredictionContext {
         cursor_point: Point,
         buffer: &BufferSnapshot,
         parent_abs_path: Option<&Path>,
-        excerpt_options: &EditPredictionExcerptOptions,
+        options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         Self::gather_context_with_references_fn(
             cursor_point,
             buffer,
             parent_abs_path,
-            excerpt_options,
+            options,
             index_state,
             references_in_excerpt,
         )
@@ -93,7 +94,7 @@ impl EditPredictionContext {
         cursor_point: Point,
         buffer: &BufferSnapshot,
         parent_abs_path: Option<&Path>,
-        excerpt_options: &EditPredictionExcerptOptions,
+        options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
         get_references: impl FnOnce(
             &EditPredictionExcerpt,
@@ -104,7 +105,7 @@ impl EditPredictionContext {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
-            excerpt_options,
+            &options.excerpt,
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
@@ -118,7 +119,11 @@ impl EditPredictionContext {
                 .collect::<String>(),
         );
 
-        let imports = Imports::gather(&buffer, parent_abs_path);
+        let imports = if options.use_imports {
+            Imports::gather(&buffer, parent_abs_path)
+        } else {
+            Imports::default()
+        };
 
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub
@@ -128,6 +133,7 @@ impl EditPredictionContext {
             let references = get_references(&excerpt, &excerpt_text, buffer);
 
             scored_declarations(
+                &options.score,
                 &index_state,
                 &excerpt,
                 &excerpt_occurrences,
@@ -188,10 +194,16 @@ mod tests {
                 EditPredictionContext::gather_context_in_background(
                     cursor_point,
                     buffer_snapshot,
-                    EditPredictionExcerptOptions {
-                        max_bytes: 60,
-                        min_bytes: 10,
-                        target_before_cursor_over_total_bytes: 0.5,
+                    EditPredictionContextOptions {
+                        use_imports: true,
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: 60,
+                            min_bytes: 10,
+                            target_before_cursor_over_total_bytes: 0.5,
+                        },
+                        score: EditPredictionScoreOptions {
+                            omit_excerpt_overlaps: true,
+                        },
                     },
                     Some(index),
                     cx,

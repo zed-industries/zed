@@ -16,36 +16,29 @@ use crate::text_similarity::Occurrences;
 
 // TODO:
 //
-// * Distinguish different types of paths? (whether they are always relative)
+// * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
 //
-// * Sort out how to get trace logs to automatically appear in test failures
+// * Defer path normalization
 //
 // * Write documentation for extension authors
 //
 //     - the @import capture must match before or in the same pattern as all all captures it contains
 
-// Future improvements:
+// Future improvements to consider:
+//
+// * Distinguish different types of paths. `#include "maths.h"` is relative whereas `#include
+// <maths.h>` is not.
 //
 // * Provide the name used when importing whole modules (see tests with "named_module" in the name).
 // To be useful, will require parsing of identifier qualification.
 //
 // * Scoping for imports that aren't at the top level
 //
-// * Consider only scanning prefix of the file / other strategies for not scanning entire file. This
-// could look like having query matches that indicate it reached a declaration that is not allowed
-// in the import section.
+// * Only scan a prefix of the file, when possible. This could look like having query matches that
+// indicate it reached a declaration that is not allowed in the import section.
 //
-// * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
-//
-// * Only use the top syntax layer?
-//
-// * Consider deferring path normalization
-//
-// * When the same import statement is matched multiple times (once for each identifier), it is
-// currently creating new strings for each namespace component. Cache of range to Arc<str> could
-// be used.
-//
-//   - Alternative: Multiple content captures in the same query match
+// * Support directly parsing to occurrences instead of storing namespaces / paths. Types should be
+// generic on this, so that tests etc can still use strings. Could do similar in syntax index.
 //
 // * Distinguish different types of namespaces when known. E.g. "name.type" capture. Once capture
 // names are more open-ended like this may make sense to build and cache a jump table (direct
@@ -54,7 +47,7 @@ use crate::text_similarity::Occurrences;
 // * There are a few "Language specific:" comments on behavior that gets applied to all languages.
 // Would be cleaner to be conditional on the language or otherwise configured.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Imports {
     pub identifier_to_imports: HashMap<Identifier, Vec<Import>>,
     pub wildcard_modules: Vec<Module>,
@@ -99,10 +92,10 @@ impl Module {
                 {
                     let path = snapshot.text_for_range(range.clone()).collect::<Cow<str>>();
 
+                    // Language specific: removes angle brackets from C/C++ #include
                     let path = if let Some(without_lt) = path.strip_prefix("<")
                         && let Some(without_angle_brackets) = without_lt.strip_suffix(">")
                     {
-                        // Language specific: removes angle brackets from C/C++ #include
                         Path::new(without_angle_brackets)
                     } else {
                         Path::new(path.as_ref())
@@ -157,22 +150,14 @@ impl Deref for ModuleRange {
     }
 }
 
-impl Module {
-    pub fn occurrences(&self) -> Occurrences {
-        // todo! compare paths directly
-        match self {
-            Module::Source(path) => Occurrences::from_worktree_path(
-                // todo! figure out which worktree it belongs to
-                None,
-                &RelPath::new(&path, PathStyle::Posix).unwrap(),
-            ),
-            Module::Namespace(namespace) => Occurrences::from_identifiers(&namespace.0),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Namespace(pub Vec<Arc<str>>);
+
+impl Namespace {
+    pub fn occurrences(&self) -> Occurrences {
+        Occurrences::from_identifiers(&self.0)
+    }
+}
 
 impl Imports {
     pub fn gather(snapshot: &BufferSnapshot, parent_abs_path: Option<&Path>) -> Self {
@@ -310,7 +295,7 @@ impl Imports {
             if let Some(node) = Self::attach_node(detached_node.into(), &mut trees) {
                 trees.push(node);
             }
-            println!(
+            log::trace!(
                 "Attached node to tree\n{:#?}\nAttach result:\n{:#?}",
                 detached_node,
                 trees
@@ -776,6 +761,22 @@ mod test {
         check_imports_with_file_abs_path(
             Some(&parent_abs_path),
             &TYPESCRIPT,
+            r#"import "./maths.js";"#,
+            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
+            cx,
+        );
+
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import "../maths.js";"#,
+            &[&["SOURCE /home/user/maths.js", "WILDCARD"]],
+            cx,
+        );
+
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
             r#"import RandomNumberGenerator, { pi as π } from "./maths.js";"#,
             &[
                 &[
@@ -808,14 +809,6 @@ mod test {
                 &["SOURCE /home/user/project/maths/index.js", "phi"],
                 &["SOURCE /home/user/project/maths/index.js", "absolute"],
             ],
-            cx,
-        );
-
-        check_imports_with_file_abs_path(
-            Some(&parent_abs_path),
-            &TYPESCRIPT,
-            r#"import "./maths.js";"#,
-            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
             cx,
         );
 
@@ -953,7 +946,7 @@ mod test {
     #[gpui::test]
     fn test_python_package_relative_imports(cx: &mut TestAppContext) {
         // TODO: These should provide info about the dir they are relative to, to provide more
-        // precise resolution. Instead, this will be handled by fuzzy matching.
+        // precise resolution. Instead, fuzzy matching is used as usual.
 
         check_imports(&PYTHON, "from . import math", &[&["math"]], cx);
 

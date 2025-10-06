@@ -59,6 +59,8 @@ pub trait PathExt {
         }
     }
     fn local_to_wsl(&self) -> Option<PathBuf>;
+    fn path_ends_with<P: AsRef<Path>>(&self, suffix: P) -> bool;
+    fn strip_path_suffix<P: AsRef<Path>>(&self, suffix: P) -> Option<&Path>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -117,6 +119,28 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         Some(new_path)
+    }
+
+    fn path_ends_with<P: AsRef<Path>>(&self, suffix: P) -> bool {
+        self.strip_path_suffix(suffix).is_some()
+    }
+
+    fn strip_path_suffix<P: AsRef<Path>>(&self, suffix: P) -> Option<&Path> {
+        if let Some(suffix) = self
+            .as_ref()
+            .as_os_str()
+            .as_encoded_bytes()
+            .strip_suffix(suffix.as_ref().as_os_str().as_encoded_bytes())
+        {
+            if suffix
+                .last()
+                .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
+            {
+                let os_str = unsafe { OsStr::from_encoded_bytes_unchecked(suffix) };
+                return Some(Path::new(os_str));
+            }
+        }
+        None
     }
 }
 

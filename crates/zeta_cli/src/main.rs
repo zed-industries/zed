@@ -4,8 +4,9 @@ use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction_context::{
-    Declaration, DeclarationStyle, EditPredictionContext, EditPredictionExcerptOptions, Identifier,
-    ReferenceRegion, SyntaxIndex, references_in_range,
+    Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, ReferenceRegion,
+    SyntaxIndex, references_in_range,
 };
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
@@ -275,11 +276,17 @@ async fn get_context(
                 });
                 let indexing_done_task = zeta.update(cx, |zeta, cx| {
                     zeta.set_options(zeta2::ZetaOptions {
-                        excerpt: EditPredictionExcerptOptions {
-                            max_bytes: zeta2_args.max_excerpt_bytes,
-                            min_bytes: zeta2_args.min_excerpt_bytes,
-                            target_before_cursor_over_total_bytes: zeta2_args
-                                .target_before_cursor_over_total_bytes,
+                        context: EditPredictionContextOptions {
+                            use_imports: true,
+                            excerpt: EditPredictionExcerptOptions {
+                                max_bytes: zeta2_args.max_excerpt_bytes,
+                                min_bytes: zeta2_args.min_excerpt_bytes,
+                                target_before_cursor_over_total_bytes: zeta2_args
+                                    .target_before_cursor_over_total_bytes,
+                            },
+                            score: EditPredictionScoreOptions {
+                                omit_excerpt_overlaps: true,
+                            },
                         },
                         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
                         max_prompt_bytes: zeta2_args.max_prompt_bytes,
@@ -420,7 +427,8 @@ pub async fn retrieval_stats(
                 query_point,
                 &snapshot,
                 parent_abs_path.as_deref(),
-                &zeta2::DEFAULT_EXCERPT_OPTIONS,
+                // todo! make this configurable
+                &zeta2::DEFAULT_CONTEXT_OPTIONS,
                 Some(&index),
                 |_, _, _| single_reference_map,
             );

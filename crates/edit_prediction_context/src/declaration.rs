@@ -5,6 +5,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::{borrow::Cow, path::Path};
 use text::{Bias, BufferId, Rope};
+use util::paths::PathExt;
 use util::rel_path::RelPath;
 
 use crate::outline::OutlineDeclaration;
@@ -261,5 +262,28 @@ impl CachedDeclarationPath {
             worktree_abs_path: file.worktree.read(cx).abs_path(),
             rel_path: file.path.clone(),
         })
+    }
+
+    pub fn ends_with_posix_path(&self, path: &Path) -> bool {
+        if path.as_os_str().len() <= self.rel_path.len() {
+            let Ok(path) = RelPath::unix(path) else {
+                return false;
+            };
+            self.rel_path.ends_with(path)
+        } else {
+            if let Some(remaining) = path.strip_path_suffix(self.rel_path.as_std_path()) {
+                self.worktree_abs_path.path_ends_with(remaining)
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn equals_absolute_path(&self, path: &Path) -> bool {
+        if let Some(remaining) = path.strip_path_suffix(&self.rel_path.as_std_path()) {
+            self.worktree_abs_path.as_ref() == remaining
+        } else {
+            false
+        }
     }
 }
