@@ -267,51 +267,6 @@ pub struct CutToEndOfLine {
 #[action(namespace = editor)]
 pub struct FoldAtLevel(pub u32);
 
-/// Folds all code blocks at level 1.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel1;
-
-/// Folds all code blocks at level 2.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel2;
-
-/// Folds all code blocks at level 3.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel3;
-
-/// Folds all code blocks at level 4.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel4;
-
-/// Folds all code blocks at level 5.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel5;
-
-/// Folds all code blocks at level 6.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel6;
-
-/// Folds all code blocks at level 7.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel7;
-
-/// Folds all code blocks at level 8.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel8;
-
-/// Folds all code blocks at level 9.
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-pub struct FoldAtLevel9;
-
 /// Spawns the nearest available task from the current cursor position.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -501,6 +456,33 @@ actions!(
         Fold,
         /// Folds all foldable regions in the editor.
         FoldAll,
+        /// Folds all code blocks at indentation level 1.
+        #[action(name = "FoldAtLevel_1")]
+        FoldAtLevel1,
+        /// Folds all code blocks at indentation level 2.
+        #[action(name = "FoldAtLevel_2")]
+        FoldAtLevel2,
+        /// Folds all code blocks at indentation level 3.
+        #[action(name = "FoldAtLevel_3")]
+        FoldAtLevel3,
+        /// Folds all code blocks at indentation level 4.
+        #[action(name = "FoldAtLevel_4")]
+        FoldAtLevel4,
+        /// Folds all code blocks at indentation level 5.
+        #[action(name = "FoldAtLevel_5")]
+        FoldAtLevel5,
+        /// Folds all code blocks at indentation level 6.
+        #[action(name = "FoldAtLevel_6")]
+        FoldAtLevel6,
+        /// Folds all code blocks at indentation level 7.
+        #[action(name = "FoldAtLevel_7")]
+        FoldAtLevel7,
+        /// Folds all code blocks at indentation level 8.
+        #[action(name = "FoldAtLevel_8")]
+        FoldAtLevel8,
+        /// Folds all code blocks at indentation level 9.
+        #[action(name = "FoldAtLevel_9")]
+        FoldAtLevel9,
         /// Folds all function bodies in the editor.
         FoldFunctionBodies,
         /// Folds the current code block and all its children.
