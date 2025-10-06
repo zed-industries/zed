@@ -538,6 +538,7 @@ impl SettingsStore {
         &self,
         target_file: SettingsFile,
         pick: fn(&SettingsContent) -> &Option<T>,
+        type_name: &'static str,
     ) -> (SettingsFile, &T) {
         // TODO: Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
@@ -568,7 +569,7 @@ impl SettingsStore {
             }
         }
 
-        unreachable!("All values should have defaults");
+        unreachable!("{type_name}: doesn't have a default value");
     }
 }
 
@@ -1714,16 +1715,24 @@ mod tests {
         let default_value = get(&store.default_settings).unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local.clone()),
+                get,
+                "preferred line length"
+            ),
             (SettingsFile::User, &0)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::User, get),
+            store.get_value_from_file(SettingsFile::User, get, "preferred line length"),
             (SettingsFile::User, &0)
         );
         store.set_user_settings(r#"{}"#, cx).unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local.clone()),
+                get,
+                "preferred line length"
+            ),
             (SettingsFile::Default, &default_value)
         );
         store
@@ -1736,11 +1745,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local.clone()),
+                get,
+                "preferred line length"
+            ),
             (SettingsFile::Local(local), &80)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::User, get),
+            store.get_value_from_file(SettingsFile::User, get, "preferred line length"),
             (SettingsFile::Default, &default_value)
         );
     }
@@ -1817,11 +1830,19 @@ mod tests {
 
         // each local child should only inherit from it's parent
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_2_child), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local_2_child),
+                get,
+                "preferred_line_length"
+            ),
             (SettingsFile::Local(local_2), &2)
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local_1_child.clone()),
+                get,
+                "preferred_line_length"
+            ),
             (SettingsFile::Local(local_1.clone()), &1)
         );
 
@@ -1847,7 +1868,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local_1_adjacent_child.clone()),
+                get,
+                "preferred_line_length"
+            ),
             (SettingsFile::Local(local_1.clone()), &1)
         );
         store
@@ -1869,7 +1894,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child), get),
+            store.get_value_from_file(
+                SettingsFile::Local(local_1_child),
+                get,
+                "preferred_line_length"
+            ),
             (SettingsFile::Local(local_1), &1)
         );
     }

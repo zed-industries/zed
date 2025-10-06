@@ -1377,6 +1377,131 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Minimap"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show",
+                    description: "When to show the minimap in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap {
+                                &minimap.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.minimap.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Display In",
+                    description: "Where to show the minimap in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap {
+                                &minimap.display_in
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .minimap
+                                .get_or_insert_default()
+                                .display_in
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Thumb",
+                    description: "When to show the minimap thumb",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap {
+                                &minimap.thumb
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .minimap
+                                .get_or_insert_default()
+                                .thumb
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Thumb Border",
+                    description: "Border style for the minimap's scrollbar thumb",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap {
+                                &minimap.thumb_border
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .minimap
+                                .get_or_insert_default()
+                                .thumb_border
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Current Line Highlight",
+                    description: "How to highlight the current line in the minimap",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap
+                                && minimap.current_line_highlight.is_some()
+                            {
+                                &minimap.current_line_highlight
+                            } else {
+                                &settings_content.editor.current_line_highlight
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .minimap
+                                .get_or_insert_default()
+                                .current_line_highlight
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Width Columns",
+                    description: "Maximum number of columns to display in the minimap",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(minimap) = &settings_content.editor.minimap {
+                                &minimap.max_width_columns
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .minimap
+                                .get_or_insert_default()
+                                .max_width_columns
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Tab Bar",

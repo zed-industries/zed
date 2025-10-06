@@ -82,9 +82,11 @@ impl<T> AnySettingField for SettingField<T> {
             return file.to_settings();
         }
 
-        let (file, _) = cx
-            .global::<SettingsStore>()
-            .get_value_from_file(file.to_settings(), self.pick);
+        let (file, _) = cx.global::<SettingsStore>().get_value_from_file(
+            file.to_settings(),
+            self.pick,
+            self.type_name(),
+        );
         return file;
     }
 }
@@ -331,6 +333,18 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::ScrollbarDiagnostics>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowMinimap>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::DisplayIn>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MinimapThumb>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MinimapThumbBorder>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         });
 
@@ -1213,8 +1227,11 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     metadata: Option<&SettingsFieldMetadata>,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, initial_text) =
-        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let (_, initial_text) = SettingsStore::global(cx).get_value_from_file(
+        file.to_settings(),
+        field.pick,
+        field.type_name(),
+    );
     let initial_text = Some(initial_text.clone()).filter(|s| !s.as_ref().is_empty());
 
     SettingsEditor::new()
@@ -1241,7 +1258,11 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     file: SettingsUiFile,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let (_, &value) = SettingsStore::global(cx).get_value_from_file(
+        file.to_settings(),
+        field.pick,
+        field.type_name(),
+    );
 
     let toggle_state = if value.into() {
         ToggleState::Selected
@@ -1271,7 +1292,7 @@ fn render_font_picker(
     cx: &mut App,
 ) -> AnyElement {
     let current_value = SettingsStore::global(cx)
-        .get_value_from_file(file.to_settings(), field.pick)
+        .get_value_from_file(file.to_settings(), field.pick, field.type_name())
         .1
         .clone();
 
@@ -1327,7 +1348,11 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let (_, &value) = SettingsStore::global(cx).get_value_from_file(
+        file.to_settings(),
+        field.pick,
+        field.type_name(),
+    );
 
     NumericStepper::new("numeric_stepper", value, window, cx)
         .on_change({
@@ -1355,8 +1380,11 @@ where
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
-    let (_, &current_value) =
-        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let (_, &current_value) = SettingsStore::global(cx).get_value_from_file(
+        file.to_settings(),
+        field.pick,
+        field.type_name(),
+    );
 
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
