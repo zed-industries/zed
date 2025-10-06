@@ -1014,6 +1014,73 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
+    fn render_page_items<'a, Items: Iterator<Item = &'a SettingsPageItem>>(
+        &self,
+        items: Items,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
+        let mut page_content = v_flex()
+            .id("settings-ui-page")
+            .size_full()
+            .gap_4()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle);
+
+        let items: Vec<_> = items.collect();
+        let items_len = items.len();
+        let mut section_header = None;
+
+        let has_active_search = !self.search_bar.read(cx).is_empty(cx);
+        let has_no_results = items_len == 0 && has_active_search;
+
+        if has_no_results {
+            let search_query = self.search_bar.read(cx).text(cx);
+            page_content = page_content.child(
+                v_flex()
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .gap_1()
+                    .child(div().child("No Results"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(format!("No settings match \"{}\"", search_query)),
+                    ),
+            )
+        } else {
+            let last_non_header_index = items
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
+                .map(|(index, _)| index);
+
+            page_content =
+                page_content.children(items.clone().into_iter().enumerate().map(|(index, item)| {
+                    let no_bottom_border = items
+                        .get(index + 1)
+                        .map(|next_item| matches!(next_item, SettingsPageItem::SectionHeader(_)))
+                        .unwrap_or(false);
+                    let is_last = Some(index) == last_non_header_index;
+
+                    if let SettingsPageItem::SectionHeader(header) = item {
+                        section_header = Some(*header);
+                    }
+                    item.render(
+                        self.current_file.clone(),
+                        section_header.expect("All items rendered after a section header"),
+                        no_bottom_border || is_last,
+                        window,
+                        cx,
+                    )
+                }))
+        }
+        page_content
+    }
+
     fn render_page(
         &mut self,
         window: &mut Window,
@@ -1028,70 +1095,13 @@ impl SettingsWindow {
             .bg(cx.theme().colors().editor_background)
             .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
 
-        let mut page_content = v_flex()
-            .id("settings-ui-page")
-            .size_full()
-            .gap_4()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle);
+        let page_content;
 
         if sub_page_stack().len() == 0 {
             page = page.child(self.render_files(window, cx));
-
-            let items: Vec<_> = self.page_items().collect();
-            let items_len = items.len();
-            let mut section_header = None;
-
-            let search_query = self.search_bar.read(cx).text(cx);
-            let has_active_search = !search_query.is_empty();
-            let has_no_results = items_len == 0 && has_active_search;
-
-            if has_no_results {
-                page_content = page_content.child(
-                    v_flex()
-                        .size_full()
-                        .items_center()
-                        .justify_center()
-                        .gap_1()
-                        .child(div().child("No Results"))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(format!("No settings match \"{}\"", search_query)),
-                        ),
-                )
-            } else {
-                let last_non_header_index = items
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
-                    .map(|(index, _)| index);
-
-                page_content = page_content.children(items.clone().into_iter().enumerate().map(
-                    |(index, item)| {
-                        let no_bottom_border = items
-                            .get(index + 1)
-                            .map(|next_item| {
-                                matches!(next_item, SettingsPageItem::SectionHeader(_))
-                            })
-                            .unwrap_or(false);
-                        let is_last = Some(index) == last_non_header_index;
-
-                        if let SettingsPageItem::SectionHeader(header) = item {
-                            section_header = Some(*header);
-                        }
-                        item.render(
-                            self.current_file.clone(),
-                            section_header.expect("All items rendered after a section header"),
-                            no_bottom_border || is_last,
-                            window,
-                            cx,
-                        )
-                    },
-                ))
-            }
+            page_content = self
+                .render_page_items(self.page_items(), window, cx)
+                .into_any_element();
         } else {
             page = page.child(
                 h_flex()
@@ -1109,7 +1119,7 @@ impl SettingsWindow {
             );
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
-            page_content = page_content.child((active_page_render_fn)(self, window, cx));
+            page_content = (active_page_render_fn)(self, window, cx);
         }
 
         return page.child(page_content);

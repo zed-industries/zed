@@ -1,8 +1,10 @@
-use gpui::IntoElement;
-use std::{rc::Rc, sync::Arc};
+use settings::{LanguageSettingsContent, SettingsContent};
+use std::sync::Arc;
+use ui::SharedString;
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink,
+    sub_page_stack,
 };
 
 pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
@@ -1263,44 +1265,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SubPageLink(SubPageLink {
                         title: "JSON",
                         render: Arc::new(|this, window, cx| {
-                            let items = language_settings_data();
-                            let last_non_header_index = items
-                                .iter()
-                                .enumerate()
-                                .rev()
-                                .find(|(_, item)| {
-                                    matches!(item, SettingsPageItem::SectionHeader(_))
-                                })
-                                .map(|(index, _)| index);
-                            let mut section_header = None;
-                            v_flex()
-                                .id("settings-ui-page")
-                                .size_full()
-                                .gap_4()
-                                .overflow_y_scroll()
-                                .track_scroll(&this.scroll_handle)
-                                .children(items.iter().enumerate().map(|(index, item)| {
-                                    let no_bottom_border = items
-                                        .get(index + 1)
-                                        .map(|next_item| {
-                                            matches!(next_item, SettingsPageItem::SectionHeader(_))
-                                        })
-                                        .unwrap_or(false);
-                                    let is_last = Some(index) == last_non_header_index;
-
-                                    if let SettingsPageItem::SectionHeader(header) = item {
-                                        section_header = Some(*header);
-                                    }
-                                    item.render(
-                                        this.current_file.clone(),
-                                        section_header
-                                            .expect("All items rendered after a section header"),
-                                        no_bottom_border || is_last,
-                                        window,
-                                        cx,
-                                    )
-                                }))
-                                .into_any_element()
+                            this.render_page_items(language_settings_data().iter(), window, cx)
                         }),
                     }),
                 ];
