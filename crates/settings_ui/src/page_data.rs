@@ -3344,6 +3344,217 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Inlay Hints"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Global switch to toggle hints on and off",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Value Hints",
+            description: "Global switch to toggle inline values on and off when debugging",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_value_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_value_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Type Hints",
+            description: "Whether type hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_type_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().show_type_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Parameter Hints",
+            description: "Whether parameter hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_parameter_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_parameter_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Other Hints",
+            description: "Whether other hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_other_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_other_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Background",
+            description: "Whether to show a background for inlay hints",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_background
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().show_background
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Edit Debounce Ms",
+            description: "Whether or not to debounce inlay hints updates after buffer edits (set to 0 to disable debouncing)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.edit_debounce_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .edit_debounce_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Scroll Debounce Ms",
+            description: "Whether or not to debounce inlay hints updates after buffer scrolls (set to 0 to disable debouncing)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.scroll_debounce_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .scroll_debounce_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Toggle On Modifiers Press",
+            description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(inlay_hints) = &language.inlay_hints {
+                                &inlay_hints.toggle_on_modifiers_press
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .toggle_on_modifiers_press
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
@@ -3378,24 +3589,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     })
                 },
             }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Inlay Hints",
-            description: "Inlay hint related settings",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.inlay_hints)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.inlay_hints
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
