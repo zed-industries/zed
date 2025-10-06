@@ -1,15 +1,17 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 
 #[derive(Parser)]
 pub struct PublishGpuiArgs {
-    /// Optional metadata to append to the version (e.g., build.123). If not provided, bumps the minor version.
+    /// Optional pre-release identifier to append to the version (e.g., alpha, test.1). Always bumps the minor version.
     #[arg(long)]
-    metadata: Option<String>,
+    pre_release: Option<String>,
 
     /// Perform a dry-run and wait for user confirmation before each publish
     #[arg(long)]
@@ -27,7 +29,7 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     check_git_clean()?;
 
     let current_version = read_gpui_version()?;
-    let new_version = bump_version(&current_version, args.metadata.as_deref())?;
+    let new_version = bump_version(&current_version, args.pre_release.as_deref())?;
     println!(
         "Updating GPUI version: {} -> {}",
         current_version, new_version
@@ -57,24 +59,29 @@ fn read_gpui_version() -> Result<String> {
     Ok(version.to_string())
 }
 
-fn bump_version(current_version: &str, metadata: Option<&str>) -> Result<String> {
+fn bump_version(current_version: &str, pre_release: Option<&str>) -> Result<String> {
+    // Strip any existing metadata and pre-release
     let without_metadata = current_version.split('+').next().unwrap();
+    let base_version = without_metadata.split('-').next().unwrap();
 
-    let new_version = if let Some(meta) = metadata {
-        format!("{}+{}", without_metadata, meta)
+    // Parse major.minor.patch
+    let parts: Vec<&str> = base_version.split('.').collect();
+    if parts.len() != 3 {
+        bail!("Invalid version format: {}", current_version);
+    }
+
+    let major: u32 = parts[0].parse().context("Failed to parse major version")?;
+    let minor: u32 = parts[1].parse().context("Failed to parse minor version")?;
+
+    // Always bump minor version
+    let new_version = format!("{}.{}.0", major, minor + 1);
+
+    // Add pre-release if specified
+    if let Some(pre) = pre_release {
+        Ok(format!("{}-{}", new_version, pre))
     } else {
-        let base_version = without_metadata.split('-').next().unwrap();
-        let parts: Vec<&str> = base_version.split('.').collect();
-        if parts.len() != 3 {
-            bail!("Invalid version format: {}", current_version);
-        }
-
-        let major: u32 = parts[0].parse().context("Failed to parse major version")?;
-        let minor: u32 = parts[1].parse().context("Failed to parse minor version")?;
-        format!("{}.{}.0", major, minor + 1)
-    };
-
-    Ok(new_version)
+        Ok(new_version)
+    }
 }
 
 fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
@@ -98,13 +105,12 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
             crate_name, package_name
         );
 
-        // Bump version in dependency's Cargo.toml
         update_crate_version(crate_name, new_version)?;
-
+        update_workspace_dependency_version(package_name, new_version)?;
         publish_crate(crate_name, dry_run)?;
 
-        // Update version in workspace Cargo.toml
-        update_workspace_dependency_version(package_name, new_version)?;
+        // println!("Waiting 60s for the rate limit...");
+        // thread::sleep(Duration::from_secs(60));
     }
 
     Ok(())
@@ -359,34 +365,25 @@ mod tests {
         // Test stripping existing metadata and bumping
         assert_eq!(bump_version("0.1.0+old.metadata", None).unwrap(), "0.2.0");
 
-        // Test adding metadata (keeps current version)
+        // Test bumping minor with pre-release
+        assert_eq!(bump_version("0.1.0", Some("alpha")).unwrap(), "0.2.0-alpha");
+
+        // Test bumping minor with complex pre-release identifier
         assert_eq!(
-            bump_version("0.1.0", Some("build.123")).unwrap(),
-            "0.1.0+build.123"
+            bump_version("0.1.0", Some("test.1")).unwrap(),
+            "0.2.0-test.1"
         );
 
-        // Test adding metadata retains pre-release
+        // Test bumping from existing pre-release adds new pre-release
         assert_eq!(
-            bump_version("0.1.0-alpha", Some("build.456")).unwrap(),
-            "0.1.0-alpha+build.456"
+            bump_version("0.1.0-alpha", Some("beta")).unwrap(),
+            "0.2.0-beta"
         );
 
-        // Test adding metadata retains pre-release with complex identifier
+        // Test bumping and stripping metadata while adding pre-release
         assert_eq!(
-            bump_version("0.1.0-beta.2", Some("build.789")).unwrap(),
-            "0.1.0-beta.2+build.789"
-        );
-
-        // Test replacing existing metadata
-        assert_eq!(
-            bump_version("0.1.0+old.metadata", Some("new.metadata")).unwrap(),
-            "0.1.0+new.metadata"
-        );
-
-        // Test replacing metadata while retaining pre-release
-        assert_eq!(
-            bump_version("0.1.0-alpha+old.metadata", Some("new.metadata")).unwrap(),
-            "0.1.0-alpha+new.metadata"
+            bump_version("0.1.0+metadata", Some("alpha")).unwrap(),
+            "0.2.0-alpha"
         );
     }
 }
