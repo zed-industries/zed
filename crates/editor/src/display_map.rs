@@ -170,20 +170,15 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
-        let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot.clone(), edits);
+        let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot, edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot.clone(), edits, tab_size);
+        let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot, edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
-            .update(cx, |map, cx| map.sync(tab_snapshot.clone(), edits, cx));
-        let block_snapshot = self.block_map.read(wrap_snapshot.clone(), edits).snapshot;
+            .update(cx, |map, cx| map.sync(tab_snapshot, edits, cx));
+        let block_snapshot = self.block_map.read(wrap_snapshot, edits).snapshot;
 
         DisplaySnapshot {
-            buffer_snapshot: self.buffer.read(cx).snapshot(cx),
-            fold_snapshot,
-            inlay_snapshot,
-            tab_snapshot,
-            wrap_snapshot,
             block_snapshot,
             diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
@@ -198,10 +193,10 @@ impl DisplayMap {
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
         self.fold(
             other
-                .folds_in_range(0..other.buffer_snapshot.len())
+                .folds_in_range(0..other.buffer_snapshot().len())
                 .map(|fold| {
                     Crease::simple(
-                        fold.range.to_offset(&other.buffer_snapshot),
+                        fold.range.to_offset(other.buffer_snapshot()),
                         fold.placeholder.clone(),
                     )
                 })
@@ -762,12 +757,7 @@ impl<'a> HighlightedChunk<'a> {
 
 #[derive(Clone)]
 pub struct DisplaySnapshot {
-    pub buffer_snapshot: MultiBufferSnapshot,
-    pub fold_snapshot: FoldSnapshot,
     pub crease_snapshot: CreaseSnapshot,
-    inlay_snapshot: InlaySnapshot,
-    tab_snapshot: TabSnapshot,
-    wrap_snapshot: WrapSnapshot,
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
@@ -776,15 +766,44 @@ pub struct DisplaySnapshot {
     diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
-
 impl DisplaySnapshot {
+    pub fn wrap_snapshot(&self) -> &WrapSnapshot {
+        &self.block_snapshot.wrap_snapshot
+    }
+    pub fn tab_snapshot(&self) -> &TabSnapshot {
+        &self.block_snapshot.wrap_snapshot.tab_snapshot
+    }
+
+    pub fn fold_snapshot(&self) -> &FoldSnapshot {
+        &self.block_snapshot.wrap_snapshot.tab_snapshot.fold_snapshot
+    }
+
+    pub fn inlay_snapshot(&self) -> &InlaySnapshot {
+        &self
+            .block_snapshot
+            .wrap_snapshot
+            .tab_snapshot
+            .fold_snapshot
+            .inlay_snapshot
+    }
+
+    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        &self
+            .block_snapshot
+            .wrap_snapshot
+            .tab_snapshot
+            .fold_snapshot
+            .inlay_snapshot
+            .buffer
+    }
+
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
-        self.fold_snapshot.fold_count()
+        self.fold_snapshot().fold_count()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer_snapshot.len() == 0
+        self.buffer_snapshot().len() == 0
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -792,16 +811,16 @@ impl DisplaySnapshot {
     }
 
     pub fn widest_line_number(&self) -> u32 {
-        self.buffer_snapshot.widest_line_number()
+        self.buffer_snapshot().widest_line_number()
     }
 
     pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
         loop {
-            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
-            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
+            let mut inlay_point = self.inlay_snapshot().to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot().to_fold_point(inlay_point, Bias::Left);
             fold_point.0.column = 0;
-            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-            point = self.inlay_snapshot.to_buffer_point(inlay_point);
+            inlay_point = fold_point.to_inlay_point(self.fold_snapshot());
+            point = self.inlay_snapshot().to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Left);
             *display_point.column_mut() = 0;
@@ -819,11 +838,11 @@ impl DisplaySnapshot {
     ) -> (MultiBufferPoint, DisplayPoint) {
         let original_point = point;
         loop {
-            let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
-            let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
-            fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
-            inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-            point = self.inlay_snapshot.to_buffer_point(inlay_point);
+            let mut inlay_point = self.inlay_snapshot().to_inlay_point(point);
+            let mut fold_point = self.fold_snapshot().to_fold_point(inlay_point, Bias::Right);
+            fold_point.0.column = self.fold_snapshot().line_len(fold_point.row());
+            inlay_point = fold_point.to_inlay_point(self.fold_snapshot());
+            point = self.inlay_snapshot().to_buffer_point(inlay_point);
 
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
@@ -841,7 +860,8 @@ impl DisplaySnapshot {
         let new_end = if range.end.column > 0 {
             MultiBufferPoint::new(
                 range.end.row,
-                self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+                self.buffer_snapshot()
+                    .line_len(MultiBufferRow(range.end.row)),
             )
         } else {
             range.end
@@ -851,52 +871,52 @@ impl DisplaySnapshot {
     }
 
     pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
-        let inlay_point = self.inlay_snapshot.to_inlay_point(point);
-        let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
-        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let inlay_point = self.inlay_snapshot().to_inlay_point(point);
+        let fold_point = self.fold_snapshot().to_fold_point(inlay_point, bias);
+        let tab_point = self.tab_snapshot().to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
 
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
-        self.inlay_snapshot
+        self.inlay_snapshot()
             .to_buffer_point(self.display_point_to_inlay_point(point, bias))
     }
 
     pub fn display_point_to_inlay_offset(&self, point: DisplayPoint, bias: Bias) -> InlayOffset {
-        self.inlay_snapshot
+        self.inlay_snapshot()
             .to_offset(self.display_point_to_inlay_point(point, bias))
     }
 
     pub fn anchor_to_inlay_offset(&self, anchor: Anchor) -> InlayOffset {
-        self.inlay_snapshot
-            .to_inlay_offset(anchor.to_offset(&self.buffer_snapshot))
+        self.inlay_snapshot()
+            .to_inlay_offset(anchor.to_offset(self.buffer_snapshot()))
     }
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
-        self.buffer_snapshot
+        self.buffer_snapshot()
             .anchor_at(point.to_offset(self, bias), bias)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
-        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
-        let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
-        fold_point.to_inlay_point(&self.fold_snapshot)
+        let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
+        let fold_point = self.tab_snapshot().to_fold_point(tab_point, bias).0;
+        fold_point.to_inlay_point(self.fold_snapshot())
     }
 
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
-        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
-        self.tab_snapshot.to_fold_point(tab_point, bias).0
+        let tab_point = self.wrap_snapshot().to_tab_point(wrap_point);
+        self.tab_snapshot().to_fold_point(tab_point, bias).0
     }
 
     pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
-        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
-        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let tab_point = self.tab_snapshot().to_tab_point(fold_point);
+        let wrap_point = self.wrap_snapshot().tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -1118,7 +1138,7 @@ impl DisplaySnapshot {
     }
 
     pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
-        self.buffer_snapshot.chars_at(offset).map(move |ch| {
+        self.buffer_snapshot().chars_at(offset).map(move |ch| {
             let ret = (ch, offset);
             offset += ch.len_utf8();
             ret
@@ -1129,7 +1149,7 @@ impl DisplaySnapshot {
         &self,
         mut offset: usize,
     ) -> impl Iterator<Item = (char, usize)> + '_ {
-        self.buffer_snapshot
+        self.buffer_snapshot()
             .reversed_chars_at(offset)
             .map(move |ch| {
                 offset -= ch.len_utf8();
@@ -1152,11 +1172,11 @@ impl DisplaySnapshot {
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
         let mut point = self.display_point_to_point(display_point, Bias::Left);
 
-        if point.column != self.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+        if point.column != self.buffer_snapshot().line_len(MultiBufferRow(point.row)) {
             return display_point;
         }
         point.column = point.column.saturating_sub(1);
-        point = self.buffer_snapshot.clip_point(point, Bias::Left);
+        point = self.buffer_snapshot().clip_point(point, Bias::Left);
         self.point_to_display_point(point, Bias::Left)
     }
 
@@ -1164,7 +1184,7 @@ impl DisplaySnapshot {
     where
         T: ToOffset,
     {
-        self.fold_snapshot.folds_in_range(range)
+        self.fold_snapshot().folds_in_range(range)
     }
 
     pub fn blocks_in_range(
@@ -1185,12 +1205,12 @@ impl DisplaySnapshot {
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
-        self.fold_snapshot.intersects_fold(offset)
+        self.fold_snapshot().intersects_fold(offset)
     }
 
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         self.block_snapshot.is_line_replaced(buffer_row)
-            || self.fold_snapshot.is_line_folded(buffer_row)
+            || self.fold_snapshot().is_line_folded(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
@@ -1207,7 +1227,7 @@ impl DisplaySnapshot {
             .block_snapshot
             .to_wrap_point(BlockPoint::new(display_row.0, 0), Bias::Left)
             .row();
-        self.wrap_snapshot.soft_wrap_indent(wrap_row)
+        self.wrap_snapshot().soft_wrap_indent(wrap_row)
     }
 
     pub fn text(&self) -> String {
@@ -1228,7 +1248,7 @@ impl DisplaySnapshot {
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
-        self.buffer_snapshot.line_indent_for_row(buffer_row)
+        self.buffer_snapshot().line_indent_for_row(buffer_row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
@@ -1246,7 +1266,7 @@ impl DisplaySnapshot {
     }
 
     pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
-        let max_row = self.buffer_snapshot.max_row();
+        let max_row = self.buffer_snapshot().max_row();
         if buffer_row >= max_row {
             return false;
         }
@@ -1271,10 +1291,11 @@ impl DisplaySnapshot {
     }
 
     pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
-        let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
+        let start =
+            MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot().line_len(buffer_row));
         if let Some(crease) = self
             .crease_snapshot
-            .query_row(buffer_row, &self.buffer_snapshot)
+            .query_row(buffer_row, self.buffer_snapshot())
         {
             match crease {
                 Crease::Inline {
@@ -1284,7 +1305,7 @@ impl DisplaySnapshot {
                     render_trailer,
                     metadata,
                 } => Some(Crease::Inline {
-                    range: range.to_point(&self.buffer_snapshot),
+                    range: range.to_point(self.buffer_snapshot()),
                     placeholder: placeholder.clone(),
                     render_toggle: render_toggle.clone(),
                     render_trailer: render_trailer.clone(),
@@ -1298,7 +1319,7 @@ impl DisplaySnapshot {
                     block_priority,
                     render_toggle,
                 } => Some(Crease::Block {
-                    range: range.to_point(&self.buffer_snapshot),
+                    range: range.to_point(self.buffer_snapshot()),
                     block_height: *block_height,
                     block_style: *block_style,
                     render_block: render_block.clone(),
@@ -1310,7 +1331,7 @@ impl DisplaySnapshot {
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot.max_point();
+            let max_point = self.buffer_snapshot().max_point();
             let mut end = None;
 
             for row in (buffer_row.0 + 1)..=max_point.row {
@@ -1321,7 +1342,7 @@ impl DisplaySnapshot {
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
-                        self.buffer_snapshot.line_len(MultiBufferRow(prev_row)),
+                        self.buffer_snapshot().line_len(MultiBufferRow(prev_row)),
                     ));
                     break;
                 }
@@ -1330,7 +1351,7 @@ impl DisplaySnapshot {
             let mut row_before_line_breaks = end.unwrap_or(max_point);
             while row_before_line_breaks.row > start.row
                 && self
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
             {
                 row_before_line_breaks.row -= 1;
@@ -1338,7 +1359,7 @@ impl DisplaySnapshot {
 
             row_before_line_breaks = Point::new(
                 row_before_line_breaks.row,
-                self.buffer_snapshot
+                self.buffer_snapshot()
                     .line_len(MultiBufferRow(row_before_line_breaks.row)),
             );
 
@@ -1482,23 +1503,23 @@ impl DisplayPoint {
 
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0, bias);
-        let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
-        let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
-        let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
-        map.inlay_snapshot
-            .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
+        let tab_point = map.wrap_snapshot().to_tab_point(wrap_point);
+        let fold_point = map.tab_snapshot().to_fold_point(tab_point, bias).0;
+        let inlay_point = fold_point.to_inlay_point(map.fold_snapshot());
+        map.inlay_snapshot()
+            .to_buffer_offset(map.inlay_snapshot().to_offset(inlay_point))
     }
 }
 
 impl ToDisplayPoint for usize {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
-        map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
+        map.point_to_display_point(self.to_point(map.buffer_snapshot()), Bias::Left)
     }
 }
 
 impl ToDisplayPoint for OffsetUtf16 {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
-        self.to_offset(&map.buffer_snapshot).to_display_point(map)
+        self.to_offset(map.buffer_snapshot()).to_display_point(map)
     }
 }
 
@@ -1510,7 +1531,7 @@ impl ToDisplayPoint for Point {
 
 impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
-        self.to_point(&map.buffer_snapshot).to_display_point(map)
+        self.to_point(map.buffer_snapshot()).to_display_point(map)
     }
 }
 
@@ -1599,10 +1620,10 @@ pub mod tests {
         let mut blocks = Vec::new();
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
-        log::info!("fold text: {:?}", snapshot.fold_snapshot.text());
-        log::info!("tab text: {:?}", snapshot.tab_snapshot.text());
-        log::info!("wrap text: {:?}", snapshot.wrap_snapshot.text());
+        log::info!("buffer text: {:?}", snapshot.buffer_snapshot().text());
+        log::info!("fold text: {:?}", snapshot.fold_snapshot().text());
+        log::info!("tab text: {:?}", snapshot.tab_snapshot().text());
+        log::info!("wrap text: {:?}", snapshot.wrap_snapshot().text());
         log::info!("block text: {:?}", snapshot.block_snapshot.text());
         log::info!("display text: {:?}", snapshot.text());
 
@@ -1634,7 +1655,8 @@ pub mod tests {
                 30..=44 => {
                     map.update(cx, |map, cx| {
                         if rng.random() || blocks.is_empty() {
-                            let buffer = map.snapshot(cx).buffer_snapshot;
+                            let snapshot = map.snapshot(cx);
+                            let buffer = snapshot.buffer_snapshot();
                             let block_properties = (0..rng.random_range(1..=1))
                                 .map(|_| {
                                     let position = buffer.anchor_after(buffer.clip_offset(
@@ -1715,15 +1737,15 @@ pub mod tests {
 
             let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
             fold_count = snapshot.fold_count();
-            log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
-            log::info!("fold text: {:?}", snapshot.fold_snapshot.text());
-            log::info!("tab text: {:?}", snapshot.tab_snapshot.text());
-            log::info!("wrap text: {:?}", snapshot.wrap_snapshot.text());
+            log::info!("buffer text: {:?}", snapshot.buffer_snapshot().text());
+            log::info!("fold text: {:?}", snapshot.fold_snapshot().text());
+            log::info!("tab text: {:?}", snapshot.tab_snapshot().text());
+            log::info!("wrap text: {:?}", snapshot.wrap_snapshot().text());
             log::info!("block text: {:?}", snapshot.block_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());
 
             // Line boundaries
-            let buffer = &snapshot.buffer_snapshot;
+            let buffer = snapshot.buffer_snapshot();
             for _ in 0..5 {
                 let row = rng.random_range(0..=buffer.max_point().row);
                 let column = rng.random_range(0..=buffer.line_len(MultiBufferRow(row)));
@@ -1907,7 +1929,7 @@ pub mod tests {
                 )
             );
 
-            let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
+            let ix = snapshot.buffer_snapshot().text().find("seven").unwrap();
             buffer.update(cx, |buffer, cx| {
                 buffer.edit([(ix..ix, "and ")], None, cx);
             });

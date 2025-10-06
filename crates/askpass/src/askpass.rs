@@ -46,10 +46,10 @@ impl AskPassDelegate {
         Self { tx, _task: task }
     }
 
-    pub async fn ask_password(&mut self, prompt: String) -> Result<EncryptedPassword> {
+    pub async fn ask_password(&mut self, prompt: String) -> Option<EncryptedPassword> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send((prompt, tx)).await?;
-        Ok(rx.await?)
+        self.tx.send((prompt, tx)).await.ok()?;
+        rx.await.ok()
     }
 }
 
@@ -106,12 +106,7 @@ impl AskPassSession {
                     buffer.clear();
                 }
                 let prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = delegate
-                    .ask_password(prompt.to_string())
-                    .await
-                    .context("getting askpass password")
-                    .log_err()
-                {
+                if let Some(password) = delegate.ask_password(prompt.into_owned()).await {
                     #[cfg(target_os = "windows")]
                     {
                         askpass_secret.get_or_init(|| password.clone());

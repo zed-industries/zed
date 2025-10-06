@@ -255,7 +255,7 @@ impl SyntaxTreeView {
             let selection_range = editor.selections.last::<usize>(cx).range();
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();

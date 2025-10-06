@@ -251,7 +251,7 @@ impl ScrollManager {
                 Bias::Left,
             )
             .to_point(map);
-        let top_anchor = map.buffer_snapshot.anchor_after(scroll_top_buffer_point);
+        let top_anchor = map.buffer_snapshot().anchor_after(scroll_top_buffer_point);
 
         self.set_anchor(
             ScrollAnchor {
@@ -550,7 +550,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx).display_snapshot;
         let new_screen_top = DisplayPoint::new(row, 0);
         let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
+        let new_anchor = snapshot.buffer_snapshot().anchor_before(new_screen_top);
 
         self.set_scroll_anchor(
             ScrollAnchor {
