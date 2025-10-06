@@ -77,6 +77,7 @@ members = [
     "crates/fuzzy",
     "crates/git",
     "crates/git_hosting_providers",
+    "crates/git_to_graph",
     "crates/git_ui",
     "crates/go_to_line",
     "crates/google_ai",
@@ -304,6 +305,7 @@ fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
 git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
+git_to_graph = { path = "crates/git_to_graph" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
@@ -522,6 +524,7 @@ html5ever = "0.27.0"
 http = "1.1"
 http-body = "1.0"
 hyper = "0.14"
+icu = "2.0"
 ignore = "0.4.22"
 image = "0.25.1"
 imara-diff = "0.1.8"

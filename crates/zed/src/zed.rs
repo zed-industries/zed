@@ -23,6 +23,7 @@ use editor::{Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
+use git_ui::git_graph_panel::GitGraphPanel;
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
@@ -568,6 +569,7 @@ fn initialize_panels(
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
         let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
+        let git_graph_panel = GitGraphPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let notification_panel = collab_ui::notification_panel::NotificationPanel::load(
@@ -581,6 +583,7 @@ fn initialize_panels(
             outline_panel,
             terminal_panel,
             git_panel,
+            git_graph_panel,
             channels_panel,
             notification_panel,
             debug_panel,
@@ -589,6 +592,7 @@ fn initialize_panels(
             outline_panel,
             git_panel,
             terminal_panel,
+            git_graph_panel,
             channels_panel,
             notification_panel,
             debug_panel,
@@ -599,6 +603,7 @@ fn initialize_panels(
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
             workspace.add_panel(git_panel, window, cx);
+            workspace.add_panel(git_graph_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             workspace.add_panel(debug_panel, window, cx);

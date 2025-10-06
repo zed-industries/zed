@@ -579,6 +579,16 @@ impl GitRepository for FakeGitRepository {
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
     }
+
+    fn get_commits(
+        &self,
+        _limit: Option<usize>,
+        _branch: Option<String>,
+        _include_remotes: bool,
+        _order: git::repository::CommitOrder,
+    ) -> BoxFuture<'_, Result<Vec<git::repository::TopoCommit>>> {
+        async { Ok(Vec::new()) }.boxed()
+    }
 }
 
 #[cfg(test)]

@@ -21,6 +21,7 @@ use std::{
     cmp::Ordering,
     future,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
@@ -34,6 +35,24 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum CommitOrder {
+    Topological,
+    Date,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct TopoCommit {
+    pub oid: Oid,
+    pub parents: Vec<Oid>,
+    pub summary: Option<String>,
+    pub author: Option<String>,
+    pub timestamp: i64,
+    pub branches: Vec<String>,
+    pub tags: Vec<String>,
+    pub is_head: bool,
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
@@ -524,6 +543,15 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<String>>;
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
+
+    /// Get commits in specified order suitable for git graph visualization
+    fn get_commits(
+        &self,
+        limit: Option<usize>,
+        branch: Option<String>,
+        include_remotes: bool,
+        order: CommitOrder,
+    ) -> BoxFuture<'_, Result<Vec<TopoCommit>>>;
 }
 
 pub enum DiffType {
@@ -1834,6 +1862,119 @@ impl GitRepository for RealGitRepository {
                 Ok(output
                     .strip_prefix("refs/remotes/origin/")
                     .map(|s| SharedString::from(s.to_owned())))
+            })
+            .boxed()
+    }
+
+    fn get_commits(
+        &self,
+        limit: Option<usize>,
+        branch: Option<String>,
+        include_remotes: bool,
+        order: CommitOrder,
+    ) -> BoxFuture<'_, Result<Vec<TopoCommit>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+                // Build git log command with specified order and full decorations (branches, tags, etc.)
+                let order_arg = match order {
+                    CommitOrder::Topological => "--topo-order",
+                    CommitOrder::Date => "--date-order",
+                };
+
+                let mut args: Vec<String> = vec![
+                    "log".to_string(),
+                    order_arg.to_string(),
+                    "--decorate=short".to_string(),
+                    "--pretty=format:%H|%P|%s|%an|%at|%D".to_string(),
+                ];
+
+                if let Some(limit) = limit {
+                    args.push(format!("-{}", limit));
+                }
+
+                if let Some(branch_name) = &branch {
+                    args.push(branch_name.clone());
+                } else {
+                    args.push(if include_remotes {
+                        "--all".to_string()
+                    } else {
+                        "--branches".to_string()
+                    });
+                }
+
+                let output = git.run(&args).await?;
+                let mut commits = Vec::new();
+
+                for line in output.lines() {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 6 {
+                        let oid = Oid::from_str(parts[0])
+                            .with_context(|| format!("Invalid commit OID: {}", parts[0]))?;
+
+                        let parents: Vec<Oid> = if parts[1].is_empty() {
+                            Vec::new()
+                        } else {
+                            parts[1]
+                                .split_whitespace()
+                                .filter_map(|p| Oid::from_str(p).ok())
+                                .collect()
+                        };
+
+                        let summary = if parts[2].is_empty() { None } else { Some(parts[2].to_string()) };
+                        let author = if parts[3].is_empty() { None } else { Some(parts[3].to_string()) };
+                        let timestamp = parts[4].parse::<i64>()
+                            .with_context(|| format!("Invalid timestamp: {}", parts[4]))?;
+
+                        // Parse decorations (branches, tags, HEAD)
+                        // Format: "HEAD -> main, origin/main, tag: v1.0"
+                        let decorations = parts[5];
+                        let mut branches = Vec::new();
+                        let mut tags = Vec::new();
+                        let mut is_head = false;
+
+                        if !decorations.is_empty() {
+                            for decoration in decorations.split(',') {
+                                let decoration = decoration.trim();
+
+                                if decoration.starts_with("HEAD -> ") {
+                                    is_head = true;
+                                    // Extract the branch name after "HEAD -> "
+                                    if let Some(branch) = decoration.strip_prefix("HEAD -> ") {
+                                        branches.push(branch.to_string());
+                                    }
+                                } else if decoration == "HEAD" {
+                                    is_head = true;
+                                } else if let Some(tag_name) = decoration.strip_prefix("tag: ") {
+                                    // It's a tag reference
+                                    tags.push(tag_name.to_string());
+                                } else if !decoration.starts_with("grafted") {
+                                    // It's a branch reference (not a tag or graft)
+                                    branches.push(decoration.to_string());
+                                }
+                            }
+                        }
+
+                        commits.push(TopoCommit {
+                            oid,
+                            parents,
+                            summary,
+                            author,
+                            timestamp,
+                            branches,
+                            tags,
+                            is_head,
+                        });
+                    }
+                }
+
+                Ok(commits)
             })
             .boxed()
     }

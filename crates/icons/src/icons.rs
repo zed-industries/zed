@@ -214,6 +214,7 @@ pub enum IconName {
     SupermavenError,
     SupermavenInit,
     SwatchBook,
+    Tag,
     Tab,
     Terminal,
     TerminalAlt,

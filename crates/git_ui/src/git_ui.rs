@@ -10,6 +10,8 @@ use ui::{
 };
 
 mod blame_ui;
+mod commit_details_section;
+mod files_changed_section;
 
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -37,6 +39,9 @@ pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
+pub mod git_diff_view;
+mod git_graph_element;
+pub mod git_graph_panel;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -69,6 +74,7 @@ pub fn init(cx: &mut App) {
         ProjectDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
+        git_graph_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
         stash_picker::register(workspace);

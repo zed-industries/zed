@@ -8,6 +8,7 @@
 //!
 //! A theme is a collection of colors used to build a consistent appearance for UI components across the application.
 
+mod contrast;
 mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
@@ -34,6 +35,7 @@ use gpui::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+pub use crate::contrast::*;
 pub use crate::default_colors::*;
 use crate::fallback_themes::apply_theme_color_defaults;
 pub use crate::font_family_cache::*;
