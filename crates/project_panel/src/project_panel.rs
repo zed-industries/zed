@@ -57,7 +57,7 @@ use ui::{
     Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
     IconDecorationKind, IconName, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
     LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
-    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
+    StickyCandidate, Tooltip, VisibleOnHover, WithScrollbar, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
@@ -4656,6 +4656,7 @@ impl ProjectPanel {
                         this.end_slot::<AnyElement>(
                             h_flex()
                                 .gap_1()
+                                .visible_on_hover("project-panel")
                                 .child(
                                     IconButton::new(
                                         "new-file",
