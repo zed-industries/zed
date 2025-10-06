@@ -12,9 +12,9 @@ use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
 use gpui::{Entity, Task};
-use language::LanguageId;
 use language::{Bias, BufferSnapshot, LanguageServerId, Point};
 use language::{Buffer, OffsetRangeExt};
+use language::{LanguageId, ParseStatus};
 use language_model::LlmApiToken;
 use ordered_float::OrderedFloat;
 use project::{Project, ProjectPath, Worktree};
@@ -445,7 +445,7 @@ pub async fn retrieval_stats(
     let mut ready_languages = HashSet::default();
     for (file_index, project_path) in filtered_files.iter().enumerate() {
         let processing_file_message = format!(
-            "Processing file {} of {}: {}",
+            "\n\nProcessing file {} of {}: {}",
             file_index + 1,
             filtered_files.len(),
             project_path.path.display(PathStyle::Posix)
@@ -813,9 +813,16 @@ pub async fn open_buffer(
         path: path.into(),
     })?;
 
-    project
+    let buffer = project
         .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-        .await
+        .await?;
+
+    let mut parse_status = buffer.read_with(cx, |buffer, _cx| buffer.parse_status())?;
+    while *parse_status.borrow() != ParseStatus::Idle {
+        parse_status.changed().await?;
+    }
+
+    Ok(buffer)
 }
 
 pub async fn open_buffer_with_language_server(
