@@ -20,6 +20,7 @@ pub struct TreeViewItem {
     on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
+    tab_index: Option<isize>,
 }
 
 impl TreeViewItem {
@@ -39,6 +40,7 @@ impl TreeViewItem {
             on_hover: None,
             on_toggle: None,
             on_secondary_mouse_down: None,
+            tab_index: None,
         }
     }
 
@@ -70,6 +72,11 @@ impl TreeViewItem {
 
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
+        self
+    }
+
+    pub fn tab_index(mut self, tab_index: isize) -> Self {
+        self.tab_index = Some(tab_index);
         self
     }
 
@@ -135,6 +142,7 @@ impl RenderOnce for TreeViewItem {
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
+            .when_some(self.tab_index, |this, index| this.tab_index(index))
             .child(
                 h_flex()
                     .id("inner_tree_view_item")

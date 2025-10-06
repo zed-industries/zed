@@ -7,11 +7,13 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, div, point,
-    prelude::*, px, size, uniform_list,
+    Action, App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
+    point, prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::{
     BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
     RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
@@ -34,6 +36,22 @@ use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
+
+actions!(
+    settings_editor,
+    [
+        /// Toggles focus between the navbar and the main content.
+        ToggleFocusNav,
+        /// Focuses the next file in the file list.
+        FocusNextFile,
+        /// Focuses the previous file in the file list.
+        FocusPreviousFile
+    ]
+);
+
+#[derive(Action, PartialEq, Eq, Clone, Copy, Debug, JsonSchema, Deserialize)]
+#[action(namespace = settings_editor)]
+struct FocusFile(pub u32);
 
 #[derive(Clone, Copy)]
 struct SettingField<T: 'static> {
@@ -176,7 +194,13 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
-            let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
+            let settings_ui_actions = [
+                TypeId::of::<OpenSettingsEditor>(),
+                TypeId::of::<ToggleFocusNav>(),
+                TypeId::of::<FocusFile>(),
+                TypeId::of::<FocusNextFile>(),
+                TypeId::of::<FocusPreviousFile>(),
+            ];
             let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
             command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
                 if has_flag {
@@ -955,6 +979,8 @@ impl SettingsWindow {
             .p_2p5()
             .pt_10()
             .gap_3()
+            .tab_group()
+            .tab_index(0)
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
@@ -976,6 +1002,7 @@ impl SettingsWindow {
                                             ("settings-ui-navbar-entry", ix),
                                             entry.title,
                                         )
+                                        .tab_index(0)
                                         .root_item(entry.is_root)
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
@@ -1046,6 +1073,8 @@ impl SettingsWindow {
             .size_full()
             .gap_4()
             .overflow_y_scroll()
+            .tab_group()
+            .tab_index(1)
             .track_scroll(&self.scroll_handle);
 
         let items: Vec<_> = items.collect();
@@ -1190,6 +1219,7 @@ impl Render for SettingsWindow {
         let ui_font = theme::setup_ui_font(window, cx);
 
         div()
+            .id("settings-window")
             .key_context("SettingsWindow")
             .flex()
             .flex_row()
@@ -1197,6 +1227,15 @@ impl Render for SettingsWindow {
             .font(ui_font)
             .bg(cx.theme().colors().background)
             .text_color(cx.theme().colors().text)
+            .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
+                this.search_bar.focus_handle(cx).focus(window);
+            }))
+            .on_action(|_: &menu::SelectNext, window, _| {
+                window.focus_next();
+            })
+            .on_action(|_: &menu::SelectPrevious, window, _| {
+                window.focus_prev();
+            })
             .child(self.render_nav(window, cx))
             .child(self.render_page(window, cx))
     }

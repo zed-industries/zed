@@ -14373,6 +14373,8 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "project",
+ "schemars 1.0.1",
+ "search",
  "serde",
  "session",
  "settings",
