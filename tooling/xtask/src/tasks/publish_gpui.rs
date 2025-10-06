@@ -1,8 +1,6 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
@@ -39,8 +37,6 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     println!("GPUI publish complete!");
     Ok(())
 }
-
-/// Helper for running shell commands with optional verbose output
 
 fn read_gpui_version() -> Result<String> {
     let gpui_cargo_toml_path = "crates/gpui/Cargo.toml";
