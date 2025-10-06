@@ -73,13 +73,17 @@ impl ScoredDeclaration {
     }
 
     pub fn retrieval_score(&self) -> f32 {
+        let declaration_count = self.components.declaration_count as f32;
         if self.components.is_same_file {
-            2.0 / self.components.same_file_declaration_count as f32
+            10.0 / self.components.same_file_declaration_count as f32
+        } else if self.components.path_import_match_count > 0 {
+            3.0
+        } else if self.components.wildcard_path_import_match_count > 0 {
+            1.0 / declaration_count
         } else if self.components.normalized_import_similarity > 0.0 {
-            self.components.normalized_import_similarity / self.components.declaration_count as f32
+            self.components.normalized_import_similarity / declaration_count
         } else {
-            0.5 * self.components.normalized_wildcard_import_similarity
-                / self.components.declaration_count as f32
+            0.25 * self.components.normalized_wildcard_import_similarity / declaration_count
         }
     }
 
@@ -182,10 +186,6 @@ pub fn scored_declarations(
             // TODO: option to filter out other candidates when same file / import match
             let mut checked_declarations = Vec::new();
             for (declaration_id, declaration) in declarations {
-                let cached_path = declaration.cached_path();
-                let matches_path_import = matches_an_import_path(&cached_path, &import_paths);
-                let matches_wildcard_path_import =
-                    matches_an_import_path(&cached_path, &wildcard_import_paths);
                 match declaration {
                     Declaration::Buffer {
                         buffer_id,
@@ -211,8 +211,8 @@ pub fn scored_declarations(
                                 checked_declarations.push(CheckedDeclaration {
                                     declaration,
                                     same_file_line_distance: Some(declaration_line_distance),
-                                    matches_path_import,
-                                    matches_wildcard_path_import,
+                                    path_import_match_count: 0,
+                                    wildcard_path_import_match_count: 0,
                                 });
                             }
                             continue;
@@ -221,11 +221,24 @@ pub fn scored_declarations(
                     }
                     Declaration::File { .. } => {}
                 }
+                let declaration_path = declaration.cached_path();
+                let path_import_match_count = import_paths
+                    .iter()
+                    .filter(|import_path| {
+                        declaration_path_matches_import(&declaration_path, import_path)
+                    })
+                    .count();
+                let wildcard_path_import_match_count = wildcard_import_paths
+                    .iter()
+                    .filter(|import_path| {
+                        declaration_path_matches_import(&declaration_path, import_path)
+                    })
+                    .count();
                 checked_declarations.push(CheckedDeclaration {
                     declaration,
                     same_file_line_distance: None,
-                    matches_path_import,
-                    matches_wildcard_path_import,
+                    path_import_match_count,
+                    wildcard_path_import_match_count,
                 });
             }
 
@@ -299,21 +312,19 @@ pub fn scored_declarations(
 struct CheckedDeclaration<'a> {
     declaration: &'a Declaration,
     same_file_line_distance: Option<u32>,
-    matches_path_import: bool,
-    matches_wildcard_path_import: bool,
+    path_import_match_count: usize,
+    wildcard_path_import_match_count: usize,
 }
 
-fn matches_an_import_path(
+fn declaration_path_matches_import(
     declaration_path: &CachedDeclarationPath,
-    import_paths: &[&Arc<Path>],
+    import_path: &Arc<Path>,
 ) -> bool {
-    import_paths.iter().any(|import_path| {
-        if import_path.is_absolute() {
-            declaration_path.equals_absolute_path(import_path)
-        } else {
-            declaration_path.ends_with_posix_path(import_path)
-        }
-    })
+    if import_path.is_absolute() {
+        declaration_path.equals_absolute_path(import_path)
+    } else {
+        declaration_path.ends_with_posix_path(import_path)
+    }
 }
 
 fn range_intersection<T: Ord + Clone>(a: &Range<T>, b: &Range<T>) -> Option<Range<T>> {
@@ -342,8 +353,8 @@ fn score_declaration(
     let CheckedDeclaration {
         declaration,
         same_file_line_distance,
-        matches_path_import,
-        matches_wildcard_path_import,
+        path_import_match_count,
+        wildcard_path_import_match_count,
     } = checked_declaration;
 
     let is_referenced_nearby = references
@@ -433,8 +444,8 @@ fn score_declaration(
         excerpt_vs_signature_weighted_overlap,
         adjacent_vs_item_weighted_overlap,
         adjacent_vs_signature_weighted_overlap,
-        matches_path_import,
-        matches_wildcard_path_import,
+        path_import_match_count,
+        wildcard_path_import_match_count,
         import_similarity,
         max_import_similarity: 0.0,
         normalized_import_similarity: 0.0,

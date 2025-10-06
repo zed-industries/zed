@@ -9,7 +9,6 @@ use std::{borrow::Cow, ops::Range};
 use text::OffsetRangeExt as _;
 use util::RangeExt;
 use util::paths::PathStyle;
-use util::rel_path::RelPath;
 
 use crate::Identifier;
 use crate::text_similarity::Occurrences;
