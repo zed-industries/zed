@@ -3124,16 +3124,21 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
             description: "The list of language servers to use (or disable) for this language",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.language_servers)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.language_servers
-                    })
-                },
-            }),
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.language_servers
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.language_servers
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
@@ -3151,6 +3156,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
             description: "Controls whether edit predictions are shown immediately (true) or manually by triggering `editor::ShowEditPrediction` (false)",
@@ -3191,21 +3197,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Whitespaces",
             description: "Whether to show tabs and spaces in the editor",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.show_whitespaces
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.show_whitespaces
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.show_whitespaces)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_whitespaces
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SectionHeader("Whitespace Map"),
@@ -3216,12 +3217,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 SettingField {
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            &language.whitespace_map.space
+                            if let Some(whitespace_map) = &language.whitespace_map {
+                                &whitespace_map.space
+                            } else {
+                                &None
+                            }
                         })
                     },
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
-                            &mut language.whitespace_map.space
+                            &mut language.whitespace_map.get_or_insert_default().space
                         })
                     },
                 }
@@ -3236,12 +3241,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 SettingField {
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            &language.whitespace_map.tab
+                            if let Some(whitespace_map) = &language.whitespace_map {
+                                &whitespace_map.tab
+                            } else {
+                                &None
+                            }
                         })
                     },
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
-                            &mut language.whitespace_map.tab
+                            &mut language.whitespace_map.get_or_insert_default().tab
                         })
                     },
                 }
