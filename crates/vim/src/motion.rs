@@ -2440,7 +2440,15 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
-                    continue;
+
+                    // If the opening range matches the offset, it means that the
+                    // matching bracket pair is being processed, so let's stop
+                    // here and return the exact pair.
+                    if open_range.start == offset || open_range.end == offset {
+                        break;
+                    } else {
+                        continue;
+                    }
                 }
             }
 
@@ -2451,7 +2459,15 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;
-                    continue;
+
+                    // If the closing range matches the offset, it means that the
+                    // matching bracket pair is being processed, so let's stop
+                    // here and return the exact pair.
+                    if close_range.start == offset || close_range.end == offset {
+                        break;
+                    } else {
+                        continue;
+                    }
                 }
             }
 
