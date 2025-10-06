@@ -45,7 +45,8 @@ struct UnimplementedSettingField;
 
 impl<T: 'static> SettingField<T> {
     /// Helper for settings with types that are not yet implemented.
-    pub fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
+    #[allow(unused)]
+    fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| &None,
             pick_mut: |_| unreachable!(),
@@ -2760,7 +2761,7 @@ pub fn init(cx: &mut App) {
 fn init_renderers(cx: &mut App) {
     // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
-        .add_renderer::<UnimplementedSettingField>(|settings_field, file, _, _, cx| {
+        .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
             // TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
             Button::new("unimplemented-field", "UNIMPLEMENTED")
                 .size(ButtonSize::Medium)
