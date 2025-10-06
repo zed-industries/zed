@@ -533,7 +533,7 @@ impl settings::Settings for AllLanguageSettings {
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
-                    parser: prettier.parser,
+                    parser: prettier.parser.filter(|parser| !parser.is_empty()),
                     plugins: prettier.plugins.unwrap_or_default(),
                     options: prettier.options.unwrap_or_default(),
                 },

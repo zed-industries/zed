@@ -882,4 +882,25 @@ mod test {
         let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_prettier_options() {
+        let raw_prettier = r#"{"allowed": false, "tabWidth": 4, "semi": false}"#;
+        let result = serde_json::from_str::<PrettierSettingsContent>(raw_prettier)
+            .expect("Failed to parse prettier options");
+        assert!(
+            result
+                .options
+                .as_ref()
+                .expect("options were flattened")
+                .contains_key("semi")
+        );
+        assert!(
+            result
+                .options
+                .as_ref()
+                .expect("options were flattened")
+                .contains_key("tabWidth")
+        );
+    }
 }
