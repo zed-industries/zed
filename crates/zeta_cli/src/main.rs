@@ -443,6 +443,16 @@ pub async fn retrieval_stats(
         .await;
     indexed_files.sort_by(|a, b| a.path.cmp(&b.path));
 
+    let index_state = index.read_with(cx, |index, _cx| index.state().clone())?;
+    cx.update(|_| {
+        drop(index);
+    })?;
+    let index_state = Arc::new(
+        Arc::into_inner(index_state)
+            .context("Index state had more than 1 reference")?
+            .into_inner(),
+    );
+
     let mut hasher = collections::FxHasher::default();
     worktree.read_with(cx, |worktree, _cx| {
         for file in &indexed_files {
@@ -490,17 +500,6 @@ pub async fn retrieval_stats(
         .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
     let filtered_files_len = filtered_files.len();
-
-    let index_state = index.read_with(cx, |index, _cx| index.state().clone())?;
-    cx.update(|_| {
-        drop(index);
-    })?;
-
-    let index_state = Arc::new(
-        Arc::into_inner(index_state)
-            .context("Index state had more than 1 reference")?
-            .into_inner(),
-    );
 
     let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
     let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
