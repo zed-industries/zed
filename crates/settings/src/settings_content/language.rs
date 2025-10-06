@@ -793,11 +793,10 @@ pub struct IndentGuideSettingsContent {
 
 /// The task settings for a particular language.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
-    #[serde(default)]
-    pub variables: HashMap<String, String>,
+    pub variables: Option<HashMap<String, String>>,
     pub enabled: Option<bool>,
     /// Use LSP tasks over Zed language extension ones.
     /// If no LSP tasks are returned due to error/timeout or regular execution,

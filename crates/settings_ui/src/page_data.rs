@@ -3663,6 +3663,73 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Tasks"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Whether tasks are enabled for this language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(tasks) = &language.tasks {
+                            &tasks.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.tasks.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Variables",
+            description: "Extra task variables to set for a particular language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(tasks) = &language.tasks {
+                                &tasks.variables
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.tasks.get_or_insert_default().variables
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prefer Lsp",
+            description: "Use LSP tasks over Zed language extension ones",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(tasks) = &language.tasks {
+                            &tasks.prefer_lsp
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.tasks.get_or_insert_default().prefer_lsp
+                    })
+                },
+            }),
+            metadata: None,
+        }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Debuggers",
@@ -3697,24 +3764,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     })
                 },
             }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Tasks",
-            description: "Task configuration for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.tasks)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.tasks
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
             metadata: None,
         }),
     ]

@@ -571,7 +571,7 @@ impl settings::Settings for AllLanguageSettings {
                 code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
-                    variables: tasks.variables,
+                    variables: tasks.variables.unwrap_or_default(),
                     enabled: tasks.enabled.unwrap(),
                     prefer_lsp: tasks.prefer_lsp.unwrap(),
                 },
