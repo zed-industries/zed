@@ -2937,7 +2937,7 @@ struct LaunchBrowserInCompanionParams {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct KillCompanionBrowserParams {
-    launch_id: String,
+    launch_id: u64,
 }
 
 async fn spawn_companion(
@@ -2981,7 +2981,6 @@ async fn spawn_companion(
 }
 
 async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
-    // FIXME publish
     const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
