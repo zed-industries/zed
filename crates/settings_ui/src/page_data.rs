@@ -2647,7 +2647,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
         }),
-        SettingsPageItem::SectionHeader("Lines"),
+        SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Soft Wrap",
             description: "How to soft-wrap long lines of text",
@@ -3030,11 +3030,13 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Auto-Close"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
             description: "Whether to automatically close JSX tags",
             field: Box::new(
                 SettingField {
+                    // TODO(settings_ui): this setting should just be a bool
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
                             match language.jsx_tag_auto_close.as_ref() {
@@ -3051,6 +3053,55 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }
                 .unimplemented(),
             ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Use Autoclose",
+            description: "Whether to automatically type closing characters for you. For example, when you type (, Zed will automatically add a closing ) at the correct position",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.use_autoclose)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.use_autoclose
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Use Auto Surround",
+            description: "Whether to automatically surround text with characters for you. For example, when you select text and type (, Zed will automatically surround text with ()",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.use_auto_surround
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.use_auto_surround
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Always Treat Brackets As Autoclosed",
+            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.always_treat_brackets_as_autoclosed
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.always_treat_brackets_as_autoclosed
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
@@ -3231,55 +3282,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }
                 .unimplemented(),
             ),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Use Autoclose",
-            description: "Whether to automatically type closing characters for you. For example, when you type (, Zed will automatically add a closing ) at the correct position",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.use_autoclose)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.use_autoclose
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Use Auto Surround",
-            description: "Whether to automatically surround text with characters for you. For example, when you select text and type (, Zed will automatically surround text with ()",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.use_auto_surround
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.use_auto_surround
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Always Treat Brackets As Autoclosed",
-            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.always_treat_brackets_as_autoclosed
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.always_treat_brackets_as_autoclosed
-                    })
-                },
-            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
