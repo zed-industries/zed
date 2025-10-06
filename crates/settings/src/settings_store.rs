@@ -1686,7 +1686,7 @@ mod tests {
     #[gpui::test]
     fn test_get_value_for_field_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<DefaultLanguageSettings>();
 
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
@@ -1743,8 +1743,8 @@ mod tests {
     #[gpui::test]
     fn test_get_value_for_field_local_worktrees_dont_interfere(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>(cx);
-        store.register_setting::<AutoUpdateSetting>(cx);
+        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<AutoUpdateSetting>();
 
         let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
 
@@ -1872,7 +1872,7 @@ mod tests {
     #[gpui::test]
     fn test_get_overrides_for_field(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<DefaultLanguageSettings>();
 
         let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
         let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
