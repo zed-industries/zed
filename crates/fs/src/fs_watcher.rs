@@ -46,8 +46,6 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let root_path = SanitizedPath::new_arc(path);
-
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
@@ -63,6 +61,7 @@ impl Watcher for FsWatcher {
             return Ok(());
         }
 
+        let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
         let registration_id = global({
