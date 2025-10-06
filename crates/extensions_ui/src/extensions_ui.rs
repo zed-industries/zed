@@ -1503,39 +1503,28 @@ impl Render for ExtensionsPage {
                     })),
             )
             .child(self.render_feature_upsells(cx))
-            .child(
-                v_flex()
-                    .pl_4()
-                    .pr_6()
-                    .size_full()
-                    .overflow_y_hidden()
-                    .map(|this| {
-                        let mut count = self.filtered_remote_extension_indices.len();
-                        if self.filter.include_dev_extensions() {
-                            count += self.dev_extension_entries.len();
-                        }
+            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
+                let mut count = self.filtered_remote_extension_indices.len();
+                if self.filter.include_dev_extensions() {
+                    count += self.dev_extension_entries.len();
+                }
 
-                        if count == 0 {
-                            this.py_4()
-                                .child(self.render_empty_state(cx))
-                                .into_any_element()
-                        } else {
-                            let scroll_handle = self.list.clone();
-                            this.child(
-                                uniform_list(
-                                    "entries",
-                                    count,
-                                    cx.processor(Self::render_extensions),
-                                )
-                                .flex_grow()
-                                .pb_4()
-                                .track_scroll(scroll_handle.clone()),
-                            )
-                            .vertical_scrollbar_for(scroll_handle, window, cx)
-                            .into_any_element()
-                        }
-                    }),
-            )
+                if count == 0 {
+                    this.py_4()
+                        .child(self.render_empty_state(cx))
+                        .into_any_element()
+                } else {
+                    let scroll_handle = self.list.clone();
+                    this.child(
+                        uniform_list("entries", count, cx.processor(Self::render_extensions))
+                            .flex_grow()
+                            .pb_4()
+                            .track_scroll(scroll_handle.clone()),
+                    )
+                    .vertical_scrollbar_for(scroll_handle, window, cx)
+                    .into_any_element()
+                }
+            }))
     }
 }
 
