@@ -2651,19 +2651,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Soft Wrap",
             description: "How to soft-wrap long lines of text",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.soft_wrap)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.soft_wrap
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.soft_wrap)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.soft_wrap
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
@@ -2671,13 +2668,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Whether to show wrap guides in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if softwrap is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting",
             field: Box::new(SettingField {
                 pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.preferred_line_length
-                    })
+                    language_settings_field(settings_content, |language| &language.show_wrap_guides)
                 },
                 pick_mut: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
-                        &mut language.preferred_line_length
+                        &mut language.show_wrap_guides
                     })
                 },
             }),
@@ -2718,25 +2713,116 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
-        // todo! inline indent guides
+        SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Indent Guides",
-            description: "Indent guide related settings",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.indent_guides
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.indent_guides
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            title: "Enabled",
+            description: "Whether to display indent guides in the editor",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Line Width",
+            description: "The width of the indent guides in pixels, between 1 and 10",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.line_width
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().line_width
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Active Line Width",
+            description: "The width of the active indent guide in pixels, between 1 and 10",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.active_line_width
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .indent_guides
+                            .get_or_insert_default()
+                            .active_line_width
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Coloring",
+            description: "Determines how indent guides are colored",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.coloring
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().coloring
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Background Coloring",
+            description: "Determines how indent guide backgrounds are colored",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.background_coloring
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .indent_guides
+                            .get_or_insert_default()
+                            .background_coloring
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {

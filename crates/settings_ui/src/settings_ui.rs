@@ -311,6 +311,17 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<settings::RewrapBehavior>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
+        .add_renderer::<settings::FormatOnSave>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::IndentGuideColoring>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::IndentGuideBackgroundColoring>(
+            |settings_field, file, _, window, cx| {
+                render_dropdown(*settings_field, file, window, cx)
+            },
+        )
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
