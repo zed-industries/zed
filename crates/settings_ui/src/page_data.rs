@@ -2618,7 +2618,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
     }
 
     vec![
-        SettingsPageItem::SectionHeader("Tabs"),
+        SettingsPageItem::SectionHeader("Indentation"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Size",
             description: "How many columns a tab should occupy",
@@ -2642,6 +2642,38 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 pick_mut: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.hard_tabs
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Auto Indent",
+            description: "Whether indentation should be adjusted based on the context whilst typing",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.auto_indent)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.auto_indent
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Auto Indent On Paste",
+            description: "Whether indentation of pasted content should be adjusted based on the context",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.auto_indent_on_paste
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.auto_indent_on_paste
                     })
                 },
             }),
@@ -2711,6 +2743,21 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }
                 .unimplemented(),
             ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Allow Rewrap",
+            description: "Controls where the `editor::Rewrap` action is allowed for this language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.allow_rewrap)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.allow_rewrap
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
@@ -3030,31 +3077,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
-        SettingsPageItem::SectionHeader("Auto-Close"),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Jsx Tag Auto Close",
-            description: "Whether to automatically close JSX tags",
-            field: Box::new(
-                SettingField {
-                    // TODO(settings_ui): this setting should just be a bool
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            match language.jsx_tag_auto_close.as_ref() {
-                                Some(s) => &s.enabled,
-                                None => &None,
-                            }
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-        }),
+        SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Autoclose",
             description: "Whether to automatically type closing characters for you. For example, when you type (, Zed will automatically add a closing ) at the correct position",
@@ -3105,6 +3128,31 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Jsx Tag Auto Close",
+            description: "Whether to automatically close JSX tags",
+            field: Box::new(
+                SettingField {
+                    // TODO(settings_ui): this setting should just be a bool
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            match language.jsx_tag_auto_close.as_ref() {
+                                Some(s) => &s.enabled,
+                                None => &None,
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("LSP"),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Enable Language Server",
             description: "Whether to use language servers to provide code intelligence",
             field: Box::new(SettingField {
@@ -3139,21 +3187,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 }
                 .unimplemented(),
             ),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Allow Rewrap",
-            description: "Controls where the `editor::Rewrap` action is allowed for this language",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.allow_rewrap)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.allow_rewrap
-                    })
-                },
-            }),
             metadata: None,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
@@ -3194,6 +3227,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Whitespaces",
             description: "Whether to show tabs and spaces in the editor",
@@ -3209,9 +3243,8 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             }),
             metadata: None,
         }),
-        SettingsPageItem::SectionHeader("Whitespace Map"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Space",
+            title: "Space Whitespace Indicator",
             description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
             field: Box::new(
                 SettingField {
@@ -3235,7 +3268,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Tab",
+            title: "Tab Whitespace Indicator",
             description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
             field: Box::new(
                 SettingField {
@@ -3251,6 +3284,78 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.whitespace_map.get_or_insert_default().tab
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Completions"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Completions On Input",
+            description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.show_completions_on_input
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_completions_on_input
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Completion Documentation",
+            description: "Whether to display inline and alongside documentation for items in the completions menu",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.show_completion_documentation
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_completion_documentation
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Completions",
+            description: "Controls how completions are processed for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.completions)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.completions
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Miscellaneous"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Debuggers",
+            description: "Preferred debuggers for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.debuggers)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.debuggers
                         })
                     },
                 }
@@ -3309,38 +3414,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Auto Indent",
-            description: "Whether indentation should be adjusted based on the context whilst typing",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.auto_indent)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.auto_indent
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Auto Indent On Paste",
-            description: "Whether indentation of pasted content should be adjusted based on the context",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.auto_indent_on_paste
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.auto_indent_on_paste
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
             title: "Tasks",
             description: "Task configuration for this language",
             field: Box::new(
@@ -3351,76 +3424,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
                             &mut language.tasks
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Completions On Input",
-            description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.show_completions_on_input
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.show_completions_on_input
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Show Completion Documentation",
-            description: "Whether to display inline and alongside documentation for items in the completions menu",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| {
-                        &language.show_completion_documentation
-                    })
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.show_completion_documentation
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Completions",
-            description: "Controls how completions are processed for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.completions)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.completions
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Debuggers",
-            description: "Preferred debuggers for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.debuggers)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.debuggers
                         })
                     },
                 }
