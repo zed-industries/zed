@@ -12,7 +12,7 @@ use util::ResultExt;
 use workspace::ModalView;
 
 actions!(
-    line_ending,
+    line_ending_selector,
     [
         /// Toggles the line ending selector modal.
         Toggle
