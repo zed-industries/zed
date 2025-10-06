@@ -883,12 +883,12 @@ impl GitPanel {
                 return Some(());
             }
 
-            let project = self.project.clone();
+            let project = self.project.downgrade();
             let repo_path = entry.repo_path;
-            let active_repository = self.active_repository.clone()?;
+            let active_repository = self.active_repository.as_ref()?.downgrade();
 
             cx.spawn(async move |_, cx| {
-                let file_path_str = repo_path.0.to_string_lossy();
+                let file_path_str = repo_path.0.display(PathStyle::Posix);
 
                 let repo_root = active_repository.read_with(cx, |repository, _| {
                     repository.snapshot().work_directory_abs_path.clone()
