@@ -606,7 +606,7 @@ impl PickerDelegate for FontPickerDelegate {
     }
 }
 
-fn font_picker(
+pub fn font_picker(
     current_font: SharedString,
     on_font_changed: impl Fn(SharedString, &mut App) + 'static,
     window: &mut Window,

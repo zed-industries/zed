@@ -23,8 +23,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Switch, SwitchColor, TreeViewItem,
-    prelude::*,
+    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, PopoverMenu, Switch,
+    SwitchColor, TreeViewItem, prelude::*,
 };
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
@@ -2650,9 +2650,9 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<CloseWindowWhenNoItems>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
-        .add_renderer::<settings::FontFamilyName>(|settings_field, file, metadata, _, cx| {
+        .add_renderer::<settings::FontFamilyName>(|settings_field, file, _, window, cx| {
             // todo(settings_ui): We need to pass in a validator for this to ensure that users that type in invalid font names
-            render_text_field(settings_field.clone(), file, metadata, cx)
+            render_font_picker(settings_field.clone(), file, window, cx)
         })
         .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
             // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
@@ -2995,6 +2995,16 @@ impl SettingsUiFile {
 
 impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let font_family_cache = theme::FontFamilyCache::global(cx);
+
+        cx.spawn(async move |this, cx| {
+            font_family_cache.prefetch(cx).await;
+            this.update(cx, |_, cx| {
+                cx.notify();
+            })
+        })
+        .detach();
+
         let current_file = SettingsUiFile::User;
         let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -3568,6 +3578,66 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
             }
         })
         .color(SwitchColor::Accent)
+        .into_any_element()
+}
+
+fn render_font_picker(
+    field: SettingField<settings::FontFamilyName>,
+    file: SettingsUiFile,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let current_value = SettingsStore::global(cx)
+        .get_value_from_file(file.to_settings(), field.pick)
+        .1
+        .clone();
+
+    let font_picker = cx.new(|cx| {
+        onboarding::font_picker(
+            current_value.clone().into(),
+            move |font_name, cx| {
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(font_name.into());
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            },
+            window,
+            cx,
+        )
+    });
+
+    div()
+        .child(
+            PopoverMenu::new("font-picker")
+                .menu({
+                    let font_picker = font_picker.clone();
+                    move |_window, _cx| Some(font_picker.clone())
+                })
+                .trigger(
+                    ButtonLike::new("font-family-button")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .full_width()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(Label::new(current_value))
+                                .child(
+                                    Icon::new(IconName::ChevronUpDown)
+                                        .color(Color::Muted)
+                                        .size(IconSize::XSmall),
+                                ),
+                        ),
+                )
+                .full_width(true)
+                .anchor(gpui::Corner::TopLeft)
+                .offset(gpui::Point {
+                    x: px(0.0),
+                    y: px(4.0),
+                })
+                .with_handle(ui::PopoverMenuHandle::default()),
+        )
         .into_any_element()
 }
 

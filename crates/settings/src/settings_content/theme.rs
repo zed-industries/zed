@@ -1,5 +1,5 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight};
+use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, SharedString};
 use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -206,6 +206,18 @@ pub struct FontFamilyName(pub Arc<str>);
 impl AsRef<str> for FontFamilyName {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<SharedString> for FontFamilyName {
+    fn from(value: SharedString) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<FontFamilyName> for SharedString {
+    fn from(value: FontFamilyName) -> Self {
+        SharedString::new(value.0)
     }
 }
 

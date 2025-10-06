@@ -1,4 +1,4 @@
-pub use crate::welcome::ShowWelcome;
+pub use crate::{editing_page::font_picker, welcome::ShowWelcome};
 use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
 use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;

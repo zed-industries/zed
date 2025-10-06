@@ -14370,6 +14370,7 @@ dependencies = [
  "language",
  "menu",
  "node_runtime",
+ "onboarding",
  "paths",
  "pretty_assertions",
  "project",
