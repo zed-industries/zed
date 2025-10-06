@@ -395,7 +395,7 @@ impl WorktreeStore {
                                 // Otherwise, the FS watcher would do it on the `RootUpdated` event,
                                 // but with a noticeable delay, so we handle it proactively.
                                 local.update_abs_path_and_refresh(
-                                    Some(SanitizedPath::new_arc(&abs_new_path)),
+                                    SanitizedPath::new_arc(&abs_new_path),
                                     cx,
                                 );
                                 Task::ready(Ok(this.root_entry().cloned()))
