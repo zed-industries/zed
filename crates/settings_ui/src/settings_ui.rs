@@ -5,9 +5,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    ScrollHandle, Stateful, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, px, size, uniform_list,
+    App, AppContext as _, Context, Div, Entity, FontWeight, Global, IntoElement, ReadGlobal as _,
+    Render, ScrollHandle, Stateful, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowHandle, WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -379,15 +379,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Font Weight",
-                //     description: "Font weight for editor text (100-900)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_font_weight,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Font Weight",
+                    description: "Font weight for editor text (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_font_weight,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Line Height",
                     description: "Line height for editor text",
@@ -416,15 +416,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "UI Font Weight",
-                //     description: "Font weight for UI elements (100-900)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.ui_font_weight,
-                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "UI Font Weight",
+                    description: "Font weight for UI elements (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.ui_font_weight,
+                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Base Keymap",
@@ -2707,6 +2707,9 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         });
 

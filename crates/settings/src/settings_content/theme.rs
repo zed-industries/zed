@@ -31,7 +31,8 @@ pub struct ThemeSettingsContent {
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
-    pub ui_font_weight: Option<f32>,
+    #[schemars(default = "default_buffer_font_weight")]
+    pub ui_font_weight: Option<FontWeight>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<FontFamilyName>,
@@ -44,6 +45,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_size: Option<f32>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
+    #[schemars(default = "default_buffer_font_weight")]
     pub buffer_font_weight: Option<FontWeight>,
     /// The buffer's line height.
     #[serde(default)]
@@ -94,6 +96,10 @@ fn default_font_features() -> Option<FontFeatures> {
 
 fn default_font_fallbacks() -> Option<FontFallbacks> {
     Some(FontFallbacks::default())
+}
+
+fn default_buffer_font_weight() -> Option<FontWeight> {
+    Some(FontWeight::default())
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
@@ -1111,6 +1117,48 @@ mod tests {
                 .unwrap()
                 .to_string()
                 .contains("buffer_line_height.custom must be at least 1.0")
+        );
+    }
+
+    #[test]
+    fn test_buffer_font_weight_schema_has_default() {
+        use schemars::schema_for;
+
+        let schema = schema_for!(ThemeSettingsContent);
+        let schema_value = serde_json::to_value(&schema).unwrap();
+
+        let properties = &schema_value["properties"];
+        let buffer_font_weight = &properties["buffer_font_weight"];
+
+        assert!(
+            buffer_font_weight.get("default").is_some(),
+            "buffer_font_weight should have a default value in the schema"
+        );
+
+        let default_value = &buffer_font_weight["default"];
+        assert_eq!(
+            default_value.as_f64(),
+            Some(FontWeight::NORMAL.0 as f64),
+            "buffer_font_weight default should be 400.0 (FontWeight::NORMAL)"
+        );
+
+        let defs = &schema_value["$defs"];
+        let font_weight_def = &defs["FontWeight"];
+
+        assert_eq!(
+            font_weight_def["minimum"].as_f64(),
+            Some(FontWeight::THIN.0 as f64),
+            "FontWeight should have minimum of 100.0"
+        );
+        assert_eq!(
+            font_weight_def["maximum"].as_f64(),
+            Some(FontWeight::BLACK.0 as f64),
+            "FontWeight should have maximum of 900.0"
+        );
+        assert_eq!(
+            font_weight_def["default"].as_f64(),
+            Some(FontWeight::NORMAL.0 as f64),
+            "FontWeight should have default of 400.0"
         );
     }
 }

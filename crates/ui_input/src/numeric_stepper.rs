@@ -6,7 +6,7 @@ use std::{
 };
 
 use editor::{Editor, EditorStyle};
-use gpui::{ClickEvent, Entity, FocusHandle, Focusable, Modifiers};
+use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
 use ui::{IconButtonShape, prelude::*};
 
@@ -43,6 +43,24 @@ pub trait NumericStepperType:
     fn small_step() -> Self;
     fn min_value() -> Self;
     fn max_value() -> Self;
+}
+
+impl NumericStepperType for gpui::FontWeight {
+    fn default_step() -> Self {
+        FontWeight(10.0)
+    }
+    fn large_step() -> Self {
+        FontWeight(50.0)
+    }
+    fn small_step() -> Self {
+        FontWeight(5.0)
+    }
+    fn min_value() -> Self {
+        gpui::FontWeight::THIN
+    }
+    fn max_value() -> Self {
+        gpui::FontWeight::BLACK
+    }
 }
 
 macro_rules! impl_numeric_stepper_int {

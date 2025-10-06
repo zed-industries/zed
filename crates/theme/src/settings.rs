@@ -817,7 +817,7 @@ impl settings::Settings for ThemeSettings {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
                 features: content.ui_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.ui_font_weight.unwrap()),
+                weight: clamp_font_weight(content.ui_font_weight.unwrap().0),
                 style: Default::default(),
             },
             buffer_font: Font {
