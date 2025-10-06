@@ -733,7 +733,19 @@ pub enum DockSide {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
     Always,

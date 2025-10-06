@@ -1430,14 +1430,217 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Default Width",
+                    description: "Default width of the project panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide .gitignore",
+                    description: "Whether to hide the gitignore entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_gitignore
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_gitignore
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Entry Spacing",
+                    description: "Spacing between worktree entries in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.entry_spacing
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .entry_spacing
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Whether to show folder icons or chevrons for directories in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Folder Icons",
+                    description: "Whether to show folder icons or chevrons for directories in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.folder_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .folder_icons
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Whether to show the git status in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Indent Size",
+                    description: "Amount of indentation for nested items",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.indent_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .indent_size
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Reveal Entries",
+                    description: "Whether to reveal it in the project panel automatically when a corresponding project entry becomes active",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.auto_reveal_entries
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .auto_reveal_entries
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Starts Open",
+                    description: "Whether the project panel should open on startup",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.starts_open
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .starts_open
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Fold Directories",
+                    description: "Whether to fold directories automatically and show compact folders when a directory has only one subdirectory inside",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.auto_fold_dirs
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .auto_fold_dirs
+                        },
+                    }),
+                    metadata: None,
+                }),
                 // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Project Panel Default Width",
-                //     description: "Default width of the project panel in pixels",
+                //     title: "Scrollbar Show",
+                //     description: "When to show the scrollbar in the project panel",
                 //     field: Box::new(SettingField {
                 //         pick: |settings_content| {
                 //             if let Some(project_panel) = &settings_content.project_panel {
-                //                 &project_panel.default_width
+                //                 if let Some(scrollbar) = &project_panel.scrollbar {
+                //                     &scrollbar.show
+                //                 } else {
+                //                     &None
+                //                 }
                 //             } else {
                 //                 &None
                 //             }
@@ -1446,11 +1649,117 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //             &mut settings_content
                 //                 .project_panel
                 //                 .get_or_insert_default()
-                //                 .default_width
+                //                 .scrollbar
                 //         },
                 //     }),
                 //     metadata: None,
                 // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Diagnostics",
+                    description: "Which files containing diagnostic errors/warnings to mark in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.show_diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .show_diagnostics
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Sticky Scroll",
+                    description: "Whether to stick parent directories at top of the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.sticky_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .sticky_scroll
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Indent Guides Show",
+                //     description: "When to show indent guides in the project panel",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(project_panel) = &settings_content.project_panel {
+                //                 if let Some(indent_guides) = &project_panel.indent_guides {
+                //                     &indent_guides.show
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .project_panel
+                //                 .get_or_insert_default()
+                //                 .indent_guides
+                //                 .get_or_insert_default()
+                //                 .show
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Drag and Drop",
+                    description: "Whether to enable drag-and-drop operations in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.drag_and_drop
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .drag_and_drop
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hide Root",
+                    description: "Whether to hide the root entry when only one folder is open in the window",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.hide_root
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .hide_root
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Terminal"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Dock",
