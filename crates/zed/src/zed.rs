@@ -4517,6 +4517,7 @@ mod tests {
                 "feedback",
                 "file_finder",
                 "git",
+                "git_graph_panel",
                 "git_onboarding",
                 "git_panel",
                 "go_to_line",

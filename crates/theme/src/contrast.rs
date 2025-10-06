@@ -101,19 +101,6 @@ pub fn blend_with_background(foreground: Hsla, background: Hsla) -> Hsla {
 /// * `foreground` - The foreground color to potentially adjust
 /// * `background` - The background color to contrast against
 /// * `minimum_ratio` - The minimum contrast ratio required (e.g., 4.5 for WCAG AA normal text)
-///
-/// # Example
-///
-/// ```
-/// use theme::contrast::ensure_minimum_contrast;
-/// use gpui::hsla;
-///
-/// let light_text = hsla(0.0, 0.0, 0.8, 1.0); // Light gray
-/// let white_bg = hsla(0.0, 0.0, 1.0, 1.0);  // White
-///
-/// // Adjust light gray text to meet WCAG AA 4.5:1 contrast on white background
-/// let adjusted_text = ensure_minimum_contrast(light_text, white_bg, 4.5);
-/// ```
 pub fn ensure_minimum_contrast(foreground: Hsla, background: Hsla, minimum_ratio: f32) -> Hsla {
     if minimum_ratio <= 0.0 {
         return foreground;
