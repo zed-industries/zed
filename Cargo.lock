@@ -6834,6 +6834,7 @@ dependencies = [
  "indexmap 2.9.0",
  "serde",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
