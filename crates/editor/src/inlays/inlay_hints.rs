@@ -5,7 +5,6 @@ use std::{
 
 use collections::{HashMap, HashSet};
 use gpui::{App, Task};
-use itertools::Itertools as _;
 use language::{
     BufferRow,
     language_settings::{InlayHintKind, InlayHintSettings, language_settings},
@@ -463,9 +462,6 @@ impl Editor {
                                                             inlay_hints
                                                                 .allowed_hint_kinds
                                                                 .contains(&new_hint.kind)
-                                                        })
-                                                        .dedup_by(|(_, hint_a), (_, hint_b)| {
-                                                            hint_a == hint_b
                                                         })
                                                         .collect::<Vec<_>>()
                                                 },

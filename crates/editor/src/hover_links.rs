@@ -1,7 +1,8 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, Navigated, PointForPosition, SelectPhase,
-    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
+    Navigated, PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback,
+    scroll::ScrollAmount,
 };
 use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
