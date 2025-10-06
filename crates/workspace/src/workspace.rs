@@ -103,7 +103,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
-use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
+use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
@@ -1435,8 +1435,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                ThemeSettings::reload_current_theme(cx);
-                ThemeSettings::reload_current_icon_theme(cx);
+                GlobalTheme::reload_theme(cx);
+                GlobalTheme::reload_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {

@@ -500,7 +500,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let all_languages = &content.project.all_languages;
 
         fn load_from_content(settings: LanguageSettingsContent) -> LanguageSettings {
