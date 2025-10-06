@@ -1298,7 +1298,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         }),
                     }),
                 ];
+
+                items.push(SettingsPageItem::SectionHeader("Default Language Settings"));
                 items.extend(language_settings_data());
+
                 items
             },
         },
