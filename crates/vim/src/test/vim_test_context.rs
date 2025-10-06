@@ -106,7 +106,10 @@ impl VimTestContext {
                     toolbar.add_item(project_search_bar, window, cx);
                 })
             });
+            let workspace_weak = workspace.weak_handle();
             workspace.status_bar().update(cx, |status_bar, cx| {
+                let vim_command_line = cx.new(|cx| VimCommandLine::new(workspace_weak, window, cx));
+                status_bar.add_left_item(vim_command_line, window, cx);
                 let vim_mode_indicator = cx.new(|cx| ModeIndicator::new(window, cx));
                 status_bar.add_right_item(vim_mode_indicator, window, cx);
             });

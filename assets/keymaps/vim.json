@@ -1,6 +1,13 @@
 [
   {
-    "context": "VimControl && !menu",
+    "context": "VimCommandLine",
+    "bindings": {
+      "enter": "vim::ConfirmCommand",
+      "escape": "editor::Cancel"
+    }
+  },
+  {
+    "context": "VimControl && !menu && !VimCommandLine",
     "bindings": {
       "i": ["vim::PushObject", { "around": false }],
       "a": ["vim::PushObject", { "around": true }],
@@ -233,7 +240,7 @@
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
       "ctrl-[": "editor::Cancel",
-      ":": "command_palette::Toggle",
+      ":": "vim::CountCommand",
       "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
       "d": "vim::PushDelete",
@@ -266,7 +273,7 @@
     }
   },
   {
-    "context": "VimControl && VimCount",
+    "context": "VimControl && VimCount && !VimCommandLine",
     "bindings": {
       "0": ["vim::Number", 0],
       ":": "vim::CountCommand",
@@ -425,7 +432,7 @@
     "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
     "bindings": {
       ";": "vim::HelixCollapseSelection",
-      ":": "command_palette::Toggle",
+      ":": "vim::CountCommand",
       "m": "vim::PushHelixMatch",
       "s": "vim::HelixSelectRegex",
       "]": ["vim::PushHelixNext", { "around": true }],
@@ -811,7 +818,7 @@
     }
   },
   {
-    "context": "VimControl || !Editor && !Terminal",
+    "context": "(VimControl || !Editor && !Terminal) && !VimCommandLine",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -952,7 +959,7 @@
     }
   },
   {
-    "context": "Editor && mode == auto_height && VimControl",
+    "context": "Editor && mode == auto_height && VimControl && !VimCommandLine",
     "bindings": {
       // TODO: Implement search
       "/": null,
@@ -972,7 +979,7 @@
     }
   },
   {
-    "context": "GitCommit > Editor && VimControl && vim_mode == normal",
+    "context": "GitCommit > Editor && VimControl && vim_mode == normal && !VimCommandLine",
     "bindings": {
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel"
@@ -987,7 +994,7 @@
     }
   },
   {
-    "context": "MessageEditor > Editor && VimControl",
+    "context": "MessageEditor > Editor && VimControl && !VimCommandLine",
     "bindings": {
       "enter": "agent::Chat"
     }

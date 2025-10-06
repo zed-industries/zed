@@ -23,7 +23,7 @@ pub use vim_test_context::*;
 use indoc::indoc;
 use search::BufferSearchBar;
 
-use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
+use crate::{PushSneak, PushSneakBackward, Vim, insert::NormalBefore, motion, state::Mode};
 
 use util_macros::perf;
 
@@ -2299,4 +2299,137 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         },
         Mode::Normal,
     );
+}
+
+#[perf]
+#[gpui::test]
+async fn test_command_line_activation(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhello world", Mode::Normal);
+
+    // Verify command line activates when pressing :
+    cx.simulate_keystrokes(":");
+    cx.run_until_parked();
+
+    // Verify command line is active
+    assert!(cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+}
+
+#[perf]
+#[gpui::test]
+async fn test_command_line_text_entry(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhello world", Mode::Normal);
+
+    cx.simulate_keystrokes(": w");
+    cx.run_until_parked();
+
+    // Verify command line is still active after typing
+    assert!(cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+}
+
+#[perf]
+#[gpui::test]
+async fn test_command_line_dismiss_on_escape(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhello world", Mode::Normal);
+
+    cx.simulate_keystrokes(": w");
+    cx.run_until_parked();
+    assert!(cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+
+    // Escape should dismiss command line
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    assert!(!cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+
+    // Should still be in normal mode at same position
+    cx.assert_state("ˇhello world", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_command_line_dismiss_on_backspace(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhello world", Mode::Normal);
+
+    cx.simulate_keystrokes(":");
+    cx.run_until_parked();
+    assert!(cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+
+    // Backspace should dismiss command line when deleting the :
+    cx.simulate_keystrokes("backspace");
+    cx.run_until_parked();
+
+    assert!(!cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+
+    cx.assert_state("ˇhello world", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_command_line_write_command(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state("ˇhello world", Mode::Normal);
+
+    // Execute :w command
+    cx.simulate_keystrokes(": w enter");
+    cx.run_until_parked();
+
+    // Command line should be dismissed after execution
+    assert!(!cx.workspace(|_workspace, _window, cx| {
+        Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+            .map(|cl| cl.read(cx).active)
+            .unwrap_or(false)
+    }));
+
+    // Should still be in normal mode at same position
+    assert_eq!(cx.mode(), Mode::Normal);
+    assert_eq!(cx.buffer_text(), "hello world\n");
 }

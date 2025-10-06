@@ -234,6 +234,7 @@ pub struct VimGlobals {
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
     pub focused_vim: Option<WeakEntity<Vim>>,
+    pub command_line: Option<WeakEntity<crate::command_line::VimCommandLine>>,
 
     pub marks: HashMap<EntityId, Entity<MarksState>>,
 }
