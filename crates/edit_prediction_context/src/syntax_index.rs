@@ -362,7 +362,9 @@ impl SyntaxIndex {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => self.update_buffer(buffer, cx),
+            BufferEvent::Edited |
+            // paths are cached and so should be updated
+            BufferEvent::FileHandleChanged => self.update_buffer(buffer, cx),
             _ => {}
         }
     }
