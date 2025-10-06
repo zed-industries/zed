@@ -1175,6 +1175,208 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Scrollbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show",
+                    description: "When to show the scrollbar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursors",
+                    description: "Whether to show cursor positions in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.cursors
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .cursors
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Diff",
+                    description: "Whether to show git diff indicators in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.git_diff
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .git_diff
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Results",
+                    description: "Whether to show buffer search result indicators in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.search_results
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .search_results
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Selected Text",
+                    description: "Whether to show selected text occurrences in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.selected_text
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .selected_text
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Selected Symbol",
+                    description: "Whether to show selected symbol occurrences in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.selected_symbol
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .selected_symbol
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Diagnostics",
+                    description: "Which diagnostic indicators to show in the scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .diagnostics
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Horizontal Scrollbar",
+                    description: "When false, forcefully disables the horizontal scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                if let Some(axes) = &scrollbar.axes {
+                                    &axes.horizontal
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .axes
+                                .get_or_insert_default()
+                                .horizontal
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Vertical Scrollbar",
+                    description: "When false, forcefully disables the vertical scrollbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                if let Some(axes) = &scrollbar.axes {
+                                    &axes.vertical
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .scrollbar
+                                .get_or_insert_default()
+                                .axes
+                                .get_or_insert_default()
+                                .vertical
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Tab Bar",

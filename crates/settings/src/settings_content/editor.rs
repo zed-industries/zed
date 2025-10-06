@@ -460,7 +460,19 @@ pub enum MinimapThumbBorder {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
