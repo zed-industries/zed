@@ -5,19 +5,20 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Global, IntoElement, ReadGlobal as _, Render,
-    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    App, AppContext as _, Context, Div, Entity, FontWeight, Global, IntoElement, ReadGlobal as _,
+    Render, ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
     WindowOptions, actions, div, point, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CursorShape, OnLastWindowClosed,
+    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
     RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
 };
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
+    num::NonZeroU32,
     ops::Range,
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
@@ -26,6 +27,7 @@ use ui::{
     ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, PopoverMenu, Switch,
     SwitchColor, TreeViewItem, prelude::*,
 };
+use ui_input::{NumericStepper, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -367,25 +369,24 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): We need to implement a numeric stepper for these
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Font Size",
-                //     description: "Font size for editor text",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_font_size,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
-                //     }),
-                //     metadata: None,
-                // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Font Weight",
-                //     description: "Font weight for editor text (100-900)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_font_weight,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Font Size",
+                    description: "Font size for editor text",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_font_size,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Buffer Font Weight",
+                    description: "Font weight for editor text (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.buffer_font_weight,
+                        pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Line Height",
                     description: "Line height for editor text",
@@ -404,25 +405,24 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): We need to implement a numeric stepper for these
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "UI Font Size",
-                //     description: "Font size for UI elements",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.ui_font_size,
-                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
-                //     }),
-                //     metadata: None,
-                // }),
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "UI Font Weight",
-                //     description: "Font weight for UI elements (100-900)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.ui_font_weight,
-                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "UI Font Size",
+                    description: "Font size for UI elements",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.ui_font_size,
+                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "UI Font Weight",
+                    description: "Font weight for UI elements (100-900)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.ui_font_weight,
+                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Base Keymap",
@@ -493,16 +493,17 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
-                // todo(settings_ui): numeric stepper and validator is needed for this
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Unnecessary Code Fade",
-                //     description: "How much to fade out unused code (0.0 - 0.9)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
-                //         pick_mut: |settings_content| &mut settings_content.theme.unnecessary_code_fade,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Unnecessary Code Fade",
+                    description: "How much to fade out unused code (0.0 - 0.9)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.unnecessary_code_fade,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.theme.unnecessary_code_fade
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
                     description: "How to highlight the current line",
@@ -623,25 +624,41 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Needs numeric stepper + option within an option
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
-                //     description: "Left padding for cenetered layout",
+                //     description: "Left padding for centered layout",
                 //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick: |settings_content| {
+                //             &settings_content.workspace.centered_layout.left_padding
+                //         },
                 //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.bottom_dock_layout
+                //             &mut settings_content.workspace.centered_layout.left_padding
                 //         },
                 //     }),
                 //     metadata: None,
                 // }),
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Right Padding",
-                //     description: "Right padding for cenetered layout",
+                //     description: "Right padding for centered layout",
                 //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick: |settings_content| {
+                //             if let Some(centered_layout) =
+                //                 &settings_content.workspace.centered_layout
+                //             {
+                //                 &centered_layout.right_padding
+                //             } else {
+                //                 &None
+                //             }
+                //         },
                 //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.bottom_dock_layout
+                //             if let Some(mut centered_layout) =
+                //                 settings_content.workspace.centered_layout
+                //             {
+                //                 &mut centered_layout.right_padding
+                //             } else {
+                //                 &mut None
+                //             }
                 //         },
                 //     }),
                 //     metadata: None,
@@ -664,15 +681,19 @@ fn user_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Tab Size",
-                //     description: "How many columns a tab should occupy",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.tab_size,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.tab_size,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Size",
+                    description: "How many columns a tab should occupy",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.project.all_languages.defaults.tab_size
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project.all_languages.defaults.tab_size
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hard Tabs",
                     description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
@@ -837,36 +858,50 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Vertical Scroll Margin",
-                //     description: "The number of lines to keep above/below the cursor when auto-scrolling",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.vertical_scroll_margin,
-                //         pick_mut: |settings_content| &mut settings_content.editor.vertical_scroll_margin,
-                //     }),
-                //     metadata: None,
-                // }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Horizontal Scroll Margin",
-                //     description: "The number of characters to keep on either side when scrolling with the mouse",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.horizontal_scroll_margin,
-                //         pick_mut: |settings_content| &mut settings_content.editor.horizontal_scroll_margin,
-                //     }),
-                //     metadata: None,
-                // }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Scroll Sensitivity",
-                //     description: "Scroll sensitivity multiplier",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.scroll_sensitivity,
-                //         pick_mut: |settings_content| &mut settings_content.editor.scroll_sensitivity,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Vertical Scroll Margin",
+                    description: "The number of lines to keep above/below the cursor when auto-scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.vertical_scroll_margin,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.vertical_scroll_margin
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Horizontal Scroll Margin",
+                    description: "The number of characters to keep on either side when scrolling with the mouse",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.horizontal_scroll_margin,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.horizontal_scroll_margin
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Sensitivity",
+                    description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.scroll_sensitivity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.scroll_sensitivity
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Fast Scroll Sensitivity",
+                    description: "Fast Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.fast_scroll_sensitivity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.fast_scroll_sensitivity
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Autoscroll On Clicks",
                     description: "Whether to scroll when clicking near the edge of the visible text area",
@@ -1117,16 +1152,18 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Hover Popover Delay",
-                //     description: "Time to wait in milliseconds before showing the informational hover box",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.hover_popover_delay,
-                //         pick_mut: |settings_content| &mut settings_content.editor.hover_popover_delay,
-                //     }),
-                //     metadata: None,
-                // }),
+                // todo(settings ui): add units to this numeric stepper
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hover Popover Delay",
+                    description: "Time to wait in milliseconds before showing the informational hover box",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.hover_popover_delay,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.hover_popover_delay
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Code Actions"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Code Actions",
@@ -1713,7 +1750,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Figure out the right default for this value in default.json
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Gutter Debounce",
                 //     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
@@ -1753,6 +1790,84 @@ fn user_settings_data() -> Vec<SettingsPage> {
                                 .inline_blame
                                 .get_or_insert_default()
                                 .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Delay",
+                    description: "The delay after which the inline blame information is shown",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.delay_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .delay_ms
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Padding",
+                    description: "Padding between the end of the source line and the start of the inline blame in columns",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.padding
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .padding
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Min Column",
+                    description: "The minimum column number to show the inline blame information at",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.min_column
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .min_column
                         },
                     }),
                     metadata: None,
@@ -2722,6 +2837,24 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<f32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<u32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<u64>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<CodeFade>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
         });
 
     // todo(settings_ui): Figure out how we want to handle discriminant unions
@@ -3638,6 +3771,27 @@ fn render_font_picker(
                 })
                 .with_handle(ui::PopoverMenuHandle::default()),
         )
+        .into_any_element()
+}
+
+fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
+    field: SettingField<T>,
+    file: SettingsUiFile,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+
+    NumericStepper::new("numeric_stepper", value, window, cx)
+        .on_change({
+            move |value, _window, cx| {
+                let value = *value;
+                update_settings_file(file.clone(), cx, move |settings, _cx| {
+                    *(field.pick_mut)(settings) = Some(value);
+                })
+                .log_err(); // todo(settings_ui) don't log err
+            }
+        })
         .into_any_element()
 }
 
