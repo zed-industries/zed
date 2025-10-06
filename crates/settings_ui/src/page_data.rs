@@ -2889,8 +2889,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                             &mut language.format_on_save
                         })
                     },
-                }
-                .unimplemented(),
+                },
             ),
             metadata: None,
         }),
@@ -2987,25 +2986,22 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allowed",
             description: "Enables or disables formatting with Prettier for a given language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            if let Some(prettier) = &language.prettier {
-                                &prettier.allowed
-                            } else {
-                                &None
-                            }
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.prettier.get_or_insert_default().allowed
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.allowed
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().allowed
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
@@ -3130,25 +3126,22 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
             description: "Whether to automatically close JSX tags",
-            field: Box::new(
-                SettingField {
-                    // TODO(settings_ui): this setting should just be a bool
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            match language.jsx_tag_auto_close.as_ref() {
-                                Some(s) => &s.enabled,
-                                None => &None,
-                            }
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                // TODO(settings_ui): this setting should just be a bool
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        match language.jsx_tag_auto_close.as_ref() {
+                            Some(s) => &s.enabled,
+                            None => &None,
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SectionHeader("LSP"),
