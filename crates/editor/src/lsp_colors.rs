@@ -2,19 +2,19 @@ use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba, ShapedLine, TextRun};
+use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
-use multi_buffer::{Anchor, AnchorRangeExt};
+use multi_buffer::Anchor;
 use project::{DocumentColor, lsp_store::LspFetchStrategy};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
-use ui::{App, Context, SharedString, Window};
+use ui::{App, Context, Window};
 use util::post_inc;
 
 use crate::{
-    DisplayPoint, Editor, EditorSettings, EditorSnapshot, EditorStyle, InlayId, InlaySplice,
-    RangeToAnchorExt, display_map::Inlay, editor_settings::DocumentColorsRenderMode,
+    DisplayPoint, Editor, EditorSettings, EditorSnapshot, InlayId, InlaySplice, RangeToAnchorExt,
+    display_map::Inlay, editor_settings::DocumentColorsRenderMode,
 };
 
 #[derive(Debug)]
@@ -116,7 +116,6 @@ impl LspColorData {
     pub fn editor_display_highlights(
         &self,
         snapshot: &EditorSnapshot,
-        style: &EditorStyle,
     ) -> (DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>) {
         let render_mode = self.render_mode;
         let highlights = if render_mode == DocumentColorsRenderMode::None

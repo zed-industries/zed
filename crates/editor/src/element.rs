@@ -3292,7 +3292,6 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
-        document_color_ranges: &[(Range<DisplayPoint>, Hsla)],
         base_background: Hsla,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
@@ -3314,10 +3313,7 @@ impl EditorElement {
             })
         });
         let mut per_row_map = vec![Vec::new(); rows.len()];
-        for (range, color) in highlight_iter
-            .chain(selection_iter)
-            .chain(document_color_ranges.iter().cloned())
-        {
+        for (range, color) in highlight_iter.chain(selection_iter) {
             let covered_rows = if range.end.column() == 0 {
                 cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
             } else {
@@ -8651,7 +8647,7 @@ impl Element for EditorElement {
                         .read(cx)
                         .colors
                         .as_ref()
-                        .map(|colors| colors.editor_display_highlights(&snapshot, &style));
+                        .map(|colors| colors.editor_display_highlights(&snapshot));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -8799,14 +8795,20 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let merged_highlighted_ranges =
+                        if let Some((_, colors)) = document_colors.as_ref() {
+                            &highlighted_ranges
+                                .clone()
+                                .into_iter()
+                                .chain(colors.clone())
+                                .collect()
+                        } else {
+                            &highlighted_ranges
+                        };
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
-                        &highlighted_ranges,
-                        &document_colors
-                            .as_ref()
-                            .map(|colors| colors.1.clone())
-                            .unwrap_or_default(),
+                        &merged_highlighted_ranges,
                         self.style.background,
                     );
 
@@ -11190,7 +11192,6 @@ mod tests {
                 DisplayRow(0)..DisplayRow(5),
                 &selections,
                 &[],
-                &[],
                 base_bg,
             );
 
@@ -11239,7 +11240,6 @@ mod tests {
             let result = EditorElement::bg_segments_per_row(
                 DisplayRow(0)..DisplayRow(4),
                 &selections,
-                &[],
                 &[],
                 base_bg,
             );
