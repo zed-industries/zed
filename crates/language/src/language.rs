@@ -1124,8 +1124,7 @@ pub struct BracketPair {
 pub struct LanguageId(usize);
 
 impl LanguageId {
-    // todo! put back pub(crate)
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(NEXT_LANGUAGE_ID.fetch_add(1, SeqCst))
     }
 }
