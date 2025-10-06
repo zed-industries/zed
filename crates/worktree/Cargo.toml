@@ -21,6 +21,7 @@ test-support = [
     "text/test-support",
     "util/test-support",
 ]
+profile-with-tracy = ["dep:tracy-client"]
 
 [dependencies]
 anyhow.workspace = true
@@ -38,7 +39,6 @@ parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
 profiling.workspace = true
-tracy-client-sys.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -47,6 +47,7 @@ smallvec.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+tracy-client = { workspace = true, optional = true }
 util.workspace = true
 workspace-hack.workspace = true
 

@@ -25,6 +25,7 @@ test-support = [
     "dap/test-support",
     "dap_adapters/test-support",
 ]
+profile-with-tracy = ["worktree/profile-with-tracy"]
 
 [dependencies]
 aho-corasick.workspace = true
@@ -61,6 +62,7 @@ parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
 prettier.workspace = true
+profiling.workspace = true
 rand.workspace = true
 regex.workspace = true
 remote.workspace = true

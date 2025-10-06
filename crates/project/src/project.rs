@@ -1000,6 +1000,7 @@ impl Project {
         AllAgentServersSettings::register(cx);
     }
 
+    #[profiling::function]
     pub fn init(client: &Arc<Client>, cx: &mut App) {
         connection_manager::init(client.clone(), cx);
         Self::init_settings(cx);

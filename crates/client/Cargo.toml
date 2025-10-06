@@ -37,6 +37,7 @@ log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
+profiling.workspace = true
 rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true

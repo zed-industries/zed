@@ -48,7 +48,7 @@ use std::{
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
-    ffi::{CString, OsStr},
+    ffi::OsStr,
     fmt,
     future::Future,
     mem::{self},
@@ -3083,25 +3083,15 @@ impl language::LocalFile for File {
         self.worktree.read(cx).absolutize(&self.path)
     }
 
+    #[profiling::function]
     fn load(&self, cx: &App) -> Task<Result<String>> {
-        profiling::scope!("File::load outer");
-        dbg!("File::load outer");
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
 
-        cx.background_spawn(async move {
-            dbg!("File::load inner");
-            let name = CString::new("Fiber: load file").unwrap();
-            unsafe {
-                tracy_client_sys::___tracy_fiber_enter(name.as_ptr());
-            }
-            let content = fs.load(&abs_path).await;
-            unsafe {
-                tracy_client_sys::___tracy_fiber_leave();
-            }
-            content
-        })
+        cx.background_spawn(tracy_client::fiber!("File::load", async move {
+            fs.load(&abs_path).await
+        }))
     }
 
     #[profiling::function]
@@ -3109,7 +3099,9 @@ impl language::LocalFile for File {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_spawn(async move { fs.load_bytes(&abs_path).await })
+        cx.background_spawn(tracy_client::fiber!("File::load_bytes", async move {
+            fs.load_bytes(&abs_path).await
+        }))
     }
 }
 

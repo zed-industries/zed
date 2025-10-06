@@ -53,6 +53,7 @@ parse_int.workspace = true
 paths.workspace = true
 picker.workspace = true
 pretty_assertions.workspace = true
+profiling.workspace = true
 project.workspace = true
 rpc.workspace = true
 schemars.workspace = true

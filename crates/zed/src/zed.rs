@@ -137,6 +137,7 @@ actions!(
     ]
 );
 
+#[profiling::function]
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -1222,6 +1223,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
         .detach();
 }
 
+#[profiling::function]
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
@@ -1329,6 +1331,7 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
+#[profiling::function]
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,

@@ -1317,6 +1317,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> String {
     }
 }
 
+#[profiling::function]
 fn load_embedded_fonts(cx: &App) {
     let asset_source = cx.asset_source();
     let font_paths = asset_source.list("fonts").unwrap();
@@ -1399,10 +1400,12 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
 }
 
 /// Spawns a background task to load the user themes from the themes directory.
+#[profiling::function]
 fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
         async move |cx| {
+            profiling::scope!("load_user_themes_in_background");
             if let Some(theme_registry) = cx.update(|cx| ThemeRegistry::global(cx)).log_err() {
                 let themes_dir = paths::themes_dir().as_ref();
                 match fs

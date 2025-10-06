@@ -667,8 +667,7 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tracy-client = { path = "../rust_tracy_client/tracy-client", features = ["fibers"] }
-tracy-client-sys = { path = "../rust_tracy_client/tracy-client-sys", features = ["fibers"] }
+tracy-client = { version = "0.18.2", features = ["fibers"] }
 tree-sitter = { version = "0.25.10", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"

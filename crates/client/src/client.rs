@@ -150,6 +150,7 @@ pub fn init_settings(cx: &mut App) {
     ProxySettings::register(cx);
 }
 
+#[profiling::function]
 pub fn init(client: &Arc<Client>, cx: &mut App) {
     let client = Arc::downgrade(client);
     cx.on_action({

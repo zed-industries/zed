@@ -22,5 +22,4 @@ chrono.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
-tracy-client-sys.workspace = true
 workspace-hack.workspace = true

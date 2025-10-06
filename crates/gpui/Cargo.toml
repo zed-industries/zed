@@ -72,6 +72,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
+profile-with-tracy = ["dep:tracy-client"]
 
 [lib]
 path = "src/gpui.rs"
@@ -101,7 +102,6 @@ parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true
 profiling.workspace = true
-tracy-client-sys.workspace = true
 rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
@@ -125,7 +125,7 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
-tracy-client.workspace = true
+tracy-client = { workspace = true, optional = true }
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"

@@ -34,7 +34,6 @@ util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 profiling.workspace = true
-tracy-client-sys.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

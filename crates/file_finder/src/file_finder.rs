@@ -152,20 +152,11 @@ impl FileFinder {
                 if project.is_local() {
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
-                        let name =
-                            std::ffi::CString::new("Fiber: recent navigation history").unwrap();
-                        unsafe {
-                            tracy_client_sys::___tracy_fiber_enter(name.as_ptr());
-                        }
-                        let res = if fs.is_file(&abs_path).await {
+                        if fs.is_file(&abs_path).await {
                             Some(FoundPath::new(project_path, abs_path))
                         } else {
                             None
-                        };
-                        unsafe {
-                            tracy_client_sys::___tracy_fiber_leave();
                         }
-                        res
                     }))
                 } else {
                     Some(Task::ready(Some(FoundPath::new(project_path, abs_path))))
