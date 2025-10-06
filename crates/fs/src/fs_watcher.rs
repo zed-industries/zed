@@ -2,7 +2,7 @@ use notify::EventKind;
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
-    ops::{Bound, DerefMut},
+    ops::DerefMut,
     sync::{Arc, OnceLock},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -56,7 +56,10 @@ impl Watcher for FsWatcher {
             if let Some((watched_path, _)) = self
                 .registrations
                 .lock()
-                .range::<std::path::Path, _>((Bound::Unbounded, Bound::Included(path)))
+                .range::<std::path::Path, _>((
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Included(path),
+                ))
                 .next_back()
                 && path.starts_with(watched_path.as_ref())
             {
