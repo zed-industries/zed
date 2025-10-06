@@ -12918,7 +12918,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "itertools 0.14.0",
  "log",
  "parking_lot",
  "paths",
@@ -14384,6 +14383,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed-util",
+ "zed_actions",
  "zlog",
 ]
 
@@ -20342,6 +20342,7 @@ dependencies = [
  "tendril",
  "unicase",
  "walkdir",
+ "which 6.0.3",
  "workspace-hack",
  "zed-collections",
  "zed-util-macros",

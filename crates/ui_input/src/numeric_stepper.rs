@@ -417,7 +417,6 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                     })
                     .child(
                         h_flex()
-                            .h_8()
                             .min_w_16()
                             .w_full()
                             .border_1()
@@ -426,9 +425,10 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             .child(match *self.mode.read(cx) {
                                 NumericStepperMode::Read => h_flex()
                                     .id("numeric_stepper_label")
+                                    .px_1()
                                     .flex_1()
                                     .justify_center()
-                                    .child(Label::new((self.format)(&self.value)).mx_3())
+                                    .child(Label::new((self.format)(&self.value)))
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1).focus(|style| {

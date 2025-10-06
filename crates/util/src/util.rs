@@ -999,7 +999,9 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
-pub use self::shell::{get_default_system_shell, get_system_shell};
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[derive(Debug)]
 pub enum ConnectionResult<O> {

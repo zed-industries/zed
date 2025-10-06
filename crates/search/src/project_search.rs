@@ -13,7 +13,7 @@ use editor::{
     items::active_match_index,
     multibuffer_context_lines,
 };
-use futures::{StreamExt, stream::FuturesOrdered};
+use futures::StreamExt;
 use gpui::{
     Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
@@ -321,43 +321,34 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let mut buffers_with_ranges = Vec::with_capacity(results.len());
                 for result in results {
                     match result {
                         project::search::SearchResult::Buffer { buffer, ranges } => {
-                            buffers_with_ranges.push((buffer, ranges));
+                            let new_ranges = project_search
+                                .update(cx, |project_search, cx| {
+                                    project_search.excerpts.update(cx, |excerpts, cx| {
+                                        excerpts.set_anchored_excerpts_for_path(
+                                            buffer,
+                                            ranges,
+                                            multibuffer_context_lines(cx),
+                                            cx,
+                                        )
+                                    })
+                                })
+                                .ok()?
+                                .await;
+
+                            project_search
+                                .update(cx, |project_search, cx| {
+                                    project_search.match_ranges.extend(new_ranges);
+                                    cx.notify();
+                                })
+                                .ok()?;
                         }
                         project::search::SearchResult::LimitReached => {
                             limit_reached = true;
                         }
                     }
-                }
-
-                let mut new_ranges = project_search
-                    .update(cx, |project_search, cx| {
-                        project_search.excerpts.update(cx, |excerpts, cx| {
-                            buffers_with_ranges
-                                .into_iter()
-                                .map(|(buffer, ranges)| {
-                                    excerpts.set_anchored_excerpts_for_path(
-                                        buffer,
-                                        ranges,
-                                        multibuffer_context_lines(cx),
-                                        cx,
-                                    )
-                                })
-                                .collect::<FuturesOrdered<_>>()
-                        })
-                    })
-                    .ok()?;
-
-                while let Some(new_ranges) = new_ranges.next().await {
-                    project_search
-                        .update(cx, |project_search, cx| {
-                            project_search.match_ranges.extend(new_ranges);
-                            cx.notify();
-                        })
-                        .ok()?;
                 }
             }
 
