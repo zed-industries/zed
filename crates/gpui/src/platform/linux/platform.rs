@@ -77,10 +77,8 @@ pub trait LinuxClient {
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
         &self,
-    ) -> futures::channel::oneshot::Receiver<Option<ashpd::WindowIdentifier>> {
-        let (sources_tx, sources_rx) = futures::channel::oneshot::channel();
-        sources_tx.send(None).ok();
-        sources_rx
+    ) -> impl Future<Output = Option<ashpd::WindowIdentifier>> + Send + 'static {
+        std::future::ready::<Option<ashpd::WindowIdentifier>>(None)
     }
 }
 
@@ -310,10 +308,9 @@ impl<P: LinuxClient + 'static> Platform for P {
                 } else {
                     "Open File"
                 };
-                let identifier = identifier.await.ok().flatten();
 
                 let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
-                    .identifier(identifier)
+                    .identifier(identifier.await)
                     .modal(true)
                     .title(title)
                     .accept_label(options.prompt.as_ref().map(crate::SharedString::as_str))
@@ -370,11 +367,9 @@ impl<P: LinuxClient + 'static> Platform for P {
                 let suggested_name = suggested_name.map(|s| s.to_owned());
 
                 async move {
-                    let identifier = identifier.await.ok().flatten();
-
                     let mut request_builder =
                         ashpd::desktop::file_chooser::SaveFileRequest::default()
-                            .identifier(identifier)
+                            .identifier(identifier.await)
                             .modal(true)
                             .title("Save File")
                             .current_folder(directory)
