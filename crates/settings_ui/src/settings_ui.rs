@@ -3405,7 +3405,7 @@ impl SettingsWindow {
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
-            .pt_1()
+            .py_1()
             .px_1p5()
             .gap_1p5()
             .rounded_sm()
@@ -3416,7 +3416,14 @@ impl SettingsWindow {
             .child(self.search_bar.clone())
     }
 
-    fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_nav(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
+        let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
+        let visible_count = visible_entries.len();
+
         v_flex()
             .w_64()
             .p_2p5()
@@ -3426,39 +3433,46 @@ impl SettingsWindow {
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_search(window, cx).pb_1())
+            .child(self.render_search(window, cx))
             .child(
-                uniform_list(
-                    "settings-ui-nav-bar",
-                    self.navbar_entries.len(),
-                    cx.processor(|this, range: Range<usize>, _, cx| {
-                        this.visible_navbar_entries()
-                            .skip(range.start.saturating_sub(1))
-                            .take(range.len())
-                            .map(|(ix, entry)| {
-                                TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
-                                    .root_item(entry.is_root)
-                                    .toggle_state(this.is_navbar_entry_selected(ix))
-                                    .when(entry.is_root, |item| {
-                                        item.expanded(entry.expanded).on_toggle(cx.listener(
-                                            move |this, _, _, cx| {
-                                                this.toggle_navbar_entry(ix);
-                                                cx.notify();
-                                            },
-                                        ))
+                v_flex()
+                    .size_full()
+                    .child(
+                        uniform_list(
+                            "settings-ui-nav-bar",
+                            visible_count,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                let entries: Vec<_> = this.visible_navbar_entries().collect();
+                                range
+                                    .filter_map(|ix| entries.get(ix).copied())
+                                    .map(|(ix, entry)| {
+                                        TreeViewItem::new(
+                                            ("settings-ui-navbar-entry", ix),
+                                            entry.title,
+                                        )
+                                        .root_item(entry.is_root)
+                                        .toggle_state(this.is_navbar_entry_selected(ix))
+                                        .when(entry.is_root, |item| {
+                                            item.expanded(entry.expanded).on_toggle(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    this.toggle_navbar_entry(ix);
+                                                    cx.notify();
+                                                },
+                                            ))
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.navbar_entry = ix;
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                     })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.navbar_entry = ix;
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                            })
-                            .collect()
-                    }),
-                )
-                .track_scroll(self.list_handle.clone())
-                .size_full()
-                .flex_grow(),
+                                    .collect()
+                            }),
+                        )
+                        .track_scroll(self.list_handle.clone())
+                        .flex_grow(),
+                    )
+                    .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
     }
 
