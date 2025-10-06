@@ -146,10 +146,6 @@ impl AgentServerStore {
 
     fn agent_servers_settings_changed(&mut self, cx: &mut Context<Self>) {
         let AgentServerStoreState::Local {
-            node_runtime,
-            fs,
-            project_environment,
-            downstream_client,
             settings: old_settings,
             ..
         } = &mut self.state
@@ -167,6 +163,29 @@ impl AgentServerStore {
         if Some(&new_settings) == old_settings.as_ref() {
             return;
         }
+
+        self.reregister_agents(cx);
+    }
+
+    fn reregister_agents(&mut self, cx: &mut Context<Self>) {
+        let AgentServerStoreState::Local {
+            node_runtime,
+            fs,
+            project_environment,
+            downstream_client,
+            settings: old_settings,
+            ..
+        } = &mut self.state
+        else {
+            debug_panic!("Non-local projects should never attempt to reregister. This is a bug!");
+
+            return;
+        };
+
+        let new_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
 
         self.external_agents.clear();
         self.external_agents.insert(
@@ -256,7 +275,7 @@ impl AgentServerStore {
         let feature_flags_subscription =
             cx.observe_flag::<feature_flags::CodexAcpFeatureFlag, _>(move |_enabled, cx| {
                 let _ = this_handle.update(cx, |this, cx| {
-                    this.agent_servers_settings_changed(cx);
+                    this.reregister_agents(cx);
                 });
             });
         let mut this = Self {

@@ -1142,11 +1142,11 @@ impl Vim {
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot());
                     end = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot().anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1412,7 +1412,8 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);
 
-            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let snapshot = editor.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
                 snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
             if kind == Some(CharKind::Word) {

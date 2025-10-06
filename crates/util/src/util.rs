@@ -940,7 +940,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// # Examples
 ///
 /// ```
-/// use util::capitalize;
+/// use zed_util::capitalize;
 ///
 /// assert_eq!(capitalize("hello"), "Hello");
 /// assert_eq!(capitalize("WORLD"), "WORLD");
@@ -999,7 +999,9 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
-pub use self::shell::{get_default_system_shell, get_system_shell};
+pub use self::shell::{
+    get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
+};
 
 #[derive(Debug)]
 pub enum ConnectionResult<O> {

@@ -41,8 +41,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskContext, ZedDebugConfig,
-    substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
+    ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -988,7 +988,7 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
@@ -1025,7 +1025,11 @@ impl RunningState {
                     None
                 };
 
-                let builder = ShellBuilder::new(remote_shell.as_deref(), &task.resolved.shell);
+                if let Some(remote_shell) = remote_shell && task.resolved.shell == Shell::System {
+                    task.resolved.shell = Shell::Program(remote_shell);
+                }
+
+                let builder = ShellBuilder::new(&task.resolved.shell);
                 let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
@@ -1228,7 +1232,6 @@ impl RunningState {
 
             terminal.read_with(cx, |terminal, _| {
                 terminal
-                    .pty_info
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")

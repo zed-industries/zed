@@ -48,21 +48,15 @@ impl Settings for ExtensionSettings {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|capability| match capability {
-                    settings::ExtensionCapabilityContent::ProcessExec(capability) => {
-                        ExtensionCapability::ProcessExec(ProcessExecCapability {
-                            command: capability.command,
-                            args: capability.args,
-                        })
+                    settings::ExtensionCapabilityContent::ProcessExec { command, args } => {
+                        ExtensionCapability::ProcessExec(ProcessExecCapability { command, args })
                     }
-                    settings::ExtensionCapabilityContent::DownloadFile(capability) => {
-                        ExtensionCapability::DownloadFile(DownloadFileCapability {
-                            host: capability.host,
-                            path: capability.path,
-                        })
+                    settings::ExtensionCapabilityContent::DownloadFile { host, path } => {
+                        ExtensionCapability::DownloadFile(DownloadFileCapability { host, path })
                     }
-                    settings::ExtensionCapabilityContent::NpmInstallPackage(capability) => {
+                    settings::ExtensionCapabilityContent::NpmInstallPackage { package } => {
                         ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
-                            package: capability.package,
+                            package,
                         })
                     }
                 })

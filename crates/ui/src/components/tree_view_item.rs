@@ -9,7 +9,7 @@ pub struct TreeViewItem {
     id: ElementId,
     group_name: Option<SharedString>,
     label: SharedString,
-    toggle: bool,
+    expanded: bool,
     selected: bool,
     disabled: bool,
     focused: bool,
@@ -28,7 +28,7 @@ impl TreeViewItem {
             id: id.into(),
             group_name: None,
             label: label.into(),
-            toggle: false,
+            expanded: false,
             selected: false,
             disabled: false,
             focused: false,
@@ -73,8 +73,8 @@ impl TreeViewItem {
         self
     }
 
-    pub fn toggle(mut self, toggle: bool) -> Self {
-        self.toggle = toggle;
+    pub fn expanded(mut self, toggle: bool) -> Self {
+        self.expanded = toggle;
         self
     }
 
@@ -122,8 +122,9 @@ impl RenderOnce for TreeViewItem {
         let selected_border = cx.theme().colors().border.opacity(0.6);
         let focused_border = cx.theme().colors().border_focused;
         let transparent_border = cx.theme().colors().border_transparent;
+        let item_size = rems_from_px(28.);
 
-        let indentation_line = h_flex().size_7().flex_none().justify_center().child(
+        let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
             div()
                 .w_px()
                 .h_full()
@@ -143,7 +144,8 @@ impl RenderOnce for TreeViewItem {
                     .map(|this| {
                         let label = self.label;
                         if self.root_item {
-                            this.px_1()
+                            this.h(item_size)
+                                .px_1()
                                 .mb_1()
                                 .gap_2p5()
                                 .rounded_sm()
@@ -161,10 +163,12 @@ impl RenderOnce for TreeViewItem {
                                 })
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Disclosure::new("toggle", self.toggle)
+                                    Disclosure::new("toggle", self.expanded)
                                         .when_some(
                                             self.on_toggle.clone(),
-                                            |disclosure, on_toggle| disclosure.on_toggle(on_toggle),
+                                            |disclosure, on_toggle| {
+                                                disclosure.on_toggle_expanded(on_toggle)
+                                            },
                                         )
                                         .opened_icon(IconName::ChevronDown)
                                         .closed_icon(IconName::ChevronRight),

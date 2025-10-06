@@ -29,31 +29,19 @@ pub struct ExtensionSettingsContent {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionCapabilityContent {
     #[serde(rename = "process:exec")]
-    ProcessExec(ProcessExecCapabilityContent),
-    DownloadFile(DownloadFileCapabilityContent),
+    ProcessExec {
+        /// The command to execute.
+        command: String,
+        /// The arguments to pass to the command. Use `*` for a single wildcard argument.
+        /// If the last element is `**`, then any trailing arguments are allowed.
+        args: Vec<String>,
+    },
+    DownloadFile {
+        host: String,
+        path: Vec<String>,
+    },
     #[serde(rename = "npm:install")]
-    NpmInstallPackage(NpmInstallPackageCapabilityContent),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct ProcessExecCapabilityContent {
-    /// The command to execute.
-    pub command: String,
-    /// The arguments to pass to the command. Use `*` for a single wildcard argument.
-    /// If the last element is `**`, then any trailing arguments are allowed.
-    pub args: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct DownloadFileCapabilityContent {
-    pub host: String,
-    pub path: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct NpmInstallPackageCapabilityContent {
-    pub package: String,
+    NpmInstallPackage {
+        package: String,
+    },
 }

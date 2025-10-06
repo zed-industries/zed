@@ -112,7 +112,9 @@ pub struct ThemeSettings {
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
     /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
-    agent_font_size: Option<Pixels>,
+    agent_ui_font_size: Option<Pixels>,
+    /// The agent buffer font size. Determines the size of user messages in the agent panel. Falls back to the buffer font size if unset.
+    agent_buffer_font_size: Option<Pixels>,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -464,12 +466,21 @@ impl ThemeSettings {
     }
 
     /// Returns the agent panel font size. Falls back to the UI font size if unset.
-    pub fn agent_font_size(&self, cx: &App) -> Pixels {
+    pub fn agent_ui_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<AgentFontSize>()
             .map(|size| size.0)
-            .or(self.agent_font_size)
+            .or(self.agent_ui_font_size)
             .map(clamp_font_size)
             .unwrap_or_else(|| self.ui_font_size(cx))
+    }
+
+    /// Returns the agent panel buffer font size. Falls back to the buffer font size if unset.
+    pub fn agent_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<AgentFontSize>()
+            .map(|size| size.0)
+            .or(self.agent_buffer_font_size)
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
     /// Returns the buffer font size, read from the settings.
@@ -491,9 +502,17 @@ impl ThemeSettings {
     /// Returns the agent font size, read from the settings.
     ///
     /// The real agent font size is stored in-memory, to support temporary font size changes.
-    /// Use [`Self::agent_font_size`] to get the real font size.
-    pub fn agent_font_size_settings(&self) -> Option<Pixels> {
-        self.agent_font_size
+    /// Use [`Self::agent_ui_font_size`] to get the real font size.
+    pub fn agent_ui_font_size_settings(&self) -> Option<Pixels> {
+        self.agent_ui_font_size
+    }
+
+    /// Returns the agent buffer font size, read from the settings.
+    ///
+    /// The real agent buffer font size is stored in-memory, to support temporary font size changes.
+    /// Use [`Self::agent_buffer_font_size`] to get the real font size.
+    pub fn agent_buffer_font_size_settings(&self) -> Option<Pixels> {
+        self.agent_buffer_font_size
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -610,18 +629,36 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
-/// Sets the adjusted agent panel font size.
-pub fn adjust_agent_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
-    let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
+/// Sets the adjusted font size of agent responses in the agent panel.
+pub fn adjust_agent_ui_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let agent_ui_font_size = ThemeSettings::get_global(cx).agent_ui_font_size(cx);
     let adjusted_size = cx
         .try_global::<AgentFontSize>()
-        .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
+        .map_or(agent_ui_font_size, |adjusted_size| adjusted_size.0);
     cx.set_global(AgentFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
-/// Resets the agent panel font size to the default value.
-pub fn reset_agent_font_size(cx: &mut App) {
+/// Resets the agent response font size in the agent panel to the default value.
+pub fn reset_agent_ui_font_size(cx: &mut App) {
+    if cx.has_global::<AgentFontSize>() {
+        cx.remove_global::<AgentFontSize>();
+        cx.refresh_windows();
+    }
+}
+
+/// Sets the adjusted font size of user messages in the agent panel.
+pub fn adjust_agent_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let agent_buffer_font_size = ThemeSettings::get_global(cx).agent_buffer_font_size(cx);
+    let adjusted_size = cx
+        .try_global::<AgentFontSize>()
+        .map_or(agent_buffer_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(AgentFontSize(clamp_font_size(f(adjusted_size))));
+    cx.refresh_windows();
+}
+
+/// Resets the user message font size in the agent panel to the default value.
+pub fn reset_agent_buffer_font_size(cx: &mut App) {
     if cx.has_global::<AgentFontSize>() {
         cx.remove_global::<AgentFontSize>();
         cx.refresh_windows();
@@ -662,7 +699,7 @@ impl settings::Settings for ThemeSettings {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
                 features: content.ui_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.ui_font_weight.unwrap()),
+                weight: clamp_font_weight(content.ui_font_weight.unwrap().0),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -675,24 +712,25 @@ impl settings::Settings for ThemeSettings {
                     .into(),
                 features: content.buffer_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: clamp_font_weight(content.buffer_font_weight.unwrap()),
+                weight: clamp_font_weight(content.buffer_font_weight.unwrap().0),
                 style: FontStyle::default(),
             },
             buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_font_size: content.agent_font_size.map(Into::into),
+            agent_ui_font_size: content.agent_ui_font_size.map(Into::into),
+            agent_buffer_font_size: content.agent_buffer_font_size.map(Into::into),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),
             icon_theme: icon_theme_selection,
             ui_density: content.ui_density.unwrap_or_default().into(),
-            unnecessary_code_fade: content.unnecessary_code_fade.unwrap().clamp(0.0, 0.9),
+            unnecessary_code_fade: content.unnecessary_code_fade.unwrap().0.clamp(0.0, 0.9),
         }
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
-        vscode.f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
-        vscode.f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
+        vscode.from_f32_setting("editor.fontWeight", &mut current.theme.buffer_font_weight);
+        vscode.from_f32_setting("editor.fontSize", &mut current.theme.buffer_font_size);
         if let Some(font) = vscode.read_string("editor.font") {
             current.theme.buffer_font_family = Some(FontFamilyName(font.into()));
         }

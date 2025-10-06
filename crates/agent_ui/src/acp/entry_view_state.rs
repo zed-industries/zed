@@ -203,7 +203,7 @@ impl EntryViewState {
         self.entries.drain(range);
     }
 
-    pub fn agent_font_size_changed(&mut self, cx: &mut App) {
+    pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
                 Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
@@ -387,7 +387,7 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
         font_size: Some(
             TextSize::Small
                 .rems(cx)
-                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .to_pixels(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                 .into(),
         ),
         ..Default::default()

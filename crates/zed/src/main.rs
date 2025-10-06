@@ -663,7 +663,8 @@ pub fn main() {
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
-        cx.set_menus(app_menus());
+        let menus = app_menus(cx);
+        cx.set_menus(menus);
         initialize_workspace(app_state.clone(), prompt_builder, cx);
 
         cx.activate(true);

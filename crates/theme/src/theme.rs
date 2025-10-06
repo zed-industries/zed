@@ -111,6 +111,7 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
 
+<<<<<<< HEAD
     let settings = ThemeSettings::get_global(cx);
 
     let mut prev_buffer_font_size_settings = settings.buffer_font_size_settings();
@@ -128,6 +129,22 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let icon_theme = GlobalTheme::configured_icon_theme(cx);
     cx.set_global(GlobalTheme { theme, icon_theme });
 
+||||||| 3bf71c690f
+    let mut prev_buffer_font_size_settings =
+        ThemeSettings::get_global(cx).buffer_font_size_settings();
+    let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    let mut prev_agent_font_size_settings =
+        ThemeSettings::get_global(cx).agent_font_size_settings();
+=======
+    let mut prev_buffer_font_size_settings =
+        ThemeSettings::get_global(cx).buffer_font_size_settings();
+    let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    let mut prev_agent_ui_font_size_settings =
+        ThemeSettings::get_global(cx).agent_ui_font_size_settings();
+    let mut prev_agent_buffer_font_size_settings =
+        ThemeSettings::get_global(cx).agent_buffer_font_size_settings();
+
+>>>>>>> main
     cx.observe_global::<SettingsStore>(move |cx| {
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_size_settings = settings.buffer_font_size_settings();
@@ -150,9 +167,29 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
             reset_ui_font_size(cx);
         }
 
+<<<<<<< HEAD
         if agent_font_size_settings != prev_agent_font_size_settings {
             prev_agent_font_size_settings = agent_font_size_settings;
             reset_agent_font_size(cx);
+||||||| 3bf71c690f
+        let agent_font_size_settings = ThemeSettings::get_global(cx).agent_font_size_settings();
+        if agent_font_size_settings != prev_agent_font_size_settings {
+            prev_agent_font_size_settings = agent_font_size_settings;
+            reset_agent_font_size(cx);
+=======
+        let agent_ui_font_size_settings =
+            ThemeSettings::get_global(cx).agent_ui_font_size_settings();
+        if agent_ui_font_size_settings != prev_agent_ui_font_size_settings {
+            prev_agent_ui_font_size_settings = agent_ui_font_size_settings;
+            reset_agent_ui_font_size(cx);
+        }
+
+        let agent_buffer_font_size_settings =
+            ThemeSettings::get_global(cx).agent_buffer_font_size_settings();
+        if agent_buffer_font_size_settings != prev_agent_buffer_font_size_settings {
+            prev_agent_buffer_font_size_settings = agent_buffer_font_size_settings;
+            reset_agent_buffer_font_size(cx);
+>>>>>>> main
         }
 
         if theme_name != prev_theme_name || theme_overrides != prev_theme_overrides {

@@ -49,7 +49,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
-use util::post_inc;
+use util::{post_inc, rel_path::RelPath};
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -161,24 +161,33 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: u32,
-    path: Arc<str>,
+    namespace: Option<u64>,
+    path: Arc<RelPath>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u32, path: Arc<str>) -> Self {
-        Self { namespace, path }
+    pub fn namespaced(namespace: u64, path: Arc<RelPath>) -> Self {
+        Self {
+            namespace: Some(namespace),
+            path,
+        }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
+            Self::namespaced(file.worktree_id(cx).to_proto(), file.path().clone())
         } else {
-            Self::namespaced(0, buffer.entity_id().to_string().into())
+            Self {
+                namespace: None,
+                path: RelPath::unix(&buffer.entity_id().to_string())
+                    .unwrap()
+                    .into_arc(),
+            }
         }
     }
 
-    pub fn path(&self) -> &Arc<str> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 }
