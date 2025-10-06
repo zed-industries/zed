@@ -156,7 +156,16 @@ impl Project {
                         let args = spawn_task
                             .args
                             .iter()
-                            .filter_map(|arg| shlex::try_quote(arg).ok());
+                            .filter_map(|arg| shlex::try_quote(&arg).ok())
+                            .map(|arg| {
+                                // If we are running in PowerShell, we want to take extra care when escaping strings.
+                                // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
+                                match shell_kind {
+                                    ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
+                                    _ => arg,
+                                }
+                            });
+
                         command.into_iter().chain(args).join(" ")
                     } else {
                         // todo: this breaks for remotes to windows
