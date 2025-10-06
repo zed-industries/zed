@@ -60,10 +60,10 @@ enum Commands {
         context_args: Option<ContextArgs>,
     },
     RetrievalStats {
+        #[clap(flatten)]
+        zeta2_args: Zeta2Args,
         #[arg(long)]
         worktree: PathBuf,
-        #[arg(long, default_value_t = 42)]
-        file_indexing_parallelism: usize,
     },
 }
 
@@ -282,24 +282,7 @@ async fn get_context(
                     zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
                 });
                 let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                    zeta.set_options(zeta2::ZetaOptions {
-                        context: EditPredictionContextOptions {
-                            use_imports: true,
-                            excerpt: EditPredictionExcerptOptions {
-                                max_bytes: zeta2_args.max_excerpt_bytes,
-                                min_bytes: zeta2_args.min_excerpt_bytes,
-                                target_before_cursor_over_total_bytes: zeta2_args
-                                    .target_before_cursor_over_total_bytes,
-                            },
-                            score: EditPredictionScoreOptions {
-                                omit_excerpt_overlaps: true,
-                            },
-                        },
-                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
-                        max_prompt_bytes: zeta2_args.max_prompt_bytes,
-                        prompt_format: zeta2_args.prompt_format.into(),
-                        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
-                    });
+                    zeta.set_options((&zeta2_args).into());
                     zeta.register_buffer(&buffer, &project, cx);
                     zeta.wait_for_initial_indexing(&project, cx)
                 });
@@ -347,10 +330,33 @@ async fn get_context(
     }
 }
 
+impl Into<zeta2::ZetaOptions> for &Zeta2Args {
+    fn into(self) -> zeta2::ZetaOptions {
+        zeta2::ZetaOptions {
+            context: EditPredictionContextOptions {
+                use_imports: true,
+                excerpt: EditPredictionExcerptOptions {
+                    max_bytes: self.max_excerpt_bytes,
+                    min_bytes: self.min_excerpt_bytes,
+                    target_before_cursor_over_total_bytes: self
+                        .target_before_cursor_over_total_bytes,
+                },
+                score: EditPredictionScoreOptions {
+                    omit_excerpt_overlaps: true,
+                },
+            },
+            max_diagnostic_bytes: self.max_diagnostic_bytes,
+            max_prompt_bytes: self.max_prompt_bytes,
+            prompt_format: self.prompt_format.clone().into(),
+            file_indexing_parallelism: self.file_indexing_parallelism,
+        }
+    }
+}
+
 pub async fn retrieval_stats(
     worktree: PathBuf,
-    file_indexing_parallelism: usize,
     app_state: Arc<ZetaCliAppState>,
+    options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
     let worktree_path = worktree.canonicalize()?;
@@ -381,7 +387,7 @@ pub async fn retrieval_stats(
         })?
         .await;
 
-    let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx))?;
+    let index = cx.new(|cx| SyntaxIndex::new(&project, options.file_indexing_parallelism, cx))?;
     index
         .read_with(cx, |index, cx| index.wait_for_initial_file_indexing(cx))?
         .await?;
@@ -490,7 +496,7 @@ pub async fn retrieval_stats(
                 &index,
                 &project,
                 &worktree,
-                &zeta2::DEFAULT_CONTEXT_OPTIONS,
+                &options.context,
                 cx,
             )
             .await?;
@@ -681,7 +687,6 @@ async fn retrieve_definitions(
         query_point,
         &snapshot,
         parent_abs_path.as_deref(),
-        // todo! make this configurable
         &options,
         Some(&index),
         |_, _, _| single_reference_map,
@@ -1013,9 +1018,9 @@ fn main() {
                     .await
                 }
                 Commands::RetrievalStats {
+                    zeta2_args,
                     worktree,
-                    file_indexing_parallelism,
-                } => retrieval_stats(worktree, file_indexing_parallelism, app_state, cx).await,
+                } => retrieval_stats(worktree, app_state, (&zeta2_args).into(), cx).await,
             };
             match result {
                 Ok(output) => {
