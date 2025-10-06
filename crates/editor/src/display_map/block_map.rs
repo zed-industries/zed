@@ -3578,10 +3578,7 @@ mod tests {
 
         let text = "line 1\nline 2\nline 3";
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
-                [(text, vec![Point::new(0, 0)..Point::new(2, 6)])],
-                cx,
-            )
+            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(2, 6)])], cx)
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
