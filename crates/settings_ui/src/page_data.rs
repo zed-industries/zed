@@ -2836,12 +2836,15 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 SettingField {
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            &language.jsx_tag_auto_close
+                            match language.jsx_tag_auto_close.as_ref() {
+                                Some(s) => &s.enabled,
+                                None => &None,
+                            }
                         })
                     },
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
-                            &mut language.jsx_tag_auto_close
+                            &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
                         })
                     },
                 }
@@ -2869,39 +2872,31 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
             description: "The list of language servers to use (or disable) for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| {
-                            &language.language_servers
-                        })
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.language_servers
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.language_servers)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.language_servers
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
             description: "Controls where the `editor::Rewrap` action is allowed for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.allow_rewrap)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.allow_rewrap
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.allow_rewrap)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.allow_rewrap
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
@@ -2961,19 +2956,40 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Whitespace Map"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Whitespace Map",
-            description: "Visible characters used to render whitespace when show_whitespaces is enabled",
+            title: "Space",
+            description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {
                         language_settings_field(settings_content, |language| {
-                            &language.whitespace_map
+                            &language.whitespace_map.space
                         })
                     },
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
-                            &mut language.whitespace_map
+                            &mut language.whitespace_map.space
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Tab",
+            description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.whitespace_map.tab
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.whitespace_map.tab
                         })
                     },
                 }

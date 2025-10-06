@@ -385,7 +385,19 @@ pub struct WhitespaceMapContent {
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Debug,
+    PartialEq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
