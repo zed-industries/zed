@@ -5,8 +5,8 @@ use fs::Fs;
 use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, Color, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
-    Label, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*, v_flex,
+    ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 use crate::{CycleModeSelector, ToggleProfileSelector};
@@ -104,59 +104,68 @@ impl ModeSelector {
                 let is_selected = &mode.id == &current_mode;
                 let is_default = Some(&mode.id) == default_mode.as_ref();
                 let is_bypass_mode = mode.id.0.as_ref() == "bypassPermissions";
+                let has_error = self.error_message.is_some();
+
                 let entry = ContextMenuEntry::new(mode.name.clone())
-                    .toggleable(IconPosition::End, is_selected);
+                    .disabled(is_bypass_mode && has_error)
+                    .toggleable(IconPosition::Start, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
                     entry.documentation_aside(DocumentationSide::Left, DocumentationEdge::Bottom, {
                         let description = description.clone();
 
                         move |cx| {
-                            let mut content =
-                                v_flex().gap_1().child(Label::new(description.clone()));
-
-                            if is_bypass_mode {
-                                content = content.child(
-                                    v_flex()
-                                        .gap_0p5()
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new(description.clone()))
+                                .child(
+                                    h_flex()
                                         .pt_1()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(
-                                            Label::new(
-                                                "Add permissions to ~/.claude/settings.json",
+                                        .gap_0p5()
+                                        .text_sm()
+                                        .text_color(Color::Muted.color(cx))
+                                        .child("Hold")
+                                        .child(h_flex().flex_shrink_0().children(
+                                            ui::render_modifiers(
+                                                &gpui::Modifiers::secondary_key(),
+                                                PlatformStyle::platform(),
+                                                None,
+                                                Some(ui::TextSize::Default.rems(cx).into()),
+                                                true,
+                                            ),
+                                        ))
+                                        .child(div().map(|this| {
+                                            if is_default {
+                                                this.child("to also unset as default")
+                                            } else {
+                                                this.child("to also set as default")
+                                            }
+                                        })),
+                                )
+                                .when(has_error && is_bypass_mode, |this| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_1()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(
+                                                Icon::new(IconName::XCircle)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Error),
                                             )
-                                            .color(Color::Muted),
-                                        ),
-                                );
-                            }
-
-                            content = content.child(
-                                h_flex()
-                                    .pt_1()
-                                    .border_t_1()
-                                    .border_color(cx.theme().colors().border_variant)
-                                    .gap_0p5()
-                                    .text_sm()
-                                    .text_color(Color::Muted.color(cx))
-                                    .child("Hold")
-                                    .child(h_flex().flex_shrink_0().children(ui::render_modifiers(
-                                        &gpui::Modifiers::secondary_key(),
-                                        PlatformStyle::platform(),
-                                        None,
-                                        Some(ui::TextSize::Default.rems(cx).into()),
-                                        true,
-                                    )))
-                                    .child(div().map(|this| {
-                                        if is_default {
-                                            this.child("to also unset as default")
-                                        } else {
-                                            this.child("to also set as default")
-                                        }
-                                    })),
-                            );
-
-                            content.into_any_element()
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().colors().text_muted)
+                                                    .child("To enable this mode, add permissions to ~/.claude/settings.json")
+                                            )
+                                    )
+                                })
+                                .into_any_element()
                         }
                     })
                 } else {
@@ -211,19 +220,11 @@ impl Render for ModeSelector {
         let trigger_button = Button::new("mode-selector-trigger", current_mode_name)
             .label_size(LabelSize::Small)
             .style(ButtonStyle::Subtle)
-            .color(if self.error_message.is_some() {
-                Color::Error
-            } else {
-                Color::Muted
-            })
+            .color(Color::Muted)
             .icon(IconName::ChevronDown)
             .icon_size(IconSize::XSmall)
             .icon_position(IconPosition::End)
-            .icon_color(if self.error_message.is_some() {
-                Color::Error
-            } else {
-                Color::Muted
-            })
+            .icon_color(Color::Muted)
             .disabled(self.setting_mode);
 
         PopoverMenu::new("mode-selector")
@@ -231,50 +232,38 @@ impl Render for ModeSelector {
                 trigger_button,
                 Tooltip::element({
                     let focus_handle = self.focus_handle.clone();
-                    let error_message = self.error_message.clone();
+
                     move |window, cx| {
-                        let mut tooltip = v_flex().gap_1();
-
-                        if let Some(ref error) = error_message {
-                            tooltip = tooltip.child(
-                                div()
-                                    .mb_1()
-                                    .child(Label::new(error.clone()).color(Color::Error)),
-                            );
-                        }
-
-                        if error_message.is_none() {
-                            tooltip = tooltip
-                                .child(
-                                    h_flex()
-                                        .pb_1()
-                                        .gap_2()
-                                        .justify_between()
-                                        .border_b_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .child(Label::new("Cycle Through Modes"))
-                                        .children(KeyBinding::for_action_in(
-                                            &CycleModeSelector,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .justify_between()
-                                        .child(Label::new("Toggle Mode Menu"))
-                                        .children(KeyBinding::for_action_in(
-                                            &ToggleProfileSelector,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )),
-                                );
-                        }
-
-                        tooltip.into_any()
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .pb_1()
+                                    .gap_2()
+                                    .justify_between()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(Label::new("Cycle Through Modes"))
+                                    .children(KeyBinding::for_action_in(
+                                        &CycleModeSelector,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Label::new("Toggle Mode Menu"))
+                                    .children(KeyBinding::for_action_in(
+                                        &ToggleProfileSelector,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )),
+                            )
+                            .into_any()
                     }
                 }),
             )
