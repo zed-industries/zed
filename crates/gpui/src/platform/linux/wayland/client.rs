@@ -860,23 +860,18 @@ impl LinuxClient for WaylandClient {
         "Wayland"
     }
 
-    fn window_identifier(&self) -> futures::channel::oneshot::Receiver<Option<WindowIdentifier>> {
-        let (done_tx, done_rx) = futures::channel::oneshot::channel();
-        let client_state = self.0.borrow();
-        let executor = &client_state.common.foreground_executor;
-
-        if let Some(active_window) = client_state.keyboard_focused_window.as_ref() {
-            let surface = active_window.surface();
-            executor
-                .spawn(async move {
-                    let window_identifier = ashpd::WindowIdentifier::from_wayland(&surface).await;
-                    done_tx.send(window_identifier).ok();
-                })
-                .detach();
-        } else {
-            done_tx.send(None).ok();
+    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+        async fn inner(surface: Option<wl_surface::WlSurface>) -> Option<WindowIdentifier> {
+            if let Some(surface) = surface {
+                ashpd::WindowIdentifier::from_wayland(&surface).await
+            } else {
+                None
+            }
         }
-        done_rx
+
+        let client_state = self.0.borrow();
+        let active_window = client_state.keyboard_focused_window.as_ref();
+        inner(active_window.map(|aw| aw.surface()))
     }
 }
 
