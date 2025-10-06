@@ -166,22 +166,6 @@ pub enum ConnectionOptions {
     P2p(IrohConnectionOptions),
 }
 
-impl ConnectionOptions {
-    fn connection_string(&self) -> String {
-        match self {
-            Self::Ssh(opts) => opts.connection_string(),
-            Self::P2p(opts) => opts.ticket.node_addr().node_id.to_string(),
-        }
-    }
-
-    fn nickname(&self) -> Option<&String> {
-        match self {
-            Self::Ssh(opts) => opts.nickname.as_ref(),
-            Self::P2p(opts) => opts.nickname.as_ref(),
-        }
-    }
-}
-
 impl From<ConnectionOptions> for RemoteConnectionOptions {
     fn from(value: ConnectionOptions) -> Self {
         match value {
@@ -215,6 +199,33 @@ impl EditNicknameState {
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("Add a nickname for this server", window, cx);
+            if let Some(starting_text) = starting_text {
+                this.set_text(starting_text, window, cx);
+            }
+        });
+        this.editor.focus_handle(cx).focus(window);
+        this
+    }
+}
+
+struct EditP2pNicknameState {
+    index: P2pServerIndex,
+    editor: Entity<Editor>,
+}
+
+impl EditP2pNicknameState {
+    fn new(index: P2pServerIndex, window: &mut Window, cx: &mut App) -> Self {
+        let this = Self {
+            index,
+            editor: cx.new(|cx| Editor::single_line(window, cx)),
+        };
+        let starting_text = SshSettings::get_global(cx)
+            .p2p_connections()
+            .nth(index.0)
+            .and_then(|state| state.nickname)
+            .filter(|text| !text.is_empty());
+        this.editor.update(cx, |this, cx| {
+            this.set_placeholder_text("Add a nickname for this connection", window, cx);
             if let Some(starting_text) = starting_text {
                 this.set_text(starting_text, window, cx);
             }
@@ -691,6 +702,7 @@ enum Mode {
     Default(DefaultState),
     ViewServerOptions(ViewServerOptionsState),
     EditNickname(EditNicknameState),
+    EditP2pNickname(EditP2pNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
     #[cfg(target_os = "windows")]
@@ -1370,6 +1382,20 @@ impl RemoteServerProjects {
                     Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
                 self.focus_handle.focus(window);
             }
+            Mode::EditP2pNickname(state) => {
+                let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
+                let index = state.index;
+                self.update_settings_file(cx, move |setting, _| {
+                    if let Some(connections) = setting.p2p_connections.as_mut()
+                        && let Some(connection) = connections.get_mut(index.0)
+                    {
+                        connection.nickname = text;
+                    }
+                });
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
+                self.focus_handle.focus(window);
+            }
             #[cfg(target_os = "windows")]
             Mode::AddWslDistro(state) => {
                 let delegate = &state.picker.read(cx).delegate;
@@ -1820,7 +1846,18 @@ impl RemoteServerProjects {
             ServerIndex::Wsl(server) => {
                 self.delete_wsl_project(server, project, cx);
             }
+            ServerIndex::P2p(server) => {
+                self.delete_p2p_project(server, project, cx);
+            }
         }
+    }
+
+    fn delete_p2p_server(&mut self, server: P2pServerIndex, cx: &mut Context<Self>) {
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(connections) = setting.p2p_connections.as_mut() {
+                connections.remove(server.0);
+            }
+        });
     }
 
     fn delete_ssh_project(
@@ -1851,6 +1888,24 @@ impl RemoteServerProjects {
         self.update_settings_file(cx, move |setting, _| {
             if let Some(server) = setting
                 .wsl_connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(server.0))
+            {
+                server.projects.remove(&project);
+            }
+        });
+    }
+
+    fn delete_p2p_project(
+        &mut self,
+        server: P2pServerIndex,
+        project: &SshProject,
+        cx: &mut Context<Self>,
+    ) {
+        let project = project.clone();
+        self.update_settings_file(cx, move |setting, _| {
+            if let Some(server) = setting
+                .p2p_connections
                 .as_mut()
                 .and_then(|connections| connections.get_mut(server.0))
             {
@@ -2475,15 +2530,175 @@ impl RemoteServerProjects {
     fn render_edit_p2p(
         &self,
         connection: &IrohConnectionOptions,
-        _index: P2pServerIndex,
-        _entries: &[NavigableEntry],
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        index: P2pServerIndex,
+        entries: &[NavigableEntry],
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let _connection_string = SharedString::new(connection.ticket.to_string().clone());
-        // TODO
+        let connection_string = SharedString::new(connection.ticket.to_string().clone());
 
         v_flex()
+            .child({
+                let label = if connection.nickname.is_some() {
+                    "Edit Nickname"
+                } else {
+                    "Add Nickname to Server"
+                };
+                div()
+                    .id("p2p-options-add-nickname")
+                    .track_focus(&entries[0].focus_handle)
+                    .on_action(cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                        this.mode =
+                            Mode::EditP2pNickname(EditP2pNicknameState::new(index, window, cx));
+                        cx.notify();
+                    }))
+                    .child(
+                        ListItem::new("add-nickname")
+                            .toggle_state(entries[0].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                            .child(Label::new(label))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.mode = Mode::EditP2pNickname(EditP2pNicknameState::new(
+                                    index, window, cx,
+                                ));
+                                cx.notify();
+                            })),
+                    )
+            })
+            .child({
+                let workspace = self.workspace.clone();
+                fn callback(
+                    workspace: WeakEntity<Workspace>,
+                    connection_string: SharedString,
+                    cx: &mut App,
+                ) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(connection_string.to_string()));
+                    workspace
+                        .update(cx, |this, cx| {
+                            struct SshServerAddressCopiedToClipboard;
+                            let notification = format!(
+                                "Copied server address ({}) to clipboard",
+                                connection_string
+                            );
+
+                            this.show_toast(
+                                Toast::new(
+                                    NotificationId::composite::<SshServerAddressCopiedToClipboard>(
+                                        connection_string.clone(),
+                                    ),
+                                    notification,
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+                div()
+                    .id("p2p-options-copy-server-address")
+                    .track_focus(&entries[1].focus_handle)
+                    .on_action({
+                        let connection_string = connection_string.clone();
+                        let workspace = self.workspace.clone();
+                        move |_: &menu::Confirm, _, cx| {
+                            callback(workspace.clone(), connection_string.clone(), cx);
+                        }
+                    })
+                    .child(
+                        ListItem::new("copy-server-address")
+                            .toggle_state(entries[1].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
+                            .child(Label::new("Copy Server Address"))
+                            .end_hover_slot(
+                                Label::new(connection_string.clone()).color(Color::Muted),
+                            )
+                            .on_click({
+                                let connection_string = connection_string.clone();
+                                move |_, _, cx| {
+                                    callback(workspace.clone(), connection_string.clone(), cx);
+                                }
+                            }),
+                    )
+            })
+            .child({
+                fn remove_p2p_server(
+                    remote_servers: Entity<RemoteServerProjects>,
+                    index: P2pServerIndex,
+                    connection_string: SharedString,
+                    window: &mut Window,
+                    cx: &mut App,
+                ) {
+                    let prompt_message = format!("Remove server `{}`?", connection_string);
+
+                    let confirmation = window.prompt(
+                        PromptLevel::Warning,
+                        &prompt_message,
+                        None,
+                        &["Yes, remove it", "No, keep it"],
+                        cx,
+                    );
+
+                    cx.spawn(async move |cx| {
+                        if confirmation.await.ok() == Some(0) {
+                            remote_servers
+                                .update(cx, |this, cx| {
+                                    this.delete_p2p_server(index, cx);
+                                })
+                                .ok();
+                            remote_servers
+                                .update(cx, |this, cx| {
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
+                div()
+                    .id("p2p-options-copy-server-address")
+                    .track_focus(&entries[2].focus_handle)
+                    .on_action(cx.listener({
+                        let connection_string = connection_string.clone();
+                        move |_, _: &menu::Confirm, window, cx| {
+                            remove_p2p_server(
+                                cx.entity(),
+                                index,
+                                connection_string.clone(),
+                                window,
+                                cx,
+                            );
+                            cx.focus_self(window);
+                        }
+                    }))
+                    .child(
+                        ListItem::new("remove-server")
+                            .toggle_state(entries[2].focus_handle.contains_focused(window, cx))
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                            .child(Label::new("Remove Server").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                remove_p2p_server(
+                                    cx.entity(),
+                                    index,
+                                    connection_string.clone(),
+                                    window,
+                                    cx,
+                                );
+                                cx.focus_self(window);
+                            })),
+                    )
+            })
     }
 
     fn render_edit_nickname(
@@ -2506,6 +2721,45 @@ impl RemoteServerProjects {
 
         v_flex()
             .id("ssh-edit-nickname")
+            .track_focus(&self.focus_handle(cx))
+            .child(
+                SshConnectionHeader {
+                    connection_string,
+                    paths: Default::default(),
+                    nickname,
+                    is_wsl: false,
+                }
+                .render(window, cx),
+            )
+            .child(
+                h_flex()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(state.editor.clone()),
+            )
+    }
+
+    fn render_edit_p2p_nickname(
+        &self,
+        state: &EditP2pNicknameState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .p2p_connections()
+            .nth(state.index.0)
+        else {
+            return v_flex()
+                .id("p2p-edit-nickname")
+                .track_focus(&self.focus_handle(cx));
+        };
+
+        let connection_string = connection.ticket.clone();
+        let nickname = connection.nickname.map(|s| s.into());
+
+        v_flex()
+            .id("p2p-edit-nickname")
             .track_focus(&self.focus_handle(cx))
             .child(
                 SshConnectionHeader {
@@ -2964,6 +3218,9 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
+                    .into_any_element(),
+                Mode::EditP2pNickname(state) => self
+                    .render_edit_p2p_nickname(state, window, cx)
                     .into_any_element(),
                 #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self
