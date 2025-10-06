@@ -23,7 +23,7 @@ use std::{
     num::NonZeroU32,
     ops::Range,
     rc::Rc,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
     ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
@@ -309,6 +309,26 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
+        .add_renderer::<settings::RewrapBehavior>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::FormatOnSave>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::IndentGuideColoring>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::IndentGuideBackgroundColoring>(
+            |settings_field, file, _, window, cx| {
+                render_dropdown(*settings_field, file, window, cx)
+            },
+        )
+        .add_renderer::<settings::WordsCompletionMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::LspInsertMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
@@ -353,6 +373,26 @@ pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<Setting
     )
 }
 
+/// The current sub page path that is selected.
+/// If this is empty the selected page is rendered,
+/// otherwise the last sub page gets rendered.
+///
+/// Global so that `pick` and `pick_mut` callbacks can access it
+/// and use it to dynamically render sub pages (e.g. for language settings)
+static SUB_PAGE_STACK: LazyLock<RwLock<Vec<SubPage>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+
+fn sub_page_stack() -> std::sync::RwLockReadGuard<'static, Vec<SubPage>> {
+    SUB_PAGE_STACK
+        .read()
+        .expect("SUB_PAGE_STACK is never poisoned")
+}
+
+fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
+    SUB_PAGE_STACK
+        .write()
+        .expect("SUB_PAGE_STACK is never poisoned")
+}
+
 pub struct SettingsWindow {
     files: Vec<SettingsUiFile>,
     current_file: SettingsUiFile,
@@ -363,10 +403,6 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
-    /// The current sub page path that is selected.
-    /// If this is empty the selected page is rendered,
-    /// otherwise the last sub page gets rendered.
-    sub_page_stack: Vec<SubPage>,
     scroll_handle: ScrollHandle,
 }
 
@@ -548,7 +584,12 @@ impl PartialEq for SettingItem {
 #[derive(Clone)]
 struct SubPageLink {
     title: &'static str,
-    render: Rc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) -> AnyElement>,
+    render: Arc<
+        dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
+            + 'static
+            + Send
+            + Sync,
+    >,
 }
 
 impl PartialEq for SubPageLink {
@@ -647,7 +688,6 @@ impl SettingsWindow {
             search_bar,
             search_task: None,
             search_matches: vec![],
-            sub_page_stack: vec![],
             scroll_handle: ScrollHandle::new(),
         };
 
@@ -978,7 +1018,7 @@ impl SettingsWindow {
         let mut items = vec![];
         items.push(self.current_page().title);
         items.extend(
-            self.sub_page_stack
+            sub_page_stack()
                 .iter()
                 .flat_map(|page| [page.section_header, page.link.title]),
         );
@@ -995,6 +1035,73 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
+    fn render_page_items<'a, Items: Iterator<Item = &'a SettingsPageItem>>(
+        &self,
+        items: Items,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
+        let mut page_content = v_flex()
+            .id("settings-ui-page")
+            .size_full()
+            .gap_4()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle);
+
+        let items: Vec<_> = items.collect();
+        let items_len = items.len();
+        let mut section_header = None;
+
+        let has_active_search = !self.search_bar.read(cx).is_empty(cx);
+        let has_no_results = items_len == 0 && has_active_search;
+
+        if has_no_results {
+            let search_query = self.search_bar.read(cx).text(cx);
+            page_content = page_content.child(
+                v_flex()
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .gap_1()
+                    .child(div().child("No Results"))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(format!("No settings match \"{}\"", search_query)),
+                    ),
+            )
+        } else {
+            let last_non_header_index = items
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
+                .map(|(index, _)| index);
+
+            page_content =
+                page_content.children(items.clone().into_iter().enumerate().map(|(index, item)| {
+                    let no_bottom_border = items
+                        .get(index + 1)
+                        .map(|next_item| matches!(next_item, SettingsPageItem::SectionHeader(_)))
+                        .unwrap_or(false);
+                    let is_last = Some(index) == last_non_header_index;
+
+                    if let SettingsPageItem::SectionHeader(header) = item {
+                        section_header = Some(*header);
+                    }
+                    item.render(
+                        self.current_file.clone(),
+                        section_header.expect("All items rendered after a section header"),
+                        no_bottom_border || is_last,
+                        window,
+                        cx,
+                    )
+                }))
+        }
+        page_content
+    }
+
     fn render_page(
         &mut self,
         window: &mut Window,
@@ -1009,70 +1116,13 @@ impl SettingsWindow {
             .bg(cx.theme().colors().editor_background)
             .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
 
-        let mut page_content = v_flex()
-            .id("settings-ui-page")
-            .size_full()
-            .gap_4()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle);
+        let page_content;
 
-        if self.sub_page_stack.len() == 0 {
+        if sub_page_stack().len() == 0 {
             page = page.child(self.render_files(window, cx));
-
-            let items: Vec<_> = self.page_items().collect();
-            let items_len = items.len();
-            let mut section_header = None;
-
-            let search_query = self.search_bar.read(cx).text(cx);
-            let has_active_search = !search_query.is_empty();
-            let has_no_results = items_len == 0 && has_active_search;
-
-            if has_no_results {
-                page_content = page_content.child(
-                    v_flex()
-                        .size_full()
-                        .items_center()
-                        .justify_center()
-                        .gap_1()
-                        .child(div().child("No Results"))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().text_muted)
-                                .child(format!("No settings match \"{}\"", search_query)),
-                        ),
-                )
-            } else {
-                let last_non_header_index = items
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
-                    .map(|(index, _)| index);
-
-                page_content = page_content.children(items.clone().into_iter().enumerate().map(
-                    |(index, item)| {
-                        let no_bottom_border = items
-                            .get(index + 1)
-                            .map(|next_item| {
-                                matches!(next_item, SettingsPageItem::SectionHeader(_))
-                            })
-                            .unwrap_or(false);
-                        let is_last = Some(index) == last_non_header_index;
-
-                        if let SettingsPageItem::SectionHeader(header) = item {
-                            section_header = Some(*header);
-                        }
-                        item.render(
-                            self.current_file.clone(),
-                            section_header.expect("All items rendered after a section header"),
-                            no_bottom_border || is_last,
-                            window,
-                            cx,
-                        )
-                    },
-                ))
-            }
+            page_content = self
+                .render_page_items(self.page_items(), window, cx)
+                .into_any_element();
         } else {
             page = page.child(
                 h_flex()
@@ -1089,8 +1139,8 @@ impl SettingsWindow {
                     .child(self.render_sub_page_breadcrumbs()),
             );
 
-            let active_page_render_fn = self.sub_page_stack.last().unwrap().link.render.clone();
-            page_content = page_content.child((active_page_render_fn)(self, window, cx));
+            let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
+            page_content = (active_page_render_fn)(self, window, cx);
         }
 
         return page.child(page_content);
@@ -1122,7 +1172,7 @@ impl SettingsWindow {
         section_header: &'static str,
         cx: &mut Context<SettingsWindow>,
     ) {
-        self.sub_page_stack.push(SubPage {
+        sub_page_stack_mut().push(SubPage {
             link: sub_page_link,
             section_header,
         });
@@ -1130,7 +1180,7 @@ impl SettingsWindow {
     }
 
     fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.sub_page_stack.pop();
+        sub_page_stack_mut().pop();
         cx.notify();
     }
 }
@@ -1558,7 +1608,6 @@ mod test {
             list_handle: UniformListScrollHandle::default(),
             search_matches: vec![],
             search_task: None,
-            sub_page_stack: vec![],
             scroll_handle: ScrollHandle::new(),
         };
 

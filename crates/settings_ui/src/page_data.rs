@@ -1,8 +1,10 @@
-use gpui::IntoElement;
-use std::rc::Rc;
+use settings::{LanguageSettingsContent, SettingsContent};
+use std::sync::Arc;
+use ui::{IntoElement, SharedString};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink,
+    sub_page_stack,
 };
 
 pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
@@ -488,7 +490,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper + option within an option
+                // todo(settings_ui): Needs numeric stepper   option within an option
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
                 //     description: "Left padding for centered layout",
@@ -1258,35 +1260,51 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Languages & Frameworks",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Language Server",
-                    description: "Whether to use language servers to provide code intelligence",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .enable_language_server
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .enable_language_server
-                        },
+            items: {
+                let mut items = vec![
+                    SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "JSON",
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(language_settings_data().iter(), window, cx)
+                                .into_any_element()
+                        }),
                     }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Languages"),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSON",
-                    render: Rc::new(|_, _, _| "A settings page!".into_any_element()),
-                }),
-            ],
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "JSONC",
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(language_settings_data().iter(), window, cx)
+                                .into_any_element()
+                        }),
+                    }),
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "Rust",
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(language_settings_data().iter(), window, cx)
+                                .into_any_element()
+                        }),
+                    }),
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "Python",
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(language_settings_data().iter(), window, cx)
+                                .into_any_element()
+                        }),
+                    }),
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "TSX",
+                        render: Arc::new(|this, window, cx| {
+                            this.render_page_items(language_settings_data().iter(), window, cx)
+                                .into_any_element()
+                        }),
+                    }),
+                ];
+
+                items.push(SettingsPageItem::SectionHeader("Default Language Settings"));
+                items.extend(language_settings_data());
+
+                items
+            },
         },
         SettingsPage {
             title: "Workbench & Window",
@@ -2557,5 +2575,1192 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                 }),
             ],
         },
+    ]
+}
+
+const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
+
+fn language_settings_data() -> Vec<SettingsPageItem> {
+    fn current_language() -> Option<SharedString> {
+        sub_page_stack().iter().find_map(|page| {
+            (page.section_header == LANGUAGES_SECTION_HEADER)
+                .then(|| SharedString::new_static(page.link.title))
+        })
+    }
+
+    fn language_settings_field<T>(
+        settings_content: &SettingsContent,
+        get: fn(&LanguageSettingsContent) -> &Option<T>,
+    ) -> &Option<T> {
+        let all_languages = &settings_content.project.all_languages;
+        let mut language_content = None;
+        if let Some(current_language) = current_language() {
+            language_content = all_languages.languages.0.get(&current_language);
+        }
+        let value = language_content
+            .map(get)
+            .unwrap_or_else(|| get(&all_languages.defaults));
+        return value;
+    }
+
+    fn language_settings_field_mut<T>(
+        settings_content: &mut SettingsContent,
+        get: fn(&mut LanguageSettingsContent) -> &mut Option<T>,
+    ) -> &mut Option<T> {
+        let all_languages = &mut settings_content.project.all_languages;
+        let language_content = if let Some(current_language) = current_language() {
+            all_languages
+                .languages
+                .0
+                .entry(current_language)
+                .or_default()
+        } else {
+            &mut all_languages.defaults
+        };
+        return get(language_content);
+    }
+
+    vec![
+        SettingsPageItem::SectionHeader("Indentation"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Tab Size",
+            description: "How many columns a tab should occupy",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.tab_size)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| &mut language.tab_size)
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Hard Tabs",
+            description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.hard_tabs)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.hard_tabs
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Auto Indent",
+            description: "Whether indentation should be adjusted based on the context whilst typing",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.auto_indent)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.auto_indent
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Auto Indent On Paste",
+            description: "Whether indentation of pasted content should be adjusted based on the context",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.auto_indent_on_paste
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.auto_indent_on_paste
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Wrapping"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Soft Wrap",
+            description: "How to soft-wrap long lines of text",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.soft_wrap)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.soft_wrap
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Wrap Guides",
+            description: "Whether to show wrap guides in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if softwrap is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.show_wrap_guides)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_wrap_guides
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Preferred Line Length",
+            description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.preferred_line_length
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.preferred_line_length
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Wrap Guides",
+            description: "Character counts at which to show wrap guides in the editor",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.wrap_guides)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.wrap_guides
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Allow Rewrap",
+            description: "Controls where the `editor::Rewrap` action is allowed for this language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.allow_rewrap)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.allow_rewrap
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Indent Guides"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Whether to display indent guides in the editor",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Line Width",
+            description: "The width of the indent guides in pixels, between 1 and 10",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.line_width
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().line_width
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Active Line Width",
+            description: "The width of the active indent guide in pixels, between 1 and 10",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.active_line_width
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .indent_guides
+                            .get_or_insert_default()
+                            .active_line_width
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Coloring",
+            description: "Determines how indent guides are colored",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.coloring
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.indent_guides.get_or_insert_default().coloring
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Background Coloring",
+            description: "Determines how indent guide backgrounds are colored",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(indent_guides) = &language.indent_guides {
+                            &indent_guides.background_coloring
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .indent_guides
+                            .get_or_insert_default()
+                            .background_coloring
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Formatting"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Format On Save",
+            description: "Whether or not to perform a buffer format before saving",
+            field: Box::new(
+                // TODO(settings_ui): this setting should just be a bool
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.format_on_save
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.format_on_save
+                        })
+                    },
+                },
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Remove Trailing Whitespace On Save",
+            description: "Whether or not to remove any trailing whitespace from lines of a buffer before saving it",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.remove_trailing_whitespace_on_save
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.remove_trailing_whitespace_on_save
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Ensure Final Newline On Save",
+            description: "Whether or not to ensure there's a single newline at the end of a buffer when saving it",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.ensure_final_newline_on_save
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.ensure_final_newline_on_save
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Formatter",
+            description: "How to perform a buffer format",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.formatter)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.formatter
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Use On Type Format",
+            description: "Whether to use additional LSP queries to format (and amend) the code after every \"trigger\" symbol input, defined by LSP server capabilities",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.use_on_type_format
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.use_on_type_format
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Code Actions On Format",
+            description: "Which code actions to run on save after the formatter. These are not run if formatting is off",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.code_actions_on_format
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.code_actions_on_format
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Prettier"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Allowed",
+            description: "Enables or disables formatting with Prettier for a given language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.allowed
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().allowed
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Parser",
+            description: "Forces Prettier integration to use a specific parser name when formatting files with the language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.parser
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().parser
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Plugins",
+            description: "Forces Prettier integration to use specific plugins when formatting files with the language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.plugins
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().plugins
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Options",
+            description: "Default Prettier options, in the format as in package.json section for Prettier",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.options
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().options
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Autoclose"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Use Autoclose",
+            description: "Whether to automatically type closing characters for you. For example, when you type (, Zed will automatically add a closing ) at the correct position",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.use_autoclose)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.use_autoclose
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Use Auto Surround",
+            description: "Whether to automatically surround text with characters for you. For example, when you select text and type (, Zed will automatically surround text with ()",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.use_auto_surround
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.use_auto_surround
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Always Treat Brackets As Autoclosed",
+            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.always_treat_brackets_as_autoclosed
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.always_treat_brackets_as_autoclosed
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Jsx Tag Auto Close",
+            description: "Whether to automatically close JSX tags",
+            field: Box::new(SettingField {
+                // TODO(settings_ui): this setting should just be a bool
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        match language.jsx_tag_auto_close.as_ref() {
+                            Some(s) => &s.enabled,
+                            None => &None,
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.jsx_tag_auto_close.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("LSP"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enable Language Server",
+            description: "Whether to use language servers to provide code intelligence",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.enable_language_server
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.enable_language_server
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Language Servers",
+            description: "The list of language servers to use (or disable) for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.language_servers
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.language_servers
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Linked Edits",
+            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.linked_edits)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.linked_edits
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Edit Predictions"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Edit Predictions",
+            description: "Controls whether edit predictions are shown immediately (true) or manually by triggering `editor::ShowEditPrediction` (false)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.show_edit_predictions
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_edit_predictions
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Edit Predictions Disabled In",
+            description: "Controls whether edit predictions are shown in the given language scopes",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            &language.edit_predictions_disabled_in
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.edit_predictions_disabled_in
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Whitespace"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Whitespaces",
+            description: "Whether to show tabs and spaces in the editor",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.show_whitespaces)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_whitespaces
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Space Whitespace Indicator",
+            description: "Visible character used to render space characters when show_whitespaces is enabled (default: \"•\")",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(whitespace_map) = &language.whitespace_map {
+                                &whitespace_map.space
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.whitespace_map.get_or_insert_default().space
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Tab Whitespace Indicator",
+            description: "Visible character used to render tab characters when show_whitespaces is enabled (default: \"→\")",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(whitespace_map) = &language.whitespace_map {
+                                &whitespace_map.tab
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.whitespace_map.get_or_insert_default().tab
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Completions"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Completions On Input",
+            description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.show_completions_on_input
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_completions_on_input
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Completion Documentation",
+            description: "Whether to display inline and alongside documentation for items in the completions menu",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.show_completion_documentation
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.show_completion_documentation
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Words",
+            description: "Controls how words are completed",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.words
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().words
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Words Min Length",
+            description: "How many characters has to be in the completions query to automatically show the words-based completions",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.words_min_length
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .completions
+                            .get_or_insert_default()
+                            .words_min_length
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp",
+            description: "Whether to fetch LSP completions or not",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp Fetch Timeout Ms",
+            description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_fetch_timeout_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .completions
+                            .get_or_insert_default()
+                            .lsp_fetch_timeout_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp Insert Mode",
+            description: "Controls how LSP completions are inserted",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_insert_mode
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp_insert_mode
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Inlay Hints"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Global switch to toggle hints on and off",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Value Hints",
+            description: "Global switch to toggle inline values on and off when debugging",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_value_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_value_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Type Hints",
+            description: "Whether type hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_type_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().show_type_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Parameter Hints",
+            description: "Whether parameter hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_parameter_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_parameter_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Other Hints",
+            description: "Whether other hints should be shown",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_other_hints
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .show_other_hints
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Show Background",
+            description: "Whether to show a background for inlay hints",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.show_background
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.inlay_hints.get_or_insert_default().show_background
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Edit Debounce Ms",
+            description: "Whether or not to debounce inlay hints updates after buffer edits (set to 0 to disable debouncing)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.edit_debounce_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .edit_debounce_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Scroll Debounce Ms",
+            description: "Whether or not to debounce inlay hints updates after buffer scrolls (set to 0 to disable debouncing)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(inlay_hints) = &language.inlay_hints {
+                            &inlay_hints.scroll_debounce_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .inlay_hints
+                            .get_or_insert_default()
+                            .scroll_debounce_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Toggle On Modifiers Press",
+            description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(inlay_hints) = &language.inlay_hints {
+                                &inlay_hints.toggle_on_modifiers_press
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language
+                                .inlay_hints
+                                .get_or_insert_default()
+                                .toggle_on_modifiers_press
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Tasks"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enabled",
+            description: "Whether tasks are enabled for this language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(tasks) = &language.tasks {
+                            &tasks.enabled
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.tasks.get_or_insert_default().enabled
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Variables",
+            description: "Extra task variables to set for a particular language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(tasks) = &language.tasks {
+                                &tasks.variables
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.tasks.get_or_insert_default().variables
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Prefer Lsp",
+            description: "Use LSP tasks over Zed language extension ones",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(tasks) = &language.tasks {
+                            &tasks.prefer_lsp
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.tasks.get_or_insert_default().prefer_lsp
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SectionHeader("Miscellaneous"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Debuggers",
+            description: "Preferred debuggers for this language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| &language.debuggers)
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.debuggers
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Extend Comment On Newline",
+            description: "Whether to start a new line with a comment when a previous line is a comment as well",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.extend_comment_on_newline
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.extend_comment_on_newline
+                    })
+                },
+            }),
+            metadata: None,
+        }),
     ]
 }
