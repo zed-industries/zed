@@ -99,7 +99,7 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
         );
 
         // Bump version in dependency's Cargo.toml
-        update_crate_version(package_name, new_version)?;
+        update_crate_version(crate_name, new_version)?;
 
         publish_crate(crate_name, dry_run)?;
 
