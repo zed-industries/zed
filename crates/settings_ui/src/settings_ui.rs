@@ -5,9 +5,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, FontWeight, Global, IntoElement, ReadGlobal as _,
-    Render, ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, px, size, uniform_list,
+    App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, div, point,
+    prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -3165,6 +3165,10 @@ impl SettingsWindow {
         this.fetch_files(cx);
         this.build_ui(cx);
 
+        this.search_bar.update(cx, |editor, cx| {
+            editor.focus_handle(cx).focus(window);
+        });
+
         this
     }
 
@@ -3647,6 +3651,7 @@ impl Render for SettingsWindow {
         let ui_font = theme::setup_ui_font(window, cx);
 
         div()
+            .key_context("SettingsWindow")
             .flex()
             .flex_row()
             .size_full()
