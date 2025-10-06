@@ -92,7 +92,7 @@ fn publish_dependencies(new_version: &str, dry_run: bool) -> Result<()> {
         ("zed-util", "util"),
         ("gpui-macros", "gpui_macros"),
         ("zed-http-client", "http_client"),
-        ("zed-derive-refinable", "derive_refineable"),
+        ("zed-derive-refineable", "derive_refineable"),
         ("zed-refineable", "refineable"),
         ("zed-semantic-version", "semantic_version"),
         ("zed-sum-tree", "sum_tree"),
