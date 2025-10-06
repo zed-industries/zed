@@ -7,7 +7,6 @@ use zed_actions::{ToggleFocus as ToggleDebugPanel, dev};
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
 
-    let include_dev_items = ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev);
     let mut view_items = vec![
         MenuItem::action(
             "Zoom In",
@@ -46,7 +45,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::separator(),
     ];
 
-    if include_dev_items {
+    if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
         view_items.push(MenuItem::action(
             "Toggle GPUI Inspector",
             dev::ToggleInspector,
