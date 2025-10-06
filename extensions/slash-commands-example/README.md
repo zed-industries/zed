@@ -90,7 +90,7 @@ There are no commands to write to or clear the log.
 
 - *An additional way to view this log is through the Terminal Panel of Zed.*
 
-on MacOS:
+on macOS:
 ``` shell
 tail ~/Library/Logs/Zed/Zed.log
 ```
