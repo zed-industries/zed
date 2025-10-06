@@ -2899,17 +2899,93 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Prettier",
-            description: "Zed's Prettier integration settings. Allows to enable/disable formatting with Prettier and configure default Prettier, used when no project-level Prettier installation is found",
+            title: "Allowed",
+            description: "Enables or disables formatting with Prettier for a given language",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.prettier)
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.allowed
+                            } else {
+                                &None
+                            }
+                        })
                     },
                     pick_mut: |settings_content| {
                         language_settings_field_mut(settings_content, |language| {
-                            &mut language.prettier
+                            &mut language.prettier.get_or_insert_default().allowed
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Parser",
+            description: "Forces Prettier integration to use a specific parser name when formatting files with the language",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(prettier) = &language.prettier {
+                            &prettier.parser
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.prettier.get_or_insert_default().parser
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Plugins",
+            description: "Forces Prettier integration to use specific plugins when formatting files with the language",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.plugins
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().plugins
+                        })
+                    },
+                }
+                .unimplemented(),
+            ),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Options",
+            description: "Default Prettier options, in the format as in package.json section for Prettier",
+            field: Box::new(
+                SettingField {
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            if let Some(prettier) = &language.prettier {
+                                &prettier.options
+                            } else {
+                                &None
+                            }
+                        })
+                    },
+                    pick_mut: |settings_content| {
+                        language_settings_field_mut(settings_content, |language| {
+                            &mut language.prettier.get_or_insert_default().options
                         })
                     },
                 }

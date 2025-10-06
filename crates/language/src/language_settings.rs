@@ -534,8 +534,8 @@ impl settings::Settings for AllLanguageSettings {
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
                     parser: prettier.parser,
-                    plugins: prettier.plugins,
-                    options: prettier.options,
+                    plugins: prettier.plugins.unwrap_or_default(),
+                    options: prettier.options.unwrap_or_default(),
                 },
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),

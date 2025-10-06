@@ -571,13 +571,12 @@ pub struct PrettierSettingsContent {
 
     /// Forces Prettier integration to use specific plugins when formatting files with the language.
     /// The default Prettier will be installed with these plugins.
-    #[serde(default)]
-    pub plugins: HashSet<String>,
+    pub plugins: Option<HashSet<String>>,
 
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
-    pub options: HashMap<String, serde_json::Value>,
+    pub options: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// TODO: this should just be a bool
