@@ -65,7 +65,7 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
         let mut path = PathBuf::from(dir);
-        if path.is_relative() {
+        if path.is_relative() && path.exists() {
             let abs_path = path
                 .canonicalize()
                 .expect("failed to canonicalize custom data directory's path to an absolute path");
