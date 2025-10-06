@@ -14292,6 +14292,7 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "ec4rs",
  "fs",
  "futures 0.3.31",
@@ -14379,6 +14380,7 @@ dependencies = [
  "strum 0.27.1",
  "theme",
  "ui",
+ "ui_input",
  "workspace",
  "workspace-hack",
  "zed-util",
