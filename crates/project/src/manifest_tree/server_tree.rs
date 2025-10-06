@@ -8,7 +8,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
     sync::{Arc, Weak},
 };
 
@@ -21,6 +20,7 @@ use language::{
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::OnceLock;
+use util::rel_path::RelPath;
 
 use crate::{
     LanguageServerId, ProjectPath, project_settings::LspSettings,
@@ -32,7 +32,7 @@ use super::ManifestTree;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ServersForWorktree {
     pub(crate) roots: BTreeMap<
-        Arc<Path>,
+        Arc<RelPath>,
         BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
     >,
 }
@@ -338,7 +338,7 @@ impl LanguageServerTree {
             .entry(worktree_id)
             .or_default()
             .roots
-            .entry(Arc::from(Path::new("")))
+            .entry(RelPath::empty().into())
             .or_default()
             .entry(node.disposition.server_name.clone())
             .or_insert_with(|| (node, BTreeSet::new()))

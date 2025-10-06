@@ -4,12 +4,12 @@ use crate::{
     Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
-use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use std::{
     any::{Any, TypeId},
     borrow::{Borrow, BorrowMut},
     future::Future,
+    ops,
     sync::Arc,
 };
 use util::Deferred;
@@ -17,12 +17,23 @@ use util::Deferred;
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
 /// The app context, with specialized behavior for the given entity.
-#[derive(Deref, DerefMut)]
 pub struct Context<'a, T> {
-    #[deref]
-    #[deref_mut]
     app: &'a mut App,
     entity_state: WeakEntity<T>,
+}
+
+impl<'a, T> ops::Deref for Context<'a, T> {
+    type Target = App;
+
+    fn deref(&self) -> &Self::Target {
+        self.app
+    }
+}
+
+impl<'a, T> ops::DerefMut for Context<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.app
+    }
 }
 
 impl<'a, T: 'static> Context<'a, T> {
@@ -66,6 +77,20 @@ impl<'a, T: 'static> Context<'a, T> {
             } else {
                 false
             }
+        })
+    }
+
+    /// Observe changes to ourselves
+    pub fn observe_self(
+        &mut self,
+        mut on_event: impl FnMut(&mut T, &mut Context<T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static,
+    {
+        let this = self.entity();
+        self.app.observe(&this, move |this, cx| {
+            this.update(cx, |this, cx| on_event(this, cx))
         })
     }
 

@@ -27,7 +27,7 @@ use std::{
     str::FromStr,
 };
 use unindent::Unindent as _;
-use util::{RandomCharIter, path, post_inc};
+use util::{RandomCharIter, path, post_inc, rel_path::rel_path};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -863,20 +863,20 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
             21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
                 diagnostics.editor.update(cx, |editor, cx| {
                     let snapshot = editor.snapshot(window, cx);
-                    if !snapshot.buffer_snapshot.is_empty() {
-                        let position = rng.random_range(0..snapshot.buffer_snapshot.len());
-                        let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
+                    if !snapshot.buffer_snapshot().is_empty() {
+                        let position = rng.random_range(0..snapshot.buffer_snapshot().len());
+                        let position = snapshot.buffer_snapshot().clip_offset(position, Bias::Left);
                         log::info!(
                             "adding inlay at {position}/{}: {:?}",
-                            snapshot.buffer_snapshot.len(),
-                            snapshot.buffer_snapshot.text(),
+                            snapshot.buffer_snapshot().len(),
+                            snapshot.buffer_snapshot().text(),
                         );
 
                         editor.splice_inlays(
                             &[],
                             vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
-                                snapshot.buffer_snapshot.anchor_before(position),
+                                snapshot.buffer_snapshot().anchor_before(position),
                                 Rope::from_iter(["Test inlay ", "next_inlay_id"]),
                             )],
                             cx,
@@ -1609,7 +1609,7 @@ async fn test_buffer_diagnostics(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {
@@ -1763,7 +1763,7 @@ async fn test_buffer_diagnostics_without_warnings(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {
@@ -1892,7 +1892,7 @@ async fn test_buffer_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         worktree_id: project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         }),
-        path: Arc::from(Path::new("main.rs")),
+        path: rel_path("main.rs").into(),
     };
     let buffer = project
         .update(cx, |project, cx| {

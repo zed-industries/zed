@@ -1,11 +1,12 @@
 use crate::{
     DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt, SelectionEffects,
-    display_map::ToDisplayPoint, scroll::WasScrolled,
+    display_map::ToDisplayPoint,
+    scroll::{ScrollOffset, WasScrolled},
 };
-use gpui::{Bounds, Context, Pixels, Window, px};
+use gpui::{Bounds, Context, Pixels, Window};
 use language::Point;
 use multi_buffer::Anchor;
-use std::{cmp, f32};
+use std::cmp;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -106,20 +107,21 @@ impl Editor {
         &mut self,
         bounds: Bounds<Pixels>,
         line_height: Pixels,
-        max_scroll_top: f32,
+        max_scroll_top: ScrollOffset,
         autoscroll_request: Option<(Autoscroll, bool)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> (NeedsHorizontalAutoscroll, WasScrolled) {
         let viewport_height = bounds.size.height;
-        let visible_lines = viewport_height / line_height;
+        let visible_lines = ScrollOffset::from(viewport_height / line_height);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take()
             && scroll_position.y != 0.
         {
-            scroll_position.y += (bounds.top() - last_bounds.top()) / line_height;
+            scroll_position.y +=
+                ScrollOffset::from((bounds.top() - last_bounds.top()) / line_height);
             if scroll_position.y < 0. {
                 scroll_position.y = 0.;
             }
@@ -143,7 +145,7 @@ impl Editor {
         if let Some(first_highlighted_row) =
             self.highlighted_display_row_for_autoscroll(&display_map)
         {
-            target_top = first_highlighted_row.as_f32();
+            target_top = first_highlighted_row.as_f64();
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
@@ -154,7 +156,7 @@ impl Editor {
                 .head()
                 .to_display_point(&display_map)
                 .row()
-                .as_f32();
+                .as_f64();
             target_bottom = selections
                 .last()
                 .unwrap()
@@ -162,7 +164,7 @@ impl Editor {
                 .to_display_point(&display_map)
                 .row()
                 .next_row()
-                .as_f32();
+                .as_f64();
 
             let selections_fit = target_bottom - target_top <= visible_lines;
             if matches!(
@@ -178,7 +180,7 @@ impl Editor {
                     .head()
                     .to_display_point(&display_map)
                     .row()
-                    .as_f32();
+                    .as_f64();
                 target_top = newest_selection_top;
                 target_bottom = newest_selection_top + 1.;
             }
@@ -209,7 +211,7 @@ impl Editor {
             }
         };
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
-            target_top = anchor.to_display_point(&display_map).row().as_f32();
+            target_top = anchor.to_display_point(&display_map).row().as_f64();
             target_bottom = target_top + 1.;
         }
 
@@ -254,11 +256,11 @@ impl Editor {
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::TopRelative(lines) => {
-                scroll_position.y = target_top - lines as f32;
+                scroll_position.y = target_top - lines as ScrollOffset;
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::BottomRelative(lines) => {
-                scroll_position.y = target_bottom + lines as f32;
+                scroll_position.y = target_bottom + lines as ScrollOffset;
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
         };
@@ -284,22 +286,25 @@ impl Editor {
         autoscroll_request: Option<(Autoscroll, bool)>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::Point<f32>> {
+    ) -> Option<gpui::Point<ScrollOffset>> {
         let (_, local) = autoscroll_request?;
+        let em_advance = ScrollOffset::from(em_advance);
+        let viewport_width = ScrollOffset::from(viewport_width);
+        let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
 
         let mut target_left;
-        let mut target_right;
+        let mut target_right: f64;
 
         if self
             .highlighted_display_row_for_autoscroll(&display_map)
             .is_none()
         {
-            target_left = px(f32::INFINITY);
-            target_right = px(0.);
+            target_left = f64::INFINITY;
+            target_right = 0.;
             for selection in selections {
                 let head = selection.head().to_display_point(&display_map);
                 if head.row() >= start_row
@@ -307,21 +312,22 @@ impl Editor {
                 {
                     let start_column = head.column();
                     let end_column = cmp::min(display_map.line_len(head.row()), head.column());
-                    target_left = target_left.min(
+                    target_left = target_left.min(ScrollOffset::from(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(start_column as usize)
                             + self.gutter_dimensions.margin,
-                    );
+                    ));
                     target_right = target_right.max(
-                        layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(end_column as usize)
-                            + em_advance,
+                        ScrollOffset::from(
+                            layouts[head.row().minus(start_row) as usize]
+                                .x_for_index(end_column as usize),
+                        ) + em_advance,
                     );
                 }
             }
         } else {
-            target_left = px(0.);
-            target_right = px(0.);
+            target_left = 0.;
+            target_right = 0.;
         }
 
         target_right = target_right.min(scroll_width);

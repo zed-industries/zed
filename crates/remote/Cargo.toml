@@ -44,6 +44,7 @@ util.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }

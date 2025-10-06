@@ -21,12 +21,12 @@ use language::{
 };
 use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
-    proto::{self, ToProto},
+    proto::{self},
 };
 use smol::channel::Receiver;
-use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
+use std::{io, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -292,7 +292,7 @@ impl RemoteBufferStore {
 
     fn open_buffer(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -370,7 +370,7 @@ impl LocalBufferStore {
         &self,
         buffer_handle: Entity<Buffer>,
         worktree: Entity<Worktree>,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         mut has_changed_file: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
@@ -389,7 +389,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx)
+            worktree.write_file(path, text, line_ending, cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -443,7 +443,7 @@ impl LocalBufferStore {
     fn local_worktree_entries_changed(
         this: &mut BufferStore,
         worktree_handle: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<BufferStore>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
@@ -462,7 +462,7 @@ impl LocalBufferStore {
     fn local_worktree_entry_changed(
         this: &mut BufferStore,
         entry_id: ProjectEntryId,
-        path: &Arc<Path>,
+        path: &Arc<RelPath>,
         worktree: &Entity<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut Context<BufferStore>,
@@ -615,7 +615,7 @@ impl LocalBufferStore {
 
     fn open_buffer(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -1402,8 +1402,9 @@ impl BufferStore {
             .await?;
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
 
-        if let Some(new_path) = envelope.payload.new_path {
-            let new_path = ProjectPath::from_proto(new_path);
+        if let Some(new_path) = envelope.payload.new_path
+            && let Some(new_path) = ProjectPath::from_proto(new_path)
+        {
             this.update(&mut cx, |this, cx| {
                 this.save_buffer_as(buffer.clone(), new_path, cx)
             })?

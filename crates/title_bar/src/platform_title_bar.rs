@@ -109,6 +109,7 @@ impl Render for PlatformTitleBar {
                     .flex_row()
                     .items_center()
                     .justify_between()
+                    .overflow_x_hidden()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style == PlatformStyle::Mac, |this| {

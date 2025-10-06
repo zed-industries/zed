@@ -8,38 +8,57 @@ pub async fn get_messages(working_directory: &Path, shas: &[Oid]) -> Result<Hash
         return Ok(HashMap::default());
     }
 
-    const MARKER: &str = "<MARKER>";
+    let output = if cfg!(windows) {
+        // Windows has a maximum invocable command length, so we chunk the input.
+        // Actual max is 32767, but we leave some room for the rest of the command as we aren't in precise control of what std might do here
+        const MAX_CMD_LENGTH: usize = 30000;
+        // 40 bytes of hash, 2 quotes and a separating space
+        const SHA_LENGTH: usize = 40 + 2 + 1;
+        const MAX_ENTRIES_PER_INVOCATION: usize = MAX_CMD_LENGTH / SHA_LENGTH;
 
-    let output = util::command::new_smol_command("git")
-        .current_dir(working_directory)
+        let mut result = vec![];
+        for shas in shas.chunks(MAX_ENTRIES_PER_INVOCATION) {
+            let partial = get_messages_impl(working_directory, shas).await?;
+            result.extend(partial);
+        }
+        result
+    } else {
+        get_messages_impl(working_directory, shas).await?
+    };
+
+    Ok(shas
+        .iter()
+        .cloned()
+        .zip(output)
+        .collect::<HashMap<Oid, String>>())
+}
+
+async fn get_messages_impl(working_directory: &Path, shas: &[Oid]) -> Result<Vec<String>> {
+    const MARKER: &str = "<MARKER>";
+    let mut cmd = util::command::new_smol_command("git");
+    cmd.current_dir(working_directory)
         .arg("show")
         .arg("-s")
         .arg(format!("--format=%B{}", MARKER))
-        .args(shas.iter().map(ToString::to_string))
+        .args(shas.iter().map(ToString::to_string));
+    let output = cmd
         .output()
         .await
-        .context("starting git blame process")?;
-
+        .with_context(|| format!("starting git blame process: {:?}", cmd))?;
     anyhow::ensure!(
         output.status.success(),
         "'git show' failed with error {:?}",
         output.status
     );
-
-    Ok(shas
-        .iter()
-        .cloned()
-        .zip(
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .split_terminator(MARKER)
-                .map(|str| str.trim().replace("<", "&lt;").replace(">", "&gt;")),
-        )
-        .collect::<HashMap<Oid, String>>())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .split_terminator(MARKER)
+        .map(|str| str.trim().replace("<", "&lt;").replace(">", "&gt;"))
+        .collect::<Vec<_>>())
 }
 
 /// Parse the output of `git diff --name-status -z`
-pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&Path, StatusCode)> {
+pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, StatusCode)> {
     let mut parts = content.split('\0');
     std::iter::from_fn(move || {
         loop {
@@ -51,13 +70,14 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&Path,
                 "D" => StatusCode::Deleted,
                 _ => continue,
             };
-            return Some((Path::new(path), status));
+            return Some((path, status));
         }
     })
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -78,31 +98,19 @@ mod tests {
         assert_eq!(
             output,
             &[
-                (Path::new("Cargo.lock"), StatusCode::Modified),
-                (Path::new("crates/project/Cargo.toml"), StatusCode::Modified),
+                ("Cargo.lock", StatusCode::Modified),
+                ("crates/project/Cargo.toml", StatusCode::Modified),
+                ("crates/project/src/buffer_store.rs", StatusCode::Modified),
+                ("crates/project/src/git.rs", StatusCode::Deleted),
+                ("crates/project/src/git_store.rs", StatusCode::Added),
                 (
-                    Path::new("crates/project/src/buffer_store.rs"),
-                    StatusCode::Modified
-                ),
-                (Path::new("crates/project/src/git.rs"), StatusCode::Deleted),
-                (
-                    Path::new("crates/project/src/git_store.rs"),
-                    StatusCode::Added
-                ),
-                (
-                    Path::new("crates/project/src/git_store/git_traversal.rs"),
+                    "crates/project/src/git_store/git_traversal.rs",
                     StatusCode::Added,
                 ),
+                ("crates/project/src/project.rs", StatusCode::Modified),
+                ("crates/project/src/worktree_store.rs", StatusCode::Modified),
                 (
-                    Path::new("crates/project/src/project.rs"),
-                    StatusCode::Modified
-                ),
-                (
-                    Path::new("crates/project/src/worktree_store.rs"),
-                    StatusCode::Modified
-                ),
-                (
-                    Path::new("crates/project_panel/src/project_panel.rs"),
+                    "crates/project_panel/src/project_panel.rs",
                     StatusCode::Modified
                 ),
             ]

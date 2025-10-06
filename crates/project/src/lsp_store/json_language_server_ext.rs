@@ -1,9 +1,11 @@
-use anyhow::Context as _;
-use collections::HashMap;
-use gpui::WeakEntity;
+use anyhow::{Context, Result};
+use gpui::{App, AsyncApp, Entity, Global, WeakEntity};
 use lsp::LanguageServer;
 
 use crate::LspStore;
+
+const LOGGER: zlog::Logger = zlog::scoped!("json-schema");
+
 /// https://github.com/Microsoft/vscode/blob/main/extensions/json-language-features/server/README.md#schema-content-request
 ///
 /// Represents a "JSON language server-specific, non-standardized, extension to the LSP" with which the vscode-json-language-server
@@ -20,82 +22,77 @@ impl lsp::request::Request for SchemaContentRequest {
     const METHOD: &'static str = "vscode/content";
 }
 
-pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
-    language_server
-        .on_request::<SchemaContentRequest, _, _>(|params, cx| {
-            // PERF: Use a cache (`OnceLock`?) to avoid recomputing the action schemas
-            let mut generator = settings::KeymapFile::action_schema_generator();
-            let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
-            async move {
-                let all_schemas = all_schemas?;
-                let Some(uri) = params.get(0) else {
-                    anyhow::bail!("No URI");
-                };
-                let normalized_action_name = uri
-                    .strip_prefix("zed://schemas/action/")
-                    .context("Invalid URI")?;
-                let action_name = denormalize_action_name(normalized_action_name);
-                let schema = root_schema_from_action_schema(
-                    all_schemas
-                        .get(action_name.as_str())
-                        .and_then(Option::as_ref),
-                    &mut generator,
-                )
-                .to_value();
+type SchemaRequestHandler = fn(Entity<LspStore>, String, &mut AsyncApp) -> Result<String>;
+pub struct SchemaHandlingImpl(SchemaRequestHandler);
 
-                serde_json::to_string(&schema).context("Failed to serialize schema")
+impl Global for SchemaHandlingImpl {}
+
+pub fn register_schema_handler(handler: SchemaRequestHandler, cx: &mut App) {
+    debug_assert!(
+        !cx.has_global::<SchemaHandlingImpl>(),
+        "SchemaHandlingImpl already registered"
+    );
+    cx.set_global(SchemaHandlingImpl(handler));
+}
+
+struct SchemaContentsChanged {}
+
+impl lsp::notification::Notification for SchemaContentsChanged {
+    const METHOD: &'static str = "json/schemaContent";
+    type Params = String;
+}
+
+pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: &String, cx: &App) {
+    zlog::trace!(LOGGER => "Notifying schema changed for URI: {:?}", uri);
+    let servers = lsp_store.read_with(cx, |lsp_store, _| {
+        let mut servers = Vec::new();
+        let Some(local) = lsp_store.as_local() else {
+            return servers;
+        };
+
+        for states in local.language_servers.values() {
+            let json_server = match states {
+                super::LanguageServerState::Running {
+                    adapter, server, ..
+                } if adapter.adapter.is_primary_zed_json_schema_adapter() => server.clone(),
+                _ => continue,
+            };
+
+            servers.push(json_server);
+        }
+        servers
+    });
+    for server in servers {
+        zlog::trace!(LOGGER => "Notifying server {:?} of schema change for URI: {:?}", server.server_id(), &uri);
+        // TODO: handle errors
+        server.notify::<SchemaContentsChanged>(uri).ok();
+    }
+}
+
+pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
+    language_server
+        .on_request::<SchemaContentRequest, _, _>(move |params, cx| {
+            let handler = cx.try_read_global::<SchemaHandlingImpl, _>(|handler, _| {
+                handler.0
+            });
+            let mut cx = cx.clone();
+            let uri = params.clone().pop();
+            let lsp_store = lsp_store.clone();
+            let resolution = async move {
+                let lsp_store = lsp_store.upgrade().context("LSP store has been dropped")?;
+                let uri = uri.context("No URI")?;
+                let handle_schema_request = handler.context("No schema handler registered")?;
+                handle_schema_request(lsp_store, uri, &mut cx)
+            };
+            async move {
+                zlog::trace!(LOGGER => "Handling schema request for {:?}", &params);
+                let result = resolution.await;
+                match &result {
+                    Ok(content) => {zlog::trace!(LOGGER => "Schema request resolved with {}B schema", content.len());},
+                    Err(err) => {zlog::warn!(LOGGER => "Schema request failed: {}", err);},
+                }
+                result
             }
         })
         .detach();
-}
-
-pub fn normalize_action_name(action_name: &str) -> String {
-    action_name.replace("::", "__")
-}
-
-pub fn denormalize_action_name(action_name: &str) -> String {
-    action_name.replace("__", "::")
-}
-
-pub fn normalized_action_file_name(action_name: &str) -> String {
-    normalized_action_name_to_file_name(normalize_action_name(action_name))
-}
-
-pub fn normalized_action_name_to_file_name(mut normalized_action_name: String) -> String {
-    normalized_action_name.push_str(".json");
-    normalized_action_name
-}
-
-pub fn url_schema_for_action(action_name: &str) -> serde_json::Value {
-    let normalized_name = normalize_action_name(action_name);
-    let file_name = normalized_action_name_to_file_name(normalized_name.clone());
-    serde_json::json!({
-        "fileMatch": [file_name],
-        "url": format!("zed://schemas/action/{}", normalized_name)
-    })
-}
-
-fn root_schema_from_action_schema(
-    action_schema: Option<&schemars::Schema>,
-    generator: &mut schemars::SchemaGenerator,
-) -> schemars::Schema {
-    let Some(action_schema) = action_schema else {
-        return schemars::json_schema!(false);
-    };
-    let meta_schema = generator
-        .settings()
-        .meta_schema
-        .as_ref()
-        .expect("meta_schema should be present in schemars settings")
-        .to_string();
-    let defs = generator.definitions();
-    let mut schema = schemars::json_schema!({
-        "$schema": meta_schema,
-        "allowTrailingCommas": true,
-        "$defs": defs,
-    });
-    schema
-        .ensure_object()
-        .extend(std::mem::take(action_schema.clone().ensure_object()));
-    schema
 }

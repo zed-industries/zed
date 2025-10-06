@@ -585,7 +585,7 @@ fn aligned_origin_x(
 
     match align {
         TextAlign::Left => origin.x,
-        TextAlign::Center => (2.0 * origin.x + align_width - line_width) / 2.0,
+        TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
         TextAlign::Right => origin.x + align_width - line_width,
     }
 }

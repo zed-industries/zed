@@ -4,7 +4,6 @@ use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Anchor, Buffer, BufferSnapshot};
-use project::Project;
 use std::{
     ops::{AddAssign, Range},
     path::Path,
@@ -94,7 +93,7 @@ fn completion_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    EditPrediction {
+    EditPrediction::Local {
         id: None,
         edits,
         edit_preview: None,
@@ -132,7 +131,6 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         buffer_handle: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,

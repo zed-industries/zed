@@ -1,3 +1,4 @@
+use askpass::EncryptedPassword;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
@@ -7,13 +8,15 @@ use ui::{
     LabelSize, ParentElement, Render, SharedString, StyledExt, StyledTypography, Window, div,
     h_flex, v_flex,
 };
+use util::maybe;
 use workspace::ModalView;
+use zeroize::Zeroize;
 
 pub(crate) struct AskPassModal {
     operation: SharedString,
     prompt: SharedString,
     editor: Entity<Editor>,
-    tx: Option<oneshot::Sender<String>>,
+    tx: Option<oneshot::Sender<EncryptedPassword>>,
 }
 
 impl EventEmitter<DismissEvent> for AskPassModal {}
@@ -28,7 +31,7 @@ impl AskPassModal {
     pub fn new(
         operation: SharedString,
         prompt: SharedString,
-        tx: oneshot::Sender<String>,
+        tx: oneshot::Sender<EncryptedPassword>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -53,10 +56,20 @@ impl AskPassModal {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tx) = self.tx.take() {
-            tx.send(self.editor.read(cx).text(cx)).ok();
-        }
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let tx = self.tx.take()?;
+            let mut text = self.editor.update(cx, |this, cx| {
+                let text = this.text(cx);
+                this.clear(window, cx);
+                text
+            });
+            let pw = askpass::EncryptedPassword::try_from(text.as_ref()).ok()?;
+            text.zeroize();
+            tx.send(pw).ok();
+            Some(())
+        });
+
         cx.emit(DismissEvent);
     }
 

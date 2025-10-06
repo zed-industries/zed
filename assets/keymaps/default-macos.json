@@ -289,7 +289,7 @@
       "alt-enter": "agent::ContinueWithBurnMode",
       "cmd-y": "agent::AllowOnce",
       "cmd-alt-y": "agent::AllowAlways",
-      "cmd-d": "agent::RejectOnce"
+      "cmd-alt-z": "agent::RejectOnce"
     }
   },
   {
@@ -427,6 +427,13 @@
     "bindings": {
       "cmd-n": "rules_library::NewRule",
       "cmd-shift-s": "rules_library::ToggleDefaultRule",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
+  {
+    "context": "SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
       "cmd-w": "workspace::CloseWindow"
     }
   },

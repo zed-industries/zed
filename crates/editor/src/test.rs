@@ -186,7 +186,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
         match block {
             Block::Custom(custom_block) => {
                 if let BlockPlacement::Near(x) = &custom_block.placement
-                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot))
+                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot()))
                 {
                     continue;
                 };
@@ -217,15 +217,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 height,
             } => {
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                    format!(
-                        "§ {}",
-                        first_excerpt
-                            .buffer
-                            .file()
-                            .unwrap()
-                            .file_name(cx)
-                            .to_string_lossy()
-                    )
+                    format!("§ {}", first_excerpt.buffer.file().unwrap().file_name(cx))
                 }));
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
@@ -237,17 +229,11 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 }
             }
             Block::BufferHeader { excerpt, height } => {
-                lines[row.0 as usize].push_str(&cx.update(|_, cx| {
-                    format!(
-                        "§ {}",
-                        excerpt
-                            .buffer
-                            .file()
-                            .unwrap()
-                            .file_name(cx)
-                            .to_string_lossy()
-                    )
-                }));
+                lines[row.0 as usize].push_str(
+                    &cx.update(|_, cx| {
+                        format!("§ {}", excerpt.buffer.file().unwrap().file_name(cx))
+                    }),
+                );
                 for row in row.0 + 1..row.0 + height {
                     lines[row as usize].push_str("§ -----");
                 }

@@ -84,6 +84,17 @@ pub enum EditPredictionProvider {
     Zed,
 }
 
+impl EditPredictionProvider {
+    pub fn is_zed(&self) -> bool {
+        match self {
+            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
+        }
+    }
+}
+
 /// The contents of the edit prediction settings.
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
@@ -136,7 +147,19 @@ pub enum EditPredictionsMode {
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -159,6 +182,7 @@ pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -250,7 +274,7 @@ pub struct LanguageSettingsContent {
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
     ///
     /// Default: "•" for spaces, "→" for tabs.
-    pub whitespace_map: Option<WhitespaceMap>,
+    pub whitespace_map: Option<WhitespaceMapContent>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -321,7 +345,19 @@ pub struct LanguageSettingsContent {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -343,23 +379,9 @@ pub enum ShowWhitespaceSetting {
 
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct WhitespaceMap {
-    pub space: Option<String>,
-    pub tab: Option<String>,
-}
-
-impl WhitespaceMap {
-    pub fn space(&self) -> SharedString {
-        self.space
-            .as_ref()
-            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
-    }
-
-    pub fn tab(&self) -> SharedString {
-        self.tab
-            .as_ref()
-            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
-    }
+pub struct WhitespaceMapContent {
+    pub space: Option<char>,
+    pub tab: Option<char>,
 }
 
 /// The behavior of `editor::Rewrap`.
@@ -547,102 +569,13 @@ pub struct PrettierSettingsContent {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq, MergeFrom)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "lowercase")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
     /// Files should not be formatted on save.
     Off,
-    List(FormatterList),
-}
-
-impl JsonSchema for FormatOnSave {
-    fn schema_name() -> Cow<'static, str> {
-        "OnSaveFormatter".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let formatter_schema = Formatter::json_schema(generator);
-
-        json_schema!({
-            "oneOf": [
-                {
-                    "type": "array",
-                    "items": formatter_schema
-                },
-                {
-                    "type": "string",
-                    "enum": ["on", "off", "language_server"]
-                },
-                formatter_schema
-            ]
-        })
-    }
-}
-
-impl Serialize for FormatOnSave {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::On => serializer.serialize_str("on"),
-            Self::Off => serializer.serialize_str("off"),
-            Self::List(list) => list.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for FormatOnSave {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FormatDeserializer;
-
-        impl<'d> Visitor<'d> for FormatDeserializer {
-            type Value = FormatOnSave;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid on-save formatter kind")
-            }
-            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "on" {
-                    Ok(Self::Value::On)
-                } else if v == "off" {
-                    Ok(Self::Value::Off)
-                } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList::Single(
-                        Formatter::LanguageServer { name: None },
-                    )))
-                } else {
-                    let ret: Result<FormatterList, _> =
-                        Deserialize::deserialize(v.into_deserializer());
-                    ret.map(Self::Value::List)
-                }
-            }
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-                ret.map(Self::Value::List)
-            }
-            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-                ret.map(Self::Value::List)
-            }
-        }
-        deserializer.deserialize_any(FormatDeserializer)
-    }
 }
 
 /// Controls which formatter should be used when formatting code.
@@ -780,8 +713,8 @@ pub enum Formatter {
         /// The arguments to pass to the program.
         arguments: Option<Arc<[String]>>,
     },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    /// Files should be formatted using a code action executed by language servers.
+    CodeAction(String),
 }
 
 /// The settings for indent guides.

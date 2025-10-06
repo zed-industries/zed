@@ -35,6 +35,9 @@
 //! being created (unless no tests were run). These results can be automatically
 //! compared. To do so, run `cargo perf-compare new-ident old-ident`.
 //!
+//! To save the markdown output to a file instead, run `cargo perf-compare --save=$FILE
+//! new-ident old-ident`.
+//!
 //! NB: All files matching `.perf-runs/ident.*.json` will be considered when
 //! doing this comparison, so ensure there aren't leftover files in your `.perf-runs`
 //! directory that might match that!
@@ -43,7 +46,7 @@
 //! This should probably not be called manually unless you're working on the profiler
 //! itself; use the `cargo perf-test` alias (after building this crate) instead.
 
-use perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
+use zed_perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
 
 use std::{
     fs::OpenOptions,
@@ -91,9 +94,12 @@ impl OutputKind<'_> {
     /// Logs the output of a run as per the `OutputKind`.
     fn log(&self, output: &Output, t_bin: &str) {
         match self {
-            OutputKind::Markdown => print!("{output}"),
+            OutputKind::Markdown => println!("{output}"),
             OutputKind::Json(ident) => {
-                let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+                // We're going to be in tooling/perf/$whatever.
+                let wspace_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+                    .join("..")
+                    .join("..");
                 let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
                 std::fs::create_dir_all(&runs_dir).unwrap();
                 assert!(
@@ -212,11 +218,28 @@ fn parse_mdata(t_bin: &str, mdata_fn: &str) -> Result<TestMdata, FailKind> {
 
 /// Compares the perf results of two profiles as per the arguments passed in.
 fn compare_profiles(args: &[String]) {
-    let ident_new = args.first().expect("FATAL: missing identifier for new run");
-    let ident_old = args.get(1).expect("FATAL: missing identifier for old run");
-    // TODO: move this to a constant also tbh
+    let mut save_to = None;
+    let mut ident_idx = 0;
+    args.first().inspect(|a| {
+        if a.starts_with("--save") {
+            save_to = Some(
+                a.strip_prefix("--save=")
+                    .expect("FATAL: save param formatted incorrectly"),
+            );
+        }
+        ident_idx = 1;
+    });
+    let ident_new = args
+        .get(ident_idx)
+        .expect("FATAL: missing identifier for new run");
+    let ident_old = args
+        .get(ident_idx + 1)
+        .expect("FATAL: missing identifier for old run");
     let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
+    let runs_dir = PathBuf::from(&wspace_dir)
+        .join("..")
+        .join("..")
+        .join(consts::RUNS_DIR);
 
     // Use the blank outputs initially, so we can merge into these with prefixes.
     let mut outputs_new = Output::blank();
@@ -255,7 +278,17 @@ fn compare_profiles(args: &[String]) {
     }
 
     let res = outputs_new.compare_perf(outputs_old);
-    println!("{res}");
+    if let Some(filename) = save_to {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(filename)
+            .expect("FATAL: couldn't save run results to file");
+        file.write_all(format!("{res}").as_bytes()).unwrap();
+    } else {
+        println!("{res}");
+    }
 }
 
 /// Runs a test binary, filtering out tests which aren't marked for perf triage
@@ -321,6 +354,24 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
     out.into_iter()
 }
 
+/// Runs the specified test `count` times, returning the time taken if the test
+/// succeeded.
+#[inline]
+fn spawn_and_iterate(t_bin: &str, t_name: &str, count: NonZero<usize>) -> Option<Duration> {
+    let mut cmd = Command::new(t_bin);
+    cmd.args([t_name, "--exact"]);
+    cmd.env(consts::ITER_ENV_VAR, format!("{count}"));
+    // Don't let the child muck up our stdin/out/err.
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let pre = Instant::now();
+    // Discard the output beyond ensuring success.
+    let out = cmd.spawn().unwrap().wait();
+    let post = Instant::now();
+    out.iter().find_map(|s| s.success().then_some(post - pre))
+}
+
 /// Triage a test to determine the correct number of iterations that it should run.
 /// Specifically, repeatedly runs the given test until its execution time exceeds
 /// `thresh`, calling `step(iterations)` after every failed run to determine the new
@@ -328,7 +379,8 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
 /// else `Some(iterations)`.
 ///
 /// # Panics
-/// This will panic if `step(usize)` is not monotonically increasing.
+/// This will panic if `step(usize)` is not monotonically increasing, or if the test
+/// binary is invalid.
 fn triage_test(
     t_bin: &str,
     t_name: &str,
@@ -336,22 +388,12 @@ fn triage_test(
     mut step: impl FnMut(NonZero<usize>) -> Option<NonZero<usize>>,
 ) -> Option<NonZero<usize>> {
     let mut iter_count = DEFAULT_ITER_COUNT;
+    // It's possible that the first loop of a test might be an outlier (e.g. it's
+    // doing some caching), in which case we want to skip it.
+    let duration_once = spawn_and_iterate(t_bin, t_name, NonZero::new(1).unwrap())?;
     loop {
-        let mut cmd = Command::new(t_bin);
-        cmd.args([t_name, "--exact"]);
-        cmd.env(consts::ITER_ENV_VAR, format!("{iter_count}"));
-        // Don't let the child muck up our stdin/out/err.
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-        let pre = Instant::now();
-        // Discard the output beyond ensuring success.
-        let out = cmd.spawn().unwrap().wait();
-        let post = Instant::now();
-        if !out.unwrap().success() {
-            break None;
-        }
-        if post - pre > thresh {
+        let duration = spawn_and_iterate(t_bin, t_name, iter_count)?;
+        if duration.saturating_sub(duration_once) > thresh {
             break Some(iter_count);
         }
         let new = step(iter_count)?;
@@ -375,7 +417,10 @@ fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<
         "1",
         "--export-markdown",
         "-",
-        &format!("{t_bin} {t_name}"),
+        // Parse json instead...
+        "--time-unit",
+        "millisecond",
+        &format!("{t_bin} --exact {t_name}"),
     ]);
     perf_cmd.env(consts::ITER_ENV_VAR, format!("{iterations}"));
     let p_out = perf_cmd.output().unwrap();
@@ -390,7 +435,7 @@ fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<
     // TODO: Parse json instead.
     let mut res_iter = results_line.split_whitespace();
     // Durations are given in milliseconds, so account for that.
-    let mean = Duration::from_secs_f64(res_iter.nth(4).unwrap().parse::<f64>().unwrap() / 1000.);
+    let mean = Duration::from_secs_f64(res_iter.nth(5).unwrap().parse::<f64>().unwrap() / 1000.);
     let stddev = Duration::from_secs_f64(res_iter.nth(1).unwrap().parse::<f64>().unwrap() / 1000.);
 
     Some(Timings { mean, stddev })
