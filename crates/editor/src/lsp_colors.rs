@@ -134,7 +134,6 @@ impl LspColorData {
                         b: color.color.blue,
                         a: color.color.alpha,
                     });
-
                     (display_range, color)
                 })
                 .collect()
