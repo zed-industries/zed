@@ -3189,6 +3189,21 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Linked Edits",
+            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| &language.linked_edits)
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.linked_edits
+                    })
+                },
+            }),
+            metadata: None,
+        }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
@@ -3679,21 +3694,6 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 pick_mut: |settings_content| {
                     language_settings_field_mut(settings_content, |language| {
                         &mut language.extend_comment_on_newline
-                    })
-                },
-            }),
-            metadata: None,
-        }),
-        SettingsPageItem::SettingItem(SettingItem {
-            title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
-            field: Box::new(SettingField {
-                pick: |settings_content| {
-                    language_settings_field(settings_content, |language| &language.linked_edits)
-                },
-                pick_mut: |settings_content| {
-                    language_settings_field_mut(settings_content, |language| {
-                        &mut language.linked_edits
                     })
                 },
             }),
