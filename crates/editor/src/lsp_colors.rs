@@ -117,11 +117,7 @@ impl LspColorData {
         &self,
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
-        window: &Window,
-    ) -> (
-        DocumentColorsRenderMode,
-        Vec<(Range<DisplayPoint>, Hsla, ShapedLine)>,
-    ) {
+    ) -> (DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>) {
         let render_mode = self.render_mode;
         let highlights = if render_mode == DocumentColorsRenderMode::None
             || render_mode == DocumentColorsRenderMode::Inlay
@@ -132,13 +128,6 @@ impl LspColorData {
                 .iter()
                 .flat_map(|(_, buffer_colors)| &buffer_colors.colors)
                 .map(|(range, color, _)| {
-                    let buffer = &snapshot.buffer_snapshot;
-                    let display_text: SharedString = buffer
-                        .text_for_range(range.to_offset(&buffer))
-                        .collect::<String>()
-                        .replace("\n", "")
-                        .into();
-
                     let display_range = range.clone().to_display_points(snapshot);
                     let color = Hsla::from(Rgba {
                         r: color.color.red,
@@ -147,28 +136,7 @@ impl LspColorData {
                         a: color.color.alpha,
                     });
 
-                    // Blend the color with the background color to avoid alpha.
-                    let solid_color = style.background.blend(color);
-                    let font_size = style.text.font_size.to_pixels(window.rem_size());
-                    let text_run = TextRun {
-                        len: display_text.len(),
-                        color: if solid_color.l >= 0.5 {
-                            gpui::black()
-                        } else {
-                            gpui::white()
-                        },
-                        background_color: None,
-                        font: style.text.font(),
-                        underline: None,
-                        strikethrough: None,
-                    };
-
-                    let shape_line =
-                        window
-                            .text_system()
-                            .shape_line(display_text, font_size, &[text_run], None);
-
-                    (display_range, color, shape_line)
+                    (display_range, color)
                 })
                 .collect()
         };

@@ -3292,6 +3292,7 @@ impl EditorElement {
         rows: Range<DisplayRow>,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
         highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+        document_color_ranges: &[(Range<DisplayPoint>, Hsla)],
         base_background: Hsla,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
@@ -3313,7 +3314,10 @@ impl EditorElement {
             })
         });
         let mut per_row_map = vec![Vec::new(); rows.len()];
-        for (range, color) in highlight_iter.chain(selection_iter) {
+        for (range, color) in highlight_iter
+            .chain(selection_iter)
+            .chain(document_color_ranges.iter().cloned())
+        {
             let covered_rows = if range.end.column() == 0 {
                 cmp::max(range.start.row(), rows.start)..cmp::min(range.end.row(), rows.end)
             } else {
@@ -6112,8 +6116,8 @@ impl EditorElement {
 
                 self.paint_lines_background(layout, window, cx);
                 let invisible_display_ranges = self.paint_highlights(layout, window, cx);
+                self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
-                self.paint_document_colors(layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
@@ -6247,7 +6251,7 @@ impl EditorElement {
         });
     }
 
-    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_document_colors(&self, layout: &mut EditorLayout, window: &mut Window) {
         let Some((colors_render_mode, image_colors)) = &layout.document_colors else {
             return;
         };
@@ -6260,7 +6264,7 @@ impl EditorElement {
 
         let line_end_overshoot = layout.line_end_overshoot();
 
-        for (range, color, shape_line) in image_colors {
+        for (range, color) in image_colors {
             match colors_render_mode {
                 DocumentColorsRenderMode::Inlay | DocumentColorsRenderMode::None => return,
                 DocumentColorsRenderMode::Background => {
@@ -6273,22 +6277,6 @@ impl EditorElement {
                         layout,
                         window,
                     );
-
-                    // paint text above the background color
-                    let row_range = &layout.visible_display_row_range;
-                    if row_range.start <= range.start.row() && range.end.row() < row_range.end {
-                        let row = range.start.row().max(row_range.start).min(row_range.end);
-                        let line_height = layout.position_map.line_height;
-                        let start_y = layout.content_origin.y + row.as_f32() * line_height
-                            - layout.position_map.scroll_pixel_position.y;
-                        let line_layout =
-                            &layout.position_map.line_layouts[row.minus(row_range.start) as usize];
-                        let start_x = layout.content_origin.x
-                            + line_layout.x_for_index(range.start.column() as usize)
-                            - layout.position_map.scroll_pixel_position.x;
-
-                        _ = shape_line.paint(point(start_x, start_y), line_height, window, cx);
-                    }
                 }
                 DocumentColorsRenderMode::Border => {
                     self.paint_highlighted_range(
@@ -8658,10 +8646,12 @@ impl Element for EditorElement {
                             cx,
                         );
 
-                    let document_colors =
-                        self.editor.read(cx).colors.as_ref().map(|colors| {
-                            colors.editor_display_highlights(&snapshot, &style, window)
-                        });
+                    let document_colors = self
+                        .editor
+                        .read(cx)
+                        .colors
+                        .as_ref()
+                        .map(|colors| colors.editor_display_highlights(&snapshot, &style));
                     let redacted_ranges = self.editor.read(cx).redacted_ranges(
                         start_anchor..end_anchor,
                         &snapshot.display_snapshot,
@@ -8813,6 +8803,10 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &selections,
                         &highlighted_ranges,
+                        &document_colors
+                            .as_ref()
+                            .map(|colors| colors.1.clone())
+                            .unwrap_or_default(),
                         self.style.background,
                     );
 
@@ -9640,10 +9634,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
-    document_colors: Option<(
-        DocumentColorsRenderMode,
-        Vec<(Range<DisplayPoint>, Hsla, ShapedLine)>,
-    )>,
+    document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
 }
 
 impl EditorLayout {
@@ -11199,6 +11190,7 @@ mod tests {
                 DisplayRow(0)..DisplayRow(5),
                 &selections,
                 &[],
+                &[],
                 base_bg,
             );
 
@@ -11247,6 +11239,7 @@ mod tests {
             let result = EditorElement::bg_segments_per_row(
                 DisplayRow(0)..DisplayRow(4),
                 &selections,
+                &[],
                 &[],
                 base_bg,
             );
