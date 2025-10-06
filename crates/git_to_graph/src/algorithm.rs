@@ -93,9 +93,9 @@ pub fn init_node(
         let parent_node = unassigned_nodes
             .entry(parent_id.clone())
             .or_insert_with(|| {
-                let pn = new_node(parent_id, *tmp_row);
+                let new_parent_node = new_node(parent_id, *tmp_row);
                 *tmp_row -= 1;
-                pn
+                new_parent_node
             });
         parent_node.borrow_mut().children.push(node.clone());
         node.borrow_mut().parents.push(parent_node.clone());
