@@ -431,6 +431,13 @@
     }
   },
   {
+    "context": "SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "use_key_equivalents": true,
     "bindings": {

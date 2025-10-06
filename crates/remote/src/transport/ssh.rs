@@ -1055,17 +1055,14 @@ fn build_command(
         }
     }
 
-    write!(exec, "{ssh_shell} ").unwrap();
     if let Some(input_program) = input_program {
-        let mut script = shlex::try_quote(&input_program)?.into_owned();
+        write!(exec, "{}", shlex::try_quote(&input_program).unwrap()).unwrap();
         for arg in input_args {
             let arg = shlex::try_quote(&arg)?;
-            script.push_str(" ");
-            script.push_str(&arg);
+            write!(exec, " {}", &arg).unwrap();
         }
-        write!(exec, "-c {}", shlex::try_quote(&script).unwrap()).unwrap();
     } else {
-        write!(exec, "-l").unwrap();
+        write!(exec, "{ssh_shell} -l").unwrap();
     };
 
     let mut args = Vec::new();
@@ -1115,7 +1112,7 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
-                "exec env -C \"$HOME/work\" INPUT_VA=val /bin/fish -c 'remote_program arg1 arg2'"
+                "exec env -C \"$HOME/work\" INPUT_VA=val remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);

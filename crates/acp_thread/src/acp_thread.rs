@@ -2109,18 +2109,16 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let (task_command, task_args) = ShellBuilder::new(
-                    project
-                        .update(cx, |project, cx| {
-                            project
-                                .remote_client()
-                                .and_then(|r| r.read(cx).default_system_shell())
-                        })?
-                        .as_deref(),
-                    &Shell::Program(get_default_system_shell()),
-                )
-                .redirect_stdin_to_dev_null()
-                .build(Some(command.clone()), &args);
+                let shell = project
+                    .update(cx, |project, cx| {
+                        project
+                            .remote_client()
+                            .and_then(|r| r.read(cx).default_system_shell())
+                    })?
+                    .unwrap_or_else(|| get_default_system_shell());
+                let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
+                    .redirect_stdin_to_dev_null()
+                    .build(Some(command.clone()), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2333,12 +2331,10 @@ mod tests {
         // Create a display-only terminal and then send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -2412,12 +2408,10 @@ mod tests {
         // Now create a display-only lower-level terminal and send Created
         let lower = cx.new(|cx| {
             let builder = ::terminal::TerminalBuilder::new_display_only(
-                None,
                 ::terminal::terminal_settings::CursorShape::default(),
                 ::terminal::terminal_settings::AlternateScroll::On,
                 None,
                 0,
-                cx,
             )
             .unwrap();
             builder.subscribe(cx)

@@ -9,7 +9,7 @@ pub struct TreeViewItem {
     id: ElementId,
     group_name: Option<SharedString>,
     label: SharedString,
-    toggle: bool,
+    expanded: bool,
     selected: bool,
     disabled: bool,
     focused: bool,
@@ -28,7 +28,7 @@ impl TreeViewItem {
             id: id.into(),
             group_name: None,
             label: label.into(),
-            toggle: false,
+            expanded: false,
             selected: false,
             disabled: false,
             focused: false,
@@ -73,8 +73,8 @@ impl TreeViewItem {
         self
     }
 
-    pub fn toggle(mut self, toggle: bool) -> Self {
-        self.toggle = toggle;
+    pub fn expanded(mut self, toggle: bool) -> Self {
+        self.expanded = toggle;
         self
     }
 
@@ -161,10 +161,12 @@ impl RenderOnce for TreeViewItem {
                                 })
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
-                                    Disclosure::new("toggle", self.toggle)
+                                    Disclosure::new("toggle", self.expanded)
                                         .when_some(
                                             self.on_toggle.clone(),
-                                            |disclosure, on_toggle| disclosure.on_toggle(on_toggle),
+                                            |disclosure, on_toggle| {
+                                                disclosure.on_toggle_expanded(on_toggle)
+                                            },
                                         )
                                         .opened_icon(IconName::ChevronDown)
                                         .closed_icon(IconName::ChevronRight),
