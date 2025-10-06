@@ -1,3 +1,4 @@
+use anyhow::Context;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -32,8 +33,19 @@ pub fn home_dir() -> &'static PathBuf {
 }
 
 pub trait PathExt {
+    /// Compacts a given file path by replacing the user's home directory
+    /// prefix with a tilde (`~`).
+    ///
+    /// # Returns
+    ///
+    /// * A `PathBuf` containing the compacted file path. If the input path
+    ///   does not have the user's home directory prefix, or if we are not on
+    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf;
+
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -45,7 +57,6 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
-            use anyhow::Context as _;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -57,18 +68,24 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf>;
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
+    fn multiple_extensions(&self) -> Option<String>;
+
+    /// Try to make a shell-safe representation of the path.
+    ///
+    /// For Unix, the path is escaped to be safe for POSIX shells
+    fn try_shell_safe(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
-    /// Compacts a given file path by replacing the user's home directory
-    /// prefix with a tilde (`~`).
-    ///
-    /// # Returns
-    ///
-    /// * A `PathBuf` containing the compacted file path. If the input path
-    ///   does not have the user's home directory prefix, or if we are not on
-    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
@@ -85,7 +102,6 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
@@ -98,8 +114,6 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Converts a local path to one that can be used inside of WSL.
-    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf> {
         let mut new_path = PathBuf::new();
         for component in self.as_ref().components() {
@@ -116,6 +130,43 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         Some(new_path)
+    }
+
+    fn multiple_extensions(&self) -> Option<String> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
+
+        let parts: Vec<&str> = file_name
+            .split('.')
+            // Skip the part with the file name extension
+            .skip(1)
+            .collect();
+
+        if parts.len() < 2 {
+            return None;
+        }
+
+        Some(parts.join("."))
+    }
+
+    fn try_shell_safe(&self) -> anyhow::Result<String> {
+        #[cfg(target_os = "windows")]
+        {
+            Ok(self.as_ref().to_string_lossy().to_string())
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let path_str = self
+                .as_ref()
+                .to_str()
+                .with_context(|| "Path contains invalid UTF-8")?;
+
+            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+            // errors are introduced in the future :(
+            Ok(shlex::try_quote(path_str)?.into_owned())
+        }
     }
 }
 
