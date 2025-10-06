@@ -35,7 +35,6 @@ Each channel has a notes file associated with it to keep track of current status
 
 This is similar to a Google Doc, except powered by Zed's collaborative software and persisted to our servers.
 
-
 ## Inviting people
 
 By default, channels you create can only be accessed by you. You can invite collaborators by right clicking and selecting `Manage members`.
