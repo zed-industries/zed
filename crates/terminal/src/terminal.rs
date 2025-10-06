@@ -616,10 +616,14 @@ impl TerminalBuilder {
             child_exited: None,
         };
 
-        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
+        if !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(b"\n");
+                terminal.write_to_pty(if cfg!(windows) {
+                    b"\r\n" as &[_]
+                } else {
+                    b"\n"
+                });
             }
             terminal.clear();
         }
@@ -2131,12 +2135,8 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(
-        &self,
-        cx: &App,
-        cwd: impl FnOnce() -> Option<PathBuf>,
-    ) -> Result<TerminalBuilder> {
-        let working_directory = self.working_directory().or_else(cwd);
+    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
             None,

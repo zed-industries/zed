@@ -466,7 +466,7 @@ impl TerminalPanel {
                     Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
-                        || working_directory,
+                        working_directory,
                     )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })

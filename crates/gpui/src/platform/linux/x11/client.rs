@@ -1315,17 +1315,9 @@ impl X11Client {
             return None;
         };
         let mut state = self.0.borrow_mut();
-        let keystroke = state.pre_key_char_down.take();
         state.composing = false;
         drop(state);
-        if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text);
-            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                keystroke,
-                is_held: false,
-            }));
-        }
-
+        window.handle_ime_commit(text);
         Some(())
     }
 
