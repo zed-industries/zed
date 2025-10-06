@@ -3397,6 +3397,8 @@ impl SettingsWindow {
             .gap_1()
             .children(self.files.iter().enumerate().map(|(ix, file)| {
                 Button::new(ix, file.name())
+                    .toggle_state(file == &self.current_file)
+                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
             }))
     }
