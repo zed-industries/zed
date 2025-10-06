@@ -808,7 +808,6 @@ dependencies = [
  "gpui",
  "log",
  "net",
- "proto",
  "smol",
  "tempfile",
  "windows 0.61.1",
