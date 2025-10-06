@@ -2135,12 +2135,8 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
-    pub fn clone_builder(
-        &self,
-        cx: &App,
-        cwd: impl FnOnce() -> Option<PathBuf>,
-    ) -> Result<TerminalBuilder> {
-        let working_directory = self.working_directory().or_else(cwd);
+    pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
             None,
