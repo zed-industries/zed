@@ -41,6 +41,22 @@ struct SettingField<T: 'static> {
     pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
 }
 
+/// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
+/// to keep the setting around in the UI with valid pick and pick_mut implementations, but don't actually try to render it.
+/// TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
+struct UnimplementedSettingField;
+
+impl<T: 'static> SettingField<T> {
+    /// Helper for settings with types that are not yet implemented.
+    #[allow(unused)]
+    fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
+        SettingField {
+            pick: |_| &None,
+            pick_mut: |_| unreachable!(),
+        }
+    }
+}
+
 trait AnySettingField {
     fn as_any(&self) -> &dyn Any;
     fn type_name(&self) -> &'static str;
@@ -62,6 +78,10 @@ impl<T> AnySettingField for SettingField<T> {
     }
 
     fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile {
+        if AnySettingField::type_id(self) == TypeId::of::<UnimplementedSettingField>() {
+            return file.to_settings();
+        }
+
         let (file, _) = cx
             .global::<SettingsStore>()
             .get_value_from_file(file.to_settings(), self.pick);
@@ -180,6 +200,17 @@ pub fn init(cx: &mut App) {
 fn init_renderers(cx: &mut App) {
     // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
+        .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
+            // TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
+            Button::new("unimplemented-field", "UNIMPLEMENTED")
+                .size(ButtonSize::Medium)
+                .icon(IconName::XCircle)
+                .icon_position(IconPosition::Start)
+                .icon_color(Color::Error)
+                .icon_size(IconSize::Small)
+                .style(ButtonStyle::Outlined)
+                .into_any_element()
+        })
         .add_renderer::<bool>(|settings_field, file, _, _, cx| {
             render_toggle_button(*settings_field, file, cx).into_any_element()
         })
