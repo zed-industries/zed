@@ -2956,10 +2956,19 @@ impl Window {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
-        let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS_Y as f32).floor() as u8,
-        };
+        let quantized_origin = Point::new(
+            (glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32).round() / SUBPIXEL_VARIANTS_X as f32,
+            (glyph_origin.y.0 * SUBPIXEL_VARIANTS_Y as f32).round() / SUBPIXEL_VARIANTS_Y as f32,
+        );
+
+        let subpixel_variant = Point::new(
+            (quantized_origin.x.fract() * SUBPIXEL_VARIANTS_X as f32) as u8,
+            (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
+        );
+
+        let integer_origin: Point<ScaledPixels> =
+            quantized_origin.map(|coord| ScaledPixels(coord.trunc()));
+
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -2979,7 +2988,7 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
+                origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.content_mask().scale(scale_factor);
