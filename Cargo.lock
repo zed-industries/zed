@@ -6856,7 +6856,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
- "git2",
  "git_to_graph",
  "gpui",
  "indoc",
