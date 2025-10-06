@@ -3573,7 +3573,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_folded_multiline_buffer_hides_near_blocks(cx: &mut gpui::TestAppContext) {
+    fn test_folded_buffer_with_near_blocks(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
         let text = "line 1\nline 2\nline 3";
@@ -3621,12 +3621,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_folded_single_line_buffer_hides_near_blocks(cx: &mut gpui::TestAppContext) {
+    fn test_folded_buffer_with_near_blocks_on_last_line(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
 
-        let text = "import { foo } from './bar'";
+        let text = "line 1\nline 2\nline 3\nline 4";
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(0, 27)])], cx)
+            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(3, 6)])], cx)
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3647,14 +3647,14 @@ mod tests {
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
-            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
+            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(3, 6))),
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
         }]);
 
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
-        assert_eq!(blocks_snapshot.text(), "\nimport { foo } from './bar'\n");
+        assert_eq!(blocks_snapshot.text(), "\nline 1\nline 2\nline 3\nline 4\n");
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
         buffer.read_with(cx, |buffer, cx| {
