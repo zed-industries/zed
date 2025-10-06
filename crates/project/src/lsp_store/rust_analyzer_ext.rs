@@ -91,7 +91,7 @@ pub fn cancel_flycheck(
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
             project.buffer_store().update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(buffer_path, cx)
+                buffer_store.open_buffer(buffer_path, None, cx)
             })
         })
     });
@@ -139,7 +139,7 @@ pub fn run_flycheck(
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
             project.buffer_store().update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(buffer_path, cx)
+                buffer_store.open_buffer(buffer_path, None, cx)
             })
         })
     });
@@ -196,7 +196,7 @@ pub fn clear_flycheck(
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
             project.buffer_store().update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(buffer_path, cx)
+                buffer_store.open_buffer(buffer_path, None, cx)
             })
         })
     });

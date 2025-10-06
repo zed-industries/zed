@@ -500,6 +500,7 @@ impl HeadlessProject {
                         worktree_id,
                         path: Arc::<Path>::from_proto(message.payload.path),
                     },
+                    None,
                     cx,
                 )
             });
@@ -592,6 +593,7 @@ impl HeadlessProject {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into(),
                     },
+                    None,
                     cx,
                 )
             });

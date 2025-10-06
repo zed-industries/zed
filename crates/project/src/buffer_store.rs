@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use client::Client;
 use collections::{HashMap, HashSet, hash_map};
-use fs::Fs;
+use fs::{Fs, encodings::EncodingWrapper};
 use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -625,11 +625,13 @@ impl LocalBufferStore {
         &self,
         path: Arc<Path>,
         worktree: Entity<Worktree>,
+        encoding: Option<EncodingWrapper>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
-            let load_file = worktree.load_file(path.as_ref(), None, cx);
+            let load_file = worktree.load_file(path.as_ref(), encoding, cx);
             let reservation = cx.reserve_entity();
+
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
             cx.spawn(async move |_, cx| {
                 let loaded = load_file.await?;
@@ -644,11 +646,7 @@ impl LocalBufferStore {
 
         cx.spawn(async move |this, cx| {
             let buffer = match load_buffer.await {
-                Ok(buffer) => {
-                    // Reload the buffer to trigger UTF-16 detection
-                    buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
-                    Ok(buffer)
-                }
+                Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(0, buffer_id, "");
@@ -818,6 +816,7 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
+        encoding: Option<EncodingWrapper>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path) {
@@ -841,7 +840,7 @@ impl BufferStore {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
+                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, encoding, cx),
                     BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
                 };
 
@@ -1146,7 +1145,7 @@ impl BufferStore {
                 let buffers = this.update(cx, |this, cx| {
                     project_paths
                         .into_iter()
-                        .map(|project_path| this.open_buffer(project_path, cx))
+                        .map(|project_path| this.open_buffer(project_path, None, cx))
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {
