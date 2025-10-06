@@ -13,8 +13,8 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
-    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
+    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, LanguageSettingsContent,
+    OnLastWindowClosed, RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
 };
 use std::{
     any::{Any, TypeId, type_name},
@@ -564,7 +564,10 @@ impl PartialEq for SettingItem {
 struct SubPageLink {
     title: &'static str,
     render: Arc<
-        dyn Fn(&mut SettingsWindow, &mut Window, &mut App) -> AnyElement + 'static + Send + Sync,
+        dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
+            + 'static
+            + Send
+            + Sync,
     >,
 }
 

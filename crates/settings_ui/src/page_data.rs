@@ -1257,35 +1257,56 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
         },
         SettingsPage {
             title: "Languages & Frameworks",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Language Server",
-                    description: "Whether to use language servers to provide code intelligence",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .enable_language_server
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .enable_language_server
-                        },
+            items: {
+                let mut items = vec![
+                    SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
+                    SettingsPageItem::SubPageLink(SubPageLink {
+                        title: "JSON",
+                        render: Arc::new(|this, window, cx| {
+                            let items = language_settings_data();
+                            let last_non_header_index = items
+                                .iter()
+                                .enumerate()
+                                .rev()
+                                .find(|(_, item)| {
+                                    matches!(item, SettingsPageItem::SectionHeader(_))
+                                })
+                                .map(|(index, _)| index);
+                            let mut section_header = None;
+                            v_flex()
+                                .id("settings-ui-page")
+                                .size_full()
+                                .gap_4()
+                                .overflow_y_scroll()
+                                .track_scroll(&this.scroll_handle)
+                                .children(items.iter().enumerate().map(|(index, item)| {
+                                    let no_bottom_border = items
+                                        .get(index + 1)
+                                        .map(|next_item| {
+                                            matches!(next_item, SettingsPageItem::SectionHeader(_))
+                                        })
+                                        .unwrap_or(false);
+                                    let is_last = Some(index) == last_non_header_index;
+
+                                    if let SettingsPageItem::SectionHeader(header) = item {
+                                        section_header = Some(*header);
+                                    }
+                                    item.render(
+                                        this.current_file.clone(),
+                                        section_header
+                                            .expect("All items rendered after a section header"),
+                                        no_bottom_border || is_last,
+                                        window,
+                                        cx,
+                                    )
+                                }))
+                                .into_any_element()
+                        }),
                     }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Languages"),
-                SettingsPageItem::SubPageLink(SubPageLink {
-                    title: "JSON",
-                    render: Arc::new(|_, _, _| "A settings page!".into_any_element()),
-                }),
-            ],
+                ];
+                items.extend(language_settings_data());
+                items
+            },
         },
         SettingsPage {
             title: "Workbench & Window",
@@ -2556,5 +2577,68 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                 }),
             ],
         },
+    ]
+}
+
+const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
+
+fn language_settings_data() -> Vec<SettingsPageItem> {
+    fn current_language() -> Option<SharedString> {
+        // todo! make "Languages" const
+        sub_page_stack().iter().find_map(|page| {
+            (page.section_header == LANGUAGES_SECTION_HEADER)
+                .then(|| SharedString::new_static(page.link.title))
+        })
+    }
+
+    fn language_settings_field<T>(
+        settings_content: &SettingsContent,
+        get: fn(&LanguageSettingsContent) -> &Option<T>,
+    ) -> &Option<T> {
+        let all_languages = &settings_content.project.all_languages;
+        let mut language_content = None;
+        if let Some(current_language) = current_language() {
+            language_content = all_languages.languages.0.get(&current_language);
+        }
+        let language_content = language_content.unwrap_or(&all_languages.defaults);
+        return get(language_content);
+    }
+
+    fn language_settings_field_mut<T>(
+        settings_content: &mut SettingsContent,
+        get: fn(&mut LanguageSettingsContent) -> &mut Option<T>,
+    ) -> &mut Option<T> {
+        let all_languages = &mut settings_content.project.all_languages;
+        let language_content = if let Some(current_language) = current_language() {
+            all_languages
+                .languages
+                .0
+                .entry(current_language)
+                .or_default()
+        } else {
+            &mut all_languages.defaults
+        };
+        return get(language_content);
+    }
+
+    vec![
+        SettingsPageItem::SectionHeader("General"),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Enable Language Server",
+            description: "Whether to use language servers to provide code intelligence",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        &language.enable_language_server
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.enable_language_server
+                    })
+                },
+            }),
+            metadata: None,
+        }),
     ]
 }
