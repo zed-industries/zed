@@ -8,9 +8,7 @@ use util::fs::make_file_executable;
 
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
-use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(target_os = "windows")]
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -177,13 +175,12 @@ impl AskPassSession {
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         self.askpass_task.script_path()
     }
-
 }
 
 pub struct PasswordProxy {
     _task: Task<()>,
     #[cfg(not(target_os = "windows"))]
-    askpass_script_path: PathBuf,
+    askpass_script_path: std::path::PathBuf,
     #[cfg(target_os = "windows")]
     askpass_helper: String,
 }

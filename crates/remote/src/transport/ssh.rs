@@ -70,14 +70,13 @@ impl From<settings::SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone)]
 struct SshSocket {
     connection_options: SshConnectionOptions,
     #[cfg(not(target_os = "windows"))]
-    socket_path: PathBuf,
+    socket_path: std::path::PathBuf,
     envs: HashMap<String, String>,
     #[cfg(target_os = "windows")]
-    password: askpass::EncryptedPassword,
+    _proxy: askpass::PasswordProxy,
 }
 
 macro_rules! shell_script {
@@ -343,16 +342,17 @@ impl SshRemoteConnection {
         }
 
         #[cfg(not(target_os = "windows"))]
-        let socket = SshSocket::new(connection_options, socket_path)?;
+        let socket = SshSocket::new(connection_options, socket_path).await?;
         #[cfg(target_os = "windows")]
         let socket = SshSocket::new(
             connection_options,
-            askpass.script_path().as_ref().display().to_string(),
             askpass
                 .get_password()
                 .or_else(|| askpass::EncryptedPassword::try_from("").ok())
                 .context("Failed to fetch askpass password")?,
-        )?;
+            cx.background_executor().clone(),
+        )
+        .await?;
         drop(askpass);
 
         let ssh_platform = socket.platform().await?;
@@ -659,7 +659,7 @@ impl SshRemoteConnection {
 
 impl SshSocket {
     #[cfg(not(target_os = "windows"))]
-    fn new(options: SshConnectionOptions, socket_path: PathBuf) -> Result<Self> {
+    async fn new(options: SshConnectionOptions, socket_path: PathBuf) -> Result<Self> {
         Ok(Self {
             connection_options: options,
             envs: HashMap::default(),
@@ -668,19 +668,26 @@ impl SshSocket {
     }
 
     #[cfg(target_os = "windows")]
-    fn new(
+    async fn new(
         options: SshConnectionOptions,
-        askpass_script: String,
         password: askpass::EncryptedPassword,
+        executor: gpui::BackgroundExecutor,
     ) -> Result<Self> {
         let mut envs = HashMap::default();
+        let get_password =
+            move |_| Task::ready(std::ops::ControlFlow::Continue(Ok(password.clone())));
+
+        let _proxy = askpass::PasswordProxy::new(get_password, executor).await?;
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
-        envs.insert("SSH_ASKPASS".into(), askpass_script);
+        envs.insert(
+            "SSH_ASKPASS".into(),
+            _proxy.script_path().as_ref().display().to_string(),
+        );
 
         Ok(Self {
             connection_options: options,
             envs,
-            password,
+            _proxy,
         })
     }
 
