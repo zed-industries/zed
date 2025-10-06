@@ -153,18 +153,29 @@ impl Project {
                     }
 
                     if let Some(store) = &toolchain_store {
-                        let list_task = store.update(&mut cx.clone(), |store, cx| {
-                            store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
-                        }).ok()?;
+                        let list_task = store
+                            .update(&mut cx.clone(), |store, cx| {
+                                store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
+                            })
+                            .ok()?;
 
                         if let Some(toolchain_list) = list_task.await {
-                            let toolchain = toolchain_list.toolchains.default
-                                .and_then(|idx| toolchain_list.toolchains.toolchains.get(idx).cloned())
-                                .or_else(|| toolchain_list.toolchains.toolchains.first().cloned())?;
+                            let toolchain = toolchain_list
+                                .toolchains
+                                .default
+                                .and_then(|idx| {
+                                    toolchain_list.toolchains.toolchains.get(idx).cloned()
+                                })
+                                .or_else(|| {
+                                    toolchain_list.toolchains.toolchains.first().cloned()
+                                })?;
 
-                            project.update(&mut cx.clone(), |this, cx| {
-                                this.activate_toolchain(path, toolchain.clone(), cx)
-                            }).ok()?.await;
+                            project
+                                .update(&mut cx.clone(), |this, cx| {
+                                    this.activate_toolchain(path, toolchain.clone(), cx)
+                                })
+                                .ok()?
+                                .await;
 
                             let language = lang_registry
                                 .language_for_name(&toolchain.language_name.0)
@@ -404,18 +415,29 @@ impl Project {
                     }
 
                     if let Some(store) = &toolchain_store {
-                        let list_task = store.update(&mut cx.clone(), |store, cx| {
-                            store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
-                        }).ok()?;
+                        let list_task = store
+                            .update(&mut cx.clone(), |store, cx| {
+                                store.list_toolchains(path.clone(), LanguageName::new("Python"), cx)
+                            })
+                            .ok()?;
 
                         if let Some(toolchain_list) = list_task.await {
-                            let toolchain = toolchain_list.toolchains.default
-                                .and_then(|idx| toolchain_list.toolchains.toolchains.get(idx).cloned())
-                                .or_else(|| toolchain_list.toolchains.toolchains.first().cloned())?;
+                            let toolchain = toolchain_list
+                                .toolchains
+                                .default
+                                .and_then(|idx| {
+                                    toolchain_list.toolchains.toolchains.get(idx).cloned()
+                                })
+                                .or_else(|| {
+                                    toolchain_list.toolchains.toolchains.first().cloned()
+                                })?;
 
-                            project.update(&mut cx.clone(), |this, cx| {
-                                this.activate_toolchain(path, toolchain.clone(), cx)
-                            }).ok()?.await;
+                            project
+                                .update(&mut cx.clone(), |this, cx| {
+                                    this.activate_toolchain(path, toolchain.clone(), cx)
+                                })
+                                .ok()?
+                                .await;
 
                             let language = lang_registry
                                 .language_for_name(&toolchain.language_name.0)
