@@ -2980,17 +2980,18 @@ impl SettingsPageItem {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .gap_4()
+                                    .gap_1()
                                     .child(Label::new(SharedString::new_static(setting_item.title)))
                                     .when_some(
                                         file_set_in.filter(|file_set_in| file_set_in != &file),
-                                        |elem, file_set_in| {
-                                            elem.child(
+                                        |this, file_set_in| {
+                                            this.child(
                                                 Label::new(format!(
-                                                    "set in {}",
+                                                    "— set in {}",
                                                     file_set_in.name()
                                                 ))
-                                                .color(Color::Muted),
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
                                             )
                                         },
                                     ),
