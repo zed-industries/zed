@@ -907,13 +907,6 @@ mod test {
             ],
             cx,
         );
-
-        // todo!
-        //
-        // from . import math
-        // from .subpackage import math
-        // from ..subpackage import math
-        // from ...subpackage import math
     }
 
     #[gpui::test]
@@ -939,10 +932,44 @@ mod test {
         //     ]) @import
 
         check_imports(&PYTHON, "import math", &[&["math", "WILDCARD"]], cx);
+
         check_imports(
             &PYTHON,
             "import math as maths",
             &[&["math", "WILDCARD"]],
+            cx,
+        );
+
+        check_imports(&PYTHON, "import a.b.c", &[&["a", "b", "c", "WILDCARD"]], cx);
+
+        check_imports(
+            &PYTHON,
+            "import a.b.c as d",
+            &[&["a", "b", "c", "WILDCARD"]],
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_python_package_relative_imports(cx: &mut TestAppContext) {
+        // TODO: These should provide info about the dir they are relative to, to provide more
+        // precise resolution. Instead, this will be handled by fuzzy matching.
+
+        check_imports(&PYTHON, "from . import math", &[&["math"]], cx);
+
+        check_imports(&PYTHON, "from .a import math", &[&["a", "math"]], cx);
+
+        check_imports(
+            &PYTHON,
+            "from ..a.b import math",
+            &[&["a", "b", "math"]],
+            cx,
+        );
+
+        check_imports(
+            &PYTHON,
+            "from ..a.b import *",
+            &[&["a", "b", "WILDCARD"]],
             cx,
         );
     }
