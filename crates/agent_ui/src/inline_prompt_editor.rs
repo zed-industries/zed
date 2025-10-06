@@ -11,8 +11,8 @@ use editor::{
 };
 use fs::Fs;
 use gpui::{
-    AnyElement, App, Context, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, TextStyle, WeakEntity, Window,
+    AnyElement, App, ClipboardEntry, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
@@ -272,7 +272,31 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image_instance(Arc::new(image), cx);
+            }
+        });
     }
 
     fn handle_prompt_editor_events(

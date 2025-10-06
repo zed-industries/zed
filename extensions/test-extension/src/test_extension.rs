@@ -18,6 +18,10 @@ impl TestExtension {
 
         let current_dir = std::env::current_dir().unwrap();
         println!("current_dir: {}", current_dir.display());
+        assert_eq!(
+            current_dir.file_name().unwrap().to_str().unwrap(),
+            "test-extension"
+        );
 
         fs::create_dir_all(current_dir.join("dir-created-with-abs-path")).unwrap();
         fs::create_dir_all("./dir-created-with-rel-path").unwrap();

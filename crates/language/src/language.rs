@@ -22,8 +22,8 @@ mod toolchain;
 #[cfg(test)]
 pub mod buffer_tests;
 
-pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
+pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -55,7 +55,7 @@ use std::{
     str,
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -70,18 +70,21 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
+use util::rel_path::RelPath;
 use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
+pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
-pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, ToTreeSitterPoint, TreeSitterOptions};
+pub use syntax_map::{
+    OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
+};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
@@ -166,7 +169,6 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    pub reinstall_attempt_count: AtomicU64,
     cached_binary: ServerBinaryCache,
 }
 
@@ -183,7 +185,6 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
-            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
             .finish_non_exhaustive()
     }
 }
@@ -202,7 +203,6 @@ impl CachedLspAdapter {
             language_ids,
             adapter,
             cached_binary: Default::default(),
-            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
@@ -308,7 +308,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     ) -> Result<Option<(PathBuf, String)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
 }
 
@@ -461,17 +461,6 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     /// files
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         false
-    }
-
-    /// Method only implemented by the default JSON language server adapter.
-    /// Used to clear the cache of JSON schemas that are used to provide
-    /// autocompletion and diagnostics in Zed settings and keybinds files.
-    /// Should not be called unless the callee is sure that
-    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
-    async fn clear_zed_json_schema_cache(&self) {
-        unreachable!(
-            "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
-        );
     }
 
     /// True for the extension adapter and false otherwise.
@@ -760,6 +749,7 @@ pub struct LanguageConfig {
     pub hard_tabs: Option<bool>,
     /// How many columns a tab should occupy.
     #[serde(default)]
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: Option<NonZeroU32>,
     /// How to soft-wrap long lines of text.
     #[serde(default)]
@@ -781,6 +771,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of characters that Zed should treat as word characters for linked edit operations.
+    #[serde(default)]
+    pub linked_edit_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
@@ -853,6 +846,7 @@ pub struct BlockCommentConfig {
     /// A character to add as a prefix when a new line is added to a block comment.
     pub prefix: Arc<str>,
     /// A indent to add for prefix and end line upon new line.
+    #[schemars(range(min = 1, max = 128))]
     pub tab_size: u32,
 }
 
@@ -917,6 +911,8 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
+    pub linked_edit_characters: Override<HashSet<char>>,
+    #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
@@ -975,6 +971,7 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            linked_edit_characters: Default::default(),
             debuggers: Default::default(),
         }
     }
@@ -1154,7 +1151,7 @@ pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Option<Query>,
-    pub(crate) highlights_query: Option<Query>,
+    pub highlights_config: Option<HighlightsConfig>,
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
@@ -1166,6 +1163,11 @@ pub struct Grammar {
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+}
+
+pub struct HighlightsConfig {
+    pub query: Query,
+    pub identifier_capture_indices: Vec<u32>,
 }
 
 struct IndentConfig {
@@ -1332,7 +1334,7 @@ impl Language {
             grammar: ts_language.map(|ts_language| {
                 Arc::new(Grammar {
                     id: GrammarId::new(),
-                    highlights_query: None,
+                    highlights_config: None,
                     brackets_config: None,
                     outline_config: None,
                     text_object_config: None,
@@ -1368,6 +1370,7 @@ impl Language {
         self.manifest_name = name;
         self
     }
+
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1428,13 +1431,35 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
+        let grammar = self.grammar_mut()?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut identifier_capture_indices = Vec::new();
+        for name in [
+            "variable",
+            "constant",
+            "constructor",
+            "function",
+            "function.method",
+            "function.method.call",
+            "function.special",
+            "property",
+            "type",
+            "type.interface",
+        ] {
+            identifier_capture_indices.extend(query.capture_index_for_name(name));
+        }
+
+        grammar.highlights_config = Some(HighlightsConfig {
+            query,
+            identifier_capture_indices,
+        });
+
         Ok(self)
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let grammar = self.grammar_mut()?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let extra_captures: Vec<_> = query
@@ -1455,29 +1480,30 @@ impl Language {
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut item_capture_ix = None;
-        let mut name_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut item_capture_ix = 0;
+        let mut name_capture_ix = 0;
         let mut context_capture_ix = None;
         let mut extra_context_capture_ix = None;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         let mut annotation_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "outline",
+            &[],
             &mut [
-                ("item", &mut item_capture_ix),
-                ("name", &mut name_capture_ix),
-                ("context", &mut context_capture_ix),
-                ("context.extra", &mut extra_context_capture_ix),
-                ("open", &mut open_capture_ix),
-                ("close", &mut close_capture_ix),
-                ("annotation", &mut annotation_capture_ix),
+                Capture::Required("item", &mut item_capture_ix),
+                Capture::Required("name", &mut name_capture_ix),
+                Capture::Optional("context", &mut context_capture_ix),
+                Capture::Optional("context.extra", &mut extra_context_capture_ix),
+                Capture::Optional("open", &mut open_capture_ix),
+                Capture::Optional("close", &mut close_capture_ix),
+                Capture::Optional("annotation", &mut annotation_capture_ix),
             ],
-        );
-        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
-            grammar.outline_config = Some(OutlineConfig {
+        ) {
+            self.grammar_mut()?.outline_config = Some(OutlineConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
@@ -1492,17 +1518,22 @@ impl Language {
     }
 
     pub fn with_text_object_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut text_objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if let Some(text_object) = TextObject::from_capture_name(name) {
                 text_objects_by_capture_ix.push((ix as u32, text_object));
+            } else {
+                log::warn!(
+                    "unrecognized capture name '{}' in {} textobjects TreeSitter query",
+                    name,
+                    self.config.name,
+                );
             }
         }
 
-        grammar.text_object_config = Some(TextObjectConfig {
+        self.grammar_mut()?.text_object_config = Some(TextObjectConfig {
             query,
             text_objects_by_capture_ix,
         });
@@ -1510,25 +1541,26 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut item_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut item_capture_ix = 0;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
         let mut collapse_capture_ix = None;
         let mut keep_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "embedding",
+            &[],
             &mut [
-                ("item", &mut item_capture_ix),
-                ("name", &mut name_capture_ix),
-                ("context", &mut context_capture_ix),
-                ("keep", &mut keep_capture_ix),
-                ("collapse", &mut collapse_capture_ix),
+                Capture::Required("item", &mut item_capture_ix),
+                Capture::Optional("name", &mut name_capture_ix),
+                Capture::Optional("context", &mut context_capture_ix),
+                Capture::Optional("keep", &mut keep_capture_ix),
+                Capture::Optional("collapse", &mut collapse_capture_ix),
             ],
-        );
-        if let Some(item_capture_ix) = item_capture_ix {
-            grammar.embedding_config = Some(EmbeddingConfig {
+        ) {
+            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
@@ -1541,17 +1573,22 @@ impl Language {
     }
 
     pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if let Some(text_object) = DebuggerTextObject::from_capture_name(name) {
                 objects_by_capture_ix.push((ix as u32, text_object));
+            } else {
+                log::warn!(
+                    "unrecognized capture name '{}' in {} debugger TreeSitter query",
+                    name,
+                    self.config.name,
+                );
             }
         }
 
-        grammar.debug_variables_config = Some(DebugVariablesConfig {
+        self.grammar_mut()?.debug_variables_config = Some(DebugVariablesConfig {
             query,
             objects_by_capture_ix,
         });
@@ -1559,30 +1596,31 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut open_capture_ix = None;
-        let mut close_capture_ix = None;
-        get_capture_indices(
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut open_capture_ix = 0;
+        let mut close_capture_ix = 0;
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "brackets",
+            &[],
             &mut [
-                ("open", &mut open_capture_ix),
-                ("close", &mut close_capture_ix),
+                Capture::Required("open", &mut open_capture_ix),
+                Capture::Required("close", &mut close_capture_ix),
             ],
-        );
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = BracketsPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    if setting.key.as_ref() == "newline.only" {
-                        config.newline_only = true
+        ) {
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = BracketsPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        if setting.key.as_ref() == "newline.only" {
+                            config.newline_only = true
+                        }
                     }
-                }
-                config
-            })
-            .collect();
-        if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            grammar.brackets_config = Some(BracketsConfig {
+                    config
+                })
+                .collect();
+            self.grammar_mut()?.brackets_config = Some(BracketsConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
@@ -1593,31 +1631,31 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut indent_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut indent_capture_ix = 0;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
         let mut outdent_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "indents",
+            &["start."],
             &mut [
-                ("indent", &mut indent_capture_ix),
-                ("start", &mut start_capture_ix),
-                ("end", &mut end_capture_ix),
-                ("outdent", &mut outdent_capture_ix),
+                Capture::Required("indent", &mut indent_capture_ix),
+                Capture::Optional("start", &mut start_capture_ix),
+                Capture::Optional("end", &mut end_capture_ix),
+                Capture::Optional("outdent", &mut outdent_capture_ix),
             ],
-        );
-
-        let mut suffixed_start_captures = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if let Some(suffix) = name.strip_prefix("start.") {
-                suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+        ) {
+            let mut suffixed_start_captures = HashMap::default();
+            for (ix, name) in query.capture_names().iter().enumerate() {
+                if let Some(suffix) = name.strip_prefix("start.") {
+                    suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+                }
             }
-        }
 
-        if let Some(indent_capture_ix) = indent_capture_ix {
-            grammar.indents_config = Some(IndentConfig {
+            self.grammar_mut()?.indents_config = Some(IndentConfig {
                 query,
                 indent_capture_ix,
                 start_capture_ix,
@@ -1630,68 +1668,74 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
         let mut injection_content_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "injections",
+            &[],
             &mut [
-                ("language", &mut language_capture_ix),
-                ("injection.language", &mut injection_language_capture_ix),
-                ("content", &mut content_capture_ix),
-                ("injection.content", &mut injection_content_capture_ix),
+                Capture::Optional("language", &mut language_capture_ix),
+                Capture::Optional("injection.language", &mut injection_language_capture_ix),
+                Capture::Optional("content", &mut content_capture_ix),
+                Capture::Optional("injection.content", &mut injection_content_capture_ix),
             ],
-        );
-        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both language and injection.language captures are present");
-            }
-            _ => language_capture_ix,
-        };
-        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both content and injection.content captures are present")
-            }
-            _ => content_capture_ix,
-        };
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = InjectionPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "language" | "injection.language" => {
-                            config.language.clone_from(&setting.value);
-                        }
-                        "combined" | "injection.combined" => {
-                            config.combined = true;
-                        }
-                        _ => {}
-                    }
+        ) {
+            language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both language and injection.language captures are present");
                 }
-                config
-            })
-            .collect();
-        if let Some(content_capture_ix) = content_capture_ix {
-            grammar.injection_config = Some(InjectionConfig {
-                query,
-                language_capture_ix,
-                content_capture_ix,
-                patterns,
-            });
+                _ => language_capture_ix,
+            };
+            content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both content and injection.content captures are present")
+                }
+                _ => content_capture_ix,
+            };
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = InjectionPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        match setting.key.as_ref() {
+                            "language" | "injection.language" => {
+                                config.language.clone_from(&setting.value);
+                            }
+                            "combined" | "injection.combined" => {
+                                config.combined = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    config
+                })
+                .collect();
+            if let Some(content_capture_ix) = content_capture_ix {
+                self.grammar_mut()?.injection_config = Some(InjectionConfig {
+                    query,
+                    language_capture_ix,
+                    content_capture_ix,
+                    patterns,
+                });
+            } else {
+                log::error!(
+                    "missing required capture in injections {} TreeSitter query: \
+                    content or injection.content",
+                    &self.config.name,
+                );
+            }
         }
         Ok(self)
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = {
-            let grammar = self.grammar.as_ref().context("no grammar for language")?;
-            Query::new(&grammar.ts_language, source)?
-        };
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, mut name) in query.capture_names().iter().copied().enumerate() {
@@ -1766,7 +1810,7 @@ impl Language {
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
 
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let grammar = self.grammar_mut()?;
         grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
@@ -1775,24 +1819,33 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut redaction_capture_ix = None;
-        get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
-
-        if let Some(redaction_capture_ix) = redaction_capture_ix {
-            grammar.redactions_config = Some(RedactionConfig {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut redaction_capture_ix = 0;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "redactions",
+            &[],
+            &mut [Capture::Required("redact", &mut redaction_capture_ix)],
+        ) {
+            self.grammar_mut()?.redactions_config = Some(RedactionConfig {
                 query,
                 redaction_capture_ix,
             });
         }
-
         Ok(self)
     }
 
-    fn grammar_mut(&mut self) -> Option<&mut Grammar> {
-        Arc::get_mut(self.grammar.as_mut()?)
+    fn expect_grammar(&self) -> Result<&Grammar> {
+        self.grammar
+            .as_ref()
+            .map(|grammar| grammar.as_ref())
+            .context("no grammar for language")
+    }
+
+    fn grammar_mut(&mut self) -> Result<&mut Grammar> {
+        Arc::get_mut(self.grammar.as_mut().context("no grammar for language")?)
+            .context("cannot mutate grammar")
     }
 
     pub fn name(&self) -> LanguageName {
@@ -1827,7 +1880,10 @@ impl Language {
             let tree = grammar.parse_text(text, None);
             let captures =
                 SyntaxSnapshot::single_tree_captures(range.clone(), text, &tree, self, |grammar| {
-                    grammar.highlights_query.as_ref()
+                    grammar
+                        .highlights_config
+                        .as_ref()
+                        .map(|config| &config.query)
                 });
             let highlight_maps = vec![grammar.highlight_map()];
             let mut offset = 0;
@@ -1856,10 +1912,10 @@ impl Language {
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref()
-            && let Some(highlights_query) = &grammar.highlights_query
+            && let Some(highlights_config) = &grammar.highlights_config
         {
             *grammar.highlight_map.lock() =
-                HighlightMap::new(highlights_query.capture_names(), theme);
+                HighlightMap::new(highlights_config.query.capture_names(), theme);
         }
     }
 
@@ -1950,6 +2006,15 @@ impl LanguageScope {
             self.config_override()
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// identifiers during linked editing operations.
+    pub fn linked_edit_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.linked_edit_characters),
+            Some(&self.language.config.linked_edit_characters),
         )
     }
 
@@ -2074,8 +2139,9 @@ impl Grammar {
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
         let capture_id = self
-            .highlights_query
+            .highlights_config
             .as_ref()?
+            .query
             .capture_index_for_name(name)?;
         Some(self.highlight_map.lock().get(capture_id))
     }
@@ -2312,15 +2378,66 @@ impl LspAdapter for FakeLspAdapter {
     }
 }
 
-fn get_capture_indices(query: &Query, captures: &mut [(&str, &mut Option<u32>)]) {
-    for (ix, name) in query.capture_names().iter().enumerate() {
-        for (capture_name, index) in captures.iter_mut() {
-            if capture_name == name {
-                **index = Some(ix as u32);
-                break;
+enum Capture<'a> {
+    Required(&'static str, &'a mut u32),
+    Optional(&'static str, &'a mut Option<u32>),
+}
+
+fn populate_capture_indices(
+    query: &Query,
+    language_name: &LanguageName,
+    query_type: &str,
+    expected_prefixes: &[&str],
+    captures: &mut [Capture<'_>],
+) -> bool {
+    let mut found_required_indices = Vec::new();
+    'outer: for (ix, name) in query.capture_names().iter().enumerate() {
+        for (required_ix, capture) in captures.iter_mut().enumerate() {
+            match capture {
+                Capture::Required(capture_name, index) if capture_name == name => {
+                    **index = ix as u32;
+                    found_required_indices.push(required_ix);
+                    continue 'outer;
+                }
+                Capture::Optional(capture_name, index) if capture_name == name => {
+                    **index = Some(ix as u32);
+                    continue 'outer;
+                }
+                _ => {}
             }
         }
+        if !name.starts_with("_")
+            && !expected_prefixes
+                .iter()
+                .any(|&prefix| name.starts_with(prefix))
+        {
+            log::warn!(
+                "unrecognized capture name '{}' in {} {} TreeSitter query \
+                (suppress this warning by prefixing with '_')",
+                name,
+                language_name,
+                query_type
+            );
+        }
     }
+    let mut missing_required_captures = Vec::new();
+    for (capture_ix, capture) in captures.iter().enumerate() {
+        if let Capture::Required(capture_name, _) = capture
+            && !found_required_indices.contains(&capture_ix)
+        {
+            missing_required_captures.push(*capture_name);
+        }
+    }
+    let success = missing_required_captures.is_empty();
+    if !success {
+        log::error!(
+            "missing required capture(s) in {} {} TreeSitter query: {}",
+            language_name,
+            query_type,
+            missing_required_captures.join(", ")
+        );
+    }
+    success
 }
 
 pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {

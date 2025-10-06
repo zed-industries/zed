@@ -1,8 +1,8 @@
 use crate::repository::RepoPath;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::{path::Path, str::FromStr, sync::Arc};
-use util::ResultExt;
+use std::{str::FromStr, sync::Arc};
+use util::{ResultExt, rel_path::RelPath};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileStatus {
@@ -378,14 +378,12 @@ impl From<FileStatus> for GitSummary {
     }
 }
 
-impl sum_tree::Summary for GitSummary {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
+impl sum_tree::ContextLessSummary for GitSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, rhs: &Self) {
         *self += *rhs;
     }
 }
@@ -449,7 +447,8 @@ impl FromStr for GitStatus {
                 }
                 let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
-                let path = RepoPath(Path::new(path).into());
+                // git-status outputs `/`-delimited repo paths, even on Windows.
+                let path = RepoPath(RelPath::unix(path).log_err()?.into());
                 Some((path, status))
             })
             .collect::<Vec<_>>();

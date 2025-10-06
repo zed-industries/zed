@@ -258,6 +258,8 @@ messages!(
     (Unstage, Background),
     (Stash, Background),
     (StashPop, Background),
+    (StashApply, Background),
+    (StashDrop, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -298,6 +300,7 @@ messages!(
     (AskPassResponse, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
+    (GitRenameBranch, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -321,6 +324,7 @@ messages!(
     (ExternalAgentsUpdated, Background),
     (ExternalAgentLoadingStatusUpdated, Background),
     (NewExternalAgentVersionAvailable, Background),
+    (RemoteStarted, Background),
 );
 
 request_messages!(
@@ -425,6 +429,8 @@ request_messages!(
     (Unstage, Ack),
     (Stash, Ack),
     (StashPop, Ack),
+    (StashApply, Ack),
+    (StashDrop, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
@@ -479,6 +485,7 @@ request_messages!(
     (AskPassRequest, AskPassResponse),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
+    (GitRenameBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
@@ -491,7 +498,8 @@ request_messages!(
     (GitClone, GitCloneResponse),
     (ToggleLspLogs, Ack),
     (GetProcesses, GetProcessesResponse),
-    (GetAgentServerCommand, AgentServerCommand)
+    (GetAgentServerCommand, AgentServerCommand),
+    (RemoteStarted, Ack),
 );
 
 lsp_messages!(
@@ -578,6 +586,8 @@ entity_messages!(
     Unstage,
     Stash,
     StashPop,
+    StashApply,
+    StashDrop,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
@@ -631,6 +641,7 @@ entity_messages!(
     Pull,
     AskPassRequest,
     GitChangeBranch,
+    GitRenameBranch,
     GitCreateBranch,
     CheckForPushedCommits,
     GitDiff,
@@ -863,25 +874,5 @@ mod tests {
             id: u32::MAX,
         };
         assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
-    }
-
-    #[test]
-    #[cfg(target_os = "windows")]
-    fn test_proto() {
-        use std::path::PathBuf;
-
-        fn generate_proto_path(path: PathBuf) -> PathBuf {
-            let proto = path.to_proto();
-            PathBuf::from_proto(proto)
-        }
-
-        let path = PathBuf::from("C:\\foo\\bar");
-        assert_eq!(path, generate_proto_path(path.clone()));
-
-        let path = PathBuf::from("C:/foo/bar/");
-        assert_eq!(path, generate_proto_path(path.clone()));
-
-        let path = PathBuf::from("C:/foo\\bar\\");
-        assert_eq!(path, generate_proto_path(path.clone()));
     }
 }

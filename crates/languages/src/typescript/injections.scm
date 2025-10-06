@@ -2,8 +2,8 @@
   (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
   (#set! injection.language "jsdoc"))
 
-(((comment) @reference
-  (#match? @reference "^///\\s+<reference\\s+types=\"\\S+\"\\s*/>\\s*$")) @injection.content
+(((comment) @_reference
+  (#match? @_reference "^///\\s+<reference\\s+types=\"\\S+\"\\s*/>\\s*$")) @injection.content
   (#set! injection.language "html"))
 
 ((regex) @injection.content

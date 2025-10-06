@@ -1,15 +1,15 @@
 pub mod wit;
 
-use crate::ExtensionManifest;
 use crate::capability_granter::CapabilityGranter;
+use crate::{ExtensionManifest, ExtensionSettings};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
-    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
+    ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
+    WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -29,6 +29,7 @@ use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use settings::Settings;
 use std::borrow::Cow;
 use std::sync::{LazyLock, OnceLock};
 use std::time::Duration;
@@ -569,6 +570,9 @@ impl WasmHost {
                 message(cx).await;
             }
         });
+
+        let extension_settings = ExtensionSettings::get_global(cx);
+
         Arc::new(Self {
             engine: wasm_engine(cx.background_executor()),
             fs,
@@ -577,19 +581,7 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
-            granted_capabilities: vec![
-                ExtensionCapability::ProcessExec(ProcessExecCapability {
-                    command: "*".to_string(),
-                    args: vec!["**".to_string()],
-                }),
-                ExtensionCapability::DownloadFile(DownloadFileCapability {
-                    host: "*".to_string(),
-                    path: vec!["**".to_string()],
-                }),
-                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
-                    package: "*".to_string(),
-                }),
-            ],
+            granted_capabilities: extension_settings.granted_capabilities.clone(),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })
@@ -666,15 +658,17 @@ impl WasmHost {
 
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
-        let path = SanitizedPath::new(&extension_work_dir);
+        let path = SanitizedPath::new(&extension_work_dir).to_string();
+        #[cfg(target_os = "windows")]
+        let path = path.replace('\\', "/");
 
         let mut ctx = wasi::WasiCtxBuilder::new();
         ctx.inherit_stdio()
-            .env("PWD", path.to_string())
+            .env("PWD", &path)
             .env("RUST_BACKTRACE", "full");
 
         ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
-        ctx.preopened_dir(&path, path.to_string(), dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
 
         Ok(ctx.build())
     }

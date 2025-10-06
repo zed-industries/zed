@@ -1,17 +1,24 @@
 mod boundary;
 mod object;
+mod paste;
 mod select;
 
 use editor::display_map::DisplaySnapshot;
 use editor::{
-    DisplayPoint, Editor, HideMouseCursorOrigin, SelectionEffects, ToOffset, ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, SelectionEffects, ToOffset,
+    ToPoint, movement,
 };
 use gpui::actions;
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind, Point};
+use search::{BufferSearchBar, SearchOptions};
+use settings::Settings;
 use text::{Bias, SelectionGoal};
+use workspace::searchable;
+use workspace::searchable::FilteredSearchRange;
 
 use crate::motion;
+use crate::state::SearchState;
 use crate::{
     Vim,
     motion::{Motion, right},
@@ -31,6 +38,8 @@ actions!(
         HelixGotoLastModification,
         /// Select entire line or multiple lines, extending downwards.
         HelixSelectLine,
+        /// Select all matches of a given pattern within the current selection.
+        HelixSelectRegex,
     ]
 );
 
@@ -40,6 +49,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
+    Vim::action(editor, cx, Vim::helix_paste);
+    Vim::action(editor, cx, Vim::helix_select_regex);
 }
 
 impl Vim {
@@ -51,6 +62,35 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.helix_move_cursor(motion, times, window, cx);
+    }
+
+    pub fn helix_select_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let current_head = selection.head();
+
+                    let Some((new_head, goal)) = motion.move_point(
+                        map,
+                        current_head,
+                        selection.goal,
+                        times,
+                        &text_layout_details,
+                    ) else {
+                        return;
+                    };
+
+                    selection.set_head(new_head, goal);
+                })
+            });
+        });
     }
 
     /// Updates all selections based on where the cursors are.
@@ -93,7 +133,7 @@ impl Vim {
         self.helix_new_selections(window, cx, |cursor, map| {
             let mut head = movement::right(map, cursor);
             let mut tail = cursor;
-            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            let classifier = map.buffer_snapshot().char_classifier_at(head.to_point(map));
             if head == map.max_point() {
                 return None;
             }
@@ -130,7 +170,7 @@ impl Vim {
             // but the search starts from the left side of it,
             // so to include that space the selection must end one character to the right.
             let mut tail = movement::right(map, cursor);
-            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            let classifier = map.buffer_snapshot().char_classifier_at(head.to_point(map));
             if head == DisplayPoint::zero() {
                 return None;
             }
@@ -317,6 +357,9 @@ impl Vim {
                 );
             }
         });
+
+        // Drop back to normal mode after yanking
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
@@ -332,6 +375,64 @@ impl Vim {
             });
         });
         self.switch_mode(Mode::Insert, false, window, cx);
+    }
+
+    fn helix_select_regex(
+        &mut self,
+        _: &HelixSelectRegex,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Vim::take_forced_motion(cx);
+        let Some(pane) = self.pane(window, cx) else {
+            return;
+        };
+        let prior_selections = self.editor_selections(window, cx);
+        pane.update(cx, |pane, cx| {
+            if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
+                search_bar.update(cx, |search_bar, cx| {
+                    if !search_bar.show(window, cx) {
+                        return;
+                    }
+
+                    search_bar.select_query(window, cx);
+                    cx.focus_self(window);
+
+                    search_bar.set_replacement(None, cx);
+                    let mut options = SearchOptions::NONE;
+                    options |= SearchOptions::REGEX;
+                    if EditorSettings::get_global(cx).search.case_sensitive {
+                        options |= SearchOptions::CASE_SENSITIVE;
+                    }
+                    search_bar.set_search_options(options, cx);
+                    if let Some(search) = search_bar.set_search_within_selection(
+                        Some(FilteredSearchRange::Selection),
+                        window,
+                        cx,
+                    ) {
+                        cx.spawn_in(window, async move |search_bar, cx| {
+                            if search.await.is_ok() {
+                                search_bar.update_in(cx, |search_bar, window, cx| {
+                                    search_bar.activate_current_match(window, cx)
+                                })
+                            } else {
+                                Ok(())
+                            }
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                    self.search = SearchState {
+                        direction: searchable::Direction::Next,
+                        count: 1,
+                        prior_selections,
+                        prior_operator: self.operator_stack.last().cloned(),
+                        prior_mode: self.mode,
+                        helix_select: true,
+                    }
+                });
+            }
+        });
+        self.start_recording(cx);
     }
 
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
@@ -366,7 +467,7 @@ impl Vim {
                         let was_empty = range.is_empty();
                         let was_reversed = selection.reversed;
                         (
-                            map.buffer_snapshot.anchor_at(start_offset, Bias::Left),
+                            map.buffer_snapshot().anchor_before(start_offset),
                             end_offset - start_offset,
                             was_empty,
                             was_reversed,
@@ -445,8 +546,8 @@ impl Vim {
             editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(cx);
-            let max_point = display_map.buffer_snapshot.max_point();
-            let buffer_snapshot = &display_map.buffer_snapshot;
+            let max_point = display_map.buffer_snapshot().max_point();
+            let buffer_snapshot = &display_map.buffer_snapshot();
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
@@ -813,7 +914,16 @@ mod test {
         cx.simulate_keystrokes("y");
         cx.shared_clipboard().assert_eq("worl");
         cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+
+        // Test yanking in select mode character by character
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystroke("v");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixSelect);
+        cx.simulate_keystroke("y");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
     }
+
     #[gpui::test]
     async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -1032,5 +1142,74 @@ mod test {
             ˇ»line five"},
             Mode::HelixNormal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_mode_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.enable_helix();
+
+        cx.set_state("ˇhello", Mode::HelixNormal);
+        cx.simulate_keystrokes("l v l l");
+        cx.assert_state("h«ellˇ»o", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_mode_motion_multiple_cursors(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.enable_helix();
+
+        // Start with multiple cursors (no selections)
+        cx.set_state("ˇhello\nˇworld", Mode::HelixNormal);
+
+        // Enter select mode and move right twice
+        cx.simulate_keystrokes("v l l");
+
+        // Each cursor should independently create and extend its own selection
+        cx.assert_state("«helˇ»lo\n«worˇ»ld", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_word_motions(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::Normal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one tˇ»wo", Mode::Visual);
+
+        // In Vim, this selects "t". In helix selections stops just before "t"
+
+        cx.enable_helix();
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one ˇ»two", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_regex(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state("ˇone two one", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state("«one two oneˇ»", Mode::HelixNormal);
+        cx.simulate_keystrokes("s o n e");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("x");
+        cx.simulate_keystrokes("s");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("«oneˇ» two «oneˇ»", Mode::HelixNormal);
+
+        cx.set_state("ˇone two one", Mode::HelixNormal);
+        cx.simulate_keystrokes("s o n e enter");
+        cx.assert_state("ˇone two one", Mode::HelixNormal);
     }
 }

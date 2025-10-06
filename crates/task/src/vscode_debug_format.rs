@@ -6,13 +6,6 @@ use crate::{
     DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
 };
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-enum Request {
-    Launch,
-    Attach,
-}
-
 // TODO support preLaunchTask linkage with other tasks
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

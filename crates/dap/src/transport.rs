@@ -262,6 +262,7 @@ impl TransportDelegate {
                     break;
                 }
             }
+            log::debug!("stderr: {line}");
 
             for (kind, handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Adapter) {

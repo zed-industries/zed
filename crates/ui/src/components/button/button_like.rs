@@ -217,7 +217,7 @@ impl ButtonStyle {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
-                filled_background.fade_out(0.92);
+                filled_background.fade_out(0.5);
 
                 ButtonLikeStyles {
                     background: filled_background,
@@ -596,7 +596,7 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
-                ButtonSize::None => this,
+                ButtonSize::None => this.px_px(),
             })
             .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)

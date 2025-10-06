@@ -65,12 +65,12 @@ impl Vim {
                         // we don't do a replace, we need insert a "\n"
                         if !is_new_line {
                             range.end.column += 1;
-                            range.end = map.buffer_snapshot.clip_point(range.end, Bias::Right);
+                            range.end = map.buffer_snapshot().clip_point(range.end, Bias::Right);
                         }
-                        let replace_range = map.buffer_snapshot.anchor_before(range.start)
-                            ..map.buffer_snapshot.anchor_after(range.end);
+                        let replace_range = map.buffer_snapshot().anchor_before(range.start)
+                            ..map.buffer_snapshot().anchor_after(range.end);
                         let current_text = map
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .text_for_range(replace_range.clone())
                             .collect();
                         vim.replacements.push((replace_range.clone(), current_text));
@@ -111,15 +111,15 @@ impl Vim {
                         )
                         .to_point(&map);
                         new_selections.push(
-                            map.buffer_snapshot.anchor_before(start)
-                                ..map.buffer_snapshot.anchor_before(start),
+                            map.buffer_snapshot().anchor_before(start)
+                                ..map.buffer_snapshot().anchor_before(start),
                         );
 
                         let mut undo = None;
                         let edit_range = start..end;
                         for (i, (range, inverse)) in vim.replacements.iter().rev().enumerate() {
-                            if range.start.to_point(&map.buffer_snapshot) <= edit_range.start
-                                && range.end.to_point(&map.buffer_snapshot) >= edit_range.end
+                            if range.start.to_point(&map.buffer_snapshot()) <= edit_range.start
+                                && range.end.to_point(&map.buffer_snapshot()) >= edit_range.end
                             {
                                 undo = Some(inverse.clone());
                                 vim.replacements.remove(vim.replacements.len() - i - 1);
@@ -154,10 +154,10 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around, None);
             let start = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));
             let end = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.end.to_point(&snapshot));
             let new_range = start..end;
             vim.exchange_impl(new_range, editor, &snapshot, window, cx);
@@ -206,10 +206,10 @@ impl Vim {
                 forced_motion,
             );
             let start = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.start.to_point(&snapshot));
             let end = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(selection.end.to_point(&snapshot));
             let new_range = start..end;
             vim.exchange_impl(new_range, editor, &snapshot, window, cx);
@@ -228,14 +228,14 @@ impl Vim {
         if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
             let previous_range = ranges[0].clone();
 
-            let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot);
-            let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot);
-            let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot);
-            let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot);
+            let new_range_start = new_range.start.to_offset(&snapshot.buffer_snapshot());
+            let new_range_end = new_range.end.to_offset(&snapshot.buffer_snapshot());
+            let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot());
+            let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot());
 
             let text_for = |range: Range<Anchor>| {
                 snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .text_for_range(range)
                     .collect::<String>()
             };

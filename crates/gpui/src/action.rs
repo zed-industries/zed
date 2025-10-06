@@ -13,6 +13,7 @@ use std::{
 /// For example:
 ///
 /// ```
+/// use gpui::actions;
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
 ///
@@ -45,6 +46,7 @@ macro_rules! actions {
 /// struct action for each listed action name in the given namespace.
 ///
 /// ```
+/// use gpui::actions;
 /// actions!(editor, [MoveUp, MoveDown, MoveLeft, MoveRight, Newline]);
 /// ```
 ///
@@ -55,6 +57,7 @@ macro_rules! actions {
 /// More complex data types can also be actions, by using the derive macro for `Action`:
 ///
 /// ```
+/// use gpui::Action;
 /// #[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, Action)]
 /// #[action(namespace = editor)]
 /// pub struct SelectNext {
@@ -93,14 +96,22 @@ macro_rules! actions {
 /// `main`.
 ///
 /// ```
-/// #[derive(gpui::private::serde::Deserialize, std::cmp::PartialEq, std::clone::Clone)]
+/// use gpui::{SharedString, register_action};
+/// #[derive(Clone, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
 /// pub struct Paste {
 ///     pub content: SharedString,
 /// }
 ///
 /// impl gpui::Action for Paste {
-///      ///...
+///     # fn boxed_clone(&self) -> Box<dyn gpui::Action> { unimplemented!()}
+///     # fn partial_eq(&self, other: &dyn gpui::Action) -> bool { unimplemented!() }
+///     # fn name(&self) -> &'static str { "Paste" }
+///     # fn name_for_type() -> &'static str { "Paste" }
+///     # fn build(value: serde_json::Value) -> anyhow::Result<Box<dyn gpui::Action>> {
+///     #     unimplemented!()
+///     # }
 /// }
+///
 /// register_action!(Paste);
 /// ```
 pub trait Action: Any + Send {

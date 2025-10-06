@@ -1,4 +1,5 @@
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -11,6 +12,8 @@ use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
 };
+
+use crate::rel_path::RelPath;
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -31,17 +34,9 @@ pub fn home_dir() -> &'static PathBuf {
     })
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub fn set_home_dir(path: PathBuf) {
-    HOME_DIR
-        .set(path)
-        .expect("set_home_dir called after home_dir was already accessed");
-}
-
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
-    fn to_sanitized_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -65,6 +60,8 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    fn local_to_wsl(&self) -> Option<PathBuf>;
+    fn multiple_extensions(&self) -> Option<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -105,18 +102,56 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Returns a sanitized string representation of the path.
-    /// Note, on Windows, this assumes that the path is a valid UTF-8 string and
-    /// is not a UNC path.
-    fn to_sanitized_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            self.as_ref().to_string_lossy().replace("/", "\\")
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
+    fn local_to_wsl(&self) -> Option<PathBuf> {
+        // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
+        // todo: ideally rework them..?
+        let mut new_path = std::ffi::OsString::new();
+        for component in self.as_ref().components() {
+            match component {
+                std::path::Component::Prefix(prefix) => {
+                    let drive_letter = prefix.as_os_str().to_string_lossy().to_lowercase();
+                    let drive_letter = drive_letter.strip_suffix(':')?;
+
+                    new_path.push(format!("/mnt/{}", drive_letter));
+                }
+                std::path::Component::RootDir => {}
+                std::path::Component::CurDir => {
+                    new_path.push("/.");
+                }
+                std::path::Component::ParentDir => {
+                    new_path.push("/..");
+                }
+                std::path::Component::Normal(os_str) => {
+                    new_path.push("/");
+                    new_path.push(os_str);
+                }
+            }
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.as_ref().to_string_lossy().to_string()
+
+        Some(new_path.into())
+    }
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
+    fn multiple_extensions(&self) -> Option<String> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
+
+        let parts: Vec<&str> = file_name
+            .split('.')
+            // Skip the part with the file name extension
+            .skip(1)
+            .collect();
+
+        if parts.len() < 2 {
+            return None;
         }
+
+        Some(parts.into_iter().join("."))
     }
 }
 
@@ -199,17 +234,6 @@ impl SanitizedPath {
     pub fn to_path_buf(&self) -> PathBuf {
         self.0.to_path_buf()
     }
-
-    pub fn to_glob_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            self.0.to_string_lossy().replace("/", "\\")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.0.to_string_lossy().to_string()
-        }
-    }
 }
 
 impl std::fmt::Debug for SanitizedPath {
@@ -244,7 +268,7 @@ impl AsRef<Path> for SanitizedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PathStyle {
     Posix,
     Windows,
@@ -252,83 +276,80 @@ pub enum PathStyle {
 
 impl PathStyle {
     #[cfg(target_os = "windows")]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Windows
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Posix
     }
 
     #[inline]
-    pub fn separator(&self) -> &str {
+    pub fn separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
         }
     }
+
+    pub fn is_windows(&self) -> bool {
+        *self == PathStyle::Windows
+    }
+
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
+        let right = right.as_ref().to_str()?;
+        if is_absolute(right, self) {
+            return None;
+        }
+        let left = left.as_ref().to_str()?;
+        if left.is_empty() {
+            Some(right.into())
+        } else {
+            Some(format!(
+                "{left}{}{right}",
+                if left.ends_with(self.separator()) {
+                    ""
+                } else {
+                    self.separator()
+                }
+            ))
+        }
+    }
+
+    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
+        let Some(pos) = path_like.rfind(self.separator()) else {
+            return (None, path_like);
+        };
+        let filename_start = pos + self.separator().len();
+        (
+            Some(&path_like[..filename_start]),
+            &path_like[filename_start..],
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct RemotePathBuf {
-    inner: PathBuf,
     style: PathStyle,
-    string: String, // Cached string representation
+    string: String,
 }
 
 impl RemotePathBuf {
-    pub fn new(path: PathBuf, style: PathStyle) -> Self {
-        #[cfg(target_os = "windows")]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
-            PathStyle::Windows => path.to_string_lossy().into(),
-        };
-        #[cfg(not(target_os = "windows"))]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().to_string(),
-            PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
-        };
-        Self {
-            inner: path,
-            style,
-            string,
-        }
+    pub fn new(string: String, style: PathStyle) -> Self {
+        Self { style, string }
     }
 
     pub fn from_str(path: &str, style: PathStyle) -> Self {
-        let path_buf = PathBuf::from(path);
-        Self::new(path_buf, style)
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.to_string(),
-            PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
-            PathStyle::Windows => self.to_string(),
-        }
-    }
-
-    pub fn as_path(&self) -> &Path {
-        &self.inner
+        Self::new(path.to_string(), style)
     }
 
     pub fn path_style(&self) -> PathStyle {
         self.style
     }
 
-    pub fn parent(&self) -> Option<RemotePathBuf> {
-        self.inner
-            .parent()
-            .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    pub fn to_proto(self) -> String {
+        self.string
     }
 }
 
@@ -336,6 +357,19 @@ impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
     }
+}
+
+pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
+    path_like.starts_with('/')
+        || path_style == PathStyle::Windows
+            && (path_like.starts_with('\\')
+                || path_like
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+                    && path_like[1..]
+                        .strip_prefix(':')
+                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
@@ -358,6 +392,8 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
         \:+(\d+)\:*()$       # filename:row
+        |
+        \:+()()$
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -391,7 +427,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -422,7 +458,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -434,8 +470,8 @@ impl PathWithPosition {
     ///     row: None,
     ///     column: None,
     /// });
-    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs::"),
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -566,10 +602,11 @@ impl PathWithPosition {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PathMatcher {
     sources: Vec<String>,
     glob: GlobSet,
+    path_style: PathStyle,
 }
 
 // impl std::fmt::Display for PathMatcher {
@@ -587,7 +624,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
+    pub fn new(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+    ) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
             .map(|as_str| Glob::new(as_str.as_ref()))
@@ -598,7 +638,11 @@ impl PathMatcher {
             glob_builder.add(single_glob);
         }
         let glob = glob_builder.build()?;
-        Ok(PathMatcher { glob, sources })
+        Ok(PathMatcher {
+            glob,
+            sources,
+            path_style,
+        })
     }
 
     pub fn sources(&self) -> &[String] {
@@ -616,11 +660,21 @@ impl PathMatcher {
 
     fn check_with_end_separator(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        let separator = std::path::MAIN_SEPARATOR_STR;
+        let separator = self.path_style.separator();
         if path_str.ends_with(separator) {
             false
         } else {
             self.glob.is_match(path_str.to_string() + separator)
+        }
+    }
+}
+
+impl Default for PathMatcher {
+    fn default() -> Self {
+        Self {
+            path_style: PathStyle::local(),
+            glob: GlobSet::empty(),
+            sources: vec![],
         }
     }
 }
@@ -777,6 +831,81 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+pub fn compare_rel_paths(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+        if filename.is_empty() {
+            return (None, None);
+        }
+
+        match filename.rsplit_once('.') {
+            // Case 1: No dot was found. The entire name is the stem.
+            None => (Some(filename), None),
+
+            // Case 2: A dot was found.
+            Some((before, after)) => {
+                // This is the crucial check for dotfiles like ".bashrc".
+                // If `before` is empty, the dot was the first character.
+                // In that case, we revert to the "whole name is the stem" logic.
+                if before.is_empty() {
+                    (Some(filename), None)
+                } else {
+                    // Otherwise, we have a standard stem and extension.
+                    (Some(before), Some(after))
+                }
+            }
+        }
+    }
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = a_is_file && components_a.rest().is_empty();
+                let b_is_file = b_is_file && components_b.rest().is_empty();
+
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let (a_stem, a_extension) = a_is_file
+                        .then(|| stem_and_extension(component_a))
+                        .unwrap_or_default();
+                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
+
+                    let (b_stem, b_extension) = b_is_file
+                        .then(|| stem_and_extension(component_b))
+                        .unwrap_or_default();
+                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
+
+                    let compare_components = match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => natural_sort(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    };
+
+                    compare_components.then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = a_extension.unwrap_or_default();
+                            let ext_b = b_extension.unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                });
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
+        }
+    }
+}
 
 pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
@@ -840,8 +969,9 @@ pub fn compare_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util_macros::perf;
 
-    #[test]
+    #[perf]
     fn compare_paths_with_dots() {
         let mut paths = vec![
             (Path::new("test_dirs"), false),
@@ -879,7 +1009,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn compare_paths_with_same_name_different_extensions() {
         let mut paths = vec![
             (Path::new("test_dirs/file.rs"), true),
@@ -901,7 +1031,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn compare_paths_case_semi_sensitive() {
         let mut paths = vec![
             (Path::new("test_DIRS"), false),
@@ -933,7 +1063,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn path_with_position_parse_posix_path() {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename
@@ -977,7 +1107,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs:"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }
@@ -1020,7 +1150,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(not(target_os = "windows"))]
     fn path_with_position_parse_posix_path_with_suffix() {
         assert_eq!(
@@ -1076,7 +1206,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn path_with_position_parse_windows_path() {
         assert_eq!(
@@ -1098,7 +1228,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn path_with_position_parse_windows_path_with_suffix() {
         assert_eq!(
@@ -1211,10 +1341,10 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_path_compact() {
         let path: PathBuf = [
-            home_dir().to_string_lossy().to_string(),
+            home_dir().to_string_lossy().into_owned(),
             "some_file.txt".to_string(),
         ]
         .iter()
@@ -1226,7 +1356,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[perf]
     fn test_extension_or_hidden_file_name() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
@@ -1249,27 +1379,29 @@ mod tests {
         assert_eq!(path.extension_or_hidden_file_name(), Some("eslintrc.js"));
     }
 
-    #[test]
+    #[perf]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
         );
     }
 
-    #[test]
+    #[perf]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
         let path = Path::new("C:\\Users\\someone\\test_file.rs");
@@ -1287,7 +1419,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_compare_numeric_segments() {
         // Helper function to create peekable iterators and test
         fn compare(a: &str, b: &str) -> Ordering {
@@ -1355,7 +1487,7 @@ mod tests {
         assert_eq!(b_iter.collect::<String>(), "def");
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort() {
         // Basic alphanumeric
         assert_eq!(natural_sort("a", "b"), Ordering::Less);
@@ -1409,7 +1541,7 @@ mod tests {
         assert_eq!(natural_sort("File_a1", "File_A1"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_compare_paths() {
         // Helper function for cleaner tests
         fn compare(a: &str, is_a_file: bool, b: &str, is_b_file: bool) -> Ordering {
@@ -1495,8 +1627,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_case_sensitivity() {
+        std::thread::sleep(std::time::Duration::from_millis(100));
         // Same letter different case - lowercase should come first
         assert_eq!(natural_sort("a", "A"), Ordering::Less);
         assert_eq!(natural_sort("A", "a"), Ordering::Greater);
@@ -1514,7 +1647,7 @@ mod tests {
         assert_eq!(natural_sort("a", "B"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_with_numbers() {
         // Basic number ordering
         assert_eq!(natural_sort("file1", "file2"), Ordering::Less);
@@ -1592,7 +1725,7 @@ mod tests {
         assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_edge_cases() {
         // Empty strings
         assert_eq!(natural_sort("", ""), Ordering::Equal);
@@ -1616,5 +1749,24 @@ mod tests {
         assert_eq!(natural_sort("file-1a", "file-1b"), Ordering::Less);
         assert_eq!(natural_sort("file-1.2", "file-1.10"), Ordering::Less);
         assert_eq!(natural_sort("file-1.10", "file-1.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_multiple_extensions() {
+        // No extensions
+        let path = Path::new("/a/b/c/file_name");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Only one extension
+        let path = Path::new("/a/b/c/file_name.tsx");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Stories sample extension
+        let path = Path::new("/a/b/c/file_name.stories.tsx");
+        assert_eq!(path.multiple_extensions(), Some("stories.tsx".to_string()));
+
+        // Longer sample extension
+        let path = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
     }
 }

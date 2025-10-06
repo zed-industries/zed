@@ -5,8 +5,8 @@ use fs::Fs;
 use gpui::{Context, Entity, FocusHandle, WeakEntity, Window, prelude::*};
 use std::{rc::Rc, sync::Arc};
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
+    Button, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, KeyBinding,
+    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 use crate::{CycleModeSelector, ToggleProfileSelector};
@@ -91,7 +91,7 @@ impl ModeSelector {
                     .toggleable(IconPosition::End, is_selected);
 
                 let entry = if let Some(description) = &mode.description {
-                    entry.documentation_aside(ui::DocumentationSide::Left, {
+                    entry.documentation_aside(DocumentationSide::Left, DocumentationEdge::Bottom, {
                         let description = description.clone();
 
                         move |cx| {
@@ -107,13 +107,15 @@ impl ModeSelector {
                                         .text_sm()
                                         .text_color(Color::Muted.color(cx))
                                         .child("Hold")
-                                        .child(div().pt_0p5().children(ui::render_modifiers(
-                                            &gpui::Modifiers::secondary_key(),
-                                            PlatformStyle::platform(),
-                                            None,
-                                            Some(ui::TextSize::Default.rems(cx).into()),
-                                            true,
-                                        )))
+                                        .child(h_flex().flex_shrink_0().children(
+                                            ui::render_modifiers(
+                                                &gpui::Modifiers::secondary_key(),
+                                                PlatformStyle::platform(),
+                                                None,
+                                                Some(ui::TextSize::Default.rems(cx).into()),
+                                                true,
+                                            ),
+                                        ))
                                         .child(div().map(|this| {
                                             if is_default {
                                                 this.child("to also unset as default")
@@ -223,6 +225,10 @@ impl Render for ModeSelector {
             )
             .anchor(gpui::Corner::BottomRight)
             .with_handle(self.menu_handle.clone())
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })

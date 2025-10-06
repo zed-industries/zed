@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{BackgroundExecutor, SharedString, TestAppContext};
 use rand::prelude::*;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{
     ops::{Deref, DerefMut, Range},
     rc::Rc,

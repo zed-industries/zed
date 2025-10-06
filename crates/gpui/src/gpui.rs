@@ -8,9 +8,12 @@
 //! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
 //! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
 //!
-//! ```
+//! ```toml
+//! [dependencies]
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
+//!
+//! - [Ownership and data flow](_ownership_and_data_flow)
 //!
 //! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
 //! kick off your application by passing a callback to [`Application::run`]. Inside this callback,
@@ -64,6 +67,8 @@
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
 
+extern crate self as gpui;
+
 #[macro_use]
 mod action;
 mod app;
@@ -104,6 +109,9 @@ mod util;
 mod view;
 mod window;
 
+#[cfg(doc)]
+pub mod _ownership_and_data_flow;
+
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]
 pub mod private {
@@ -111,7 +119,6 @@ pub mod private {
     pub use inventory;
     pub use schemars;
     pub use serde;
-    pub use serde_derive;
     pub use serde_json;
 }
 
@@ -157,6 +164,8 @@ pub use taffy::{AvailableSpace, LayoutId};
 #[cfg(any(test, feature = "test-support"))]
 pub use test::*;
 pub use text_system::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
 pub use window::*;

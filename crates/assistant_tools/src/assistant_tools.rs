@@ -52,7 +52,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
-    registry.register_tool(TerminalTool::new(cx));
+    registry.register_tool(TerminalTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);

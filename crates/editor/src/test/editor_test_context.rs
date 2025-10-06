@@ -275,7 +275,8 @@ impl EditorTestContext {
             let details = editor.text_layout_details(window);
 
             let y = pixel_position.y
-                + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
+                + f32::from(line_height)
+                    * Pixels::from(display_point.row().as_f64() - newest_point.row().as_f64());
             let x = pixel_position.x + snapshot.x_for_display_point(display_point, &details)
                 - snapshot.x_for_display_point(newest_point, &details);
             Point::new(x, y)
@@ -296,7 +297,7 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_head_for_repo(
             &Self::root_path().join(".git"),
-            &[(path.into(), diff_base.to_string())],
+            &[(path.as_unix_str(), diff_base.to_string())],
             "deadbeef",
         );
         self.cx.run_until_parked();
@@ -317,7 +318,7 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         fs.set_index_for_repo(
             &Self::root_path().join(".git"),
-            &[(path.into(), diff_base.to_string())],
+            &[(path.as_unix_str(), diff_base.to_string())],
         );
         self.cx.run_until_parked();
     }
@@ -329,7 +330,7 @@ impl EditorTestContext {
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
-            found = git_state.index_contents.get(path.as_ref()).cloned();
+            found = git_state.index_contents.get(&path.into()).cloned();
         })
         .unwrap();
         assert_eq!(expected, found.as_deref());
@@ -396,7 +397,7 @@ impl EditorTestContext {
         let (multibuffer_snapshot, selections, excerpts) = self.update_editor(|editor, _, cx| {
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
 
-            let selections = editor.selections.disjoint_anchors();
+            let selections = editor.selections.disjoint_anchors_arc();
             let excerpts = multibuffer_snapshot
                 .excerpts()
                 .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
@@ -503,7 +504,7 @@ impl EditorTestContext {
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .iter()
-                .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+                .map(|range| range.to_offset(&snapshot.buffer_snapshot()))
                 .collect()
         });
         assert_set_eq!(actual_ranges, expected_ranges);
@@ -518,7 +519,7 @@ impl EditorTestContext {
             .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()
-            .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+            .map(|range| range.to_offset(&snapshot.buffer_snapshot()))
             .collect();
         assert_set_eq!(actual_ranges, expected_ranges);
     }
@@ -578,7 +579,7 @@ pub fn assert_state_with_diff(
 ) {
     let (snapshot, selections) = editor.update_in(cx, |editor, window, cx| {
         (
-            editor.snapshot(window, cx).buffer_snapshot.clone(),
+            editor.snapshot(window, cx).buffer_snapshot().clone(),
             editor.selections.ranges::<usize>(cx),
         )
     });

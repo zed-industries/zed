@@ -691,7 +691,7 @@ impl LspCommand for GetLspRunnables {
                     task_template.command = shell.program;
                     task_template.args = shell.args;
                     task_template.env = shell.environment;
-                    task_template.cwd = Some(shell.cwd.to_string_lossy().to_string());
+                    task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
                 }
             }
 

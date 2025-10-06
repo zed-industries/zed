@@ -1,8 +1,6 @@
-use editor::{Editor, EditorSettings, MultiBufferSnapshot};
+use editor::{Editor, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -10,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -207,10 +205,7 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !EditorSettings::get_global(cx)
-            .status_bar
-            .cursor_position_button
-        {
+        if !StatusBarSettings::get_global(cx).cursor_position_button {
             return div();
         }
 
@@ -293,34 +288,23 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum LineIndicatorFormat {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LineIndicatorFormat {
     Short,
-    #[default]
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
-#[serde(transparent)]
-#[settings_key(key = "line_indicator_format")]
-pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
+    fn from(format: settings::LineIndicatorFormat) -> Self {
+        match format {
+            settings::LineIndicatorFormat::Short => LineIndicatorFormat::Short,
+            settings::LineIndicatorFormat::Long => LineIndicatorFormat::Long,
+        }
+    }
+}
 
 impl Settings for LineIndicatorFormat {
-    type FileContent = LineIndicatorFormatContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let format = [
-            sources.release_channel,
-            sources.operating_system,
-            sources.user,
-        ]
-        .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default);
-
-        Ok(format.0)
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        content.line_indicator_format.unwrap().into()
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

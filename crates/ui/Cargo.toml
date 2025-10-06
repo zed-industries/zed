@@ -21,6 +21,7 @@ gpui_macros.workspace = true
 icons.workspace = true
 itertools.workspace = true
 menu.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true

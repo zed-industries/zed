@@ -36,6 +36,7 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
+use util::paths::PathStyle;
 
 use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
@@ -448,6 +449,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
             .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashDrop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -1878,6 +1880,7 @@ async fn share_project(
             session.connection_id,
             &request.worktrees,
             request.is_ssh_project,
+            request.windows_paths.unwrap_or(false),
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -2011,6 +2014,7 @@ async fn join_project(
         language_servers,
         language_server_capabilities,
         role: project.role.into(),
+        windows_paths: project.path_style == PathStyle::Windows,
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
