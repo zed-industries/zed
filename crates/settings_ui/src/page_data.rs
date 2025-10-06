@@ -250,15 +250,16 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Buffer Line Height",
-                    description: "Line height for editor text",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.theme.buffer_line_height,
-                        pick_mut: |settings_content| &mut settings_content.theme.buffer_line_height,
-                    }),
-                    metadata: None,
-                }),
+                // todo(settings_ui): This needs custom ui
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Buffer Line Height",
+                //     description: "Line height for editor text",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.theme.buffer_line_height,
+                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_line_height,
+                //     }),
+                //     metadata: None,
+                // }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Family",
                     description: "Font family for UI elements",

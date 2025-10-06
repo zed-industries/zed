@@ -239,11 +239,12 @@ fn init_renderers(cx: &mut App) {
             // todo(settings_ui): We need to pass in a validator for this to ensure that users that type in invalid font names
             render_font_picker(settings_field.clone(), file, window, cx)
         })
-        .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
-            // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
-            // right now there's a manual impl of strum::VariantArray
-            render_dropdown(*settings_field, file, window, cx)
-        })
+        // todo(settings_ui): This needs custom ui
+        // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
+        //     // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
+        //     // right now there's a manual impl of strum::VariantArray
+        //     render_dropdown(*settings_field, file, window, cx)
+        // })
         .add_renderer::<settings::BaseKeymapContent>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })

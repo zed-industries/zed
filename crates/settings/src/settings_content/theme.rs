@@ -262,18 +262,7 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    JsonSchema,
-    MergeFrom,
-    Default,
-    strum::VariantNames,
-)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -283,10 +272,6 @@ pub enum BufferLineHeight {
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
-}
-
-impl strum::VariantArray for BufferLineHeight {
-    const VARIANTS: &'static [Self] = &[Self::Comfortable, Self::Standard];
 }
 
 fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
