@@ -54,10 +54,10 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
-    v_flex,
+    Color, ContextMenu, DecoratedIcon, Divider, Icon, IconButton, IconDecoration,
+    IconDecorationKind, IconName, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
+    LabelSize, ListItem, ListItemSpacing, ScrollAxes, ScrollableHandle, Scrollbars,
+    StickyCandidate, Tooltip, WithScrollbar, prelude::*, v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
@@ -4652,6 +4652,85 @@ impl ProjectPanel {
                         }
                     })
                     .selectable(false)
+                    .when(depth == 0, |this| {
+                        this.end_slot::<AnyElement>(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    IconButton::new(
+                                        "new-file",
+                                        IconName::FileTextOutlined
+                                    )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .size(ui::ButtonSize::Compact)
+                                        .tooltip(Tooltip::text("New File..."))
+                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                            if this.state.selection.is_none() || this.state.selection.is_some_and(|s| s.entry_id == NEW_ENTRY_ID) {
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+                                            }
+
+                                            this.new_file(&NewFile, window, cx);
+                                        }))
+                                )
+                                .child(
+                                    IconButton::new(
+                                        "new-folder",
+                                        IconName::Folder,
+                                    )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .size(ui::ButtonSize::Compact)
+                                        .tooltip(Tooltip::text("New Folder..."))
+                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                            if this.state.selection.is_none() || this.state.selection.is_some_and(|s| s.entry_id == NEW_ENTRY_ID) {
+                                                this.state.selection = Some(SelectedEntry {
+                                                    worktree_id,
+                                                    entry_id,
+                                                });
+                                            }
+
+                                            this.new_directory(&NewDirectory, window, cx);
+                                        }))
+                                )
+                                .child(
+                                    IconButton::new(
+                                        "refresh",
+                                        IconName::RefreshTitle
+                                    )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .size(ui::ButtonSize::Compact)
+                                        .tooltip(Tooltip::text("Refresh Explorer"))
+                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                            for worktree in this.project.read(cx).visible_worktrees(cx) {
+                                                let worktree = worktree.read(cx);
+                                                if let Some(root_entry) = worktree.root_entry() {
+                                                    worktree.as_local().map(|local_worktree| {
+                                                        local_worktree.refresh_entries_for_paths(vec![root_entry.path.clone()])
+                                                    });
+                                                }
+                                            }
+
+                                            this.update_visible_entries(None, false, false, window, cx);
+                                            cx.notify();
+                                        }))
+                                )
+                                .child(
+                                    IconButton::new(
+                                        "collapse-all",
+                                        IconName::ChevronUp
+                                    )
+                                        .shape(ui::IconButtonShape::Square)
+                                        .size(ui::ButtonSize::Compact)
+                                        .tooltip(Tooltip::text("Collapse All"))
+                                        .on_click(cx.listener(move |this, _event, window, cx| {
+                                            this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                                        }))
+                                )
+                                .into_any_element(),
+                        )
+                    })
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
                             div()
