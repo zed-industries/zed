@@ -35,7 +35,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, update_settings_file};
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ use ui::{
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::{Chat, ToggleModelSelector};
+use zed_actions::agent::{Chat, SwitchToProfile, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
 use super::entry_view_state::EntryViewState;
@@ -123,8 +123,9 @@ impl ProfileProvider for Entity<agent2::Thread> {
     }
 
     fn set_profile(&self, profile_id: AgentProfileId, cx: &mut App) {
-        self.update(cx, |thread, _cx| {
-            thread.set_profile(profile_id);
+        self.update(cx, |thread, cx| {
+            // Apply the profile and let the thread swap to its default model.
+            thread.set_profile(profile_id, cx);
         });
     }
 
@@ -861,6 +862,55 @@ impl AcpThreadView {
         if let Some(thread) = self.thread() {
             self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
+    }
+
+    fn switch_profile_via_action(
+        &mut self,
+        action: &SwitchToProfile,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.profile_id.is_empty() {
+            return;
+        }
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let profile_id = AgentProfileId(Arc::<str>::from(action.profile_id.as_str()));
+        let settings = AgentSettings::get_global(cx);
+        let Some(target) = settings.profiles.get(&profile_id) else {
+            return;
+        };
+        if &profile_id == thread.read(cx).profile() {
+            return;
+        }
+
+        // Only block if target requires tools but model doesn’t support them.
+        let model_supports_tools = thread.read(cx).model().is_some_and(|m| m.supports_tools());
+        let target_requires_tools = target.tools.values().any(|enabled| *enabled);
+        if target_requires_tools && !model_supports_tools {
+            return;
+        }
+
+        // Apply the profile immediately so the UI and thread swap models before the disk write.
+        thread.update(cx, |t, cx| t.set_profile(profile_id.clone(), cx));
+
+        let fs = <dyn Fs>::global(cx);
+        let id_for_settings = profile_id.clone();
+        update_settings_file(fs, cx, move |s, _| {
+            s.agent
+                .get_or_insert_default()
+                .set_profile(id_for_settings.0);
+        });
+
+        telemetry::event!(
+            "agent_profile_switched",
+            profile_id = profile_id.as_str(),
+            source = "palette"
+        );
+
+        cx.notify();
     }
 
     pub fn expand_message_editor(
@@ -3912,6 +3962,9 @@ impl AcpThreadView {
                 } else if let Some(mode_selector) = this.mode_selector() {
                     mode_selector.read(cx).menu_handle().toggle(window, cx);
                 }
+            }))
+            .on_action(cx.listener(|this, action: &SwitchToProfile, window, cx| {
+                this.switch_profile_via_action(action, window, cx);
             }))
             .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
                 if let Some(mode_selector) = this.mode_selector() {
