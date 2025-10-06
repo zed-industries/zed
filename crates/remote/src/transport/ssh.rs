@@ -347,6 +347,7 @@ impl SshRemoteConnection {
         #[cfg(target_os = "windows")]
         let socket = SshSocket::new(
             connection_options,
+            askpass.script_path().as_ref().display().to_string(),
             askpass
                 .get_password()
                 .or_else(|| askpass::EncryptedPassword::try_from("").ok())
@@ -667,10 +668,14 @@ impl SshSocket {
     }
 
     #[cfg(target_os = "windows")]
-    fn new(options: SshConnectionOptions, password: askpass::EncryptedPassword) -> Result<Self> {
+    fn new(
+        options: SshConnectionOptions,
+        askpass_script: String,
+        password: askpass::EncryptedPassword,
+    ) -> Result<Self> {
         let mut envs = HashMap::default();
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
-        envs.insert("SSH_ASKPASS".into(), askpass_script.display().to_string());
+        envs.insert("SSH_ASKPASS".into(), askpass_script);
 
         Ok(Self {
             connection_options: options,
@@ -729,7 +734,6 @@ impl SshSocket {
 
     #[cfg(target_os = "windows")]
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
-        use askpass::ProcessExt;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

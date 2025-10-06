@@ -9,9 +9,9 @@ use util::fs::make_file_executable;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
+use std::sync::Arc;
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
-use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
@@ -109,13 +109,17 @@ impl AskPassSession {
                 let prompt = delegate.ask_password(prompt);
                 let kill_tx = kill_tx.clone();
                 let askpass_opened_tx = askpass_opened_tx.clone();
+                #[cfg(target_os = "windows")]
+                let askpass_secret = askpass_secret.clone();
                 executor.spawn(async move {
                     if let Some(askpass_opened_tx) = askpass_opened_tx.lock().await.take() {
                         askpass_opened_tx.send(()).ok();
                     }
                     if let Some(password) = prompt.await {
                         #[cfg(target_os = "windows")]
-                        askpass_secret.set(password.clone());
+                        {
+                            _ = askpass_secret.set(password.clone());
+                        }
                         ControlFlow::Continue(Ok(password))
                     } else {
                         if let Some(kill_tx) = kill_tx.lock().await.take() {
@@ -174,14 +178,11 @@ impl AskPassSession {
         self.askpass_task.script_path()
     }
 
-    #[allow(unused)]
-    pub fn proxy(&self) -> &PasswordProxy {
-        &self.askpass_task
-    }
 }
 
 pub struct PasswordProxy {
     _task: Task<()>,
+    #[cfg(not(target_os = "windows"))]
     askpass_script_path: PathBuf,
     #[cfg(target_os = "windows")]
     askpass_helper: String,
@@ -257,6 +258,7 @@ impl PasswordProxy {
 
         Ok(Self {
             _task,
+            #[cfg(not(target_os = "windows"))]
             askpass_script_path,
             #[cfg(target_os = "windows")]
             askpass_helper,
