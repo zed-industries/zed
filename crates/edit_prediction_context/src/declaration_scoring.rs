@@ -73,17 +73,19 @@ impl ScoredDeclaration {
     }
 
     pub fn retrieval_score(&self) -> f32 {
-        let declaration_count = self.components.declaration_count as f32;
         if self.components.is_same_file {
             10.0 / self.components.same_file_declaration_count as f32
         } else if self.components.path_import_match_count > 0 {
             3.0
         } else if self.components.wildcard_path_import_match_count > 0 {
-            1.0 / declaration_count
+            // TODO:could be cool to
+            1.0
         } else if self.components.normalized_import_similarity > 0.0 {
-            self.components.normalized_import_similarity / declaration_count
+            self.components.normalized_import_similarity
+        } else if self.components.normalized_wildcard_import_similarity > 0.0 {
+            0.5 * self.components.normalized_wildcard_import_similarity
         } else {
-            0.25 * self.components.normalized_wildcard_import_similarity / declaration_count
+            1.0 / self.components.declaration_count as f32
         }
     }
 
