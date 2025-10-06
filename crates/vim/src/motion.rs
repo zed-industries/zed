@@ -3400,6 +3400,22 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_matching_nested_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_tsx(cx).await;
+
+        cx.set_shared_state(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick={() => {}ˇ}></Button>"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
+    }
+
+    #[gpui::test]
     async fn test_comma_semicolon(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
