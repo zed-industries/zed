@@ -424,7 +424,7 @@ pub async fn retrieval_stats(
     .detach();
 
     let mut lsp_open_handles = Vec::new();
-    let mut output = std::fs::File::create("retrieval-stats.txt")?;
+    let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
     let mut results = Vec::new();
     let mut ready_languages = HashSet::default();
     for (file_index, project_path) in files.iter().enumerate() {
