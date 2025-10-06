@@ -96,8 +96,6 @@ pub fn references_in_range(
                     let identifier_text =
                         &range_text[node_range.start - range.start..node_range.end - range.start];
 
-                    dbg!(identifier_text);
-
                     references.push(Reference {
                         identifier: Identifier {
                             name: identifier_text.into(),

@@ -67,7 +67,9 @@ enum Commands {
         #[arg(long)]
         extension: Option<String>,
         #[arg(long)]
-        file_limit: Option<usize>,
+        limit: Option<usize>,
+        #[arg(long)]
+        skip: Option<usize>,
     },
 }
 
@@ -362,6 +364,7 @@ pub async fn retrieval_stats(
     app_state: Arc<ZetaCliAppState>,
     only_extension: Option<String>,
     file_limit: Option<usize>,
+    skip_files: Option<usize>,
     options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
@@ -412,6 +415,7 @@ pub async fn retrieval_stats(
                     .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
             }
         })
+        .skip(skip_files.unwrap_or(0))
         .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
 
@@ -477,6 +481,8 @@ pub async fn retrieval_stats(
             ReferenceRegion::Nearby,
             &snapshot,
         );
+
+        println!("References: {}", references.len());
 
         loop {
             let is_ready = lsp_store
@@ -1033,13 +1039,15 @@ fn main() {
                     zeta2_args,
                     worktree,
                     extension,
-                    file_limit,
+                    limit,
+                    skip,
                 } => {
                     retrieval_stats(
                         worktree,
                         app_state,
                         extension,
-                        file_limit,
+                        limit,
+                        skip,
                         (&zeta2_args).into(),
                         cx,
                     )
