@@ -120,35 +120,37 @@ impl SyntaxIndex {
                     .iter()
                     .map(|worktree| worktree.file_count())
                     .sum::<usize>();
-                let chunk_size = snapshots_file_count.div_ceil(file_indexing_parallelism);
-                let chunk_count = snapshots_file_count.div_ceil(chunk_size);
-                let file_chunks = initial_worktree_snapshots
-                    .iter()
-                    .flat_map(|worktree| {
-                        let worktree_id = worktree.id();
-                        worktree.files(false, 0).map(move |entry| {
-                            (
-                                entry.id,
-                                ProjectPath {
-                                    worktree_id,
-                                    path: entry.path.clone(),
-                                },
-                            )
+                if snapshots_file_count > 0 {
+                    let chunk_size = snapshots_file_count.div_ceil(file_indexing_parallelism);
+                    let chunk_count = snapshots_file_count.div_ceil(chunk_size);
+                    let file_chunks = initial_worktree_snapshots
+                        .iter()
+                        .flat_map(|worktree| {
+                            let worktree_id = worktree.id();
+                            worktree.files(false, 0).map(move |entry| {
+                                (
+                                    entry.id,
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: entry.path.clone(),
+                                    },
+                                )
+                            })
                         })
-                    })
-                    .chunks(chunk_size);
+                        .chunks(chunk_size);
 
-                let mut tasks = Vec::with_capacity(chunk_count);
-                for chunk in file_chunks.into_iter() {
-                    tasks.push(Self::update_dirty_files(
-                        &this,
-                        chunk.into_iter().collect(),
-                        cx.clone(),
-                    ));
+                    let mut tasks = Vec::with_capacity(chunk_count);
+                    for chunk in file_chunks.into_iter() {
+                        tasks.push(Self::update_dirty_files(
+                            &this,
+                            chunk.into_iter().collect(),
+                            cx.clone(),
+                        ));
+                    }
+                    futures::future::join_all(tasks).await;
+                    log::info!("Finished initial file indexing");
                 }
-                futures::future::join_all(tasks).await;
 
-                log::info!("Finished initial file indexing");
                 *initial_file_indexing_done_tx.borrow_mut() = true;
 
                 let Ok(state) = this.read_with(cx, |this, _cx| this.state.clone()) else {
