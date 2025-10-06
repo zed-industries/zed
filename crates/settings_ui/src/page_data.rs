@@ -1310,7 +1310,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Active language Button",
+                    title: "Active Language Button",
                     description: "Whether to show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -1383,6 +1383,147 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                                 .tab_bar
                                 .get_or_insert_default()
                                 .show_nav_history_buttons
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Title Bar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Branch Icon",
+                    description: "Whether to show the branch icon beside branch switcher in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_branch_icon
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_branch_icon
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Branch Name",
+                    description: "Whether to show the branch name button in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_branch_name
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_branch_name
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Project Items",
+                    description: "Whether to show the project host and name in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_project_items
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_project_items
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Onboarding Banner",
+                    description: "Whether to show onboarding banners in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_onboarding_banner
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_onboarding_banner
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show User Picture",
+                    description: "Whether to show user picture in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_user_picture
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_user_picture
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Sign In",
+                    description: "Whether to show the sign in button in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_sign_in
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_sign_in
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Menus",
+                    description: "Whether to show the menus in the titlebar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(title_bar) = &settings_content.title_bar {
+                                &title_bar.show_menus
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .title_bar
+                                .get_or_insert_default()
+                                .show_menus
                         },
                     }),
                     metadata: None,
