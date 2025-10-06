@@ -1726,7 +1726,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Figure out the right default for this value in default.json
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Gutter Debounce",
                 //     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
@@ -1766,6 +1766,84 @@ fn user_settings_data() -> Vec<SettingsPage> {
                                 .inline_blame
                                 .get_or_insert_default()
                                 .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Delay",
+                    description: "The delay after which the inline blame information is shown",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.delay_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .delay_ms
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Padding",
+                    description: "Padding between the end of the source line and the start of the inline blame in columns",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.padding
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .padding
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Blame Min Column",
+                    description: "The minimum column number to show the inline blame information at",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.min_column
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .min_column
                         },
                     }),
                     metadata: None,
@@ -2744,6 +2822,9 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<u32>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<u64>(|settings_field, file, _, window, cx| {

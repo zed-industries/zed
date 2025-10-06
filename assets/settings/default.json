@@ -1231,6 +1231,10 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    ///
+    /// Default: null
+    "gutter_debounce": null,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
