@@ -369,7 +369,15 @@
     "bindings": {
       "new": "rules_library::NewRule",
       "ctrl-n": "rules_library::NewRule",
-      "ctrl-shift-s": "rules_library::ToggleDefaultRule"
+      "ctrl-shift-s": "rules_library::ToggleDefaultRule",
+      "ctrl-w": "workspace::CloseWindow"
+    }
+  },
+  {
+    "context": "SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseWindow"
     }
   },
   {
