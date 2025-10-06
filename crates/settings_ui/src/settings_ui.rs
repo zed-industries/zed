@@ -27,7 +27,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, Switch, SwitchColor,
     TreeViewItem, WithScrollbar, prelude::*,
 };
-use ui_input::{NumericStepper, NumericStepperType};
+use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 
 use crate::components::SettingsEditor;
@@ -3775,6 +3775,7 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .style(NumericStepperStyle::Outlined)
         .into_any_element()
 }
 
