@@ -2650,6 +2650,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SectionHeader("Lines"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Soft Wrap",
+            description: "How to soft-wrap long lines of text",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {
@@ -2684,6 +2685,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
+            description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -2811,6 +2813,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prettier",
+            description: "Zed's Prettier integration settings. Allows to enable/disable formatting with Prettier and configure default Prettier, used when no project-level Prettier installation is found",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {
@@ -3047,6 +3050,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
+            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {

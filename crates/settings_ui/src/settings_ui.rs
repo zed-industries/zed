@@ -13,8 +13,8 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{
-    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, LanguageSettingsContent,
-    OnLastWindowClosed, RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
+    BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
+    RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
 };
 use std::{
     any::{Any, TypeId, type_name},
