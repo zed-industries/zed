@@ -2581,7 +2581,6 @@ const LANGUAGES_SECTION_HEADER: &'static str = "Languages";
 
 fn language_settings_data() -> Vec<SettingsPageItem> {
     fn current_language() -> Option<SharedString> {
-        // todo! make "Languages" const
         sub_page_stack().iter().find_map(|page| {
             (page.section_header == LANGUAGES_SECTION_HEADER)
                 .then(|| SharedString::new_static(page.link.title))
