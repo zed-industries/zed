@@ -64,6 +64,10 @@ enum Commands {
         zeta2_args: Zeta2Args,
         #[arg(long)]
         worktree: PathBuf,
+        #[arg(long)]
+        extension: Option<String>,
+        #[arg(long)]
+        file_limit: Option<usize>,
     },
 }
 
@@ -356,6 +360,8 @@ impl Into<zeta2::ZetaOptions> for &Zeta2Args {
 pub async fn retrieval_stats(
     worktree: PathBuf,
     app_state: Arc<ZetaCliAppState>,
+    only_extension: Option<String>,
+    file_limit: Option<usize>,
     options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
@@ -391,16 +397,22 @@ pub async fn retrieval_stats(
     index
         .read_with(cx, |index, cx| index.wait_for_initial_file_indexing(cx))?
         .await?;
-    let files = index
+    let mut indexed_files = index
         .read_with(cx, |index, cx| index.indexed_file_paths(cx))?
-        .await
+        .await;
+    indexed_files.sort_by(|a, b| a.path.cmp(&b.path));
+    let filtered_files = indexed_files
         .into_iter()
         .filter(|project_path| {
-            project_path
-                .path
-                .extension()
-                .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
+            let file_extension = project_path.path.extension();
+            if let Some(only_extension) = only_extension.as_ref() {
+                file_extension.is_some_and(|extension| extension == only_extension)
+            } else {
+                file_extension
+                    .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
+            }
         })
+        .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
 
     let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store())?;
@@ -427,11 +439,11 @@ pub async fn retrieval_stats(
     let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
     let mut results = Vec::new();
     let mut ready_languages = HashSet::default();
-    for (file_index, project_path) in files.iter().enumerate() {
+    for (file_index, project_path) in filtered_files.iter().enumerate() {
         let processing_file_message = format!(
             "Processing file {} of {}: {}",
             file_index + 1,
-            files.len(),
+            filtered_files.len(),
             project_path.path.display(PathStyle::Posix)
         );
         println!("{}", processing_file_message);
@@ -1020,7 +1032,19 @@ fn main() {
                 Commands::RetrievalStats {
                     zeta2_args,
                     worktree,
-                } => retrieval_stats(worktree, app_state, (&zeta2_args).into(), cx).await,
+                    extension,
+                    file_limit,
+                } => {
+                    retrieval_stats(
+                        worktree,
+                        app_state,
+                        extension,
+                        file_limit,
+                        (&zeta2_args).into(),
+                        cx,
+                    )
+                    .await
+                }
             };
             match result {
                 Ok(output) => {
