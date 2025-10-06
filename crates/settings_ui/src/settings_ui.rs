@@ -29,6 +29,7 @@ use ui::{
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
+use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
 
@@ -2703,14 +2704,6 @@ pub struct SettingsUiFeatureFlag;
 impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
-
-actions!(
-    zed,
-    [
-        /// Opens Settings Editor.
-        OpenSettingsEditor
-    ]
-);
 
 pub fn init(cx: &mut App) {
     init_renderers(cx);
