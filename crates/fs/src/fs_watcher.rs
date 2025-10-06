@@ -1,7 +1,8 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    ops::{Bound, DerefMut},
     sync::{Arc, OnceLock},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -11,7 +12,7 @@ use crate::{PathEvent, PathEventKind, Watcher};
 pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Mutex<HashMap<Arc<std::path::Path>, WatcherRegistrationId>>,
+    registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
 }
 
 impl FsWatcher {
@@ -29,8 +30,11 @@ impl FsWatcher {
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
-        let mut registrations = self.registrations.lock();
-        let registrations = registrations.drain();
+        let mut registrations = BTreeMap::new();
+        {
+            let old = &mut self.registrations.lock();
+            std::mem::swap(old.deref_mut(), &mut registrations);
+        }
 
         let _ = global(|g| {
             for (_, registration) in registrations {
@@ -47,18 +51,26 @@ impl Watcher for FsWatcher {
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
-        let path: Arc<std::path::Path> = path.into();
-
-        if self.registrations.lock().contains_key(&path) {
+        // Return early if an ancestor of this path was already being watched.
+        // saves a huge amount of memory
+        if let Some((watched_path, _)) = self
+            .registrations
+            .lock()
+            .range::<std::path::Path, _>((Bound::Unbounded, Bound::Included(path)))
+            .next_back()
+            && path.starts_with(watched_path.as_ref())
+        {
             return Ok(());
         }
+
+        let path: Arc<std::path::Path> = path.into();
 
         let registration_id = global({
             let path = path.clone();
             |g| {
                 g.add(
                     path,
-                    notify::RecursiveMode::NonRecursive,
+                    notify::RecursiveMode::Recursive,
                     move |event: &notify::Event| {
                         let kind = match event.kind {
                             EventKind::Create(_) => Some(PathEventKind::Created),
