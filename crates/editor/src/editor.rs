@@ -18,7 +18,6 @@ mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
-mod editor_settings_controls;
 mod element;
 mod git;
 mod highlight_matching_bracket;
@@ -57,7 +56,6 @@ pub use editor_settings::{
     CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
     ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap,
 };
-pub use editor_settings_controls::*;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
