@@ -5,15 +5,15 @@ use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction_context::{
     Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
-    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, ReferenceRegion,
-    SyntaxIndex, references_in_range,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, Reference,
+    ReferenceRegion, SyntaxIndex, SyntaxIndexState, references_in_range,
 };
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
 use gpui::{Entity, Task};
-use language::Bias;
 use language::Point;
+use language::{Bias, BufferSnapshot};
 use language::{Buffer, OffsetRangeExt};
 use language_model::LlmApiToken;
 use ordered_float::OrderedFloat;
@@ -421,89 +421,19 @@ pub async fn retrieval_stats(
         let index = index.lock().await;
         for reference in references {
             let query_point = snapshot.offset_to_point(reference.range.start);
-            let mut single_reference_map = HashMap::default();
-            single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
-            let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
+
+            let retrieved_definitions = retrieve_definitions(
+                &reference,
                 query_point,
                 &snapshot,
                 parent_abs_path.as_deref(),
-                // todo! make this configurable
+                &index,
+                &project,
+                &worktree,
                 &zeta2::DEFAULT_CONTEXT_OPTIONS,
-                Some(&index),
-                |_, _, _| single_reference_map,
-            );
-
-            let Some(edit_prediction_context) = edit_prediction_context else {
-                let result = RetrievalStatsResult {
-                    identifier: reference.identifier,
-                    point: query_point,
-                    outcome: RetrievalStatsOutcome::NoExcerpt,
-                };
-                write!(output, "{:?}\n\n", result)?;
-                results.push(result);
-                continue;
-            };
-
-            let mut retrieved_definitions = Vec::new();
-            for scored_declaration in edit_prediction_context.declarations {
-                match &scored_declaration.declaration {
-                    Declaration::File {
-                        project_entry_id,
-                        declaration,
-                        ..
-                    } => {
-                        let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                            worktree
-                                .entry_for_id(*project_entry_id)
-                                .map(|entry| entry.path.clone())
-                        })?
-                        else {
-                            log::error!("bug: file project entry not found");
-                            continue;
-                        };
-                        let project_path = ProjectPath {
-                            worktree_id,
-                            path: path.clone(),
-                        };
-                        let buffer = project
-                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                            .await?;
-                        let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
-                        retrieved_definitions.push((
-                            path,
-                            rope.offset_to_point(declaration.item_range.start)
-                                ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.score(DeclarationStyle::Declaration),
-                            scored_declaration.retrieval_score(),
-                        ));
-                    }
-                    Declaration::Buffer {
-                        project_entry_id,
-                        rope,
-                        declaration,
-                        ..
-                    } => {
-                        let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                            worktree
-                                .entry_for_id(*project_entry_id)
-                                .map(|entry| entry.path.clone())
-                        })?
-                        else {
-                            log::error!("bug: buffer project entry not found");
-                            continue;
-                        };
-                        retrieved_definitions.push((
-                            path,
-                            rope.offset_to_point(declaration.item_range.start)
-                                ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.score(DeclarationStyle::Declaration),
-                            scored_declaration.retrieval_score(),
-                        ));
-                    }
-                }
-            }
-            retrieved_definitions
-                .sort_by_key(|(_, _, _, retrieval_score)| Reverse(OrderedFloat(*retrieval_score)));
+                cx,
+            )
+            .await?;
 
             // TODO: Consider still checking language server in this case, or having a mode for
             // this. For now assuming that the purpose of this is to refine the ranking rather than
@@ -520,28 +450,29 @@ pub async fn retrieval_stats(
                 .await;
             match lsp_result {
                 Ok(lsp_definitions) => {
-                    let lsp_definitions = lsp_definitions
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|definition| {
-                            definition
-                                .target
-                                .buffer
-                                .read_with(cx, |buffer, _cx| {
-                                    Some((
-                                        buffer.file()?.path().clone(),
-                                        definition.target.range.to_point(&buffer),
-                                    ))
-                                })
-                                .ok()?
-                        })
-                        .collect::<Vec<_>>();
-
+                    let mut lsp_ranges = Vec::new();
+                    let mut is_outside_worktree = false;
+                    for definition in lsp_definitions.unwrap_or_default() {
+                        definition.target.buffer.read_with(cx, |buffer, cx| {
+                            let Some(file) = project::File::from_dyn(buffer.file()) else {
+                                return;
+                            };
+                            let definition_worktree_id = file.worktree.read(cx).id();
+                            if definition_worktree_id != worktree_id {
+                                is_outside_worktree = true;
+                            } else {
+                                lsp_ranges.push((
+                                    file.path.clone(),
+                                    definition.target.range.to_point(&buffer),
+                                ));
+                            }
+                        })?
+                    }
                     let result = RetrievalStatsResult {
                         identifier: reference.identifier,
                         point: query_point,
                         outcome: RetrievalStatsOutcome::Success {
-                            matches: lsp_definitions
+                            matches: lsp_ranges
                                 .iter()
                                 .map(|(path, range)| {
                                     retrieved_definitions.iter().position(
@@ -552,7 +483,7 @@ pub async fn retrieval_stats(
                                     )
                                 })
                                 .collect(),
-                            lsp_definitions,
+                            lsp_ranges,
                             retrieved_definitions,
                         },
                     };
@@ -574,39 +505,45 @@ pub async fn retrieval_stats(
         }
     }
 
-    let mut no_excerpt_count = 0;
-    let mut error_count = 0;
-    let mut definitions_count = 0;
-    let mut top_match_count = 0;
-    let mut non_top_match_count = 0;
-    let mut ranking_involved_count = 0;
-    let mut ranking_involved_top_match_count = 0;
-    let mut ranking_involved_non_top_match_count = 0;
+    let mut no_excerpt_count = 0f64;
+    let mut error_count = 0f64;
+    let mut definitions_count = 0f64;
+    let mut top_match_count = 0f64;
+    let mut top_match_score = 0f64;
+    let mut top_match_retrieval_score = 0f64;
+    let mut non_top_match_count = 0f64;
+    let mut non_top_match_score = 0f64;
+    let mut non_top_match_retrieval_score = 0f64;
+    let mut ranking_involved_count = 0f64;
+    let mut ranking_involved_top_match_count = 0f64;
+    let mut ranking_involved_non_top_match_count = 0f64;
     for result in &results {
         match &result.outcome {
-            RetrievalStatsOutcome::NoExcerpt => no_excerpt_count += 1,
-            RetrievalStatsOutcome::LanguageServerError { .. } => error_count += 1,
+            RetrievalStatsOutcome::LanguageServerError { .. } => error_count += 1.,
+            RetrievalStatsOutcome::OutsideWorktree => {}
             RetrievalStatsOutcome::Success {
                 matches,
                 retrieved_definitions,
                 ..
             } => {
-                definitions_count += 1;
+                definitions_count += 1.;
                 let top_matches = matches.contains(&Some(0));
                 if top_matches {
-                    top_match_count += 1;
+                    top_match_count += 1.;
                 }
-                let non_top_matches = !top_matches && matches.iter().any(|index| *index != Some(0));
+                let non_top_matches = !top_matches
+                    && matches
+                        .iter()
+                        .any(|index| index.is_some_and(|index| index != 0));
                 if non_top_matches {
-                    non_top_match_count += 1;
+                    non_top_match_count += 1.;
                 }
-                if retrieved_definitions.len() > 1 {
-                    ranking_involved_count += 1;
+                if (top_matches || non_top_matches) && retrieved_definitions.len() > 1 {
                     if top_matches {
-                        ranking_involved_top_match_count += 1;
+                        ranking_involved_top_match_count += 1.;
                     }
                     if non_top_matches {
-                        ranking_involved_non_top_match_count += 1;
+                        ranking_involved_non_top_match_count += 1.;
                     }
                 }
             }
@@ -614,22 +551,146 @@ pub async fn retrieval_stats(
     }
 
     println!("\nStats:\n");
-    println!("No Excerpt: {}", no_excerpt_count);
-    println!("Language Server Error: {}", error_count);
-    println!("Definitions: {}", definitions_count);
-    println!("Top Match: {}", top_match_count);
-    println!("Non-Top Match: {}", non_top_match_count);
-    println!("Ranking Involved: {}", ranking_involved_count);
+
+    if no_excerpt_count > 0. {
+        println!("No Excerpt: {}", no_excerpt_count);
+    }
+    if error_count > 0. {
+        println!("Language Server Error: {}", error_count);
+    }
+    if no_excerpt_count > 0. || error_count > 0. {
+        println!("");
+    }
+
+    let present_count = top_match_count + non_top_match_count;
+
+    println!("╮ Definitions: {}", definitions_count);
     println!(
-        "Ranking Involved Top Match: {}",
-        ranking_involved_top_match_count
+        "╰─╮ Present (recall): {} ({:.2}%)",
+        top_match_count + non_top_match_count,
+        ((top_match_count + non_top_match_count) / definitions_count) * 100.0
     );
     println!(
-        "Ranking Involved Non-Top Match: {}",
-        ranking_involved_non_top_match_count
+        "  ├─╴ Top Match: {} ({:.2}%)",
+        top_match_count,
+        (top_match_count / present_count) * 100.0
+    );
+    println!(
+        "  ├─╴ Non-Top Match: {} ({:.2}%)",
+        non_top_match_count,
+        (non_top_match_count / present_count) * 100.0
+    );
+
+    let multiple_results_count =
+        ranking_involved_top_match_count + ranking_involved_non_top_match_count;
+
+    println!(
+        "  ╰─╮ Multiple Results: {} ({:.2}%)",
+        multiple_results_count,
+        (multiple_results_count / present_count) * 100.0
+    );
+    println!(
+        "    ├─╴ Top Match: {} ({:.2}%)",
+        ranking_involved_top_match_count,
+        (ranking_involved_top_match_count / multiple_results_count) * 100.0
+    );
+    println!(
+        "    ╰─╴ Non-Top Match: {} ({:.2}%)",
+        ranking_involved_non_top_match_count,
+        (ranking_involved_non_top_match_count / multiple_results_count) * 100.0
     );
 
     Ok("".to_string())
+}
+
+async fn retrieve_definitions(
+    reference: &Reference,
+    query_point: Point,
+    snapshot: &BufferSnapshot,
+    parent_abs_path: Option<&Path>,
+    index: &SyntaxIndexState,
+    project: &Entity<Project>,
+    worktree: &Entity<Worktree>,
+    options: &EditPredictionContextOptions,
+    cx: &mut AsyncApp,
+) -> Result<Vec<(Arc<RelPath>, Range<Point>, f32, f32)>> {
+    let mut single_reference_map = HashMap::default();
+    single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
+    let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
+        query_point,
+        &snapshot,
+        parent_abs_path.as_deref(),
+        // todo! make this configurable
+        &options,
+        Some(&index),
+        |_, _, _| single_reference_map,
+    );
+
+    let Some(edit_prediction_context) = edit_prediction_context else {
+        return Ok(Vec::new());
+    };
+
+    let mut retrieved_definitions = Vec::new();
+    for scored_declaration in edit_prediction_context.declarations {
+        match &scored_declaration.declaration {
+            Declaration::File {
+                project_entry_id,
+                declaration,
+                ..
+            } => {
+                let Some(path) = worktree.read_with(cx, |worktree, _cx| {
+                    worktree
+                        .entry_for_id(*project_entry_id)
+                        .map(|entry| entry.path.clone())
+                })?
+                else {
+                    log::error!("bug: file project entry not found");
+                    continue;
+                };
+                let project_path = ProjectPath {
+                    worktree_id: worktree.read_with(cx, |worktree, _cx| worktree.id())?,
+                    path: path.clone(),
+                };
+                let buffer = project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .await?;
+                let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
+                retrieved_definitions.push((
+                    path,
+                    rope.offset_to_point(declaration.item_range.start)
+                        ..rope.offset_to_point(declaration.item_range.end),
+                    scored_declaration.score(DeclarationStyle::Declaration),
+                    scored_declaration.retrieval_score(),
+                ));
+            }
+            Declaration::Buffer {
+                project_entry_id,
+                rope,
+                declaration,
+                ..
+            } => {
+                let Some(path) = worktree.read_with(cx, |worktree, _cx| {
+                    worktree
+                        .entry_for_id(*project_entry_id)
+                        .map(|entry| entry.path.clone())
+                })?
+                else {
+                    log::error!("bug: buffer project entry not found");
+                    continue;
+                };
+                retrieved_definitions.push((
+                    path,
+                    rope.offset_to_point(declaration.item_range.start)
+                        ..rope.offset_to_point(declaration.item_range.end),
+                    scored_declaration.score(DeclarationStyle::Declaration),
+                    scored_declaration.retrieval_score(),
+                ));
+            }
+        }
+    }
+    retrieved_definitions.sort_by_key(|(_, _, score, _)| Reverse(OrderedFloat(*score)));
+
+    Ok(retrieved_definitions)
 }
 
 #[derive(Debug)]
@@ -643,15 +704,15 @@ struct RetrievalStatsResult {
 
 #[derive(Debug)]
 enum RetrievalStatsOutcome {
-    NoExcerpt,
     LanguageServerError {
         #[allow(dead_code)]
         message: String,
     },
+    OutsideWorktree,
     Success {
         matches: Vec<Option<usize>>,
         #[allow(dead_code)]
-        lsp_definitions: Vec<(Arc<RelPath>, Range<Point>)>,
+        lsp_ranges: Vec<(Arc<RelPath>, Range<Point>)>,
         retrieved_definitions: Vec<(Arc<RelPath>, Range<Point>, f32, f32)>,
     },
 }
