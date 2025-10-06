@@ -21,6 +21,7 @@ pub fn set_test_locale(locale_str: &str) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+#[cfg(all(unix, not(any(target_vendor = "apple", target_os = "android"))))]
 fn posix_to_bcp47(locale: &str) -> String {
     if locale.is_empty() {
         return String::new();
