@@ -227,6 +227,7 @@ pub struct StatusBarSettings {
     pub show: bool,
     pub active_language_button: bool,
     pub cursor_position_button: bool,
+    pub line_endings_button: bool,
 }
 
 impl Settings for StatusBarSettings {
@@ -236,6 +237,7 @@ impl Settings for StatusBarSettings {
             show: status_bar.show.unwrap(),
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
+            line_endings_button: status_bar.line_endings_button.unwrap(),
         }
     }
 

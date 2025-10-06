@@ -419,6 +419,8 @@ pub fn initialize_workspace(
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+        let line_ending_indicator =
+            cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
@@ -427,6 +429,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
+            status_bar.add_right_item(line_ending_indicator, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
