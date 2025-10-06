@@ -116,7 +116,6 @@ fn write_buffer_font_size(size: Pixels, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     update_settings_file(fs, cx, move |settings, _| {
-        let size: f32 = size.into();
         settings.theme.buffer_font_size = Some(size.into());
     });
 }
