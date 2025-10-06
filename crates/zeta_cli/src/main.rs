@@ -104,6 +104,8 @@ struct Zeta2Args {
     output_format: OutputFormat,
     #[arg(long, default_value_t = 42)]
     file_indexing_parallelism: usize,
+    #[arg(long, default_value_t = true)]
+    use_imports: bool,
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
@@ -340,7 +342,7 @@ impl Into<zeta2::ZetaOptions> for &Zeta2Args {
     fn into(self) -> zeta2::ZetaOptions {
         zeta2::ZetaOptions {
             context: EditPredictionContextOptions {
-                use_imports: true,
+                use_imports: self.use_imports,
                 excerpt: EditPredictionExcerptOptions {
                     max_bytes: self.max_excerpt_bytes,
                     min_bytes: self.min_excerpt_bytes,
