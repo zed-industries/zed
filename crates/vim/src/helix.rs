@@ -133,7 +133,7 @@ impl Vim {
         self.helix_new_selections(window, cx, |cursor, map| {
             let mut head = movement::right(map, cursor);
             let mut tail = cursor;
-            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            let classifier = map.buffer_snapshot().char_classifier_at(head.to_point(map));
             if head == map.max_point() {
                 return None;
             }
@@ -170,7 +170,7 @@ impl Vim {
             // but the search starts from the left side of it,
             // so to include that space the selection must end one character to the right.
             let mut tail = movement::right(map, cursor);
-            let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+            let classifier = map.buffer_snapshot().char_classifier_at(head.to_point(map));
             if head == DisplayPoint::zero() {
                 return None;
             }
@@ -467,7 +467,7 @@ impl Vim {
                         let was_empty = range.is_empty();
                         let was_reversed = selection.reversed;
                         (
-                            map.buffer_snapshot.anchor_before(start_offset),
+                            map.buffer_snapshot().anchor_before(start_offset),
                             end_offset - start_offset,
                             was_empty,
                             was_reversed,
@@ -546,8 +546,8 @@ impl Vim {
             editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(cx);
-            let max_point = display_map.buffer_snapshot.max_point();
-            let buffer_snapshot = &display_map.buffer_snapshot;
+            let max_point = display_map.buffer_snapshot().max_point();
+            let buffer_snapshot = &display_map.buffer_snapshot();
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line

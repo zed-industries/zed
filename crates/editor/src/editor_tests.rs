@@ -4527,8 +4527,8 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
         let snapshot = editor.snapshot(window, cx);
         assert_eq!(
             snapshot
-                .buffer_snapshot
-                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
+                .buffer_snapshot()
+                .diff_hunks_in_range(0..snapshot.buffer_snapshot().len())
                 .collect::<Vec<_>>(),
             Vec::new(),
             "Should not have any diffs for files with custom newlines"
@@ -5742,7 +5742,7 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
     // Create a four-line block that replaces three lines of text.
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
-        let snapshot = &snapshot.buffer_snapshot;
+        let snapshot = &snapshot.buffer_snapshot();
         let placement = BlockPlacement::Replace(
             snapshot.anchor_after(Point::new(1, 0))..=snapshot.anchor_after(Point::new(3, 0)),
         );
@@ -20739,7 +20739,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
     let mut actual_guides = cx.update_editor(|editor, window, cx| {
         editor
             .snapshot(window, cx)
-            .buffer_snapshot
+            .buffer_snapshot()
             .indent_guides_in_range(Anchor::min()..Anchor::max(), false, cx)
             .map(|guide| (guide.start_row..=guide.end_row, guide.depth))
             .collect::<Vec<_>>()
@@ -20795,7 +20795,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
         let buffer_id = hunks[0].buffer_id;
@@ -20886,7 +20886,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
         let buffer_id = hunks[0].buffer_id;
@@ -20952,7 +20952,7 @@ async fn test_toggle_deletion_hunk_at_start_of_file(
     let hunk_ranges = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
         let buffer_id = hunks[0].buffer_id;
@@ -21117,7 +21117,7 @@ async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let hunks = editor
-            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot())
             .collect::<Vec<_>>();
         assert_eq!(hunks.len(), 1);
         assert_eq!(
@@ -22572,7 +22572,7 @@ fn add_log_breakpoint_at_cursor(
             let breakpoint_position = editor
                 .snapshot(window, cx)
                 .display_snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .anchor_before(Point::new(cursor_position.row, 0));
 
             (breakpoint_position, Breakpoint::new_log(log_message))
@@ -25364,8 +25364,8 @@ fn assert_hunk_revert(
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
         let reverted_hunk_statuses = snapshot
-            .buffer_snapshot
-            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
+            .buffer_snapshot()
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot().len())
             .map(|hunk| hunk.status().kind)
             .collect::<Vec<_>>();
 

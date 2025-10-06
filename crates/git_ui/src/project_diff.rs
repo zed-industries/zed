@@ -1557,7 +1557,7 @@ mod tests {
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>();
@@ -1570,7 +1570,7 @@ mod tests {
         let new_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>()
