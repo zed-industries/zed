@@ -237,6 +237,7 @@ impl PasswordProxy {
                         }
                     }
                 }
+                drop(temp_dir);
                 Result::<_, anyhow::Error>::Ok(())
             })
             .await
