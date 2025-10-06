@@ -1,6 +1,6 @@
 mod headless;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3;
 use edit_prediction_context::{
@@ -20,9 +20,14 @@ use ordered_float::OrderedFloat;
 use project::{Project, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::json;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display};
+use std::fs::File;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -79,7 +84,7 @@ struct ContextArgs {
     #[arg(long)]
     worktree: PathBuf,
     #[arg(long)]
-    cursor: CursorPosition,
+    cursor: SourceLocation,
     #[arg(long)]
     use_language_server: bool,
     #[arg(long)]
@@ -160,20 +165,51 @@ impl FromStr for FileOrStdin {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CursorPosition {
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct SourceLocation {
     path: Arc<RelPath>,
     point: Point,
 }
 
-impl FromStr for CursorPosition {
+impl Serialize for SourceLocation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SourceLocation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.path.display(PathStyle::Posix),
+            self.point.row + 1,
+            self.point.column + 1
+        )
+    }
+}
+
+impl FromStr for SourceLocation {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() != 3 {
             return Err(anyhow!(
-                "Invalid cursor format. Expected 'file.rs:line:column', got '{}'",
+                "Invalid source location. Expected 'file.rs:line:column', got '{}'",
                 s
             ));
         }
@@ -189,7 +225,7 @@ impl FromStr for CursorPosition {
         // Convert from 1-based to 0-based indexing
         let point = Point::new(line.saturating_sub(1), column.saturating_sub(1));
 
-        Ok(CursorPosition { path, point })
+        Ok(SourceLocation { path, point })
     }
 }
 
@@ -370,6 +406,7 @@ pub async fn retrieval_stats(
     options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
+    let options = Arc::new(options);
     let worktree_path = worktree.canonicalize()?;
 
     let project = cx.update(|cx| {
@@ -389,7 +426,6 @@ pub async fn retrieval_stats(
             project.create_worktree(&worktree_path, true, cx)
         })?
         .await?;
-    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id())?;
 
     // wait for worktree scan so that wait_for_initial_file_indexing waits for the whole worktree.
     worktree
@@ -406,6 +442,39 @@ pub async fn retrieval_stats(
         .read_with(cx, |index, cx| index.indexed_file_paths(cx))?
         .await;
     indexed_files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut hasher = collections::FxHasher::default();
+    worktree.read_with(cx, |worktree, _cx| {
+        for file in &indexed_files {
+            let content = std::fs::read(worktree.absolutize(&file.path))?;
+            content.hash(&mut hasher);
+        }
+        anyhow::Ok(())
+    })??;
+    let indexed_files_hash = hasher.finish();
+    let lsp_definitions_path = std::env::current_dir()?.join(format!(
+        "target/zeta2-lsp-definitions-{:x}.json",
+        indexed_files_hash
+    ));
+
+    let lsp_definitions: Arc<_> = if std::fs::exists(&lsp_definitions_path)? {
+        log::info!(
+            "Using cached LSP definitions from {}",
+            lsp_definitions_path.display()
+        );
+        serde_json::from_reader(File::open(&lsp_definitions_path)?)?
+    } else {
+        log::warn!(
+            "No LSP definitions found populating {}",
+            lsp_definitions_path.display()
+        );
+        let lsp_definitions =
+            gather_lsp_definitions(&indexed_files, &worktree, &project, cx).await?;
+        serde_json::to_writer_pretty(File::create(&lsp_definitions_path)?, &lsp_definitions)?;
+        lsp_definitions
+    }
+    .into();
+
     let filtered_files = indexed_files
         .into_iter()
         .filter(|project_path| {
@@ -420,194 +489,162 @@ pub async fn retrieval_stats(
         .skip(skip_files.unwrap_or(0))
         .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
+    let filtered_files_len = filtered_files.len();
 
-    let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store())?;
-    cx.subscribe(&lsp_store, {
-        move |_, event, _| {
-            if let project::LspStoreEvent::LanguageServerUpdate {
-                message:
-                    client::proto::update_language_server::Variant::WorkProgress(
-                        client::proto::LspWorkProgress {
-                            message: Some(message),
-                            ..
-                        },
-                    ),
-                ..
-            } = event
-            {
-                println!("⟲ {message}")
-            }
-        }
-    })?
-    .detach();
+    let index_state = index.read_with(cx, |index, _cx| index.state().clone())?;
+    cx.update(|_| {
+        drop(index);
+    })?;
 
-    let mut lsp_open_handles = Vec::new();
+    let index_state = Arc::new(
+        Arc::into_inner(index_state)
+            .context("Index state had more than 1 reference")?
+            .into_inner(),
+    );
+
+    let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
     let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
-    let mut results = Vec::new();
-    let mut ready_languages = HashSet::default();
-    for (file_index, project_path) in filtered_files.iter().enumerate() {
-        let processing_file_message = format!(
-            "\n\nProcessing file {} of {}: {}",
-            file_index + 1,
-            filtered_files.len(),
-            project_path.path.display(PathStyle::Posix)
-        );
-        println!("{}", processing_file_message);
-        write!(output, "{processing_file_message}\n\n").ok();
 
-        let Some((lsp_open_handle, language_server_id, buffer)) = open_buffer_with_language_server(
-            &project,
-            &worktree,
-            &project_path.path,
-            &mut ready_languages,
-            cx,
-        )
-        .await
-        .log_err() else {
-            continue;
-        };
-        lsp_open_handles.push(lsp_open_handle);
+    let tasks = filtered_files
+        .into_iter()
+        .enumerate()
+        .map(|(file_index, project_path)| {
+            let index_state = index_state.clone();
+            let lsp_definitions = lsp_definitions.clone();
+            let options = options.clone();
+            let project = project.clone();
+            let worktree = worktree.clone();
+            let output_tx = output_tx.clone();
+            cx.spawn(async move |cx| {
+                let buffer = open_buffer(&project, &worktree, &project_path.path, cx).await?;
 
-        let (snapshot, parent_abs_path) = buffer.read_with(cx, |buffer, cx| {
-            let parent_abs_path = project::File::from_dyn(buffer.file()).and_then(|f| {
-                let mut path = f.worktree.read(cx).absolutize(&f.path);
-                if path.pop() { Some(path) } else { None }
-            });
-
-            (buffer.snapshot(), parent_abs_path)
-        })?;
-        let full_range = 0..snapshot.len();
-        let references = references_in_range(
-            full_range,
-            &snapshot.text(),
-            ReferenceRegion::Nearby,
-            &snapshot,
-        );
-
-        println!("References: {}", references.len());
-
-        loop {
-            let is_ready = lsp_store
-                .read_with(cx, |lsp_store, _cx| {
-                    lsp_store
-                        .language_server_statuses
-                        .get(&language_server_id)
-                        .is_some_and(|status| status.pending_work.is_empty())
-                })
-                .unwrap();
-            if is_ready {
-                break;
-            }
-            cx.background_executor()
-                .timer(Duration::from_millis(10))
-                .await;
-        }
-
-        let index = index.read_with(cx, |index, _cx| index.state().clone())?;
-        let index = index.lock().await;
-        for reference in references {
-            let query_point = snapshot.offset_to_point(reference.range.start);
-
-            let retrieved_definitions = retrieve_definitions(
-                &reference,
-                query_point,
-                &snapshot,
-                parent_abs_path.as_deref(),
-                &index,
-                &project,
-                &worktree,
-                &options.context,
-                cx,
-            )
-            .await?;
-
-            // TODO: Consider still checking language server in this case, or having a mode for
-            // this. For now assuming that the purpose of this is to refine the ranking rather than
-            // refining whether the definition is present at all.
-            if retrieved_definitions.is_empty() {
-                continue;
-            }
-
-            // TODO: Rename declaration to definition in edit_prediction_context?
-            let lsp_result = project
-                .update(cx, |project, cx| {
-                    project.definitions(&buffer, reference.range.start, cx)
-                })?
-                .await;
-            match lsp_result {
-                Ok(lsp_definitions) => {
-                    let mut lsp_ranges = Vec::new();
-                    let mut is_outside_worktree = false;
-                    for definition in lsp_definitions.unwrap_or_default() {
-                        definition.target.buffer.read_with(cx, |buffer, cx| {
-                            let Some(file) = project::File::from_dyn(buffer.file()) else {
-                                return;
-                            };
-                            let definition_worktree_id = file.worktree.read(cx).id();
-                            if definition_worktree_id != worktree_id {
-                                is_outside_worktree = true;
+                let Some((snapshot, path, parent_abs_path)) =
+                    buffer.read_with(cx, |buffer, cx| {
+                        project::File::from_dyn(buffer.file()).and_then(|f| {
+                            let mut path = f.worktree.read(cx).absolutize(&f.path);
+                            if path.pop() {
+                                Some((buffer.snapshot(), f.path.clone(), path))
                             } else {
-                                lsp_ranges.push((
-                                    file.path.clone(),
-                                    definition.target.range.to_point(&buffer),
-                                ));
+                                None
                             }
-                        })?
+                        })
+                    })?
+                else {
+                    anyhow::bail!("Buffer had no path")
+                };
+                let full_range = 0..snapshot.len();
+                let references = references_in_range(
+                    full_range,
+                    &snapshot.text(),
+                    ReferenceRegion::Nearby,
+                    &snapshot,
+                );
+
+                println!(
+                    "{:02}/{:02} references: {}",
+                    file_index + 1,
+                    filtered_files_len,
+                    references.len(),
+                );
+
+                for reference in references {
+                    let query_point = snapshot.offset_to_point(reference.range.start);
+                    let source_location = SourceLocation {
+                        path: path.clone(),
+                        point: query_point,
+                    };
+                    let lsp_definitions = lsp_definitions
+                        .definitions
+                        .get(&source_location)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            log::warn!(
+                                "No definitions found for source location: {:?}",
+                                source_location
+                            );
+                            Vec::new()
+                        });
+
+                    let retrieved_definitions = retrieve_definitions(
+                        &reference,
+                        query_point,
+                        &snapshot,
+                        Some(parent_abs_path.as_path()),
+                        &index_state,
+                        &project,
+                        &worktree,
+                        &options.context,
+                        cx,
+                    )
+                    .await?;
+
+                    // TODO: LSP returns things like locals, this filters out some of those, but potentially
+                    // hides some retrieval issues.
+                    if retrieved_definitions.is_empty() {
+                        continue;
                     }
 
                     let result = RetrievalStatsResult {
+                        path: path.clone(),
                         identifier: reference.identifier,
                         point: query_point,
                         outcome: RetrievalStatsOutcome::Success {
-                            matches: lsp_ranges
+                            matches: lsp_definitions
                                 .iter()
-                                .map(|(path, range)| {
-                                    retrieved_definitions.iter().position(
-                                        |(retrieved_path, retrieved_range, _, _)| {
-                                            path == retrieved_path
-                                                && retrieved_range.contains_inclusive(&range)
-                                        },
-                                    )
-                                })
+                                .map(
+                                    |SourceRange {
+                                         path, point_range, ..
+                                     }| {
+                                        retrieved_definitions.iter().position(
+                                            |(retrieved_path, retrieved_range, _, _)| {
+                                                path.as_path() == retrieved_path.as_std_path()
+                                                && retrieved_range.contains_inclusive(
+                                                    &SerializablePoint::into_language_point_range(
+                                                        point_range.clone(),
+                                                    ),
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
                                 .collect(),
-                            lsp_ranges,
+                            lsp_definitions,
                             retrieved_definitions,
                         },
                     };
-                    write!(output, "{:#?}\n\n", result)?;
-                    results.push(result);
-                }
-                Err(err) => {
-                    let result = RetrievalStatsResult {
-                        identifier: reference.identifier,
-                        point: query_point,
-                        outcome: RetrievalStatsOutcome::LanguageServerError {
-                            message: err.to_string(),
-                        },
-                    };
-                    write!(output, "{:#?}\n\n", result)?;
-                    results.push(result);
-                }
-            }
-        }
-    }
 
-    let mut no_excerpt_count = 0f64;
-    let mut error_count = 0f64;
+                    output_tx.unbounded_send(result).ok();
+                }
+
+                Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    drop(output_tx);
+
+    let results = cx
+        .background_spawn(async move {
+            let mut results = Vec::new();
+            while let Some(result) = output_rx.next().await {
+                output
+                    .write_all(format!("{:#?}\n", result).as_bytes())
+                    .log_err();
+                results.push(result)
+            }
+            results
+        })
+        .await;
+
+    drop(tasks);
+
     let mut definitions_count = 0f64;
     let mut top_match_count = 0f64;
-    let mut top_match_score = 0f64;
-    let mut top_match_retrieval_score = 0f64;
     let mut non_top_match_count = 0f64;
-    let mut non_top_match_score = 0f64;
-    let mut non_top_match_retrieval_score = 0f64;
-    let mut ranking_involved_count = 0f64;
     let mut ranking_involved_top_match_count = 0f64;
     let mut ranking_involved_non_top_match_count = 0f64;
-    for result in &results {
+    for result in results {
         match &result.outcome {
-            RetrievalStatsOutcome::LanguageServerError { .. } => error_count += 1.,
-            RetrievalStatsOutcome::OutsideWorktree => {}
             RetrievalStatsOutcome::Success {
                 matches,
                 retrieved_definitions,
@@ -638,16 +675,6 @@ pub async fn retrieval_stats(
     }
 
     println!("\nStats:\n");
-
-    if no_excerpt_count > 0. {
-        println!("No Excerpt: {}", no_excerpt_count);
-    }
-    if error_count > 0. {
-        println!("Language Server Error: {}", error_count);
-    }
-    if no_excerpt_count > 0. || error_count > 0. {
-        println!("");
-    }
 
     let present_count = top_match_count + non_top_match_count;
 
@@ -780,8 +807,201 @@ async fn retrieve_definitions(
     Ok(retrieved_definitions)
 }
 
+async fn gather_lsp_definitions(
+    files: &[ProjectPath],
+    worktree: &Entity<Worktree>,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<LspResults> {
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id())?;
+
+    let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store())?;
+    cx.subscribe(&lsp_store, {
+        move |_, event, _| {
+            if let project::LspStoreEvent::LanguageServerUpdate {
+                message:
+                    client::proto::update_language_server::Variant::WorkProgress(
+                        client::proto::LspWorkProgress {
+                            message: Some(message),
+                            ..
+                        },
+                    ),
+                ..
+            } = event
+            {
+                println!("⟲ {message}")
+            }
+        }
+    })?
+    .detach();
+
+    let mut definitions = HashMap::default();
+    let mut error_count = 0;
+    let mut lsp_open_handles = Vec::new();
+    let mut ready_languages = HashSet::default();
+    for (file_index, project_path) in files.iter().enumerate() {
+        println!(
+            "Processing file {} of {}: {}",
+            file_index + 1,
+            files.len(),
+            project_path.path.display(PathStyle::Posix)
+        );
+
+        let Some((lsp_open_handle, language_server_id, buffer)) = open_buffer_with_language_server(
+            &project,
+            &worktree,
+            &project_path.path,
+            &mut ready_languages,
+            cx,
+        )
+        .await
+        .log_err() else {
+            continue;
+        };
+        lsp_open_handles.push(lsp_open_handle);
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+        let full_range = 0..snapshot.len();
+        let references = references_in_range(
+            full_range,
+            &snapshot.text(),
+            ReferenceRegion::Nearby,
+            &snapshot,
+        );
+
+        loop {
+            let is_ready = lsp_store
+                .read_with(cx, |lsp_store, _cx| {
+                    lsp_store
+                        .language_server_statuses
+                        .get(&language_server_id)
+                        .is_some_and(|status| status.pending_work.is_empty())
+                })
+                .unwrap();
+            if is_ready {
+                break;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+
+        for reference in references {
+            // TODO: Rename declaration to definition in edit_prediction_context?
+            let lsp_result = project
+                .update(cx, |project, cx| {
+                    project.definitions(&buffer, reference.range.start, cx)
+                })?
+                .await;
+
+            match lsp_result {
+                Ok(lsp_definitions) => {
+                    let mut targets = Vec::new();
+                    let mut is_outside_worktree = false;
+                    for target in lsp_definitions.unwrap_or_default() {
+                        // TODO: Do something with "origin"?
+                        let buffer = target.target.buffer;
+                        let anchor_range = target.target.range;
+                        buffer.read_with(cx, |buffer, cx| {
+                            let Some(file) = project::File::from_dyn(buffer.file()) else {
+                                return;
+                            };
+                            let file_worktree = file.worktree.read(cx);
+                            let file_worktree_id = file_worktree.id();
+                            // Relative paths for worktree files, absolute for all others
+                            if worktree_id == file_worktree_id {
+                                let path = file.path.as_std_path().to_path_buf();
+                                let offset_range = anchor_range.to_offset(&buffer);
+                                let point_range = SerializablePoint::from_language_point_range(
+                                    offset_range.to_point(&buffer),
+                                );
+                                targets.push(SourceRange {
+                                    path,
+                                    offset_range,
+                                    point_range,
+                                })
+                            } else {
+                                is_outside_worktree = true;
+                            };
+                        })?;
+                    }
+
+                    let offset = reference.range.start;
+                    let point = snapshot.offset_to_point(offset).into();
+
+                    definitions.insert(
+                        SourceLocation {
+                            path: project_path.path.clone(),
+                            point,
+                        },
+                        targets,
+                    );
+                }
+                Err(err) => {
+                    log::error!("Language server error: {err}");
+                    error_count += 1;
+                }
+            }
+        }
+    }
+
+    log::error!("Encountered {} language server errors", error_count);
+
+    Ok(LspResults { definitions })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+struct LspResults {
+    definitions: HashMap<SourceLocation, Vec<SourceRange>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceRange {
+    path: PathBuf,
+    point_range: Range<SerializablePoint>,
+    offset_range: Range<usize>,
+}
+
+/// Serializes to 1-based row and column indices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializablePoint {
+    pub row: u32,
+    pub column: u32,
+}
+
+impl SerializablePoint {
+    pub fn into_language_point_range(range: Range<Self>) -> Range<Point> {
+        range.start.into()..range.end.into()
+    }
+
+    pub fn from_language_point_range(range: Range<Point>) -> Range<Self> {
+        range.start.into()..range.end.into()
+    }
+}
+
+impl From<Point> for SerializablePoint {
+    fn from(point: Point) -> Self {
+        SerializablePoint {
+            row: point.row + 1,
+            column: point.column + 1,
+        }
+    }
+}
+
+impl From<SerializablePoint> for Point {
+    fn from(serializable: SerializablePoint) -> Self {
+        Point {
+            row: serializable.row.saturating_sub(1),
+            column: serializable.column.saturating_sub(1),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct RetrievalStatsResult {
+    #[allow(dead_code)]
+    path: Arc<RelPath>,
     #[allow(dead_code)]
     identifier: Identifier,
     #[allow(dead_code)]
@@ -791,15 +1011,10 @@ struct RetrievalStatsResult {
 
 #[derive(Debug)]
 enum RetrievalStatsOutcome {
-    LanguageServerError {
-        #[allow(dead_code)]
-        message: String,
-    },
-    OutsideWorktree,
     Success {
         matches: Vec<Option<usize>>,
         #[allow(dead_code)]
-        lsp_ranges: Vec<(Arc<RelPath>, Range<Point>)>,
+        lsp_definitions: Vec<SourceRange>,
         retrieved_definitions: Vec<(Arc<RelPath>, Range<Point>, f32, f32)>,
     },
 }

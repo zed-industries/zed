@@ -20738,6 +20738,7 @@ dependencies = [
  "terminal_view",
  "watch",
  "workspace-hack",
+ "zed-collections",
  "zed-util",
  "zeta",
  "zeta2",
