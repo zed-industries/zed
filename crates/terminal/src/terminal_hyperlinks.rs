@@ -9,12 +9,12 @@ use regex::Regex;
 use std::{ops::Index, sync::LazyLock};
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 // It is not important for this to match the specification for valid file names on various operating
 // systems. It is used to identify something that might be a path--invalid paths will be filtered
 // out later.
-const WORD_REGEX: &str = r#"\S+(?:\((?:\d+|\d+,\d+)\))|\S+"#;
+const WORD_REGEX: &str = r#"\S+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
