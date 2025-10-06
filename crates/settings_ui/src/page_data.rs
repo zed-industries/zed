@@ -1952,86 +1952,86 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Inline Update Debounce",
-                //     description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(diagnostics) = &settings_content.diagnostics {
-                //                 if let Some(inline) = &diagnostics.inline {
-                //                     &inline.update_debounce_ms
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .diagnostics
-                //                 .get_or_insert_default()
-                //                 .inline
-                //                 .get_or_insert_default()
-                //                 .update_debounce_ms
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Update Debounce",
+                    description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.update_debounce_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .update_debounce_ms
+                        },
+                    }),
+                    metadata: None,
+                }),
                 // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Inline Padding",
-                //     description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(diagnostics) = &settings_content.diagnostics {
-                //                 if let Some(inline) = &diagnostics.inline {
-                //                     &inline.padding
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .diagnostics
-                //                 .get_or_insert_default()
-                //                 .inline
-                //                 .get_or_insert_default()
-                //                 .padding
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Padding",
+                    description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.padding
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .padding
+                        },
+                    }),
+                    metadata: None,
+                }),
                 // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Inline Min Column",
-                //     description: "The minimum column to display inline diagnostics",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(diagnostics) = &settings_content.diagnostics {
-                //                 if let Some(inline) = &diagnostics.inline {
-                //                     &inline.min_column
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .diagnostics
-                //                 .get_or_insert_default()
-                //                 .inline
-                //                 .get_or_insert_default()
-                //                 .min_column
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Min Column",
+                    description: "The minimum column to display inline diagnostics",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.min_column
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .min_column
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Performance"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "LSP Pull Diagnostics Enabled",
@@ -2059,33 +2059,33 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "LSP Pull Debounce",
-                //     description: "Minimum time to wait before pulling diagnostics from the language server(s)",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(diagnostics) = &settings_content.diagnostics {
-                //                 if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
-                //                     &lsp_pull.debounce_ms
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .diagnostics
-                //                 .get_or_insert_default()
-                //                 .lsp_pull_diagnostics
-                //                 .get_or_insert_default()
-                //                 .debounce_ms
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                // todo(settings_ui): Needs unit
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "LSP Pull Debounce",
+                    description: "Minimum time to wait before pulling diagnostics from the language server(s)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
+                                    &lsp_pull.debounce_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .lsp_pull_diagnostics
+                                .get_or_insert_default()
+                                .debounce_ms
+                        },
+                    }),
+                    metadata: None,
+                }),
             ],
         },
         SettingsPage {
