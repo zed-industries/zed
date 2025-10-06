@@ -139,6 +139,7 @@ impl RenderOnce for TreeViewItem {
                 h_flex()
                     .id("inner_tree_view_item")
                     .group("tree_view_item")
+                    .cursor_pointer()
                     .size_full()
                     .relative()
                     .map(|this| {
@@ -207,7 +208,18 @@ impl RenderOnce for TreeViewItem {
                     .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
-                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                        |this, on_click| {
+                            if self.root_item && self.on_toggle.is_some() {
+                                let on_toggle = self.on_toggle.clone().unwrap();
+
+                                this.on_click(move |event, window, cx| {
+                                    on_click(event, window, cx);
+                                    on_toggle(event, window, cx);
+                                })
+                            } else {
+                                this.on_click(on_click)
+                            }
+                        },
                     )
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                         this.on_mouse_down(MouseButton::Right, move |event, window, cx| {

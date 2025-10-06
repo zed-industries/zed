@@ -5,9 +5,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, FontWeight, Global, IntoElement, ReadGlobal as _,
-    Render, ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, px, size, uniform_list,
+    App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, div, point,
+    prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -27,8 +27,9 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, Switch, SwitchColor,
     TreeViewItem, WithScrollbar, prelude::*,
 };
-use ui_input::{NumericStepper, NumericStepperType};
+use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
+use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
 
@@ -2704,14 +2705,6 @@ impl FeatureFlag for SettingsUiFeatureFlag {
     const NAME: &'static str = "settings-ui";
 }
 
-actions!(
-    zed,
-    [
-        /// Opens Settings Editor.
-        OpenSettingsEditor
-    ]
-);
-
 pub fn init(cx: &mut App) {
     init_renderers(cx);
 
@@ -2987,17 +2980,18 @@ impl SettingsPageItem {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .gap_4()
+                                    .gap_1()
                                     .child(Label::new(SharedString::new_static(setting_item.title)))
                                     .when_some(
                                         file_set_in.filter(|file_set_in| file_set_in != &file),
-                                        |elem, file_set_in| {
-                                            elem.child(
+                                        |this, file_set_in| {
+                                            this.child(
                                                 Label::new(format!(
-                                                    "set in {}",
+                                                    "— set in {}",
                                                     file_set_in.name()
                                                 ))
-                                                .color(Color::Muted),
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
                                             )
                                         },
                                     ),
@@ -3171,6 +3165,10 @@ impl SettingsWindow {
 
         this.fetch_files(cx);
         this.build_ui(cx);
+
+        this.search_bar.update(cx, |editor, cx| {
+            editor.focus_handle(cx).focus(window);
+        });
 
         this
     }
@@ -3397,13 +3395,15 @@ impl SettingsWindow {
             .gap_1()
             .children(self.files.iter().enumerate().map(|(ix, file)| {
                 Button::new(ix, file.name())
+                    .toggle_state(file == &self.current_file)
+                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
             }))
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
-            .pt_1()
+            .py_1()
             .px_1p5()
             .gap_1p5()
             .rounded_sm()
@@ -3414,7 +3414,14 @@ impl SettingsWindow {
             .child(self.search_bar.clone())
     }
 
-    fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_nav(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
+        let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
+        let visible_count = visible_entries.len();
+
         v_flex()
             .w_64()
             .p_2p5()
@@ -3424,39 +3431,46 @@ impl SettingsWindow {
             .border_r_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_search(window, cx).pb_1())
+            .child(self.render_search(window, cx))
             .child(
-                uniform_list(
-                    "settings-ui-nav-bar",
-                    self.navbar_entries.len(),
-                    cx.processor(|this, range: Range<usize>, _, cx| {
-                        this.visible_navbar_entries()
-                            .skip(range.start.saturating_sub(1))
-                            .take(range.len())
-                            .map(|(ix, entry)| {
-                                TreeViewItem::new(("settings-ui-navbar-entry", ix), entry.title)
-                                    .root_item(entry.is_root)
-                                    .toggle_state(this.is_navbar_entry_selected(ix))
-                                    .when(entry.is_root, |item| {
-                                        item.expanded(entry.expanded).on_toggle(cx.listener(
-                                            move |this, _, _, cx| {
-                                                this.toggle_navbar_entry(ix);
-                                                cx.notify();
-                                            },
-                                        ))
+                v_flex()
+                    .size_full()
+                    .child(
+                        uniform_list(
+                            "settings-ui-nav-bar",
+                            visible_count,
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                let entries: Vec<_> = this.visible_navbar_entries().collect();
+                                range
+                                    .filter_map(|ix| entries.get(ix).copied())
+                                    .map(|(ix, entry)| {
+                                        TreeViewItem::new(
+                                            ("settings-ui-navbar-entry", ix),
+                                            entry.title,
+                                        )
+                                        .root_item(entry.is_root)
+                                        .toggle_state(this.is_navbar_entry_selected(ix))
+                                        .when(entry.is_root, |item| {
+                                            item.expanded(entry.expanded).on_toggle(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    this.toggle_navbar_entry(ix);
+                                                    cx.notify();
+                                                },
+                                            ))
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.navbar_entry = ix;
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                     })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.navbar_entry = ix;
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                            })
-                            .collect()
-                    }),
-                )
-                .track_scroll(self.list_handle.clone())
-                .size_full()
-                .flex_grow(),
+                                    .collect()
+                            }),
+                        )
+                        .track_scroll(self.list_handle.clone())
+                        .flex_grow(),
+                    )
+                    .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
     }
 
@@ -3638,6 +3652,7 @@ impl Render for SettingsWindow {
         let ui_font = theme::setup_ui_font(window, cx);
 
         div()
+            .key_context("SettingsWindow")
             .flex()
             .flex_row()
             .size_full()
@@ -3773,6 +3788,7 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .style(NumericStepperStyle::Outlined)
         .into_any_element()
 }
 
