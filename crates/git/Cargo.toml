@@ -42,7 +42,6 @@ futures.workspace = true
 workspace-hack.workspace = true
 profiling.workspace = true
 tracy-client.workspace = true
-tracy-client-sys.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

@@ -626,18 +626,6 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-struct ___tracy_source_location_data {
-    pub name: *const ::std::os::raw::c_char,
-    pub function: *const ::std::os::raw::c_char,
-    pub file: *const ::std::os::raw::c_char,
-    pub line: u32,
-    pub color: u32,
-}
-
-unsafe impl Send for ___tracy_source_location_data {}
-
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -699,9 +687,8 @@ impl GitRepository for RealGitRepository {
         else {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
         };
-        dbg!("Load commit");
         let git_binary_path = self.any_git_binary_path.clone();
-        cx.background_spawn(async move {
+        cx.background_spawn(tracy_client::fiber!("load_commit", async move {
             let _zone = tracy_client::span_unchecked!();
             let show_output = util::command::new_smol_command(&git_binary_path)
                 .current_dir(&working_directory)
@@ -812,7 +799,7 @@ impl GitRepository for RealGitRepository {
             }
 
             Ok(CommitDiff { files })
-        })
+        }))
         .boxed()
     }
 

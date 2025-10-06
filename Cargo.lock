@@ -6812,7 +6812,6 @@ dependencies = [
  "thiserror 2.0.12",
  "time",
  "tracy-client",
- "tracy-client-sys",
  "unindent",
  "url",
  "util",
