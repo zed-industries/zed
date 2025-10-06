@@ -1462,6 +1462,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     title: "Current Line Highlight",
                     description: "How to highlight the current line in the minimap",
                     field: Box::new(SettingField {
+                        // todo(settings_ui): Double check that this is the right behavior
+                        // minimap current line highlight fallsback to editor.current_line_highlight
+                        // when it's null
                         pick: |settings_content| {
                             if let Some(minimap) = &settings_content.editor.minimap
                                 && minimap.current_line_highlight.is_some()
