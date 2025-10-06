@@ -17134,8 +17134,10 @@ version = "0.1.0"
 dependencies = [
  "component",
  "editor",
+ "fuzzy",
  "gpui",
  "menu",
+ "picker",
  "settings",
  "theme",
  "ui",
