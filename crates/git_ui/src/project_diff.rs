@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 1;
-const TRACKED_NAMESPACE: u32 = 2;
-const NEW_NAMESPACE: u32 = 3;
+const CONFLICT_NAMESPACE: u64 = 1;
+const TRACKED_NAMESPACE: u64 = 2;
+const NEW_NAMESPACE: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -531,11 +531,12 @@ impl ProjectDiff {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn excerpt_paths(&self, cx: &App) -> Vec<String> {
+    pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string_lossy().to_string())
+            .map(|key| key.path())
+            .cloned()
             .collect()
     }
 }
@@ -610,10 +611,6 @@ impl Item for ProjectDiff {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn set_nav_history(
@@ -1361,7 +1358,7 @@ mod tests {
     use settings::SettingsStore;
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use super::*;
 
@@ -1406,12 +1403,12 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
             "deadbeef",
         );
         fs.set_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
         );
         cx.run_until_parked();
 
@@ -1461,16 +1458,13 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[
-                ("bar".into(), "bar\n".into()),
-                ("foo".into(), "foo\n".into()),
-            ],
+            &[("bar", "bar\n".into()), ("foo", "foo\n".into())],
         );
         cx.run_until_parked();
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1491,7 +1485,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -1543,7 +1537,7 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "original\n".into())],
+            &[("foo", "original\n".into())],
             "deadbeef",
         );
         cx.run_until_parked();
@@ -1563,7 +1557,7 @@ mod tests {
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>();
@@ -1576,7 +1570,7 @@ mod tests {
         let new_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>()
@@ -1646,12 +1640,12 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
             &[
-                ("b.txt".into(), "before\n".to_string(), None),
-                ("c.txt".into(), "unchanged\n".to_string(), None),
-                ("d.txt".into(), "deleted\n".to_string(), None),
+                ("b.txt", "before\n".to_string()),
+                ("c.txt", "unchanged\n".to_string()),
+                ("d.txt", "deleted\n".to_string()),
             ],
         );
 
@@ -1764,9 +1758,9 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
-            &[("main.rs".into(), git_contents.to_owned(), None)],
+            &[("main.rs", git_contents.to_owned())],
         );
 
         let project = Project::test(fs, [Path::new("/a")], cx).await;
@@ -1816,7 +1810,7 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/project/.git")),
             &[(
-                Path::new("foo"),
+                "foo",
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

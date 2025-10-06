@@ -362,7 +362,7 @@ pub const fn transparent_black() -> Hsla {
     }
 }
 
-/// Transparent black in [`Hsla`]
+/// Transparent white in [`Hsla`]
 pub const fn transparent_white() -> Hsla {
     Hsla {
         h: 0.,

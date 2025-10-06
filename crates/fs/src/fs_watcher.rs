@@ -1,7 +1,8 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
+    ops::DerefMut,
     sync::{Arc, OnceLock},
 };
 use util::{ResultExt, paths::SanitizedPath};
@@ -11,7 +12,7 @@ use crate::{PathEvent, PathEventKind, Watcher};
 pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Mutex<HashMap<Arc<std::path::Path>, WatcherRegistrationId>>,
+    registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
 }
 
 impl FsWatcher {
@@ -29,8 +30,11 @@ impl FsWatcher {
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
-        let mut registrations = self.registrations.lock();
-        let registrations = registrations.drain();
+        let mut registrations = BTreeMap::new();
+        {
+            let old = &mut self.registrations.lock();
+            std::mem::swap(old.deref_mut(), &mut registrations);
+        }
 
         let _ = global(|g| {
             for (_, registration) in registrations {
@@ -42,57 +46,77 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let root_path = SanitizedPath::new_arc(path);
-
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
 
+        #[cfg(target_os = "windows")]
+        {
+            // Return early if an ancestor of this path was already being watched.
+            // saves a huge amount of memory
+            if let Some((watched_path, _)) = self
+                .registrations
+                .lock()
+                .range::<std::path::Path, _>((
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Included(path),
+                ))
+                .next_back()
+                && path.starts_with(watched_path.as_ref())
+            {
+                return Ok(());
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if self.registrations.lock().contains_key(path) {
+                return Ok(());
+            }
+        }
+
+        let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
-        if self.registrations.lock().contains_key(&path) {
-            return Ok(());
-        }
+        #[cfg(target_os = "windows")]
+        let mode = notify::RecursiveMode::Recursive;
+        #[cfg(target_os = "linux")]
+        let mode = notify::RecursiveMode::NonRecursive;
 
         let registration_id = global({
             let path = path.clone();
             |g| {
-                g.add(
-                    path,
-                    notify::RecursiveMode::NonRecursive,
-                    move |event: &notify::Event| {
-                        let kind = match event.kind {
-                            EventKind::Create(_) => Some(PathEventKind::Created),
-                            EventKind::Modify(_) => Some(PathEventKind::Changed),
-                            EventKind::Remove(_) => Some(PathEventKind::Removed),
-                            _ => None,
-                        };
-                        let mut path_events = event
-                            .paths
-                            .iter()
-                            .filter_map(|event_path| {
-                                let event_path = SanitizedPath::new(event_path);
-                                event_path.starts_with(&root_path).then(|| PathEvent {
-                                    path: event_path.as_path().to_path_buf(),
-                                    kind,
-                                })
+                g.add(path, mode, move |event: &notify::Event| {
+                    let kind = match event.kind {
+                        EventKind::Create(_) => Some(PathEventKind::Created),
+                        EventKind::Modify(_) => Some(PathEventKind::Changed),
+                        EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        _ => None,
+                    };
+                    let mut path_events = event
+                        .paths
+                        .iter()
+                        .filter_map(|event_path| {
+                            let event_path = SanitizedPath::new(event_path);
+                            event_path.starts_with(&root_path).then(|| PathEvent {
+                                path: event_path.as_path().to_path_buf(),
+                                kind,
                             })
-                            .collect::<Vec<_>>();
+                        })
+                        .collect::<Vec<_>>();
 
-                        if !path_events.is_empty() {
-                            path_events.sort();
-                            let mut pending_paths = pending_paths.lock();
-                            if pending_paths.is_empty() {
-                                tx.try_send(()).ok();
-                            }
-                            util::extend_sorted(
-                                &mut *pending_paths,
-                                path_events,
-                                usize::MAX,
-                                |a, b| a.path.cmp(&b.path),
-                            );
+                    if !path_events.is_empty() {
+                        path_events.sort();
+                        let mut pending_paths = pending_paths.lock();
+                        if pending_paths.is_empty() {
+                            tx.try_send(()).ok();
                         }
-                    },
-                )
+                        util::extend_sorted(
+                            &mut *pending_paths,
+                            path_events,
+                            usize::MAX,
+                            |a, b| a.path.cmp(&b.path),
+                        );
+                    }
+                })
             }
         })??;
 

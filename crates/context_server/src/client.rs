@@ -172,7 +172,7 @@ impl Client {
         let server_name = binary
             .executable
             .file_name()
-            .map(|name| name.to_string_lossy().to_string())
+            .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(String::new);
 
         let timeout = binary.timeout.map(Duration::from_millis);

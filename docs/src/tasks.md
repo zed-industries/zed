@@ -132,6 +132,27 @@ Or explicitly include escaped quotes like so:
 }
 ```
 
+### Task filtering based on variables
+
+Task definitions with variables which are not present at the moment the task list is determined are filtered out.
+For example, the following task will appear in the spawn modal only if there is a text selection:
+
+```json
+{
+  "label": "selected text",
+  "command": "echo \"$ZED_SELECTED_TEXT\""
+}
+```
+
+Set default values to such variables to have such tasks always displayed:
+
+```json
+{
+  "label": "selected text with default",
+  "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
+}
+```
+
 ## Oneshot tasks
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.

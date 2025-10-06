@@ -1,5 +1,6 @@
 mod agent;
 mod editor;
+mod extension;
 mod language;
 mod language_model;
 mod project;
@@ -9,6 +10,7 @@ mod workspace;
 
 pub use agent::*;
 pub use editor::*;
+pub use extension::*;
 pub use language::*;
 pub use language_model::*;
 pub use project::*;
@@ -16,7 +18,7 @@ pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
 
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -58,6 +60,7 @@ pub struct SettingsContent {
 
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
+    pub status_bar: Option<StatusBarSettingsContent>,
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
@@ -182,7 +185,7 @@ pub struct UserSettingsContent {
     pub linux: Option<Box<SettingsContent>>,
 
     #[serde(default)]
-    pub profiles: HashMap<String, SettingsContent>,
+    pub profiles: IndexMap<String, SettingsContent>,
 }
 
 pub struct ExtensionsSettingsContent {
@@ -220,7 +223,18 @@ impl UserSettingsContent {
 ///
 /// Default: VSCode
 #[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 pub enum BaseKeymapContent {
     #[default]
@@ -237,10 +251,6 @@ pub enum BaseKeymapContent {
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
-    /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
-    ///
-    /// Default: "always"
-    pub show: Option<TitleBarVisibility>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false
@@ -271,39 +281,53 @@ pub struct TitleBarSettingsContent {
     pub show_menus: Option<bool>,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-#[serde(rename_all = "snake_case")]
-pub enum TitleBarVisibility {
-    Always,
-    Never,
-    HideInFullScreen,
-}
-
 /// Configuration of audio in Zed.
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
-    #[serde(rename = "experimental.rodio_audio", default)]
-    pub rodio_audio: Option<bool>,
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(rename = "experimental.rodio_audio")]
+    pub rodio_audio: Option<bool>, // default is false
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control for your microphone.
-    /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
-    pub control_input_volume: Option<bool>,
+    /// Automatically increase or decrease you microphone's volume. This affects how
+    /// loud you sound to others.
+    ///
+    /// Recommended: off (default)
+    /// Microphones are too quite in zed, until everyone is on experimental
+    /// audio and has auto speaker volume on this will make you very loud
+    /// compared to other speakers.
+    #[serde(rename = "experimental.auto_microphone_volume")]
+    pub auto_microphone_volume: Option<bool>,
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control on everyone in the
-    /// call. This makes call members who are too quite louder and those who are
-    /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
-    pub control_output_volume: Option<bool>,
+    /// Automatically increate or decrease the volume of other call members.
+    /// This only affects how things sound for you.
+    #[serde(rename = "experimental.auto_speaker_volume")]
+    pub auto_speaker_volume: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
+    /// not work well on music.
+    #[serde(rename = "experimental.denoise")]
+    pub denoise: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use audio parameters compatible with the previous versions of
+    /// experimental audio and non-experimental audio. When this is false you
+    /// will sound strange to anyone not on the latest experimental audio. In
+    /// the future we will migrate by setting this to false
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(rename = "experimental.legacy_audio_compatible")]
+    pub legacy_audio_compatible: Option<bool>,
 }
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -313,6 +337,15 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+}
+
+impl Default for TelemetrySettingsContent {
+    fn default() -> Self {
+        Self {
+            diagnostics: Some(true),
+            metrics: Some(true),
+        }
+    }
 }
 
 #[skip_serializing_none]
@@ -401,21 +434,6 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
-}
-
-#[skip_serializing_none]
-#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema, MergeFrom)]
-pub struct ExtensionSettingsContent {
-    /// The extensions that should be automatically installed by Zed.
-    ///
-    /// This is used to make functionality provided by extensions (e.g., language support)
-    /// available out-of-the-box.
-    ///
-    /// Default: { "html": true }
-    #[serde(default)]
-    pub auto_install_extensions: HashMap<Arc<str>, bool>,
-    #[serde(default)]
-    pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
 #[skip_serializing_none]
@@ -583,7 +601,6 @@ pub enum ModeContent {
     #[default]
     Normal,
     Insert,
-    HelixNormal,
 }
 
 /// Controls when to use system clipboard.
@@ -697,7 +714,19 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Copy, PartialEq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSide {
     Left,
@@ -857,6 +886,12 @@ pub struct SaturatingBool(pub bool);
 impl From<bool> for SaturatingBool {
     fn from(value: bool) -> Self {
         SaturatingBool(value)
+    }
+}
+
+impl From<SaturatingBool> for bool {
+    fn from(value: SaturatingBool) -> bool {
+        value.0
     }
 }
 

@@ -50,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -206,7 +206,7 @@ impl DapStore {
 
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
@@ -943,15 +943,13 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         self.toolchain_store.clone()
     }
-    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         let entry = self
             .worktree
-            .entry_for_path(&path)
+            .entry_for_path(path)
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
-        let abs_path = self
-            .worktree
-            .absolutize(&entry.path)
-            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+        let abs_path = self.worktree.absolutize(&entry.path);
 
         self.fs.load(&abs_path).await
     }

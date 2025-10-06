@@ -37,7 +37,7 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::local(), cx);
 
     insert_query(path!("sadjaoislkdjasldj"), &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
@@ -119,7 +119,7 @@ async fn test_open_path_prompt_completion(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::local(), cx);
 
     // Confirm completion for the query "/root", since it's a directory, it should add a trailing slash.
     let query = path!("/root");
@@ -227,7 +227,7 @@ async fn test_open_path_prompt_on_windows(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
+    let (picker, cx) = build_open_path_prompt(project, false, PathStyle::local(), cx);
 
     // Support both forward and backward slashes.
     let query = "C:/root/";
@@ -372,7 +372,7 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
 
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
-    let (picker, cx) = build_open_path_prompt(project, true, PathStyle::current(), cx);
+    let (picker, cx) = build_open_path_prompt(project, true, PathStyle::local(), cx);
 
     insert_query(path!("/root"), &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["root"]);

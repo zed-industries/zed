@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{path::PathBuf, sync::Arc};
+use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -82,7 +83,7 @@ impl GitRepository for FakeGitRepository {
             self.with_state_async(false, move |state| {
                 state
                     .index_contents
-                    .get(path.as_ref())
+                    .get(&path)
                     .context("not present in index")
                     .cloned()
             })
@@ -97,7 +98,7 @@ impl GitRepository for FakeGitRepository {
             self.with_state_async(false, move |state| {
                 state
                     .head_contents
-                    .get(path.as_ref())
+                    .get(&path)
                     .context("not present in HEAD")
                     .cloned()
             })
@@ -225,6 +226,7 @@ impl GitRepository for FakeGitRepository {
                     .read_file_sync(path)
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
+                let repo_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
                 Some((repo_path.into(), (content, is_ignored)))
             })
             .collect();
@@ -386,7 +388,11 @@ impl GitRepository for FakeGitRepository {
             let contents = paths
                 .into_iter()
                 .map(|path| {
-                    let abs_path = self.dot_git_path.parent().unwrap().join(&path);
+                    let abs_path = self
+                        .dot_git_path
+                        .parent()
+                        .unwrap()
+                        .join(&path.as_std_path());
                     Box::pin(async move { (path.clone(), self.fs.load(&abs_path).await.ok()) })
                 })
                 .collect::<Vec<_>>();
@@ -602,7 +608,9 @@ mod tests {
         .await;
         fs.with_git_state(Path::new("/foo/.git"), true, |_git| {})
             .unwrap();
-        let repository = fs.open_repo(Path::new("/foo/.git")).unwrap();
+        let repository = fs
+            .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
+            .unwrap();
 
         let checkpoint_1 = repository.checkpoint().await.unwrap();
         fs.write(Path::new("/foo/b"), b"IPSUM").await.unwrap();

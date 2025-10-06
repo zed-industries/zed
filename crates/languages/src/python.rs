@@ -24,7 +24,9 @@ use smol::lock::OnceCell;
 use std::cmp::Ordering;
 use std::env::consts;
 use util::fs::{make_file_executable, remove_matching};
+use util::rel_path::RelPath;
 
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -35,8 +37,6 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -52,9 +52,9 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         for path in path.ancestors().take(depth) {
-            let p = path.join("pyproject.toml");
+            let p = path.join(RelPath::unix("pyproject.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 return Some(path.into());
             }
@@ -106,13 +106,13 @@ impl TyLspAdapter {
 
 #[cfg(target_os = "linux")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
 #[cfg(target_os = "freebsd")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-freebsd";
 }
 
@@ -153,11 +153,16 @@ impl LspAdapter for TyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
-        _cx: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut ret = json!({});
+        let mut ret = cx
+            .update(|cx| {
+                language_server_settings(delegate.as_ref(), &self.name(), cx)
+                    .and_then(|s| s.settings.clone())
+            })?
+            .unwrap_or_else(|| json!({}));
         if let Some(toolchain) = toolchain.and_then(|toolchain| {
             serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
         }) {
@@ -170,10 +175,9 @@ impl LspAdapter for TyLspAdapter {
                         "sysPrefix": sys_prefix
                     }
                 });
-                ret.as_object_mut()?.insert(
-                    "pythonExtension".into(),
-                    json!({ "activeEnvironment": environment }),
-                );
+                ret.as_object_mut()?
+                    .entry("pythonExtension")
+                    .or_insert_with(|| json!({ "activeEnvironment": environment }));
                 Some(())
             });
         }
@@ -267,7 +271,7 @@ impl LspInstaller for TyLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -462,7 +466,6 @@ impl LspAdapter for PyrightLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -679,7 +682,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| Arc::from("".as_ref()));
+                    .unwrap_or_else(|| RelPath::empty().into());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
@@ -1007,12 +1010,22 @@ fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
     venv.parent().map(|parent| parent.to_path_buf())
 }
 
+fn wr_distance(wr: &PathBuf, venv: Option<&PathBuf>) -> usize {
+    if let Some(venv) = venv
+        && let Ok(p) = venv.strip_prefix(wr)
+    {
+        p.components().count()
+    } else {
+        usize::MAX
+    }
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Arc<Path>,
+        subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -1024,13 +1037,12 @@ impl ToolchainLister for PythonToolchainProvider {
         );
         let mut config = Configuration::default();
 
-        debug_assert!(subroot_relative_path.is_relative());
         // `.ancestors()` will yield at least one path, so in case of empty `subroot_relative_path`, we'll just use
         // worktree root as the workspace directory.
         config.workspace_directories = Some(
             subroot_relative_path
                 .ancestors()
-                .map(|ancestor| worktree_root.join(ancestor))
+                .map(|ancestor| worktree_root.join(ancestor.as_std_path()))
                 .collect(),
         );
         for locator in locators.iter() {
@@ -1069,12 +1081,7 @@ impl ToolchainLister for PythonToolchainProvider {
             let proj_ordering = || {
                 let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
                 let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
-                match (&lhs_project, &rhs_project) {
-                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                    (Some(l), None) if l == &wr => Ordering::Less,
-                    (None, Some(r)) if r == &wr => Ordering::Greater,
-                    _ => Ordering::Equal,
-                }
+                wr_distance(&wr, lhs_project.as_ref()).cmp(&wr_distance(&wr, rhs_project.as_ref()))
             };
 
             // Compare environment priorities
@@ -1179,11 +1186,13 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
-                        ShellKind::Posix => "source",
+                        ShellKind::Tcsh => "source",
+                        ShellKind::Posix | ShellKind::Rc => "source",
                     };
                     let activate_script_name = match shell {
-                        ShellKind::Posix => "activate",
+                        ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
+                        ShellKind::Tcsh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
@@ -1212,7 +1221,9 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
+                    ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
+                    ShellKind::Rc => None,
                 })
             }
             _ => {}
@@ -2104,7 +2115,7 @@ impl LspInstaller for RuffLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
