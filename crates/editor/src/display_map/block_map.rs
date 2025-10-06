@@ -3572,6 +3572,99 @@ mod tests {
         assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 
+    #[gpui::test]
+    fn test_folded_multiline_buffer_hides_near_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line 1\nline 2\nline 3";
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [(text, vec![Point::new(0, 0)..Point::new(2, 6)])],
+                cx,
+            )
+        });
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer_ids = buffer_snapshot
+            .excerpts()
+            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .dedup()
+            .collect::<Vec<_>>();
+        assert_eq!(buffer_ids.len(), 1);
+        let buffer_id = buffer_ids[0];
+
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        assert_eq!(blocks_snapshot.text(), "\nline 1\n\nline 2\nline 3");
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffers([buffer_id], buffer, cx);
+        });
+
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        assert_eq!(blocks_snapshot.text(), "");
+    }
+
+    #[gpui::test]
+    fn test_folded_single_line_buffer_hides_near_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "import { foo } from './bar'";
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(0, 27)])], cx)
+        });
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let buffer_ids = buffer_snapshot
+            .excerpts()
+            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .dedup()
+            .collect::<Vec<_>>();
+        assert_eq!(buffer_ids.len(), 1);
+        let buffer_id = buffer_ids[0];
+
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wrap_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
+        assert_eq!(blocks_snapshot.text(), "\nimport { foo } from './bar'\n");
+
+        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default());
+        buffer.read_with(cx, |buffer, cx| {
+            writer.fold_buffers([buffer_id], buffer, cx);
+        });
+
+        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default());
+        assert_eq!(blocks_snapshot.text(), "");
+    }
+
     fn init_test(cx: &mut gpui::App) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
