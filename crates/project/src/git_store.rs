@@ -302,6 +302,7 @@ pub enum RepositoryState {
 pub enum RepositoryEvent {
     Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
+    PathsChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -4840,19 +4841,20 @@ impl Repository {
                     }
 
                     if needs_update {
-                        if let Some(updates_tx) = updates_tx {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(
-                                    this.snapshot.clone(),
-                                ))
-                                .ok();
-                        }
-
                         cx.emit(RepositoryEvent::Updated {
                             full_scan: false,
                             new_instance: false,
                         });
                     }
+
+                    if let Some(updates_tx) = updates_tx {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::UpdateRepository(
+                                this.snapshot.clone(),
+                            ))
+                            .ok();
+                    }
+                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );
