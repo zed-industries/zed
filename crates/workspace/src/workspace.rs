@@ -3416,6 +3416,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        println!("{:?}", *self.encoding.lock().unwrap());
         cx.spawn_in(window, async move |workspace, cx| {
             let open_paths_task_result = workspace
                 .update_in(cx, |workspace, window, cx| {

@@ -710,7 +710,7 @@ impl Worktree {
     pub fn load_file(
         &self,
         path: &Path,
-        encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        encoding: Option<EncodingWrapper>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         match self {
@@ -1324,7 +1324,7 @@ impl LocalWorktree {
     fn load_file(
         &self,
         path: &Path,
-        encoding: Option<Arc<std::sync::Mutex<&'static Encoding>>>,
+        encoding: Option<EncodingWrapper>,
         cx: &Context<Worktree>,
     ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
@@ -1353,7 +1353,7 @@ impl LocalWorktree {
                 .load_with_encoding(
                     &abs_path,
                     if let Some(encoding) = encoding {
-                        EncodingWrapper::new(*encoding.lock().unwrap())
+                        encoding
                     } else {
                         EncodingWrapper::new(encoding_rs::UTF_8)
                     },

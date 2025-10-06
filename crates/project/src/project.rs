@@ -28,6 +28,7 @@ use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 use encoding_rs::Encoding;
 pub use environment::ProjectEnvironmentEvent;
+use fs::encodings::EncodingWrapper;
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -2717,7 +2718,11 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(path.into(), cx)
+            buffer_store.open_buffer(
+                path.into(),
+                Some(EncodingWrapper::new(self.encoding.lock().as_ref().unwrap())),
+                cx,
+            )
         })
     }
 

@@ -82,7 +82,7 @@ impl EncodingWrapper {
         } else {
             // If there were decoding errors, return an error.
             Err(anyhow::anyhow!(
-                "The file contains invalid bytes for the specified encoding: {}. This usually menas that the file is not a regular text file, or is encoded in a different encoding. Continuing to open it may result in data loss if saved.",
+                "The file contains invalid bytes for the specified encoding: {}.\nThis usually means that the file is not a regular text file, or is encoded in a different encoding.\nContinuing to open it may result in data loss if saved.",
                 self.0.name()
             ))
         }
