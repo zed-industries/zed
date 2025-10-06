@@ -2132,8 +2132,9 @@ impl Terminal {
     }
 
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
-            cwd,
+            working_directory,
             None,
             self.template.shell.clone(),
             self.template.env.clone(),
