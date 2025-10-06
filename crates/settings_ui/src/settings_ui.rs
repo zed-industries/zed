@@ -23,7 +23,7 @@ use std::{
     num::NonZeroU32,
     ops::Range,
     rc::Rc,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
     ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
@@ -352,6 +352,26 @@ pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<Setting
     )
 }
 
+/// The current sub page path that is selected.
+/// If this is empty the selected page is rendered,
+/// otherwise the last sub page gets rendered.
+///
+/// Global so that `pick` and `pick_mut` callbacks can access it
+/// and use it to dynamically render sub pages (e.g. for language settings)
+static SUB_PAGE_STACK: LazyLock<RwLock<Vec<SubPage>>> = LazyLock::new(|| RwLock::new(Vec::new()));
+
+fn sub_page_stack() -> std::sync::RwLockReadGuard<'static, Vec<SubPage>> {
+    SUB_PAGE_STACK
+        .read()
+        .expect("SUB_PAGE_STACK is never poisoned")
+}
+
+fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
+    SUB_PAGE_STACK
+        .write()
+        .expect("SUB_PAGE_STACK is never poisoned")
+}
+
 pub struct SettingsWindow {
     files: Vec<SettingsUiFile>,
     current_file: SettingsUiFile,
@@ -362,10 +382,6 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
-    /// The current sub page path that is selected.
-    /// If this is empty the selected page is rendered,
-    /// otherwise the last sub page gets rendered.
-    sub_page_stack: Vec<SubPage>,
     scroll_handle: ScrollHandle,
 }
 
@@ -547,7 +563,9 @@ impl PartialEq for SettingItem {
 #[derive(Clone)]
 struct SubPageLink {
     title: &'static str,
-    render: Rc<dyn Fn(&mut SettingsWindow, &mut Window, &mut App) -> AnyElement>,
+    render: Arc<
+        dyn Fn(&mut SettingsWindow, &mut Window, &mut App) -> AnyElement + 'static + Send + Sync,
+    >,
 }
 
 impl PartialEq for SubPageLink {
@@ -646,7 +664,6 @@ impl SettingsWindow {
             search_bar,
             search_task: None,
             search_matches: vec![],
-            sub_page_stack: vec![],
             scroll_handle: ScrollHandle::new(),
         };
 
@@ -977,7 +994,7 @@ impl SettingsWindow {
         let mut items = vec![];
         items.push(self.current_page().title);
         items.extend(
-            self.sub_page_stack
+            sub_page_stack()
                 .iter()
                 .flat_map(|page| [page.section_header, page.link.title]),
         );
@@ -1015,7 +1032,7 @@ impl SettingsWindow {
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle);
 
-        if self.sub_page_stack.len() == 0 {
+        if sub_page_stack().len() == 0 {
             page = page.child(self.render_files(window, cx));
 
             let items: Vec<_> = self.page_items().collect();
@@ -1088,7 +1105,7 @@ impl SettingsWindow {
                     .child(self.render_sub_page_breadcrumbs()),
             );
 
-            let active_page_render_fn = self.sub_page_stack.last().unwrap().link.render.clone();
+            let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
             page_content = page_content.child((active_page_render_fn)(self, window, cx));
         }
 
@@ -1121,7 +1138,7 @@ impl SettingsWindow {
         section_header: &'static str,
         cx: &mut Context<SettingsWindow>,
     ) {
-        self.sub_page_stack.push(SubPage {
+        sub_page_stack_mut().push(SubPage {
             link: sub_page_link,
             section_header,
         });
@@ -1129,7 +1146,7 @@ impl SettingsWindow {
     }
 
     fn pop_sub_page(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.sub_page_stack.pop();
+        sub_page_stack_mut().pop();
         cx.notify();
     }
 }
@@ -1557,7 +1574,6 @@ mod test {
             list_handle: UniformListScrollHandle::default(),
             search_matches: vec![],
             search_task: None,
-            sub_page_stack: vec![],
             scroll_handle: ScrollHandle::new(),
         };
 

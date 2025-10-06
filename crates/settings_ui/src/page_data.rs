@@ -1,5 +1,5 @@
 use gpui::IntoElement;
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink,
@@ -1283,7 +1283,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Languages"),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "JSON",
-                    render: Rc::new(|_, _, _| "A settings page!".into_any_element()),
+                    render: Arc::new(|_, _, _| "A settings page!".into_any_element()),
                 }),
             ],
         },
