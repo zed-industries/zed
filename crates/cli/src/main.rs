@@ -726,9 +726,9 @@ mod windows {
     };
 
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::io;
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
