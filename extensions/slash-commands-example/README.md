@@ -76,8 +76,30 @@ Rebuild to see these changes reflected:
 
 ## Troubleshooting / Logs
 
-- MacOS: `tail -f ~/Library/Logs/Zed/Zed.log`
-- Linux: `tail -f ~/.local/share/zed/logs/Zed.log`
+**Time-stamped entries** labeled with INFO, WARN, or ERROR are written to a log file to assist in troubleshooting some issues.
+
+- *To see the last 1000 lines in the log file, bring up the Command Palette and enter:*
+
+```
+zed: open log
+```
+
+(The value of 1000 is currently hard-coded in the application.)
+
+There are no commands to write to or clear the log.
+
+- *An additional way to view this log is through the Terminal Panel of Zed.*
+
+on MacOS:
+``` shell
+tail ~/Library/Logs/Zed/Zed.log
+```
+
+on Linux:
+``` shell
+tail ~/.local/share/zed/logs/Zed.log
+```
+*Other terminal commands, including pipes and grep, offer even greater capabilities to examine this log file.*
 
 ## Documentation
 
