@@ -3756,7 +3756,7 @@ impl BackgroundScanner {
                     .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
-                if let Some(new_path) = new_path.clone() {
+                if let Some(new_path) = new_path {
                     log::info!(
                         "root renamed from {} to {}",
                         root_path.as_path().display(),
