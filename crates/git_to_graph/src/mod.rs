@@ -11,28 +11,28 @@
 //!
 //! This port is licensed under GPL-3.0-or-later as part of the Zed project.
 
+use crate::point::Point;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use crate::point::Point;
 
 // Module declarations
-pub mod types;
-pub mod color;
-pub mod column;
-pub mod path;
-pub mod point;
-pub mod node;
-pub mod output;
-pub mod finalize;
-pub mod process_parents;
-pub mod process_children;
 pub mod algorithm;
 pub mod build;
+pub mod color;
+pub mod column;
+pub mod finalize;
+pub mod node;
+pub mod output;
+pub mod path;
+pub mod point;
+pub mod process_children;
+pub mod process_parents;
+pub mod types;
 
 // Re-exports for public API
+pub use self::build::build_tree;
 pub use self::color::SimpleColorGen;
 pub use self::node::Node;
-pub use self::build::build_tree;
 pub use self::types::PointType;
 
 /// Input data for a single commit

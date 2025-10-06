@@ -1,6 +1,5 @@
 use time::{OffsetDateTime, UtcOffset};
 
-
 #[cfg(not(target_os = "macos"))]
 mod otheros;
 
@@ -273,7 +272,6 @@ fn calculate_month_difference(timestamp: OffsetDateTime, reference: OffsetDateTi
         year_diff * 12 + month_diff
     }
 }
-
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -798,10 +796,12 @@ mod tests {
         assert_eq!(result, "Jan 15, 2024 2:30:00\u{202f}PM");
 
         // Test enhanced absolute format
-        let result_enhanced = format_local_timestamp(timestamp, reference, TimestampFormat::EnhancedAbsolute);
+        let result_enhanced =
+            format_local_timestamp(timestamp, reference, TimestampFormat::EnhancedAbsolute);
         assert_eq!(result_enhanced, "Today at 2:30:00\u{202f}PM");
         // Test medium absolute format
-        let result_medium = format_local_timestamp(timestamp, reference, TimestampFormat::MediumAbsolute);
+        let result_medium =
+            format_local_timestamp(timestamp, reference, TimestampFormat::MediumAbsolute);
         assert_eq!(result_medium, "Today");
     }
 
@@ -817,7 +817,8 @@ mod tests {
         assert!(result.contains("14:30") || result.contains("2:30"));
 
         // Test enhanced absolute format for different day
-        let result_enhanced = format_local_timestamp(timestamp, reference, TimestampFormat::EnhancedAbsolute);
+        let result_enhanced =
+            format_local_timestamp(timestamp, reference, TimestampFormat::EnhancedAbsolute);
         assert!(!result_enhanced.is_empty());
         assert!(!result_enhanced.contains("Today"));
         assert!(!result_enhanced.contains("Yesterday"));

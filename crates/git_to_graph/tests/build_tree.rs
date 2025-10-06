@@ -3,7 +3,7 @@ use git_to_graph::build::build_tree;
 use git_to_graph::color::SimpleColorGen;
 use git_to_graph::node::Node;
 use git_to_graph::point::PointTest;
-use git_to_graph::types::{PointType, G_KEY, ID_KEY, PARENTS_KEY, PARENTS_PATHS_TEST_KEY};
+use git_to_graph::types::{G_KEY, ID_KEY, PARENTS_KEY, PARENTS_PATHS_TEST_KEY, PointType};
 use serde_json::Value;
 
 // Helper function to create a node
@@ -12,7 +12,12 @@ fn node(id: &str, parents: Vec<&str>) -> Node {
     n.insert(ID_KEY.to_string(), Value::String(id.to_string()));
     n.insert(
         PARENTS_KEY.to_string(),
-        Value::Array(parents.iter().map(|p| Value::String(p.to_string())).collect()),
+        Value::Array(
+            parents
+                .iter()
+                .map(|p| Value::String(p.to_string()))
+                .collect(),
+        ),
     );
     n
 }
@@ -32,7 +37,10 @@ fn validate_columns(expected_columns: &[i32], data: &[Node]) {
         let g_value = row.get(G_KEY).expect("g key not found");
         let g_array = g_value.as_array().expect("g is not array");
         let actual_column = g_array[1].as_i64().expect("column not i64") as i32;
-        let node_id = row.get(ID_KEY).and_then(|v| v.as_str()).unwrap_or("unknown");
+        let node_id = row
+            .get(ID_KEY)
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         assert_eq!(
             actual_column, expected_column,
             "Column mismatch for node {}: expected {}, got {}",
@@ -63,12 +71,20 @@ fn get_path(node: &Node, parent_id: &str) -> Option<(Vec<PointTest>, i32)> {
 }
 
 // Helper function to validate path points
-fn validate_path_points(node_id: &str, parent_id: &str, expected: &[PointTest], actual: &[PointTest]) {
+fn validate_path_points(
+    node_id: &str,
+    parent_id: &str,
+    expected: &[PointTest],
+    actual: &[PointTest],
+) {
     assert_eq!(
         actual.len(),
         expected.len(),
         "Path length mismatch for {} -> {}: expected {}, got {}",
-        node_id, parent_id, expected.len(), actual.len()
+        node_id,
+        parent_id,
+        expected.len(),
+        actual.len()
     );
     for (i, (exp, act)) in expected.iter().zip(actual.iter()).enumerate() {
         assert_eq!(
@@ -103,7 +119,9 @@ fn validate_paths(nodes: &[Node], expected_paths: &[Vec<(&str, ExpectedPath)>]) 
                 node_id, parent_id, expected.color_idx, actual_color
             );
 
-            let expected_points: Vec<PointTest> = expected.points.iter()
+            let expected_points: Vec<PointTest> = expected
+                .points
+                .iter()
                 .map(|(x, y, typ)| pt(*x, *y, *typ))
                 .collect();
 
@@ -140,7 +158,6 @@ fn test_not_enough_colors() {
     let result = build_tree(&input_nodes, &custom_colors(), "", -1);
     assert!(result.is_ok());
     let _out = result.unwrap();
-
 }
 
 #[test]
@@ -160,8 +177,20 @@ fn test_get_input_nodes_from_json() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (0, 1, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(0, 1, 0), (0, 2, 0)], color_idx: 0 })]
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 1, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 1, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -196,8 +225,20 @@ fn test1() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (0, 1, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(0, 1, 0), (0, 2, 0)], color_idx: 0 })]
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 1, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 1, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -223,8 +264,20 @@ fn test2() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)], color_idx: 1 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -251,8 +304,29 @@ fn test3() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)], color_idx: 1 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -286,10 +360,52 @@ fn test4() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(0, 2, 0), (0, 4, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(2, 3, 0), (2, 4, 1), (0, 4, 0)], color_idx: 2 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 3, 0), (2, 4, 1), (0, 4, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -323,11 +439,41 @@ fn test5() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 1), (0, 3, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(2, 2, 0), (2, 3, 1), (0, 3, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(0, 3, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 4, 0), (1, 5, 1), (0, 5, 0)], color_idx: 3 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 3, 1), (0, 3, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 3, 1), (0, 3, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 4, 0), (1, 5, 1), (0, 5, 0)],
+                color_idx: 3,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -359,10 +505,52 @@ fn test6() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (0, 1, 3), (0, 2, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(0, 2, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 3, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (0, 1, 3), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 3, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 2, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 3, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -397,11 +585,59 @@ fn test7() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 0)], color_idx: 1 }), ("5", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 4, 1), (0, 4, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(0, 2, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 3, 0), (1, 5, 1), (0, 5, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 3, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 4, 1), (0, 4, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 2, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 3, 0), (1, 5, 1), (0, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -437,11 +673,59 @@ fn test8() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 1), (0, 3, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(0, 2, 0), (0, 3, 0)], color_idx: 0 }), ("5", ExpectedPath { points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 1), (1, 3, 0), (1, 4, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(0, 3, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 4, 0), (1, 5, 1), (0, 5, 0)], color_idx: 2 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 3, 1), (0, 3, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 3, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 1), (1, 3, 0), (1, 4, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 4, 0), (1, 5, 1), (0, 5, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -485,13 +769,82 @@ fn test9() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(0, 2, 0), (0, 3, 0)], color_idx: 0 }), ("7", ExpectedPath { points: vec![(0, 2, 0), (2, 2, 2), (2, 4, 1), (1, 4, 0), (1, 6, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 1), (2, 4, 0), (2, 5, 0)], color_idx: 3 }), ("5", ExpectedPath { points: vec![(0, 3, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(0, 4, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(2, 5, 0), (2, 7, 1), (0, 7, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 2 })]
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 3, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (2, 2, 2), (2, 4, 1), (1, 4, 0), (1, 6, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 1), (2, 4, 0), (2, 5, 0)],
+                    color_idx: 3,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(2, 5, 0), (2, 7, 1), (0, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -535,13 +888,91 @@ fn test10() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 }), ("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 }), ("3", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(0, 3, 0), (0, 7, 0)], color_idx: 0 }), ("6", ExpectedPath { points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 1), (2, 4, 0), (2, 5, 0)], color_idx: 3 })],
-        vec![("7", ExpectedPath { points: vec![(1, 4, 0), (1, 6, 0)], color_idx: 1 }), ("6", ExpectedPath { points: vec![(1, 4, 0), (2, 4, 2), (2, 5, 0)], color_idx: 3 })],
-        vec![("7", ExpectedPath { points: vec![(2, 5, 0), (2, 6, 1), (1, 6, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 1 })]
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 3, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (0, 7, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 1), (2, 4, 0), (2, 5, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (1, 6, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (2, 4, 2), (2, 5, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(2, 5, 0), (2, 6, 1), (1, 6, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -573,11 +1004,59 @@ fn test11() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 0)], color_idx: 1 }), ("3", ExpectedPath { points: vec![(1, 1, 0), (0, 1, 3), (0, 2, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(0, 2, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 3, 0), (1, 5, 1), (0, 5, 0)], color_idx: 1 }), ("5", ExpectedPath { points: vec![(1, 3, 0), (0, 3, 3), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 3, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (0, 1, 3), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 2, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (1, 5, 1), (0, 5, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (0, 3, 3), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -614,9 +1093,13 @@ fn test12() {
     validate_columns(&expected_columns, &out.nodes);
 
     // Path validation
-    let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })]
-    ];
+    let expected_paths = vec![vec![(
+        "3",
+        ExpectedPath {
+            points: vec![(0, 0, 0), (0, 2, 0)],
+            color_idx: 0,
+        },
+    )]];
     validate_paths(&out.nodes, &expected_paths);
 }
 
@@ -662,9 +1145,22 @@ fn test13() {
     validate_columns(&expected_columns, &out.nodes);
 
     // Path validation
-    let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 }), ("4", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })]
-    ];
+    let expected_paths = vec![vec![
+        (
+            "2",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                color_idx: 1,
+            },
+        ),
+        (
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        ),
+    ]];
     validate_paths(&out.nodes, &expected_paths);
 }
 
@@ -705,11 +1201,68 @@ fn test14() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 }), ("4", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 0)], color_idx: 2 })],
-        vec![("4", ExpectedPath { points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)], color_idx: 2 }), ("6", ExpectedPath { points: vec![(0, 2, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(2, 3, 0), (2, 4, 1), (1, 4, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(1, 4, 0), (1, 7, 1), (0, 7, 0)], color_idx: 1 }), ("7", ExpectedPath { points: vec![(1, 4, 0), (2, 4, 2), (2, 6, 0)], color_idx: 3 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 5, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 3, 0), (2, 4, 1), (1, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (1, 7, 1), (0, 7, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (2, 4, 2), (2, 6, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -753,12 +1306,84 @@ fn test15() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 }), ("4", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(0, 2, 0), (0, 4, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(2, 3, 0), (2, 5, 1), (1, 5, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(0, 4, 0), (0, 7, 0)], color_idx: 0 }), ("7", ExpectedPath { points: vec![(0, 4, 0), (3, 4, 2), (3, 5, 1), (2, 5, 0), (2, 6, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(1, 5, 0), (1, 7, 1), (0, 7, 0)], color_idx: 1 }), ("7", ExpectedPath { points: vec![(1, 5, 0), (2, 5, 2), (2, 6, 0)], color_idx: 3 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 5, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (2, 2, 2), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 3, 0), (2, 5, 1), (1, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (0, 7, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (3, 4, 2), (3, 5, 1), (2, 5, 0), (2, 6, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (1, 7, 1), (0, 7, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (2, 5, 2), (2, 6, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -793,12 +1418,48 @@ fn test16() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 1), (2, 4, 0), (2, 5, 1), (1, 5, 0)], color_idx: 3 })],
-        vec![("7", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("7", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 1 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 1), (2, 4, 0), (2, 5, 1), (1, 5, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -824,12 +1485,48 @@ fn test17() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 1), (1, 4, 0), (1, 6, 1), (0, 6, 0)], color_idx: 3 })],
-        vec![("5", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(0, 5, 0), (0, 6, 0)], color_idx: 0 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 1), (1, 4, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 5, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -855,12 +1552,48 @@ fn test18() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 1), (2, 4, 0), (2, 5, 1), (1, 5, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 2 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 1), (2, 4, 0), (2, 5, 1), (1, 5, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -892,18 +1625,116 @@ fn test19() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 })],
-        vec![("9", ExpectedPath { points: vec![(2, 2, 0), (2, 9, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(3, 3, 0), (3, 7, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(1, 4, 0), (4, 4, 2), (4, 6, 0)], color_idx: 4 }), ("11", ExpectedPath { points: vec![(1, 4, 0), (1, 11, 0)], color_idx: 1 })],
-        vec![("8", ExpectedPath { points: vec![(0, 5, 0), (0, 8, 0)], color_idx: 0 }), ("6", ExpectedPath { points: vec![(0, 5, 0), (4, 5, 2), (4, 6, 0)], color_idx: 4 })],
-        vec![("11", ExpectedPath { points: vec![(4, 6, 0), (4, 8, 1), (3, 8, 0), (3, 10, 1), (2, 10, 0), (2, 11, 1), (1, 11, 0)], color_idx: 4 })],
-        vec![("8", ExpectedPath { points: vec![(3, 7, 0), (3, 8, 1), (0, 8, 0)], color_idx: 3 })],
-        vec![("10", ExpectedPath { points: vec![(0, 8, 0), (0, 10, 0)], color_idx: 0 })],
-        vec![("10", ExpectedPath { points: vec![(2, 9, 0), (2, 10, 1), (0, 10, 0)], color_idx: 2 })],
-        vec![("12", ExpectedPath { points: vec![(0, 10, 0), (0, 12, 0)], color_idx: 0 })],
-        vec![("12", ExpectedPath { points: vec![(1, 11, 0), (1, 12, 1), (0, 12, 0)], color_idx: 1 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 9, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (4, 4, 2), (4, 6, 0)],
+                    color_idx: 4,
+                },
+            ),
+            (
+                "11",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (1, 11, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (0, 8, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (4, 5, 2), (4, 6, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![(
+            "11",
+            ExpectedPath {
+                points: vec![
+                    (4, 6, 0),
+                    (4, 8, 1),
+                    (3, 8, 0),
+                    (3, 10, 1),
+                    (2, 10, 0),
+                    (2, 11, 1),
+                    (1, 11, 0),
+                ],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(3, 7, 0), (3, 8, 1), (0, 8, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(0, 8, 0), (0, 10, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(2, 9, 0), (2, 10, 1), (0, 10, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(0, 10, 0), (0, 12, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(1, 11, 0), (1, 12, 1), (0, 12, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -928,11 +1759,41 @@ fn test20() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 1), (0, 5, 0)], color_idx: 2 })],
-        vec![("4", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 1), (0, 4, 0)], color_idx: 3 })],
-        vec![("5", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 1), (0, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 1), (0, 4, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -959,13 +1820,64 @@ fn test21() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 5, 1), (0, 5, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(1, 3, 0), (1, 6, 0)], color_idx: 1 }), ("5", ExpectedPath { points: vec![(1, 3, 0), (2, 3, 2), (2, 5, 1), (0, 5, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("7", ExpectedPath { points: vec![(0, 5, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("7", ExpectedPath { points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 1 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 3, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 5, 1), (0, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (1, 6, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (2, 3, 2), (2, 5, 1), (0, 5, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 5, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -993,14 +1905,71 @@ fn test22() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(2, 2, 0), (2, 6, 1), (0, 6, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(3, 3, 0), (3, 6, 1), (2, 6, 0), (2, 7, 1), (1, 7, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(1, 4, 0), (2, 4, 2), (2, 6, 1), (0, 6, 0)], color_idx: 2 }), ("7", ExpectedPath { points: vec![(1, 4, 0), (1, 7, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(0, 5, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(0, 6, 0), (0, 8, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)], color_idx: 1 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 6, 1), (0, 6, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 6, 1), (2, 6, 0), (2, 7, 1), (1, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (2, 4, 2), (2, 6, 1), (0, 6, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 4, 0), (1, 7, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 5, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 6, 0), (0, 8, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1028,14 +1997,71 @@ fn test23() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 1), (1, 4, 0), (1, 7, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 }), ("5", ExpectedPath { points: vec![(0, 4, 0), (2, 4, 2), (2, 5, 0)], color_idx: 4 })],
-        vec![("6", ExpectedPath { points: vec![(2, 5, 0), (2, 6, 1), (0, 6, 0)], color_idx: 4 })],
-        vec![("8", ExpectedPath { points: vec![(0, 6, 0), (0, 8, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)], color_idx: 3 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 1), (0, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 1), (1, 4, 0), (1, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (0, 6, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (2, 4, 2), (2, 5, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 5, 0), (2, 6, 1), (0, 6, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 6, 0), (0, 8, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)],
+                color_idx: 3,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1066,17 +2092,110 @@ fn test24() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("9", ExpectedPath { points: vec![(2, 2, 0), (2, 9, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(0, 3, 0), (0, 7, 0)], color_idx: 0 }), ("6", ExpectedPath { points: vec![(0, 3, 0), (3, 3, 2), (3, 6, 1), (1, 6, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(4, 4, 0), (4, 6, 1), (1, 6, 0)], color_idx: 4 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 0)], color_idx: 1 })],
-        vec![("8", ExpectedPath { points: vec![(1, 6, 0), (3, 6, 2), (3, 8, 0)], color_idx: 5 }), ("10", ExpectedPath { points: vec![(1, 6, 0), (1, 10, 0)], color_idx: 1 })],
-        vec![("11", ExpectedPath { points: vec![(0, 7, 0), (0, 11, 0)], color_idx: 0 }), ("8", ExpectedPath { points: vec![(0, 7, 0), (3, 7, 2), (3, 8, 0)], color_idx: 5 })],
-        vec![("9", ExpectedPath { points: vec![(3, 8, 0), (3, 9, 1), (2, 9, 0)], color_idx: 5 })],
-        vec![("10", ExpectedPath { points: vec![(2, 9, 0), (2, 10, 1), (1, 10, 0)], color_idx: 2 })],
-        vec![("11", ExpectedPath { points: vec![(1, 10, 0), (1, 11, 1), (0, 11, 0)], color_idx: 1 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 9, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (0, 7, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (3, 3, 2), (3, 6, 1), (1, 6, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(4, 4, 0), (4, 6, 1), (1, 6, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(1, 6, 0), (3, 6, 2), (3, 8, 0)],
+                    color_idx: 5,
+                },
+            ),
+            (
+                "10",
+                ExpectedPath {
+                    points: vec![(1, 6, 0), (1, 10, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "11",
+                ExpectedPath {
+                    points: vec![(0, 7, 0), (0, 11, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 7, 0), (3, 7, 2), (3, 8, 0)],
+                    color_idx: 5,
+                },
+            ),
+        ],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(3, 8, 0), (3, 9, 1), (2, 9, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(2, 9, 0), (2, 10, 1), (1, 10, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "11",
+            ExpectedPath {
+                points: vec![(1, 10, 0), (1, 11, 1), (0, 11, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1108,18 +2227,135 @@ fn test25() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (1, 3, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 0)], color_idx: 2 })],
-        vec![("9", ExpectedPath { points: vec![(1, 3, 0), (1, 9, 0)], color_idx: 1 }), ("7", ExpectedPath { points: vec![(1, 3, 0), (3, 3, 2), (3, 7, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(2, 4, 0), (2, 6, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(0, 5, 0), (0, 8, 0)], color_idx: 0 }), ("7", ExpectedPath { points: vec![(0, 5, 0), (3, 5, 2), (3, 7, 0)], color_idx: 3 })],
-        vec![("9", ExpectedPath { points: vec![(2, 6, 0), (2, 9, 1), (1, 9, 0)], color_idx: 2 }), ("7", ExpectedPath { points: vec![(2, 6, 0), (3, 6, 2), (3, 7, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(3, 7, 0), (3, 8, 1), (0, 8, 0)], color_idx: 3 })],
-        vec![("12", ExpectedPath { points: vec![(0, 8, 0), (0, 12, 0)], color_idx: 0 }), ("9", ExpectedPath { points: vec![(0, 8, 0), (1, 8, 2), (1, 9, 0)], color_idx: 1 })],
-        vec![("11", ExpectedPath { points: vec![(1, 9, 0), (1, 11, 0)], color_idx: 1 }), ("10", ExpectedPath { points: vec![(1, 9, 0), (2, 9, 2), (2, 10, 0)], color_idx: 4 })],
-        vec![("11", ExpectedPath { points: vec![(2, 10, 0), (2, 11, 1), (1, 11, 0)], color_idx: 4 })],
-        vec![("12", ExpectedPath { points: vec![(1, 11, 0), (1, 12, 1), (0, 12, 0)], color_idx: 1 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 3, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 4, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (1, 9, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 3, 0), (3, 3, 2), (3, 7, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 4, 0), (2, 6, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (0, 8, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (3, 5, 2), (3, 7, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(2, 6, 0), (2, 9, 1), (1, 9, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(2, 6, 0), (3, 6, 2), (3, 7, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(3, 7, 0), (3, 8, 1), (0, 8, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "12",
+                ExpectedPath {
+                    points: vec![(0, 8, 0), (0, 12, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(0, 8, 0), (1, 8, 2), (1, 9, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "11",
+                ExpectedPath {
+                    points: vec![(1, 9, 0), (1, 11, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "10",
+                ExpectedPath {
+                    points: vec![(1, 9, 0), (2, 9, 2), (2, 10, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![(
+            "11",
+            ExpectedPath {
+                points: vec![(2, 10, 0), (2, 11, 1), (1, 11, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(1, 11, 0), (1, 12, 1), (0, 12, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1147,14 +2383,80 @@ fn test26() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 5, 1), (1, 5, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(0, 3, 0), (2, 3, 2), (2, 5, 1), (1, 5, 0)], color_idx: 2 }), ("8", ExpectedPath { points: vec![(0, 3, 0), (0, 8, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 4, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("7", ExpectedPath { points: vec![(1, 5, 0), (1, 7, 0)], color_idx: 1 }), ("6", ExpectedPath { points: vec![(1, 5, 0), (2, 5, 2), (2, 6, 0)], color_idx: 3 })],
-        vec![("7", ExpectedPath { points: vec![(2, 6, 0), (2, 7, 1), (1, 7, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)], color_idx: 1 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 5, 1), (1, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (2, 3, 2), (2, 5, 1), (1, 5, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (0, 8, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 4, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (1, 7, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (2, 5, 2), (2, 6, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(2, 6, 0), (2, 7, 1), (1, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(1, 7, 0), (1, 8, 1), (0, 8, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1191,23 +2493,161 @@ fn test27() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("7", ExpectedPath { points: vec![(2, 2, 0), (2, 7, 0)], color_idx: 2 })],
-        vec![("11", ExpectedPath { points: vec![(3, 3, 0), (3, 11, 0)], color_idx: 3 })],
-        vec![("15", ExpectedPath { points: vec![(0, 4, 0), (0, 15, 0)], color_idx: 0 }), ("6", ExpectedPath { points: vec![(0, 4, 0), (4, 4, 2), (4, 6, 0)], color_idx: 4 })],
-        vec![("8", ExpectedPath { points: vec![(1, 5, 0), (1, 8, 0)], color_idx: 1 }), ("6", ExpectedPath { points: vec![(1, 5, 0), (4, 5, 2), (4, 6, 0)], color_idx: 4 })],
-        vec![("15", ExpectedPath { points: vec![(4, 6, 0), (4, 14, 1), (2, 14, 0), (2, 15, 1), (0, 15, 0)], color_idx: 4 })],
-        vec![("12", ExpectedPath { points: vec![(2, 7, 0), (2, 12, 0)], color_idx: 2 })],
-        vec![("9", ExpectedPath { points: vec![(1, 8, 0), (1, 9, 0)], color_idx: 1 }), ("13", ExpectedPath { points: vec![(1, 8, 0), (5, 8, 2), (5, 13, 0)], color_idx: 5 })],
-        vec![("14", ExpectedPath { points: vec![(1, 9, 0), (1, 14, 0)], color_idx: 1 }), ("10", ExpectedPath { points: vec![(1, 9, 0), (6, 9, 2), (6, 10, 0)], color_idx: 6 })],
-        vec![("14", ExpectedPath { points: vec![(6, 10, 0), (6, 14, 1), (1, 14, 0)], color_idx: 6 })],
-        vec![("14", ExpectedPath { points: vec![(3, 11, 0), (3, 14, 1), (1, 14, 0)], color_idx: 3 })],
-        vec![("14", ExpectedPath { points: vec![(2, 12, 0), (2, 14, 1), (1, 14, 0)], color_idx: 2 })],
-        vec![("14", ExpectedPath { points: vec![(5, 13, 0), (5, 14, 1), (1, 14, 0)], color_idx: 5 })],
-        vec![("16", ExpectedPath { points: vec![(1, 14, 0), (1, 16, 0)], color_idx: 1 })],
-        vec![("17", ExpectedPath { points: vec![(0, 15, 0), (0, 17, 0)], color_idx: 0 })],
-        vec![("17", ExpectedPath { points: vec![(1, 16, 0), (1, 17, 1), (0, 17, 0)], color_idx: 1 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 7, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "11",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 11, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "15",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (0, 15, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (4, 4, 2), (4, 6, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (1, 8, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (4, 5, 2), (4, 6, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![(
+            "15",
+            ExpectedPath {
+                points: vec![(4, 6, 0), (4, 14, 1), (2, 14, 0), (2, 15, 1), (0, 15, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(2, 7, 0), (2, 12, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(1, 8, 0), (1, 9, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "13",
+                ExpectedPath {
+                    points: vec![(1, 8, 0), (5, 8, 2), (5, 13, 0)],
+                    color_idx: 5,
+                },
+            ),
+        ],
+        vec![
+            (
+                "14",
+                ExpectedPath {
+                    points: vec![(1, 9, 0), (1, 14, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "10",
+                ExpectedPath {
+                    points: vec![(1, 9, 0), (6, 9, 2), (6, 10, 0)],
+                    color_idx: 6,
+                },
+            ),
+        ],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(6, 10, 0), (6, 14, 1), (1, 14, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(3, 11, 0), (3, 14, 1), (1, 14, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(2, 12, 0), (2, 14, 1), (1, 14, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(5, 13, 0), (5, 14, 1), (1, 14, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "16",
+            ExpectedPath {
+                points: vec![(1, 14, 0), (1, 16, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "17",
+            ExpectedPath {
+                points: vec![(0, 15, 0), (0, 17, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "17",
+            ExpectedPath {
+                points: vec![(1, 16, 0), (1, 17, 1), (0, 17, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1233,12 +2673,66 @@ fn test28() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 }), ("1", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("2", ExpectedPath { points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)], color_idx: 1 })],
-        vec![("3", ExpectedPath { points: vec![(0, 2, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(0, 3, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 }), ("5", ExpectedPath { points: vec![(0, 4, 0), (1, 4, 2), (1, 5, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 1 })]
+        vec![
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 2, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "1",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 2, 1), (0, 2, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 2, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (0, 6, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (1, 4, 2), (1, 5, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1280,38 +2774,245 @@ fn test29() {
     assert!(result.is_ok());
     let out = result.unwrap();
 
-    let expected_columns = vec![0, 1, 2, 3, 4, 5, 6, 0, 3, 0, 7, 3, 5, 0, 4, 1, 0, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0];
+    let expected_columns = vec![
+        0, 1, 2, 3, 4, 5, 6, 0, 3, 0, 7, 3, 5, 0, 4, 1, 0, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1, 0,
+    ];
     validate_columns(&expected_columns, &out.nodes);
 
     // Path validation
     let expected_paths = vec![
-        vec![("7", ExpectedPath { points: vec![(0, 0, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("15", ExpectedPath { points: vec![(1, 1, 0), (1, 15, 0)], color_idx: 1 })],
-        vec![("17", ExpectedPath { points: vec![(2, 2, 0), (2, 17, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(3, 3, 0), (3, 8, 0)], color_idx: 3 })],
-        vec![("18", ExpectedPath { points: vec![(4, 4, 0), (4, 13, 1), (3, 13, 0), (3, 18, 0)], color_idx: 4 })],
-        vec![("12", ExpectedPath { points: vec![(5, 5, 0), (5, 12, 0)], color_idx: 5 })],
-        vec![("20", ExpectedPath { points: vec![(6, 6, 0), (6, 13, 1), (5, 13, 0), (5, 20, 0)], color_idx: 6 })],
-        vec![("10", ExpectedPath { points: vec![(0, 7, 0), (7, 7, 2), (7, 10, 0)], color_idx: 7 }), ("9", ExpectedPath { points: vec![(0, 7, 0), (0, 9, 0)], color_idx: 0 })],
-        vec![("9", ExpectedPath { points: vec![(3, 8, 0), (0, 8, 3), (0, 9, 0)], color_idx: 0 }), ("11", ExpectedPath { points: vec![(3, 8, 0), (3, 11, 0)], color_idx: 3 })],
-        vec![("13", ExpectedPath { points: vec![(0, 9, 0), (0, 13, 0)], color_idx: 0 }), ("14", ExpectedPath { points: vec![(0, 9, 0), (8, 9, 2), (8, 13, 1), (7, 13, 0), (7, 14, 1), (4, 14, 0)], color_idx: 8 })],
-        vec![("21", ExpectedPath { points: vec![(7, 10, 0), (7, 13, 1), (6, 13, 0), (6, 21, 0)], color_idx: 7 })],
-        vec![("13", ExpectedPath { points: vec![(3, 11, 0), (3, 13, 1), (0, 13, 0)], color_idx: 3 })],
-        vec![("14", ExpectedPath { points: vec![(5, 12, 0), (5, 13, 1), (4, 13, 0), (4, 14, 0)], color_idx: 5 })],
-        vec![("16", ExpectedPath { points: vec![(0, 13, 0), (0, 16, 0)], color_idx: 0 }), ("15", ExpectedPath { points: vec![(0, 13, 0), (1, 13, 2), (1, 15, 0)], color_idx: 1 })],
-        vec![("19", ExpectedPath { points: vec![(4, 14, 0), (4, 19, 0)], color_idx: 5 })],
-        vec![("26", ExpectedPath { points: vec![(1, 15, 0), (1, 26, 0)], color_idx: 1 })],
-        vec![("27", ExpectedPath { points: vec![(0, 16, 0), (0, 27, 0)], color_idx: 0 })],
-        vec![("25", ExpectedPath { points: vec![(2, 17, 0), (2, 25, 0)], color_idx: 2 })],
-        vec![("24", ExpectedPath { points: vec![(3, 18, 0), (3, 24, 0)], color_idx: 4 })],
-        vec![("23", ExpectedPath { points: vec![(4, 19, 0), (4, 23, 0)], color_idx: 5 })],
-        vec![("22", ExpectedPath { points: vec![(5, 20, 0), (5, 22, 0)], color_idx: 6 })],
-        vec![("22", ExpectedPath { points: vec![(6, 21, 0), (6, 22, 1), (5, 22, 0)], color_idx: 7 })],
-        vec![("23", ExpectedPath { points: vec![(5, 22, 0), (5, 23, 1), (4, 23, 0)], color_idx: 6 })],
-        vec![("24", ExpectedPath { points: vec![(4, 23, 0), (4, 24, 1), (3, 24, 0)], color_idx: 5 })],
-        vec![("25", ExpectedPath { points: vec![(3, 24, 0), (3, 25, 1), (2, 25, 0)], color_idx: 4 })],
-        vec![("26", ExpectedPath { points: vec![(2, 25, 0), (2, 26, 1), (1, 26, 0)], color_idx: 2 })],
-        vec![("27", ExpectedPath { points: vec![(1, 26, 0), (1, 27, 1), (0, 27, 0)], color_idx: 1 })]
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "15",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 15, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "17",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 17, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 8, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "18",
+            ExpectedPath {
+                points: vec![(4, 4, 0), (4, 13, 1), (3, 13, 0), (3, 18, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(5, 5, 0), (5, 12, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "20",
+            ExpectedPath {
+                points: vec![(6, 6, 0), (6, 13, 1), (5, 13, 0), (5, 20, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![
+            (
+                "10",
+                ExpectedPath {
+                    points: vec![(0, 7, 0), (7, 7, 2), (7, 10, 0)],
+                    color_idx: 7,
+                },
+            ),
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(0, 7, 0), (0, 9, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(3, 8, 0), (0, 8, 3), (0, 9, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "11",
+                ExpectedPath {
+                    points: vec![(3, 8, 0), (3, 11, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![
+            (
+                "13",
+                ExpectedPath {
+                    points: vec![(0, 9, 0), (0, 13, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "14",
+                ExpectedPath {
+                    points: vec![
+                        (0, 9, 0),
+                        (8, 9, 2),
+                        (8, 13, 1),
+                        (7, 13, 0),
+                        (7, 14, 1),
+                        (4, 14, 0),
+                    ],
+                    color_idx: 8,
+                },
+            ),
+        ],
+        vec![(
+            "21",
+            ExpectedPath {
+                points: vec![(7, 10, 0), (7, 13, 1), (6, 13, 0), (6, 21, 0)],
+                color_idx: 7,
+            },
+        )],
+        vec![(
+            "13",
+            ExpectedPath {
+                points: vec![(3, 11, 0), (3, 13, 1), (0, 13, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(5, 12, 0), (5, 13, 1), (4, 13, 0), (4, 14, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![
+            (
+                "16",
+                ExpectedPath {
+                    points: vec![(0, 13, 0), (0, 16, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "15",
+                ExpectedPath {
+                    points: vec![(0, 13, 0), (1, 13, 2), (1, 15, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "19",
+            ExpectedPath {
+                points: vec![(4, 14, 0), (4, 19, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "26",
+            ExpectedPath {
+                points: vec![(1, 15, 0), (1, 26, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "27",
+            ExpectedPath {
+                points: vec![(0, 16, 0), (0, 27, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "25",
+            ExpectedPath {
+                points: vec![(2, 17, 0), (2, 25, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "24",
+            ExpectedPath {
+                points: vec![(3, 18, 0), (3, 24, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "23",
+            ExpectedPath {
+                points: vec![(4, 19, 0), (4, 23, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "22",
+            ExpectedPath {
+                points: vec![(5, 20, 0), (5, 22, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "22",
+            ExpectedPath {
+                points: vec![(6, 21, 0), (6, 22, 1), (5, 22, 0)],
+                color_idx: 7,
+            },
+        )],
+        vec![(
+            "23",
+            ExpectedPath {
+                points: vec![(5, 22, 0), (5, 23, 1), (4, 23, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "24",
+            ExpectedPath {
+                points: vec![(4, 23, 0), (4, 24, 1), (3, 24, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "25",
+            ExpectedPath {
+                points: vec![(3, 24, 0), (3, 25, 1), (2, 25, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "26",
+            ExpectedPath {
+                points: vec![(2, 25, 0), (2, 26, 1), (1, 26, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "27",
+            ExpectedPath {
+                points: vec![(1, 26, 0), (1, 27, 1), (0, 27, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1350,35 +3051,242 @@ fn test30() {
     assert!(result.is_ok());
     let out = result.unwrap();
 
-    let expected_columns = vec![0, 1, 2, 3, 0, 0, 0, 5, 6, 5, 4, 6, 6, 6, 2, 1, 0, 6, 0, 4, 0, 3, 2, 1, 0];
+    let expected_columns = vec![
+        0, 1, 2, 3, 0, 0, 0, 5, 6, 5, 4, 6, 6, 6, 2, 1, 0, 6, 0, 4, 0, 3, 2, 1, 0,
+    ];
     validate_columns(&expected_columns, &out.nodes);
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("15", ExpectedPath { points: vec![(1, 1, 0), (1, 15, 0)], color_idx: 1 })],
-        vec![("14", ExpectedPath { points: vec![(2, 2, 0), (2, 14, 0)], color_idx: 2 })],
-        vec![("22", ExpectedPath { points: vec![(3, 3, 0), (3, 18, 1), (2, 18, 0), (2, 22, 0)], color_idx: 3 })],
-        vec![("5", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 }), ("10", ExpectedPath { points: vec![(0, 4, 0), (4, 4, 2), (4, 10, 0)], color_idx: 4 })],
-        vec![("6", ExpectedPath { points: vec![(0, 5, 0), (0, 6, 0)], color_idx: 0 }), ("7", ExpectedPath { points: vec![(0, 5, 0), (5, 5, 2), (5, 7, 0)], color_idx: 5 })],
-        vec![("8", ExpectedPath { points: vec![(0, 6, 0), (6, 6, 2), (6, 8, 0)], color_idx: 6 }), ("16", ExpectedPath { points: vec![(0, 6, 0), (0, 16, 0)], color_idx: 0 })],
-        vec![("9", ExpectedPath { points: vec![(5, 7, 0), (5, 9, 0)], color_idx: 5 })],
-        vec![("11", ExpectedPath { points: vec![(6, 8, 0), (6, 11, 0)], color_idx: 6 })],
-        vec![("16", ExpectedPath { points: vec![(5, 9, 0), (5, 16, 1), (0, 16, 0)], color_idx: 5 })],
-        vec![("18", ExpectedPath { points: vec![(4, 10, 0), (4, 18, 1), (0, 18, 0)], color_idx: 4 })],
-        vec![("12", ExpectedPath { points: vec![(6, 11, 0), (6, 12, 0)], color_idx: 6 })],
-        vec![("13", ExpectedPath { points: vec![(6, 12, 0), (6, 13, 0)], color_idx: 6 }), ("16", ExpectedPath { points: vec![(6, 12, 0), (0, 12, 3), (0, 16, 0)], color_idx: 0 })],
-        vec![("21", ExpectedPath { points: vec![(6, 13, 0), (6, 16, 1), (5, 16, 0), (5, 18, 1), (3, 18, 0), (3, 21, 0)], color_idx: 6 })],
-        vec![("18", ExpectedPath { points: vec![(2, 14, 0), (2, 18, 1), (0, 18, 0)], color_idx: 2 })],
-        vec![("23", ExpectedPath { points: vec![(1, 15, 0), (1, 23, 0)], color_idx: 1 })],
-        vec![("17", ExpectedPath { points: vec![(0, 16, 0), (6, 16, 2), (6, 17, 0)], color_idx: 7 }), ("18", ExpectedPath { points: vec![(0, 16, 0), (0, 18, 0)], color_idx: 0 })],
-        vec![("18", ExpectedPath { points: vec![(6, 17, 0), (6, 18, 1), (0, 18, 0)], color_idx: 7 })],
-        vec![("20", ExpectedPath { points: vec![(0, 18, 0), (0, 20, 0)], color_idx: 0 }), ("19", ExpectedPath { points: vec![(0, 18, 0), (4, 18, 2), (4, 19, 0)], color_idx: 5 })],
-        vec![("20", ExpectedPath { points: vec![(4, 19, 0), (4, 20, 1), (0, 20, 0)], color_idx: 5 })],
-        vec![("24", ExpectedPath { points: vec![(0, 20, 0), (0, 24, 0)], color_idx: 0 })],
-        vec![("22", ExpectedPath { points: vec![(3, 21, 0), (3, 22, 1), (2, 22, 0)], color_idx: 6 })],
-        vec![("23", ExpectedPath { points: vec![(2, 22, 0), (2, 23, 1), (1, 23, 0)], color_idx: 3 })],
-        vec![("24", ExpectedPath { points: vec![(1, 23, 0), (1, 24, 1), (0, 24, 0)], color_idx: 1 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "15",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 15, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "14",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 14, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "22",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 18, 1), (2, 18, 0), (2, 22, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (0, 5, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "10",
+                ExpectedPath {
+                    points: vec![(0, 4, 0), (4, 4, 2), (4, 10, 0)],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (0, 6, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![(0, 5, 0), (5, 5, 2), (5, 7, 0)],
+                    color_idx: 5,
+                },
+            ),
+        ],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(0, 6, 0), (6, 6, 2), (6, 8, 0)],
+                    color_idx: 6,
+                },
+            ),
+            (
+                "16",
+                ExpectedPath {
+                    points: vec![(0, 6, 0), (0, 16, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(5, 7, 0), (5, 9, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "11",
+            ExpectedPath {
+                points: vec![(6, 8, 0), (6, 11, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "16",
+            ExpectedPath {
+                points: vec![(5, 9, 0), (5, 16, 1), (0, 16, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "18",
+            ExpectedPath {
+                points: vec![(4, 10, 0), (4, 18, 1), (0, 18, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(6, 11, 0), (6, 12, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![
+            (
+                "13",
+                ExpectedPath {
+                    points: vec![(6, 12, 0), (6, 13, 0)],
+                    color_idx: 6,
+                },
+            ),
+            (
+                "16",
+                ExpectedPath {
+                    points: vec![(6, 12, 0), (0, 12, 3), (0, 16, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "21",
+            ExpectedPath {
+                points: vec![
+                    (6, 13, 0),
+                    (6, 16, 1),
+                    (5, 16, 0),
+                    (5, 18, 1),
+                    (3, 18, 0),
+                    (3, 21, 0),
+                ],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "18",
+            ExpectedPath {
+                points: vec![(2, 14, 0), (2, 18, 1), (0, 18, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "23",
+            ExpectedPath {
+                points: vec![(1, 15, 0), (1, 23, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "17",
+                ExpectedPath {
+                    points: vec![(0, 16, 0), (6, 16, 2), (6, 17, 0)],
+                    color_idx: 7,
+                },
+            ),
+            (
+                "18",
+                ExpectedPath {
+                    points: vec![(0, 16, 0), (0, 18, 0)],
+                    color_idx: 0,
+                },
+            ),
+        ],
+        vec![(
+            "18",
+            ExpectedPath {
+                points: vec![(6, 17, 0), (6, 18, 1), (0, 18, 0)],
+                color_idx: 7,
+            },
+        )],
+        vec![
+            (
+                "20",
+                ExpectedPath {
+                    points: vec![(0, 18, 0), (0, 20, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "19",
+                ExpectedPath {
+                    points: vec![(0, 18, 0), (4, 18, 2), (4, 19, 0)],
+                    color_idx: 5,
+                },
+            ),
+        ],
+        vec![(
+            "20",
+            ExpectedPath {
+                points: vec![(4, 19, 0), (4, 20, 1), (0, 20, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "24",
+            ExpectedPath {
+                points: vec![(0, 20, 0), (0, 24, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "22",
+            ExpectedPath {
+                points: vec![(3, 21, 0), (3, 22, 1), (2, 22, 0)],
+                color_idx: 6,
+            },
+        )],
+        vec![(
+            "23",
+            ExpectedPath {
+                points: vec![(2, 22, 0), (2, 23, 1), (1, 23, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "24",
+            ExpectedPath {
+                points: vec![(1, 23, 0), (1, 24, 1), (0, 24, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1404,12 +3312,57 @@ fn test31() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 0)], color_idx: 2 }), ("4", ExpectedPath { points: vec![(2, 2, 0), (1, 2, 3), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(0, 3, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 2 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(2, 2, 0), (2, 4, 1), (1, 4, 0), (1, 5, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(2, 2, 0), (1, 2, 3), (1, 4, 1), (0, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1435,12 +3388,66 @@ fn test32() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 }), ("3", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (0, 3, 0)], color_idx: 2 })],
-        vec![("3", ExpectedPath { points: vec![(0, 2, 0), (0, 3, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(0, 2, 0), (3, 2, 2), (3, 3, 1), (2, 3, 0), (2, 4, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(0, 3, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(2, 4, 0), (2, 5, 1), (1, 5, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 1 })]
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 5, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (0, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 3, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (3, 2, 2), (3, 3, 1), (2, 3, 0), (2, 4, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 4, 0), (2, 5, 1), (1, 5, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1473,19 +3480,124 @@ fn test33() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("3", ExpectedPath { points: vec![(0, 0, 0), (0, 3, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("7", ExpectedPath { points: vec![(2, 2, 0), (2, 7, 0)], color_idx: 2 })],
-        vec![("9", ExpectedPath { points: vec![(0, 3, 0), (0, 9, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 0)], color_idx: 3 })],
-        vec![("9", ExpectedPath { points: vec![(3, 4, 0), (3, 9, 1), (0, 9, 0)], color_idx: 3 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (4, 5, 2), (4, 6, 0)], color_idx: 4 }), ("8", ExpectedPath { points: vec![(1, 5, 0), (1, 8, 0)], color_idx: 1 })],
-        vec![("10", ExpectedPath { points: vec![(4, 6, 0), (4, 9, 1), (3, 9, 0), (3, 10, 1), (1, 10, 0)], color_idx: 4 })],
-        vec![("10", ExpectedPath { points: vec![(2, 7, 0), (2, 10, 1), (1, 10, 0)], color_idx: 2 })],
-        vec![("10", ExpectedPath { points: vec![(1, 8, 0), (1, 10, 0)], color_idx: 1 })],
-        vec![("13", ExpectedPath { points: vec![(0, 9, 0), (0, 13, 0)], color_idx: 0 })],
-        vec![("11", ExpectedPath { points: vec![(1, 10, 0), (2, 10, 2), (2, 11, 0)], color_idx: 5 }), ("12", ExpectedPath { points: vec![(1, 10, 0), (1, 12, 0)], color_idx: 1 })],
-        vec![("12", ExpectedPath { points: vec![(2, 11, 0), (2, 12, 1), (1, 12, 0)], color_idx: 5 })],
-        vec![("13", ExpectedPath { points: vec![(1, 12, 0), (1, 13, 1), (0, 13, 0)], color_idx: 1 })]
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 3, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 7, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "9",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (0, 9, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 3, 0), (3, 3, 2), (3, 4, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(3, 4, 0), (3, 9, 1), (0, 9, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "6",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (4, 5, 2), (4, 6, 0)],
+                    color_idx: 4,
+                },
+            ),
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![(1, 5, 0), (1, 8, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(4, 6, 0), (4, 9, 1), (3, 9, 0), (3, 10, 1), (1, 10, 0)],
+                color_idx: 4,
+            },
+        )],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(2, 7, 0), (2, 10, 1), (1, 10, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "10",
+            ExpectedPath {
+                points: vec![(1, 8, 0), (1, 10, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "13",
+            ExpectedPath {
+                points: vec![(0, 9, 0), (0, 13, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "11",
+                ExpectedPath {
+                    points: vec![(1, 10, 0), (2, 10, 2), (2, 11, 0)],
+                    color_idx: 5,
+                },
+            ),
+            (
+                "12",
+                ExpectedPath {
+                    points: vec![(1, 10, 0), (1, 12, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![(
+            "12",
+            ExpectedPath {
+                points: vec![(2, 11, 0), (2, 12, 1), (1, 12, 0)],
+                color_idx: 5,
+            },
+        )],
+        vec![(
+            "13",
+            ExpectedPath {
+                points: vec![(1, 12, 0), (1, 13, 1), (0, 13, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1512,13 +3624,73 @@ fn test34() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 0)], color_idx: 1 }), ("2", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)], color_idx: 2 })],
-        vec![("3", ExpectedPath { points: vec![(2, 2, 0), (2, 3, 0)], color_idx: 2 })],
-        vec![("5", ExpectedPath { points: vec![(2, 3, 0), (0, 3, 3), (0, 5, 0)], color_idx: 0 }), ("4", ExpectedPath { points: vec![(2, 3, 0), (2, 4, 1), (1, 4, 0)], color_idx: 2 })],
-        vec![("6", ExpectedPath { points: vec![(1, 4, 0), (1, 6, 0)], color_idx: 1 })],
-        vec![("7", ExpectedPath { points: vec![(0, 5, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("7", ExpectedPath { points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 1 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "3",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 3, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(2, 3, 0), (0, 3, 3), (0, 5, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(2, 3, 0), (2, 4, 1), (1, 4, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 4, 0), (1, 6, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 5, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1542,10 +3714,46 @@ fn test35() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 }), ("1", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("2", ExpectedPath { points: vec![(1, 1, 0), (1, 2, 0)], color_idx: 1 }), ("3", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (1, 3, 0)], color_idx: 2 })],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "1",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 2, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (1, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
         vec![],
-        vec![("4", ExpectedPath { points: vec![(1, 3, 0), (1, 4, 1), (0, 4, 0)], color_idx: 2 })]
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(1, 3, 0), (1, 4, 1), (0, 4, 0)],
+                color_idx: 2,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1571,12 +3779,69 @@ fn test36() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("4", ExpectedPath { points: vec![(0, 0, 0), (0, 4, 0)], color_idx: 0 }), ("1", ExpectedPath { points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)], color_idx: 1 })],
-        vec![("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 }), ("2", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)], color_idx: 2 })],
-        vec![("3", ExpectedPath { points: vec![(2, 2, 0), (2, 3, 0)], color_idx: 2 }), ("5", ExpectedPath { points: vec![(2, 2, 0), (3, 2, 2), (3, 4, 1), (1, 4, 0), (1, 5, 0)], color_idx: 3 })],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (0, 4, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "1",
+                ExpectedPath {
+                    points: vec![(0, 0, 0), (1, 0, 2), (1, 1, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+            (
+                "2",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 2, 0)],
+                    color_idx: 2,
+                },
+            ),
+        ],
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(2, 2, 0), (2, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "5",
+                ExpectedPath {
+                    points: vec![(2, 2, 0), (3, 2, 2), (3, 4, 1), (1, 4, 0), (1, 5, 0)],
+                    color_idx: 3,
+                },
+            ),
+        ],
         vec![],
-        vec![("6", ExpectedPath { points: vec![(0, 4, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)], color_idx: 3 })]
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 5, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 3,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1604,14 +3869,88 @@ fn test37() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("6", ExpectedPath { points: vec![(1, 1, 0), (1, 6, 1), (0, 6, 0)], color_idx: 1 })],
-        vec![("5", ExpectedPath { points: vec![(2, 2, 0), (2, 5, 1), (0, 5, 0)], color_idx: 2 })],
-        vec![("4", ExpectedPath { points: vec![(3, 3, 0), (3, 4, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(3, 4, 0), (3, 5, 1), (2, 5, 0), (2, 6, 1), (1, 6, 0), (1, 8, 1), (0, 8, 0)], color_idx: 3 }), ("7", ExpectedPath { points: vec![(3, 4, 0), (4, 4, 2), (4, 5, 1), (3, 5, 0), (3, 6, 1), (2, 6, 0), (2, 7, 1), (0, 7, 0)], color_idx: 4 })],
-        vec![("6", ExpectedPath { points: vec![(0, 5, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("7", ExpectedPath { points: vec![(0, 6, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(0, 7, 0), (0, 8, 0)], color_idx: 0 })]
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 5, 1), (0, 5, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 4, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![
+            (
+                "8",
+                ExpectedPath {
+                    points: vec![
+                        (3, 4, 0),
+                        (3, 5, 1),
+                        (2, 5, 0),
+                        (2, 6, 1),
+                        (1, 6, 0),
+                        (1, 8, 1),
+                        (0, 8, 0),
+                    ],
+                    color_idx: 3,
+                },
+            ),
+            (
+                "7",
+                ExpectedPath {
+                    points: vec![
+                        (3, 4, 0),
+                        (4, 4, 2),
+                        (4, 5, 1),
+                        (3, 5, 0),
+                        (3, 6, 1),
+                        (2, 6, 0),
+                        (2, 7, 1),
+                        (0, 7, 0),
+                    ],
+                    color_idx: 4,
+                },
+            ),
+        ],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 5, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 6, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 7, 0), (0, 8, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1638,13 +3977,49 @@ fn test38() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("5", ExpectedPath { points: vec![(0, 0, 0), (0, 5, 0)], color_idx: 0 })],
-        vec![("2", ExpectedPath { points: vec![(1, 1, 0), (1, 2, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(1, 2, 0), (1, 6, 1), (0, 6, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(2, 3, 0), (2, 6, 1), (0, 6, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(3, 4, 0), (3, 6, 1), (1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 3 })],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 2, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(1, 2, 0), (1, 6, 1), (0, 6, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 3, 0), (2, 6, 1), (0, 6, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(3, 4, 0), (3, 6, 1), (1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 3,
+            },
+        )],
         vec![],
-        vec![("7", ExpectedPath { points: vec![(0, 6, 0), (0, 7, 0)], color_idx: 1 })]
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 6, 0), (0, 7, 0)],
+                color_idx: 1,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1672,14 +4047,64 @@ fn test39() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("6", ExpectedPath { points: vec![(0, 0, 0), (0, 6, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(2, 2, 0), (2, 6, 1), (0, 6, 0)], color_idx: 2 })],
-        vec![("7", ExpectedPath { points: vec![(3, 3, 0), (3, 6, 1), (1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 3 })],
-        vec![("8", ExpectedPath { points: vec![(4, 4, 0), (4, 6, 1), (2, 6, 0), (2, 7, 1), (1, 7, 0), (1, 8, 1), (0, 8, 0)], color_idx: 4 })],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 6, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 6, 1), (0, 6, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(3, 3, 0), (3, 6, 1), (1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![
+                    (4, 4, 0),
+                    (4, 6, 1),
+                    (2, 6, 0),
+                    (2, 7, 1),
+                    (1, 7, 0),
+                    (1, 8, 1),
+                    (0, 8, 0),
+                ],
+                color_idx: 4,
+            },
+        )],
         vec![],
-        vec![("7", ExpectedPath { points: vec![(0, 6, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("8", ExpectedPath { points: vec![(0, 7, 0), (0, 8, 0)], color_idx: 0 })]
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 6, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 7, 0), (0, 8, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1708,15 +4133,81 @@ fn test40() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("7", ExpectedPath { points: vec![(0, 0, 0), (0, 7, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(1, 1, 0), (1, 5, 0)], color_idx: 1 })],
-        vec![("6", ExpectedPath { points: vec![(2, 2, 0), (2, 6, 1), (1, 6, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(3, 3, 0), (3, 6, 1), (2, 6, 0), (2, 7, 1), (1, 7, 0), (1, 8, 1), (0, 8, 0)], color_idx: 3 })],
-        vec![("9", ExpectedPath { points: vec![(4, 4, 0), (4, 6, 1), (3, 6, 0), (3, 7, 1), (2, 7, 0), (2, 8, 1), (1, 8, 0), (1, 9, 1), (0, 9, 0)], color_idx: 4 })],
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 7, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(1, 1, 0), (1, 5, 0)],
+                color_idx: 1,
+            },
+        )],
+        vec![(
+            "6",
+            ExpectedPath {
+                points: vec![(2, 2, 0), (2, 6, 1), (1, 6, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![
+                    (3, 3, 0),
+                    (3, 6, 1),
+                    (2, 6, 0),
+                    (2, 7, 1),
+                    (1, 7, 0),
+                    (1, 8, 1),
+                    (0, 8, 0),
+                ],
+                color_idx: 3,
+            },
+        )],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![
+                    (4, 4, 0),
+                    (4, 6, 1),
+                    (3, 6, 0),
+                    (3, 7, 1),
+                    (2, 7, 0),
+                    (2, 8, 1),
+                    (1, 8, 0),
+                    (1, 9, 1),
+                    (0, 9, 0),
+                ],
+                color_idx: 4,
+            },
+        )],
         vec![],
-        vec![("7", ExpectedPath { points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)], color_idx: 2 })],
-        vec![("8", ExpectedPath { points: vec![(0, 7, 0), (0, 8, 0)], color_idx: 0 })],
-        vec![("9", ExpectedPath { points: vec![(0, 8, 0), (0, 9, 0)], color_idx: 0 })]
+        vec![(
+            "7",
+            ExpectedPath {
+                points: vec![(1, 6, 0), (1, 7, 1), (0, 7, 0)],
+                color_idx: 2,
+            },
+        )],
+        vec![(
+            "8",
+            ExpectedPath {
+                points: vec![(0, 7, 0), (0, 8, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "9",
+            ExpectedPath {
+                points: vec![(0, 8, 0), (0, 9, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }
@@ -1742,11 +4233,69 @@ fn test41() {
 
     // Path validation
     let expected_paths = vec![
-        vec![("2", ExpectedPath { points: vec![(0, 0, 0), (0, 2, 0)], color_idx: 0 })],
-        vec![("3", ExpectedPath { points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (0, 3, 0)], color_idx: 2 }), ("4", ExpectedPath { points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)], color_idx: 1 })],
-        vec![("3", ExpectedPath { points: vec![(0, 2, 0), (0, 3, 0)], color_idx: 0 }), ("1", ExpectedPath { points: vec![(0, 2, 0), (3, 2, 2), (3, 3, 1), (2, 3, 0), (2, 4, 1), (1, 4, 0), (1, 5, 1), (1, 5, 0), (1, 6, 0)], color_idx: 3 })],
-        vec![("4", ExpectedPath { points: vec![(0, 3, 0), (0, 4, 0)], color_idx: 0 })],
-        vec![("5", ExpectedPath { points: vec![(0, 4, 0), (0, 5, 0)], color_idx: 0 })]
+        vec![(
+            "2",
+            ExpectedPath {
+                points: vec![(0, 0, 0), (0, 2, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (2, 1, 2), (2, 3, 1), (0, 3, 0)],
+                    color_idx: 2,
+                },
+            ),
+            (
+                "4",
+                ExpectedPath {
+                    points: vec![(1, 1, 0), (1, 4, 1), (0, 4, 0)],
+                    color_idx: 1,
+                },
+            ),
+        ],
+        vec![
+            (
+                "3",
+                ExpectedPath {
+                    points: vec![(0, 2, 0), (0, 3, 0)],
+                    color_idx: 0,
+                },
+            ),
+            (
+                "1",
+                ExpectedPath {
+                    points: vec![
+                        (0, 2, 0),
+                        (3, 2, 2),
+                        (3, 3, 1),
+                        (2, 3, 0),
+                        (2, 4, 1),
+                        (1, 4, 0),
+                        (1, 5, 1),
+                        (1, 5, 0),
+                        (1, 6, 0),
+                    ],
+                    color_idx: 3,
+                },
+            ),
+        ],
+        vec![(
+            "4",
+            ExpectedPath {
+                points: vec![(0, 3, 0), (0, 4, 0)],
+                color_idx: 0,
+            },
+        )],
+        vec![(
+            "5",
+            ExpectedPath {
+                points: vec![(0, 4, 0), (0, 5, 0)],
+                color_idx: 0,
+            },
+        )],
     ];
     validate_paths(&out.nodes, &expected_paths);
 }

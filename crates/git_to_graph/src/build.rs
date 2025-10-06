@@ -7,8 +7,8 @@ use super::output::{Out, PartialPath, Row, RowLine};
 use super::path::expand_path;
 use super::point::Point;
 use super::types::{
-    BOTTOM_HALF_LINE, FORK_LINE, FULL_LINE, G_KEY, MERGE_BACK_LINE, TOP_HALF_LINE,
-    PARENTS_PATHS_TEST_KEY, PointType,
+    BOTTOM_HALF_LINE, FORK_LINE, FULL_LINE, G_KEY, MERGE_BACK_LINE, PARENTS_PATHS_TEST_KEY,
+    PointType, TOP_HALF_LINE,
 };
 use serde_json::{Map, Value};
 
@@ -101,7 +101,8 @@ pub fn build_tree(
         first_sha: if input_nodes.is_empty() {
             String::new()
         } else {
-            input_nodes[0].get("id")
+            input_nodes[0]
+                .get("id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string()
@@ -125,27 +126,35 @@ pub fn build_rows(
     }
 
     let offset = *nodes[0].borrow().idx.borrow();
-    let mut out = vec![Row {
-        initial_node: None,
-        x: 0,
-        color: String::new(),
-        lines: Vec::new(),
-    }; nodes.len() + 1];
+    let mut out = vec![
+        Row {
+            initial_node: None,
+            x: 0,
+            color: String::new(),
+            lines: Vec::new(),
+        };
+        nodes.len() + 1
+    ];
 
     // Helper function for adding lines
-    let add_line = |out: &mut [Row], y_offset: usize, x1: i32, x2: i32, line_type: i32, color: String| {
-        if y_offset < out.len() {
-            out[y_offset].lines.push(RowLine {
-                x1,
-                x2,
-                typ: line_type,
-                color,
-            });
-        }
-    };
+    let add_line =
+        |out: &mut [Row], y_offset: usize, x1: i32, x2: i32, line_type: i32, color: String| {
+            if y_offset < out.len() {
+                out[y_offset].lines.push(RowLine {
+                    x1,
+                    x2,
+                    typ: line_type,
+                    color,
+                });
+            }
+        };
 
     // Process paths
-    let process_path = |out: &mut [Row], path: &super::path::Path, offset: i32, color: &str, is_partial_path: bool| {
+    let process_path = |out: &mut [Row],
+                        path: &super::path::Path,
+                        offset: i32,
+                        color: &str,
+                        is_partial_path: bool| {
         let mut i = 1;
         while i < path.points.len() {
             let p1 = &path.points[i - 1];
@@ -155,44 +164,125 @@ pub fn build_rows(
 
             match p2.get_type() {
                 PointType::Fork => {
-                    add_line(out, y_offset1, p1.get_x(), p2.get_x(), FORK_LINE, color.to_string());
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p2.get_x(),
+                        FORK_LINE,
+                        color.to_string(),
+                    );
                     i += 1;
                     if i < path.points.len() {
                         let p3 = &path.points[i];
                         if p3.get_x() == p2.get_x() && p3.get_type() != PointType::MergeBack {
                             let y_offset3 = (p3.get_y() - offset) as usize;
-                            add_line(out, y_offset3, p3.get_x(), p3.get_x(), TOP_HALF_LINE, color.to_string());
+                            add_line(
+                                out,
+                                y_offset3,
+                                p3.get_x(),
+                                p3.get_x(),
+                                TOP_HALF_LINE,
+                                color.to_string(),
+                            );
                         }
                     }
                 }
                 _ if p1.get_type() == PointType::MergeBack => {
-                    add_line(out, y_offset1, p1.get_x(), p2.get_x(), MERGE_BACK_LINE, color.to_string());
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p2.get_x(),
+                        MERGE_BACK_LINE,
+                        color.to_string(),
+                    );
                     if i < path.points.len() - 1 {
-                        add_line(out, y_offset2, p2.get_x(), p2.get_x(), BOTTOM_HALF_LINE, color.to_string());
+                        add_line(
+                            out,
+                            y_offset2,
+                            p2.get_x(),
+                            p2.get_x(),
+                            BOTTOM_HALF_LINE,
+                            color.to_string(),
+                        );
                     }
                     i += 1;
                     if i == path.points.len() - 1 {
                         let p3 = &path.points[i];
                         let y_offset3 = (p3.get_y() - offset) as usize;
-                        add_line(out, y_offset3, p3.get_x(), p3.get_x(), TOP_HALF_LINE, color.to_string());
+                        add_line(
+                            out,
+                            y_offset3,
+                            p3.get_x(),
+                            p3.get_x(),
+                            TOP_HALF_LINE,
+                            color.to_string(),
+                        );
                     }
                 }
                 PointType::MergeTo => {
-                    add_line(out, y_offset1, p1.get_x(), p2.get_x(), FORK_LINE, color.to_string());
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p2.get_x(),
+                        FORK_LINE,
+                        color.to_string(),
+                    );
                 }
                 _ if i == 1 => {
-                    let line_type = if is_partial_path { FULL_LINE } else { BOTTOM_HALF_LINE };
-                    add_line(out, y_offset1, p1.get_x(), p1.get_x(), line_type, color.to_string());
+                    let line_type = if is_partial_path {
+                        FULL_LINE
+                    } else {
+                        BOTTOM_HALF_LINE
+                    };
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p1.get_x(),
+                        line_type,
+                        color.to_string(),
+                    );
                     if i == path.points.len() - 1 {
-                        add_line(out, y_offset2, p2.get_x(), p2.get_x(), TOP_HALF_LINE, color.to_string());
+                        add_line(
+                            out,
+                            y_offset2,
+                            p2.get_x(),
+                            p2.get_x(),
+                            TOP_HALF_LINE,
+                            color.to_string(),
+                        );
                     }
                 }
                 _ if i == path.points.len() - 1 => {
-                    add_line(out, y_offset1, p1.get_x(), p1.get_x(), FULL_LINE, color.to_string());
-                    add_line(out, y_offset2, p2.get_x(), p2.get_x(), TOP_HALF_LINE, color.to_string());
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p1.get_x(),
+                        FULL_LINE,
+                        color.to_string(),
+                    );
+                    add_line(
+                        out,
+                        y_offset2,
+                        p2.get_x(),
+                        p2.get_x(),
+                        TOP_HALF_LINE,
+                        color.to_string(),
+                    );
                 }
                 _ => {
-                    add_line(out, y_offset1, p1.get_x(), p1.get_x(), FULL_LINE, color.to_string());
+                    add_line(
+                        out,
+                        y_offset1,
+                        p1.get_x(),
+                        p1.get_x(),
+                        FULL_LINE,
+                        color.to_string(),
+                    );
                 }
             }
             i += 1;
@@ -228,7 +318,14 @@ pub fn build_rows(
             let first_child_column = node_borrow.children[0].borrow().column;
             if first_child_column == node_column {
                 let y_off = (node_idx - offset) as usize;
-                add_line(&mut out, y_off, node_column, node_column, TOP_HALF_LINE, node_color_str.clone());
+                add_line(
+                    &mut out,
+                    y_off,
+                    node_column,
+                    node_column,
+                    TOP_HALF_LINE,
+                    node_color_str.clone(),
+                );
             }
         }
 
@@ -243,7 +340,8 @@ pub fn build_rows(
     }
 
     // Sort lines in each row instance
-    let is_straight = |typ: i32| typ == BOTTOM_HALF_LINE || typ == TOP_HALF_LINE || typ == FULL_LINE;
+    let is_straight =
+        |typ: i32| typ == BOTTOM_HALF_LINE || typ == TOP_HALF_LINE || typ == FULL_LINE;
     for row in &mut out {
         row.lines.sort_by(|a, b| {
             if is_straight(a.typ) {

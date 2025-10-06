@@ -1,12 +1,12 @@
 //! Child processing logic for git graph.
 
+use super::Node;
 use super::color::ColorsManager;
 use super::column::ColumnManager;
 use super::node::{InternalNode, InternalNodeSet, NodeExt, ProcessedNodes};
 use super::path::new_point;
 use super::point::Point;
 use super::types::PointType;
-use super::Node;
 use std::rc::Rc;
 
 /// Process all children of a node.
@@ -53,20 +53,25 @@ pub fn process_children(
                 let node_idx_rc = Rc::clone(&node.borrow().idx);
                 let mut child_borrow = child.borrow_mut();
                 let path_to_node = child_borrow.path_to(node);
-                path_to_node.no_dup_insert(-1, new_point(second_to_last_point_x, node_idx_rc, PointType::MergeBack));
+                path_to_node.no_dup_insert(
+                    -1,
+                    new_point(second_to_last_point_x, node_idx_rc, PointType::MergeBack),
+                );
             }
 
             // Process following nodes
             for following_node in following_nodes_with_children_before_idx.nodes() {
                 let following_node_id = following_node.borrow().id.clone();
-                let following_node_children: Vec<InternalNode> = following_node.borrow().children.clone();
+                let following_node_children: Vec<InternalNode> =
+                    following_node.borrow().children.clone();
 
                 for following_node_child in &following_node_children {
                     let following_node_child_id = following_node_child.borrow().id.clone();
                     let following_node_child_idx = *following_node_child.borrow().idx.borrow();
 
                     if following_node_child_idx < node_idx
-                        && !processed_nodes_inst.has_child(&following_node_id, &following_node_child_id)
+                        && !processed_nodes_inst
+                            .has_child(&following_node_id, &following_node_child_id)
                     {
                         let target_column = {
                             let mut fnc_borrow = following_node_child.borrow_mut();
@@ -80,7 +85,8 @@ pub fn process_children(
                                 let mut fnc_borrow = following_node_child.borrow_mut();
                                 let path_to_following = fnc_borrow.path_to(following_node);
                                 while path_to_following.len() >= 2
-                                    && path_to_following.last().get_y() == path_to_following.second_to_last().get_y()
+                                    && path_to_following.last().get_y()
+                                        == path_to_following.second_to_last().get_y()
                                 {
                                     path_to_following.remove_second_to_last();
                                 }
@@ -89,19 +95,23 @@ pub fn process_children(
 
                             // Calculate nb of merging nodes
                             let mut nb_nodes_merging_back = 0;
-                            let node_for_merge = if node_is_orphan && (node_idx as usize + 1) < input_nodes.len() {
-                                let next_node_id = input_nodes[node_idx as usize + 1].get_id();
-                                if let Some(next_node) = following_nodes_with_children_before_idx.get(&next_node_id) {
-                                    nb_nodes_merging_back += 1;
-                                    next_node
+                            let node_for_merge =
+                                if node_is_orphan && (node_idx as usize + 1) < input_nodes.len() {
+                                    let next_node_id = input_nodes[node_idx as usize + 1].get_id();
+                                    if let Some(next_node) =
+                                        following_nodes_with_children_before_idx.get(&next_node_id)
+                                    {
+                                        nb_nodes_merging_back += 1;
+                                        next_node
+                                    } else {
+                                        node.clone()
+                                    }
                                 } else {
                                     node.clone()
-                                }
-                            } else {
-                                node.clone()
-                            };
+                                };
 
-                            nb_nodes_merging_back += node_for_merge.borrow().nb_nodes_merging_back(target_column);
+                            nb_nodes_merging_back +=
+                                node_for_merge.borrow().nb_nodes_merging_back(target_column);
 
                             let following_node_column = following_node.borrow().column;
                             let should_move_node = following_node_column > second_to_last_point_x
@@ -142,7 +152,8 @@ pub fn process_children(
                                 following_node.borrow_mut().move_left(nb_nodes_merging_back);
                             }
 
-                            processed_nodes_inst.set(following_node_id.clone(), following_node_child_id.clone());
+                            processed_nodes_inst
+                                .set(following_node_id.clone(), following_node_child_id.clone());
                         }
                     }
                 }

@@ -1,23 +1,19 @@
 //! Main algorithm for computing git graph columns.
 
+use super::Node;
 use super::color::ColorsManager;
 use super::column::ColumnManager;
 use super::finalize::{finalize_nodes, slice_results};
-use super::node::{new_node, InternalNode, InternalNodeSet, NodeExt};
+use super::node::{InternalNode, InternalNodeSet, NodeExt, new_node};
 use super::path::Path;
 use super::point::Point;
 use super::process_children::process_children;
 use super::process_parents::process_parents;
 use super::types::ternary;
-use super::Node;
 use std::collections::HashMap;
 
 /// Main algorithm: compute columns for nodes.
-pub fn set_columns(
-    input_nodes: &[Node],
-    from: &str,
-    limit: i32,
-) -> (Vec<InternalNode>, Vec<Path>) {
+pub fn set_columns(input_nodes: &[Node], from: &str, limit: i32) -> (Vec<InternalNode>, Vec<Path>) {
     let orig_limit = limit;
     let mut colors_man = ColorsManager::new();
     let mut column_man = ColumnManager::new();
@@ -46,7 +42,13 @@ pub fn set_columns(
 
         update_limit_and_index(&node, from, &mut limit, &mut from_idx, idx as i32);
         update_node_tracking(&node, &mut following_nodes);
-        process_children(&node, input_nodes, &following_nodes, &mut column_man, &mut colors_man);
+        process_children(
+            &node,
+            input_nodes,
+            &following_nodes,
+            &mut column_man,
+            &mut colors_man,
+        );
 
         process_parents(&node, input_nodes, &mut column_man, &mut colors_man);
 
@@ -56,7 +58,13 @@ pub fn set_columns(
         }
     }
 
-    finalize_nodes(&following_nodes, &nodes, &partial_paths, from_idx, orig_limit);
+    finalize_nodes(
+        &following_nodes,
+        &nodes,
+        &partial_paths,
+        from_idx,
+        orig_limit,
+    );
 
     (slice_results(&nodes, from_idx, orig_limit), partial_paths)
 }
@@ -82,11 +90,13 @@ pub fn init_node(
 
     // Add node parent IDs to the index cache
     for parent_id in raw_node.get_parents() {
-        let parent_node = unassigned_nodes.entry(parent_id.clone()).or_insert_with(|| {
-            let pn = new_node(parent_id, *tmp_row);
-            *tmp_row -= 1;
-            pn
-        });
+        let parent_node = unassigned_nodes
+            .entry(parent_id.clone())
+            .or_insert_with(|| {
+                let pn = new_node(parent_id, *tmp_row);
+                *tmp_row -= 1;
+                pn
+            });
         parent_node.borrow_mut().children.push(node.clone());
         node.borrow_mut().parents.push(parent_node.clone());
     }

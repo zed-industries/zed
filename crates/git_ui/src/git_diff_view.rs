@@ -18,7 +18,6 @@ use std::{
     time::Duration,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
-use util::ResultExt;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
@@ -151,9 +150,9 @@ impl GitDiffView {
             let languages_registry =
                 project.read_with(cx, |project, _| project.languages().clone())?;
             let language = languages_registry
-                .language_for_file_path(&path)
+                .load_language_for_file_path(&path)
                 .await
-                .log_err();
+                .ok();
 
             // Create buffers with text content and syntax highlighting
             let old_buffer = cx.new(|cx| {
@@ -288,10 +287,6 @@ impl Item for GitDiffView {
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn act_as_type<'a>(

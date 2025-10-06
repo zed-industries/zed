@@ -94,11 +94,7 @@ pub fn ptr<T>(value: T) -> Box<T> {
 
 /// Ternary conditional helper.
 pub fn ternary<T>(predicate: bool, a: T, b: T) -> T {
-    if predicate {
-        a
-    } else {
-        b
-    }
+    if predicate { a } else { b }
 }
 
 /// Rotate negative indices to positive (Python-style indexing).

@@ -146,19 +146,23 @@ impl InternalNodeInner {
             let parent_id = self.id.clone();
 
             // Check path properties first
-            let (should_count, is_sub_branch) = if let Some(path) = child_borrow.parents_paths.get(&parent_id) {
-                if path.len() >= 2 {
-                    let second_to_last_point = path.second_to_last();
-                    let x_valid = self.column < second_to_last_point.get_x()
-                        && second_to_last_point.get_x() < max_x;
-                    let is_merge_to = path.is_merge_to();
-                    (x_valid && !is_merge_to, path.is_fork() && !child_borrow.is_first_of_branch())
+            let (should_count, is_sub_branch) =
+                if let Some(path) = child_borrow.parents_paths.get(&parent_id) {
+                    if path.len() >= 2 {
+                        let second_to_last_point = path.second_to_last();
+                        let x_valid = self.column < second_to_last_point.get_x()
+                            && second_to_last_point.get_x() < max_x;
+                        let is_merge_to = path.is_merge_to();
+                        (
+                            x_valid && !is_merge_to,
+                            path.is_fork() && !child_borrow.is_first_of_branch(),
+                        )
+                    } else {
+                        (false, false)
+                    }
                 } else {
                     (false, false)
-                }
-            } else {
-                (false, false)
-            };
+                };
 
             if should_count && !is_sub_branch {
                 nb_nodes_merging_back += 1;
@@ -287,7 +291,9 @@ impl ProcessedNodes {
 
     /// Check if a child has been processed for a node.
     pub fn has_child(&self, node_id: &str, child_id: &str) -> bool {
-        self.m.get(node_id).is_some_and(|children| children.contains_key(child_id))
+        self.m
+            .get(node_id)
+            .is_some_and(|children| children.contains_key(child_id))
     }
 
     /// Mark a child as processed for a node.

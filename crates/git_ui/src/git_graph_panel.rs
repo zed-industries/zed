@@ -26,6 +26,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent},
 };
 use std::ops::Range;
+use std::path::Path;
 use theme::{ActiveTheme, ensure_minimum_contrast};
 use time::OffsetDateTime;
 use time_format::{TimestampFormat, format_localized_timestamp};
@@ -33,7 +34,7 @@ use ui::{
     ContextMenu, Icon, IconName, IconSize, Label, LabelSize, ParentElement, PopoverMenu, Render,
     SpinnerLabel, SplitButton, WithScrollbar, div, h_flex, prelude::*, v_flex,
 };
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle};
 use workspace::dock::{DockPosition, PanelEvent};
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{Panel, Workspace};
@@ -51,13 +52,13 @@ actions!(
     ]
 );
 
-const ROW_HEIGHT: f32 = 60.0;
-const COLUMN_WIDTH: f32 = 12.0;
-const GRAPH_PADDING: f32 = 20.0;
+const ROW_HEIGHT: Pixels = px(60.0);
+const COLUMN_WIDTH: Pixels = px(12.0);
+const GRAPH_PADDING: Pixels = px(20.0);
 const INITIAL_COMMITS: usize = 50;
 const COMMITS_PER_BATCH: usize = 50;
 const LOAD_MORE_THRESHOLD: usize = 10;
-const DEFAULT_COMMIT_DETAILS_HEIGHT: f32 = 200.0;
+const DEFAULT_COMMIT_DETAILS_HEIGHT: Pixels = px(200.0);
 
 pub struct GitGraphPanel {
     focus_handle: FocusHandle,
@@ -73,15 +74,15 @@ pub struct GitGraphPanel {
     has_more_commits: bool,
     loading_commits: bool,
     load_commits_task: Option<Task<Result<()>>>,
-    graph_scroll_x: f32,
-    graph_width: f32,
+    graph_scroll_x: Pixels,
+    graph_width: Pixels,
     is_resizing: bool,
-    resize_drag_start_x: Option<f32>,
-    resize_initial_width: Option<f32>,
-    commit_details_height: f32,
+    resize_drag_start_x: Option<Pixels>,
+    resize_initial_width: Option<Pixels>,
+    commit_details_height: Pixels,
     is_resizing_details: bool,
-    resize_details_drag_start_y: Option<f32>,
-    resize_details_initial_height: Option<f32>,
+    resize_details_drag_start_y: Option<Pixels>,
+    resize_details_initial_height: Option<Pixels>,
     selected_commit_index: Option<usize>,
     selected_commit_hash: Option<String>,
     commit_details: Option<CommitDetails>,
@@ -233,8 +234,8 @@ impl GitGraphPanel {
             has_more_commits: true,
             loading_commits: false,
             load_commits_task: None,
-            graph_scroll_x: 0.0,
-            graph_width: 200.0,
+            graph_scroll_x: px(0.0),
+            graph_width: px(200.0),
             is_resizing: false,
             resize_drag_start_x: None,
             resize_initial_width: None,
@@ -405,9 +406,9 @@ impl GitGraphPanel {
                                 .max_by(|a, b| {
                                     a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
                                 })
-                                .unwrap_or(0.0);
-                            let new_width = (max_x + 50.0).max(200.0);
-                            let panel_width = this.size.map(|s| s.0).unwrap_or(800.0);
+                                .unwrap_or(px(0.0));
+                            let new_width = (max_x + px(50.0)).max(px(200.0));
+                            let panel_width = this.size.unwrap_or(px(800.0));
                             let max_graph_width = panel_width * 0.3;
                             this.graph_width = this.graph_width.max(new_width).min(max_graph_width);
 
@@ -630,7 +631,7 @@ impl GitGraphPanel {
                                 FileStatus::Modified
                             };
                             CommitFileInfo {
-                                path: file.path.to_string(),
+                                path: file.path.to_proto(),
                                 status,
                             }
                         })
@@ -727,8 +728,12 @@ impl GitGraphPanel {
         }
 
         let project_path = repository.read_with(cx, |repo, cx| {
-            let repo_path = file_path.as_str().into();
-            repo.repo_path_to_project_path(&repo_path, cx)
+            let rel_path = RepoPath::from_std_path(Path::new(&file_path), PathStyle::local()).ok();
+            if let Some(repo_path) = rel_path {
+                repo.repo_path_to_project_path(&repo_path, cx)
+            } else {
+                None
+            }
         });
 
         if let Some(path) = project_path {
@@ -769,15 +774,18 @@ impl GitGraphPanel {
         let commit_hash = commit_hash.clone();
 
         cx.spawn(async move |_this, cx| {
+            let Some(repo_path) =
+                RepoPath::from_std_path(Path::new(&file_path), PathStyle::local()).ok()
+            else {
+                return;
+            };
+
             let receiver = repository.update(cx, |repo, cx| {
-                repo.checkout_files(
-                    &commit_hash,
-                    vec![RepoPath(std::path::PathBuf::from(file_path).into())],
-                    cx,
-                )
-            })?;
-            receiver.await.ok().and_then(|r| r.log_err());
-            Ok::<(), anyhow::Error>(())
+                repo.checkout_files(&commit_hash, vec![repo_path], cx)
+            });
+            if let Ok(receiver) = receiver {
+                receiver.await.ok().and_then(|r| r.log_err());
+            }
         })
         .detach();
     }
@@ -915,11 +923,21 @@ impl GitGraphPanel {
                     .await
                     .context("Failed to load commit diff")?;
 
+                // Convert file_path String to RepoPath for comparison
+                let file_repo_path =
+                    RepoPath::from_std_path(Path::new(&file_path), PathStyle::local()).ok();
+
                 // Find the file in the diff
                 let commit_file = commit_diff?
                     .files
                     .into_iter()
-                    .find(|f| f.path.to_string() == file_path)
+                    .find(|f| {
+                        if let Some(ref file_repo_path) = file_repo_path {
+                            f.path == *file_repo_path
+                        } else {
+                            false
+                        }
+                    })
                     .context("File not found in commit diff")?;
 
                 // Extract old/new text (handle added/deleted files)
@@ -978,11 +996,21 @@ impl GitGraphPanel {
                     .await
                     .context("Failed to load commit diff")?;
 
+                // Convert file_path String to RepoPath for comparison
+                let file_repo_path =
+                    RepoPath::from_std_path(Path::new(&file_path), PathStyle::local()).ok();
+
                 // Find the file in the commit
                 let commit_file = commit_diff?
                     .files
                     .into_iter()
-                    .find(|f| f.path.to_string() == file_path)
+                    .find(|f| {
+                        if let Some(ref file_repo_path) = file_repo_path {
+                            f.path == *file_repo_path
+                        } else {
+                            false
+                        }
+                    })
                     .context("File not found in commit diff")?;
 
                 // Get the file content from the commit (use new_text as this is the state after the commit)
@@ -993,14 +1021,17 @@ impl GitGraphPanel {
                     .read_with(cx, |project, cx| project.worktrees(cx).next())?
                     .context("No worktree found")?;
 
-                let current_text = worktree
-                    .update(cx, |worktree, cx| {
-                        let path = std::path::Path::new(&file_path);
-                        worktree.load_file(path, cx)
-                    })?
-                    .await
-                    .map(|loaded_file| loaded_file.text)
-                    .unwrap_or_default();
+                let current_text = if let Some(repo_path) =
+                    RepoPath::from_std_path(Path::new(&file_path), PathStyle::local()).ok()
+                {
+                    worktree
+                        .update(cx, |worktree, cx| worktree.load_file(&repo_path, cx))?
+                        .await
+                        .map(|loaded_file| loaded_file.text)
+                        .unwrap_or_default()
+                } else {
+                    "".to_string()
+                };
 
                 // Open GitDiffView in workspace
                 workspace.update_in(cx, |workspace, window, cx| {
@@ -1292,16 +1323,16 @@ impl Render for GitGraphPanel {
                             // Handle graph width resizing
                             if this.is_resizing {
                                 if let (Some(drag_start_x), Some(initial_width)) = (this.resize_drag_start_x, this.resize_initial_width) {
-                                    let delta = event.position.x.0 - drag_start_x;
-                                    this.graph_width = (initial_width + delta).clamp(100.0, 800.0);
+                                    let delta = event.position.x - drag_start_x;
+                                    this.graph_width = (initial_width + delta).clamp(px(100.0), px(800.0));
                                     cx.notify();
                                 }
                             }
                             // Handle commit details height resizing
                             if this.is_resizing_details {
                                 if let (Some(drag_start_y), Some(initial_height)) = (this.resize_details_drag_start_y, this.resize_details_initial_height) {
-                                    let delta = event.position.y.0 - drag_start_y;
-                                    this.commit_details_height = (initial_height + delta).clamp(100.0, 600.0);
+                                    let delta = event.position.y - drag_start_y;
+                                    this.commit_details_height = (initial_height + delta).clamp(px(100.0), px(600.0));
                                     cx.notify();
                                 }
                             }
@@ -1359,7 +1390,7 @@ impl Render for GitGraphPanel {
 
                                                     div()
                                                         .id(("commit-row", absolute_index))
-                                                        .h(px(ROW_HEIGHT))
+                                                        .h(ROW_HEIGHT)
                                                         .w_full()
                                                         .flex()
                                                         .bg(row_bg)
@@ -1369,7 +1400,7 @@ impl Render for GitGraphPanel {
                                                                 this.select_commit(absolute_index, window, cx);
                                                             },
                                                         ))
-                                                        .child(div().w(px(g_width)).h_full().flex_shrink_0().overflow_hidden())
+                                                        .child(div().w(g_width).h_full().flex_shrink_0().overflow_hidden())
                                                         .child(
                                                             div()
                                                                 .flex_1()
@@ -1556,7 +1587,7 @@ impl Render for GitGraphPanel {
                                     // Wider divider with transparent background and centered line for easier grabbing
                                     div()
                                         .absolute()
-                                        .left(px(graph_width - 4.0)) // Center the 8px divider on the graph edge
+                                        .left(graph_width - px(4.0)) // Center the 8px divider on the graph edge
                                         .top_0()
                                         .bottom_0()
                                         .w(px(8.0)) // Make it 8px wide for easier clicking
@@ -1565,7 +1596,7 @@ impl Render for GitGraphPanel {
                                             MouseButton::Left,
                                             cx.listener(|this, event: &MouseDownEvent, _window, cx| {
                                                 this.is_resizing = true;
-                                                this.resize_drag_start_x = Some(event.position.x.0);
+                                                this.resize_drag_start_x = Some(event.position.x);
                                                 this.resize_initial_width = Some(this.graph_width);
                                                 cx.notify();
                                             }),
@@ -1594,7 +1625,7 @@ impl Render for GitGraphPanel {
                                 .child(
                                     // Commit details with explicit height
                                     div()
-                                        .h(px(commit_details_height))
+                                        .h(commit_details_height)
                                         .w_full()
                                         .child(
                                             self.commit_details_section.render(
@@ -1609,7 +1640,7 @@ impl Render for GitGraphPanel {
                                     // Wider horizontal divider with transparent background and centered line for easier grabbing
                                     div()
                                         .absolute()
-                                        .top(px(commit_details_height - 4.0)) // Center the 8px divider
+                                        .top(commit_details_height - px(4.0)) // Center the 8px divider
                                         .w_full()
                                         .h(px(8.0)) // Make it 8px tall for easier clicking
                                         .cursor_row_resize()
@@ -1617,7 +1648,7 @@ impl Render for GitGraphPanel {
                                             MouseButton::Left,
                                             cx.listener(|this, event: &MouseDownEvent, _window, cx| {
                                                 this.is_resizing_details = true;
-                                                this.resize_details_drag_start_y = Some(event.position.y.0);
+                                                this.resize_details_drag_start_y = Some(event.position.y);
                                                 this.resize_details_initial_height = Some(this.commit_details_height);
                                                 cx.notify();
                                             }),
@@ -1637,7 +1668,7 @@ impl Render for GitGraphPanel {
                                     // Files changed section - positioned below commit details
                                     div()
                                         .absolute()
-                                        .top(px(commit_details_height + 4.0))
+                                        .top(commit_details_height + px(4.0))
                                         .bottom_0()
                                         .w_full()
                                         .child({

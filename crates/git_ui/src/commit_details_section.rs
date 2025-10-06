@@ -1,4 +1,4 @@
-use gpui::{ScrollHandle, Window};
+use gpui::{Pixels, ScrollHandle, Window};
 use theme::ActiveTheme;
 use ui::{IntoElement, ParentElement, Render, WithScrollbar, div, h_flex, prelude::*, v_flex};
 
@@ -26,7 +26,7 @@ impl CommitDetailsSection {
     pub fn render(
         &mut self,
         details: Option<&CommitDetails>,
-        height: f32,
+        height: Pixels,
         window: &mut Window,
         cx: &mut gpui::App,
     ) -> impl IntoElement {
@@ -34,7 +34,7 @@ impl CommitDetailsSection {
         let text = cx.theme().colors().text;
 
         div()
-            .h(px(height))
+            .h(height)
             .relative()
             .child(if let Some(details) = details {
                 div()

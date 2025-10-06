@@ -45,11 +45,7 @@ pub fn contrast_ratio(color1: Hsla, color2: Hsla) -> f32 {
     let l1 = relative_luminance(color1);
     let l2 = relative_luminance(color2);
 
-    let (lighter, darker) = if l1 > l2 {
-        (l1, l2)
-    } else {
-        (l2, l1)
-    };
+    let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
 
     (lighter + 0.05) / (darker + 0.05)
 }
@@ -68,27 +64,31 @@ pub fn blend_with_background(foreground: Hsla, background: Hsla) -> Hsla {
     let b = fg_rgb.b * alpha + bg_rgb.b * (1.0 - alpha);
 
     // Convert RGB back to HSL for the result
-  let max = r.max(g).max(b);
-  let min = r.min(g).min(b);
-  let l = (max + min) / 2.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
 
-  if max == min {
-      // Achromatic
-      gpui::hsla(0.0, 0.0, l, foreground.a)
-  } else {
-      let d = max - min;
-      let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    if max == min {
+        // Achromatic
+        gpui::hsla(0.0, 0.0, l, foreground.a)
+    } else {
+        let d = max - min;
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
 
-      let h = if max == r {
-          (g - b) / d + if g < b { 6.0 } else { 0.0 }
-      } else if max == g {
-          (b - r) / d + 2.0
-      } else {
-          (r - g) / d + 4.0
-      } / 6.0;
+        let h = if max == r {
+            (g - b) / d + if g < b { 6.0 } else { 0.0 }
+        } else if max == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        } / 6.0;
 
-      gpui::hsla(h, s, l, foreground.a)
-  }
+        gpui::hsla(h, s, l, foreground.a)
+    }
 }
 
 /// Ensure two colors meet a minimum contrast ratio.
@@ -114,11 +114,7 @@ pub fn blend_with_background(foreground: Hsla, background: Hsla) -> Hsla {
 /// // Adjust light gray text to meet WCAG AA 4.5:1 contrast on white background
 /// let adjusted_text = ensure_minimum_contrast(light_text, white_bg, 4.5);
 /// ```
-pub fn ensure_minimum_contrast(
-    foreground: Hsla,
-    background: Hsla,
-    minimum_ratio: f32,
-) -> Hsla {
+pub fn ensure_minimum_contrast(foreground: Hsla, background: Hsla, minimum_ratio: f32) -> Hsla {
     if minimum_ratio <= 0.0 {
         return foreground;
     }
@@ -135,13 +131,25 @@ pub fn ensure_minimum_contrast(
     }
 
     // If that doesn't work, try reducing saturation too
-    if let Some(adjusted) = adjust_lightness_and_saturation_for_contrast(foreground, background, minimum_ratio) {
+    if let Some(adjusted) =
+        adjust_lightness_and_saturation_for_contrast(foreground, background, minimum_ratio)
+    {
         return adjusted;
     }
 
     // Last resort: use pure black or white
-    let black = Hsla { h: 0.0, s: 0.0, l: 0.0, a: foreground.a };
-    let white = Hsla { h: 0.0, s: 0.0, l: 1.0, a: foreground.a };
+    let black = Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 0.0,
+        a: foreground.a,
+    };
+    let white = Hsla {
+        h: 0.0,
+        s: 0.0,
+        l: 1.0,
+        a: foreground.a,
+    };
 
     let black_contrast = contrast_ratio(black, background);
     let white_contrast = contrast_ratio(white, background);
@@ -199,12 +207,18 @@ fn adjust_lightness_for_contrast(
         }
     }
 
-    if (contrast_ratio(Hsla {
-        h: foreground.h,
-        s: foreground.s,
-        l: best_lightness,
-        a: foreground.a,
-    }, background) - minimum_ratio).abs() < 0.5 {
+    if (contrast_ratio(
+        Hsla {
+            h: foreground.h,
+            s: foreground.s,
+            l: best_lightness,
+            a: foreground.a,
+        },
+        background,
+    ) - minimum_ratio)
+        .abs()
+        < 0.5
+    {
         Some(Hsla {
             h: foreground.h,
             s: foreground.s,
@@ -233,7 +247,8 @@ fn adjust_lightness_and_saturation_for_contrast(
             a: foreground.a,
         };
 
-        if let Some(adjusted) = adjust_lightness_for_contrast(test_color, background, minimum_ratio) {
+        if let Some(adjusted) = adjust_lightness_for_contrast(test_color, background, minimum_ratio)
+        {
             return Some(adjusted);
         }
     }

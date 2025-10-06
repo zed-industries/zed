@@ -1,9 +1,9 @@
 //! Path operations for git graph rendering.
 
 use super::point::{Point, PointImpl};
-use super::types::{rotate_idx, PointType};
-use std::rc::Rc;
+use super::types::{PointType, rotate_idx};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Path defines how to draw a line between parent and child nodes.
 #[derive(Debug)]
@@ -303,8 +303,8 @@ pub fn expand_path(path: &Path) -> Path {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::PointType;
+    use super::*;
 
     #[test]
     fn test_path_basic() {

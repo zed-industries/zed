@@ -1,12 +1,12 @@
 //! Parent processing logic for git graph.
 
+use super::Node;
 use super::color::ColorsManager;
 use super::column::ColumnManager;
 use super::node::{InternalNode, NodeExt};
 use super::path::new_point;
 use super::point::Point;
 use super::types::PointType;
-use super::Node;
 use std::rc::Rc;
 
 /// Process all parents of a node.
@@ -21,7 +21,14 @@ pub fn process_parents(
     drop(node_borrow);
 
     for (parent_idx, parent) in parents.iter().enumerate() {
-        process_parent(node, parent, parent_idx, input_nodes, column_man, colors_man);
+        process_parent(
+            node,
+            parent,
+            parent_idx,
+            input_nodes,
+            column_man,
+            colors_man,
+        );
     }
 }
 
@@ -52,7 +59,6 @@ pub fn process_parent(
     let parent_column = parent.borrow().column;
 
     if !parent_col_defined {
-
         // Check if node.pathTo(node.parents[0]).isMergeTo()
         let is_merge_to_path = {
             let has_parents = !node.borrow().parents.is_empty();
@@ -96,7 +102,6 @@ pub fn process_parent(
         let mut node_borrow = node.borrow_mut();
         let node_path_to_parent = node_borrow.path_to_id(&parent_id_clone);
         node_path_to_parent.set_color(parent_color_idx);
-
     } else if node_column < parent_column {
         if is_first_parent {
             let parent_children: Vec<InternalNode> = parent.borrow().children.clone();
@@ -108,8 +113,16 @@ pub fn process_parent(
                     path_to_parent.remove_last();
                     let last_x = path_to_parent.last().get_x();
                     let parent_idx_rc = Rc::clone(&parent.borrow().idx);
-                    path_to_parent.no_dup_append(new_point(last_x, parent_idx_rc.clone(), PointType::MergeBack));
-                    path_to_parent.no_dup_append(new_point(node_column, parent_idx_rc, PointType::Pipe));
+                    path_to_parent.no_dup_append(new_point(
+                        last_x,
+                        parent_idx_rc.clone(),
+                        PointType::MergeBack,
+                    ));
+                    path_to_parent.no_dup_append(new_point(
+                        node_column,
+                        parent_idx_rc,
+                        PointType::Pipe,
+                    ));
                 }
             }
 
@@ -133,7 +146,6 @@ pub fn process_parent(
             node_path_to_parent.no_dup_append(new_point(parent_column, y_ref, PointType::Fork));
             node_path_to_parent.set_color(parent_color);
         }
-
     } else if node_column > parent_column {
         let next_node_idx = node_idx as usize + 1;
         let next_node_id = if next_node_idx < input_nodes.len() {
@@ -150,7 +162,11 @@ pub fn process_parent(
             let mut node_borrow = node.borrow_mut();
             let node_path_to_parent = node_borrow.path_to_id(&parent_id_clone);
             let parent_idx_rc = Rc::clone(&parent.borrow().idx);
-            node_path_to_parent.no_dup_append(new_point(node_column, parent_idx_rc, PointType::MergeBack));
+            node_path_to_parent.no_dup_append(new_point(
+                node_column,
+                parent_idx_rc,
+                PointType::MergeBack,
+            ));
             node_path_to_parent.set_color(node_color);
         } else {
             let y_ref = Rc::clone(&node.borrow().idx);
@@ -161,7 +177,6 @@ pub fn process_parent(
             node_path_to_parent.no_dup_append(new_point(parent_column, y_ref, PointType::MergeTo));
             node_path_to_parent.set_color(parent_color);
         }
-
     } else if node_column == parent_column {
         let mut parent_borrow = parent.borrow_mut();
         parent_borrow.set_color(node.borrow().color_idx);

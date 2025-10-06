@@ -1,7 +1,7 @@
 //! Finalization functions for git graph processing.
 
 use super::node::{InternalNode, InternalNodeSet};
-use super::path::{new_point, Path};
+use super::path::{Path, new_point};
 use super::point::Point;
 use std::cell::RefCell;
 use std::cmp::min;

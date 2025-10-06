@@ -1874,7 +1874,7 @@ impl GitRepository for RealGitRepository {
         order: CommitOrder,
     ) -> BoxFuture<'_, Result<Vec<TopoCommit>>> {
         let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
+        let git_binary_path = self.any_git_binary_path.clone();
         let executor = self.executor.clone();
 
         self.executor
@@ -1927,9 +1927,18 @@ impl GitRepository for RealGitRepository {
                                 .collect()
                         };
 
-                        let summary = if parts[2].is_empty() { None } else { Some(parts[2].to_string()) };
-                        let author = if parts[3].is_empty() { None } else { Some(parts[3].to_string()) };
-                        let timestamp = parts[4].parse::<i64>()
+                        let summary = if parts[2].is_empty() {
+                            None
+                        } else {
+                            Some(parts[2].to_string())
+                        };
+                        let author = if parts[3].is_empty() {
+                            None
+                        } else {
+                            Some(parts[3].to_string())
+                        };
+                        let timestamp = parts[4]
+                            .parse::<i64>()
                             .with_context(|| format!("Invalid timestamp: {}", parts[4]))?;
 
                         // Parse decorations (branches, tags, HEAD)

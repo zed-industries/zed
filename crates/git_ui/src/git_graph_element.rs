@@ -6,8 +6,8 @@ use std::ops::Range;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Coordinate {
-    pub x: f32,
-    pub y: f32,
+    pub x: Pixels,
+    pub y: Pixels,
 }
 
 #[derive(Clone, Debug)]
@@ -33,8 +33,8 @@ pub struct GitGraphDecoration {
     all_commits: Vec<PositionedCommit>,
     all_paths: Vec<BranchPath>,
     partial_paths: Vec<BranchPath>,
-    scroll_x: f32,
-    graph_width: f32,
+    scroll_x: Pixels,
+    graph_width: Pixels,
 }
 
 impl GitGraphDecoration {
@@ -42,8 +42,8 @@ impl GitGraphDecoration {
         commits: Vec<PositionedCommit>,
         paths: Vec<BranchPath>,
         partial_paths: Vec<BranchPath>,
-        scroll_x: f32,
-        graph_width: f32,
+        scroll_x: Pixels,
+        graph_width: Pixels,
     ) -> Self {
         Self {
             all_commits: commits,
@@ -75,7 +75,7 @@ impl UniformListDecoration for GitGraphDecoration {
             item_height,
             scroll_x: self.scroll_x,
             graph_width: self.graph_width,
-            scroll_offset_y: scroll_offset.y.0,
+            scroll_offset_y: scroll_offset.y,
             total_item_count: item_count,
         }
         .into_any_element()
@@ -89,9 +89,9 @@ pub struct GitGraphElement {
     partial_paths: Vec<BranchPath>,
     bounds: Bounds<Pixels>,
     item_height: Pixels,
-    scroll_x: f32,
-    graph_width: f32,
-    scroll_offset_y: f32,
+    scroll_x: Pixels,
+    graph_width: Pixels,
+    scroll_offset_y: Pixels,
     total_item_count: usize,
 }
 
@@ -140,26 +140,23 @@ impl Element for GitGraphElement {
     ) {
         // Apply horizontal scroll offset only
         // Note: bounds.origin.y already accounts for vertical scroll in the decoration system
-        let offset = point(
-            self.bounds.origin.x - px(self.scroll_x),
-            self.bounds.origin.y,
-        );
+        let offset = point(self.bounds.origin.x - self.scroll_x, self.bounds.origin.y);
 
-        let graph_max_x = self.bounds.origin.x + px(self.graph_width);
+        let graph_max_x = self.bounds.origin.x + self.graph_width;
 
         // Calculate total content height
-        let total_content_height = self.total_item_count as f32 * self.item_height.0;
+        let total_content_height = self.total_item_count as f32 * self.item_height;
 
         // Clip to the visible graph area
         // The origin.y needs to account for scroll offset to extend the clipping area for paths
         let clip_bounds = Bounds {
             origin: point(
                 self.bounds.origin.x,
-                self.bounds.origin.y - px(self.scroll_offset_y),
+                self.bounds.origin.y - self.scroll_offset_y,
             ),
             size: gpui::Size {
-                width: px(self.graph_width),
-                height: px(total_content_height + 1000.0), // Add padding for continuation lines
+                width: self.graph_width,
+                height: total_content_height + px(1000.0), // Add padding for continuation lines
             },
         };
 
@@ -190,10 +187,10 @@ impl Element for GitGraphElement {
                 // Paint commit circles for visible commits
                 for (i, positioned) in self.all_commits.iter().enumerate() {
                     if i >= self.visible_range.start && i < self.visible_range.end {
-                        let x = offset.x + px(positioned.position.x);
-                        let y = offset.y + px(positioned.position.y);
+                        let x = offset.x + positioned.position.x;
+                        let y = offset.y + positioned.position.y;
 
-                        if x.0 >= self.bounds.origin.x.0 && x < graph_max_x {
+                        if x >= self.bounds.origin.x && x < graph_max_x {
                             let center = point(x, y);
                             let radius = px(4.0);
 
@@ -235,11 +232,11 @@ impl GitGraphElement {
             return None;
         }
 
-        const CURVE_DISTANCE: f32 = 25.0;
+        const CURVE_DISTANCE: Pixels = px(25.0);
 
         let mut builder = PathBuilder::stroke(px(2.5));
         let first = coordinates[0];
-        builder.move_to(point(offset.x + px(first.x), offset.y + px(first.y)));
+        builder.move_to(point(offset.x + first.x, offset.y + first.y));
 
         for (i, coord) in coordinates.iter().enumerate().skip(1) {
             let prev = coordinates[i - 1];
@@ -254,7 +251,7 @@ impl GitGraphElement {
                         coord.y + CURVE_DISTANCE
                     };
 
-                    builder.line_to(point(offset.x + px(prev.x), offset.y + px(curve_start_y)));
+                    builder.line_to(point(offset.x + prev.x, offset.y + curve_start_y));
 
                     let control_y = curve_start_y + (coord.y - curve_start_y) * 0.5;
                     let cp1 = Coordinate {
@@ -267,9 +264,9 @@ impl GitGraphElement {
                     };
 
                     builder.cubic_bezier_to(
-                        point(offset.x + px(coord.x), offset.y + px(coord.y)),
-                        point(offset.x + px(cp1.x), offset.y + px(cp1.y)),
-                        point(offset.x + px(cp2.x), offset.y + px(cp2.y)),
+                        point(offset.x + coord.x, offset.y + coord.y),
+                        point(offset.x + cp1.x, offset.y + cp1.y),
+                        point(offset.x + cp2.x, offset.y + cp2.y),
                     );
                 } else {
                     let middle_y = (prev.y + coord.y) / 2.0;
@@ -283,13 +280,13 @@ impl GitGraphElement {
                     };
 
                     builder.cubic_bezier_to(
-                        point(offset.x + px(coord.x), offset.y + px(coord.y)),
-                        point(offset.x + px(p1.x), offset.y + px(p1.y)),
-                        point(offset.x + px(p2.x), offset.y + px(p2.y)),
+                        point(offset.x + coord.x, offset.y + coord.y),
+                        point(offset.x + p1.x, offset.y + p1.y),
+                        point(offset.x + p2.x, offset.y + p2.y),
                     );
                 }
             } else {
-                builder.line_to(point(offset.x + px(coord.x), offset.y + px(coord.y)));
+                builder.line_to(point(offset.x + coord.x, offset.y + coord.y));
             }
         }
 

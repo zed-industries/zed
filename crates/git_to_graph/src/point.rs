@@ -1,9 +1,9 @@
 //! Point types for graph paths.
 
 use super::types::PointType;
+use serde::{Serialize, Serializer};
 use std::cell::RefCell;
 use std::rc::Rc;
-use serde::{Serialize, Serializer};
 
 /// Trait for points in a path.
 pub trait Point: std::fmt::Debug {
@@ -75,7 +75,12 @@ impl Point for PointImpl {
     }
 
     fn to_string(&self) -> String {
-        format!("{{{},{},{}}}", self.get_x(), self.get_y(), self.get_type() as u8)
+        format!(
+            "{{{},{},{}}}",
+            self.get_x(),
+            self.get_y(),
+            self.get_type() as u8
+        )
     }
 }
 
@@ -146,8 +151,8 @@ impl Point for PointTest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn test_point_impl() {

@@ -5,18 +5,8 @@ use std::collections::HashMap;
 /// Default color palette for the graph.
 #[allow(dead_code)]
 pub const DEFAULT_COLORS: &[&str] = &[
-    "#005EBE",
-    "#CD3A00",
-    "#FF9B00",
-    "#007754",
-    "#5247A5",
-    "#009DB5",
-    "#007DFF",
-    "#FF6C3B",
-    "#FFB800",
-    "#3EBD90",
-    "#776CCB",
-    "#00C4E0",
+    "#005EBE", "#CD3A00", "#FF9B00", "#007754", "#5247A5", "#009DB5", "#007DFF", "#FF6C3B",
+    "#FFB800", "#3EBD90", "#776CCB", "#00C4E0",
 ];
 
 /// Internal color tracking struct.
