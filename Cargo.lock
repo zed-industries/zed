@@ -14371,7 +14371,6 @@ dependencies = [
  "language",
  "menu",
  "node_runtime",
- "onboarding",
  "paths",
  "pretty_assertions",
  "project",
@@ -17135,8 +17134,10 @@ version = "0.1.0"
 dependencies = [
  "component",
  "editor",
+ "fuzzy",
  "gpui",
  "menu",
+ "picker",
  "settings",
  "theme",
  "ui",

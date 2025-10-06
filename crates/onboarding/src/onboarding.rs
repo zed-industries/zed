@@ -1,4 +1,4 @@
-pub use crate::{editing_page::font_picker, welcome::ShowWelcome};
+pub use crate::welcome::ShowWelcome;
 use crate::{multibuffer_hint::MultibufferHint, welcome::WelcomePage};
 use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;
@@ -17,6 +17,7 @@ use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
     StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
 };
+pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,

@@ -3726,7 +3726,7 @@ fn render_font_picker(
         .clone();
 
     let font_picker = cx.new(|cx| {
-        onboarding::font_picker(
+        ui_input::font_picker(
             current_value.clone().into(),
             move |font_name, cx| {
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
@@ -3742,10 +3742,7 @@ fn render_font_picker(
     div()
         .child(
             PopoverMenu::new("font-picker")
-                .menu({
-                    let font_picker = font_picker.clone();
-                    move |_window, _cx| Some(font_picker.clone())
-                })
+                .menu(move |_window, _cx| Some(font_picker.clone()))
                 .trigger(
                     ButtonLike::new("font-family-button")
                         .style(ButtonStyle::Outlined)
