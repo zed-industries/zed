@@ -22,6 +22,7 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
         if args.dry_run { " (with dry-run)" } else { "" }
     );
 
+    let start_time = std::time::Instant::now();
     check_workspace_root()?;
     ensure_cargo_set_version()?;
     check_git_clean()?;
@@ -34,7 +35,7 @@ pub fn run_publish_gpui(args: PublishGpuiArgs) -> Result<()> {
     );
     publish_dependencies(&new_version, args.dry_run)?;
     publish_gpui(&new_version, args.dry_run)?;
-    println!("GPUI publish complete!");
+    println!("GPUI published in {}s", start_time.elapsed().as_secs_f32());
     Ok(())
 }
 
