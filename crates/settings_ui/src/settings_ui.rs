@@ -18,6 +18,7 @@ use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
+    num::NonZeroU32,
     ops::Range,
     rc::Rc,
     sync::{Arc, atomic::AtomicBool},
@@ -406,16 +407,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): We need to implement a numeric stepper for these
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "UI Font Size",
-                //     description: "Font size for UI elements",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.ui_font_size,
-                //         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "UI Font Size",
+                    description: "Font size for UI elements",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.ui_font_size,
+                        pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Weight",
                     description: "Font weight for UI elements (100-900)",
@@ -625,25 +625,41 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Needs numeric stepper + option within an option
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
-                //     description: "Left padding for cenetered layout",
+                //     description: "Left padding for centered layout",
                 //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick: |settings_content| {
+                //             &settings_content.workspace.centered_layout.left_padding
+                //         },
                 //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.bottom_dock_layout
+                //             &mut settings_content.workspace.centered_layout.left_padding
                 //         },
                 //     }),
                 //     metadata: None,
                 // }),
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Right Padding",
-                //     description: "Right padding for cenetered layout",
+                //     description: "Right padding for centered layout",
                 //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                //         pick: |settings_content| {
+                //             if let Some(centered_layout) =
+                //                 &settings_content.workspace.centered_layout
+                //             {
+                //                 &centered_layout.right_padding
+                //             } else {
+                //                 &None
+                //             }
+                //         },
                 //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.bottom_dock_layout
+                //             if let Some(mut centered_layout) =
+                //                 settings_content.workspace.centered_layout
+                //             {
+                //                 &mut centered_layout.right_padding
+                //             } else {
+                //                 &mut None
+                //             }
                 //         },
                 //     }),
                 //     metadata: None,
@@ -667,15 +683,19 @@ fn user_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Tab Size",
-                //     description: "How many columns a tab should occupy",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.tab_size,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.tab_size,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Size",
+                    description: "How many columns a tab should occupy",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.project.all_languages.defaults.tab_size
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.project.all_languages.defaults.tab_size
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hard Tabs",
                     description: "Whether to indent lines using tab characters, as opposed to multiple spaces",
@@ -1120,16 +1140,18 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Hover Popover Delay",
-                //     description: "Time to wait in milliseconds before showing the informational hover box",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.hover_popover_delay,
-                //         pick_mut: |settings_content| &mut settings_content.editor.hover_popover_delay,
-                //     }),
-                //     metadata: None,
-                // }),
+                // todo(settings ui): add units to this numeric stepper
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hover Popover Delay",
+                    description: "Time to wait in milliseconds before showing the informational hover box",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.hover_popover_delay,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.hover_popover_delay
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Code Actions"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Code Actions",
@@ -2707,6 +2729,12 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<u64>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {

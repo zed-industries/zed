@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    ops::{Add, Sub},
+    num::{NonZeroU32, NonZeroU64},
     rc::Rc,
     str::FromStr,
 };
@@ -25,15 +25,7 @@ pub enum NumericStepperMode {
 }
 
 pub trait NumericStepperType:
-    Display
-    + Add<Output = Self>
-    + Sub<Output = Self>
-    + Copy
-    + Clone
-    + Sized
-    + PartialOrd
-    + FromStr
-    + 'static
+    Display + Copy + Clone + Sized + PartialOrd + FromStr + 'static
 {
     fn default_format(value: &Self) -> String {
         format!("{}", value)
@@ -43,6 +35,8 @@ pub trait NumericStepperType:
     fn small_step() -> Self;
     fn min_value() -> Self;
     fn max_value() -> Self;
+    fn saturating_add(self, rhs: Self) -> Self;
+    fn saturating_sub(self, rhs: Self) -> Self;
 }
 
 impl NumericStepperType for gpui::FontWeight {
@@ -60,6 +54,12 @@ impl NumericStepperType for gpui::FontWeight {
     }
     fn max_value() -> Self {
         gpui::FontWeight::BLACK
+    }
+    fn saturating_add(self, rhs: Self) -> Self {
+        FontWeight((self.0 + rhs.0).min(Self::max_value().0))
+    }
+    fn saturating_sub(self, rhs: Self) -> Self {
+        FontWeight((self.0 - rhs.0).max(Self::min_value().0))
     }
 }
 
@@ -85,18 +85,61 @@ macro_rules! impl_numeric_stepper_int {
             fn max_value() -> Self {
                 <$type>::MAX
             }
+
+            fn saturating_add(self, rhs: Self) -> Self {
+                self.saturating_add(rhs)
+            }
+
+            fn saturating_sub(self, rhs: Self) -> Self {
+                self.saturating_sub(rhs)
+            }
         }
     };
 }
 
+macro_rules! impl_numeric_stepper_nonzero_int {
+    ($nonzero:ty, $inner:ty) => {
+        impl NumericStepperType for $nonzero {
+            fn default_step() -> Self {
+                <$nonzero>::new(1).unwrap()
+            }
+
+            fn large_step() -> Self {
+                <$nonzero>::new(10).unwrap()
+            }
+
+            fn small_step() -> Self {
+                <$nonzero>::new(1).unwrap()
+            }
+
+            fn min_value() -> Self {
+                <$nonzero>::MIN
+            }
+
+            fn max_value() -> Self {
+                <$nonzero>::MAX
+            }
+
+            fn saturating_add(self, rhs: Self) -> Self {
+                let result = self.get().saturating_add(rhs.get());
+                <$nonzero>::new(result.max(1)).unwrap()
+            }
+
+            fn saturating_sub(self, rhs: Self) -> Self {
+                let result = self.get().saturating_sub(rhs.get()).max(1);
+                <$nonzero>::new(result).unwrap()
+            }
+        }
+    };
+}
+
+impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
+impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
 macro_rules! impl_numeric_stepper_float {
     ($type:ident) => {
         impl NumericStepperType for $type {
             fn default_format(value: &Self) -> String {
-                format!("{:^4}", value)
-                    .trim_end_matches('0')
-                    .trim_end_matches('.')
-                    .to_string()
+                format!("{:.2}", value)
             }
 
             fn default_step() -> Self {
@@ -117,6 +160,14 @@ macro_rules! impl_numeric_stepper_float {
 
             fn max_value() -> Self {
                 <$type>::MAX
+            }
+
+            fn saturating_add(self, rhs: Self) -> Self {
+                (self + rhs).clamp(Self::min_value(), Self::max_value())
+            }
+
+            fn saturating_sub(self, rhs: Self) -> Self {
+                (self - rhs).clamp(Self::min_value(), Self::max_value())
             }
         }
     };
@@ -299,7 +350,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             let min = self.min_value;
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let step = get_step(click.modifiers());
-                                let new_value = value - step;
+                                let new_value = value.saturating_sub(step);
                                 let new_value = if new_value < min { min } else { new_value };
                                 on_change(&new_value, window, cx);
                                 window.focus_prev();
@@ -428,7 +479,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             let max = self.max_value;
                             move |click: &ClickEvent, window: &mut Window, cx: &mut App| {
                                 let step = get_step(click.modifiers());
-                                let new_value = value + step;
+                                let new_value = value.saturating_add(step);
                                 let new_value = if new_value > max { max } else { new_value };
                                 on_change(&new_value, window, cx);
                             }
