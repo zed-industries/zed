@@ -495,7 +495,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
-                // todo(settings_ui): numeric stepper and validator is needed for this
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Unnecessary Code Fade",
                     description: "How much to fade out unused code (0.0 - 0.9)",
@@ -862,36 +861,50 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Vertical Scroll Margin",
-                //     description: "The number of lines to keep above/below the cursor when auto-scrolling",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.vertical_scroll_margin,
-                //         pick_mut: |settings_content| &mut settings_content.editor.vertical_scroll_margin,
-                //     }),
-                //     metadata: None,
-                // }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Horizontal Scroll Margin",
-                //     description: "The number of characters to keep on either side when scrolling with the mouse",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.horizontal_scroll_margin,
-                //         pick_mut: |settings_content| &mut settings_content.editor.horizontal_scroll_margin,
-                //     }),
-                //     metadata: None,
-                // }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Scroll Sensitivity",
-                //     description: "Scroll sensitivity multiplier",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.editor.scroll_sensitivity,
-                //         pick_mut: |settings_content| &mut settings_content.editor.scroll_sensitivity,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Vertical Scroll Margin",
+                    description: "The number of lines to keep above/below the cursor when auto-scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.vertical_scroll_margin,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.vertical_scroll_margin
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Horizontal Scroll Margin",
+                    description: "The number of characters to keep on either side when scrolling with the mouse",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.horizontal_scroll_margin,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.horizontal_scroll_margin
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scroll Sensitivity",
+                    description: "Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.scroll_sensitivity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.scroll_sensitivity
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Fast Scroll Sensitivity",
+                    description: "Fast Scroll sensitivity multiplier for both horizontal and vertical scrolling",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.fast_scroll_sensitivity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.fast_scroll_sensitivity
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Autoscroll On Clicks",
                     description: "Whether to scroll when clicking near the edge of the visible text area",

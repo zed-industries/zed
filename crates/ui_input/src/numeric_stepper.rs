@@ -81,7 +81,7 @@ impl NumericStepperType for settings::CodeFade {
         CodeFade(0.9)
     }
     fn saturating_add(self, rhs: Self) -> Self {
-        CodeFade((self.0 + rhs.0).min(Self::max_value().0)).0.
+        CodeFade((self.0 + rhs.0).min(Self::max_value().0))
     }
     fn saturating_sub(self, rhs: Self) -> Self {
         CodeFade((self.0 - rhs.0).max(Self::min_value().0))
