@@ -390,7 +390,10 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                     .p_1p5()
                                     .size_full()
                                     .justify_center()
-                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .hover(|s| {
+                                        s.bg(cx.theme().colors().element_hover)
+                                            .cursor(gpui::CursorStyle::PointingHand)
+                                    })
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Dash).size(IconSize::Small))
@@ -518,7 +521,10 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                     .p_1p5()
                                     .size_full()
                                     .justify_center()
-                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .hover(|s| {
+                                        s.bg(cx.theme().colors().element_hover)
+                                            .cursor(gpui::CursorStyle::PointingHand)
+                                    })
                                     .border_l_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Plus).size(IconSize::Small))
