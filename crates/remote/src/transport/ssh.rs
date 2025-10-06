@@ -11,7 +11,6 @@ use futures::{
     select_biased,
 };
 use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
-use itertools::Itertools;
 use parking_lot::Mutex;
 use paths::remote_server_dir_relative;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
@@ -22,7 +21,6 @@ use smol::{
     process::{self, Child, Stdio},
 };
 use std::{
-    iter,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -206,30 +204,24 @@ impl RemoteConnection for SshRemoteConnection {
             return Task::ready(Err(anyhow!("Remote binary path not set")));
         };
 
-        let mut start_proxy_command = shell_script!(
-            "exec {binary_path} proxy --identifier {identifier}",
-            binary_path = &remote_binary_path.display(self.path_style()),
-            identifier = &unique_identifier,
-        );
-
+        let mut proxy_args = vec![];
         for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
             if let Some(value) = std::env::var(env_var).ok() {
-                start_proxy_command = format!(
-                    "{}={} {} ",
-                    env_var,
-                    shlex::try_quote(&value).unwrap(),
-                    start_proxy_command,
-                );
+                proxy_args.push(format!("{}='{}'", env_var, value));
             }
         }
+        proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
+        proxy_args.push("proxy".to_owned());
+        proxy_args.push("--identifier".to_owned());
+        proxy_args.push(unique_identifier);
 
         if reconnect {
-            start_proxy_command.push_str(" --reconnect");
+            proxy_args.push("--reconnect".to_owned());
         }
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command("sh", &["-c", &start_proxy_command])
+            .ssh_command("env", &proxy_args)
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -718,24 +710,23 @@ impl SshSocket {
     // Furthermore, some setups (e.g. Coder) will change directory when SSH'ing
     // into a machine. You must use `cd` to get back to $HOME.
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
-    fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
+    fn ssh_command(&self, program: &str, args: &[impl AsRef<str>]) -> process::Command {
         let mut command = util::command::new_smol_command("ssh");
-        let to_run = iter::once(&program)
-            .chain(args.iter())
-            .map(|token| {
-                // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
-                debug_assert!(
-                    !token.contains('\n'),
-                    "multiline arguments do not work in all shells"
-                );
-                shlex::try_quote(token).unwrap()
-            })
-            .join(" ");
+        let mut to_run = shlex::try_quote(program).unwrap().into_owned();
+        for arg in args {
+            // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
+            debug_assert!(
+                !arg.as_ref().contains('\n'),
+                "multiline arguments do not work in all shells"
+            );
+            to_run.push(' ');
+            to_run.push_str(&shlex::try_quote(arg.as_ref()).unwrap());
+        }
         let to_run = format!("cd; {to_run}");
-        log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
             .arg(to_run);
+        log::debug!("ssh {:?}", command);
         command
     }
 
