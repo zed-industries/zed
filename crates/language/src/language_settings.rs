@@ -579,7 +579,7 @@ impl settings::Settings for AllLanguageSettings {
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
-                    words_min_length: completions.words_min_length.unwrap(),
+                    words_min_length: completions.words_min_length.unwrap() as usize,
                     lsp: completions.lsp.unwrap(),
                     lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),

@@ -322,6 +322,12 @@ fn init_renderers(cx: &mut App) {
                 render_dropdown(*settings_field, file, window, cx)
             },
         )
+        .add_renderer::<settings::WordsCompletionMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::LspInsertMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })

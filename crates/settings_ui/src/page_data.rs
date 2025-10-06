@@ -3327,21 +3327,114 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Completions",
-            description: "Controls how completions are processed for this language",
-            field: Box::new(
-                SettingField {
-                    pick: |settings_content| {
-                        language_settings_field(settings_content, |language| &language.completions)
-                    },
-                    pick_mut: |settings_content| {
-                        language_settings_field_mut(settings_content, |language| {
-                            &mut language.completions
-                        })
-                    },
-                }
-                .unimplemented(),
-            ),
+            title: "Words",
+            description: "Controls how words are completed",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.words
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().words
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Words Min Length",
+            description: "How many characters has to be in the completions query to automatically show the words-based completions",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.words_min_length
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .completions
+                            .get_or_insert_default()
+                            .words_min_length
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp",
+            description: "Whether to fetch LSP completions or not",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp Fetch Timeout Ms",
+            description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_fetch_timeout_ms
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language
+                            .completions
+                            .get_or_insert_default()
+                            .lsp_fetch_timeout_ms
+                    })
+                },
+            }),
+            metadata: None,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Lsp Insert Mode",
+            description: "Controls how LSP completions are inserted",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    language_settings_field(settings_content, |language| {
+                        if let Some(completions) = &language.completions {
+                            &completions.lsp_insert_mode
+                        } else {
+                            &None
+                        }
+                    })
+                },
+                pick_mut: |settings_content| {
+                    language_settings_field_mut(settings_content, |language| {
+                        &mut language.completions.get_or_insert_default().lsp_insert_mode
+                    })
+                },
+            }),
             metadata: None,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
