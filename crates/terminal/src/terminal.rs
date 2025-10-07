@@ -466,16 +466,15 @@ impl TerminalBuilder {
 
         let shell_params = match shell.clone() {
             Shell::System => {
-                #[cfg(target_os = "windows")]
-                {
+                if cfg!(windows) {
                     Some(ShellParams::new(
                         util::shell::get_windows_system_shell(),
                         None,
                         None,
                     ))
+                } else {
+                    None
                 }
-                #[cfg(not(target_os = "windows"))]
-                None
             }
             Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
