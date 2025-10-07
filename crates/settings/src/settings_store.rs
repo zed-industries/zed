@@ -67,7 +67,11 @@ pub trait Settings: 'static + Send + Sync + Sized {
     ///
     /// This function *should* panic if default values are missing,
     /// and you should add a default to default.json for documentation.
-    fn from_settings(content: &SettingsContent) -> Self;
+    fn from_settings(content: &SettingsContent, cx: &mut App) -> Self;
+
+    fn missing_default() -> anyhow::Error {
+        anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
+    }
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
@@ -78,8 +82,8 @@ pub trait Settings: 'static + Send + Sync + Sized {
     where
         Self: Sized,
     {
-        SettingsStore::update_global(cx, |store, _| {
-            store.register_setting::<Self>();
+        SettingsStore::update_global(cx, |store, cx| {
+            store.register_setting::<Self>(cx);
         });
     }
 
@@ -201,7 +205,7 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any>;
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
@@ -255,7 +259,7 @@ impl SettingsStore {
     }
 
     /// Add a new type of setting to the store.
-    pub fn register_setting<T: Settings>(&mut self) {
+    pub fn register_setting<T: Settings>(&mut self, cx: &mut App) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
 
@@ -267,7 +271,7 @@ impl SettingsStore {
             global_value: None,
             local_values: Vec::new(),
         }));
-        let value = T::from_settings(&self.merged_settings);
+        let value = T::from_settings(&self.merged_settings, cx);
         setting_value.set_global_value(Box::new(value));
     }
 
@@ -940,7 +944,7 @@ impl SettingsStore {
             self.merged_settings = Rc::new(merged);
 
             for setting_value in self.setting_values.values_mut() {
-                let value = setting_value.from_settings(&self.merged_settings);
+                let value = setting_value.from_settings(&self.merged_settings, cx);
                 setting_value.set_global_value(value);
             }
         }
@@ -977,7 +981,8 @@ impl SettingsStore {
             }
 
             for setting_value in self.setting_values.values_mut() {
-                let value = setting_value.from_settings(&project_settings_stack.last().unwrap());
+                let value =
+                    setting_value.from_settings(&project_settings_stack.last().unwrap(), cx);
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
@@ -1061,8 +1066,8 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any> {
-        Box::new(T::from_settings(s)) as _
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any> {
+        Box::new(T::from_settings(s, cx)) as _
     }
 
     fn setting_type_name(&self) -> &'static str {
@@ -1133,7 +1138,7 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             AutoUpdateSetting {
                 auto_update: content.auto_update.unwrap(),
             }
@@ -1147,7 +1152,7 @@ mod tests {
     }
 
     impl Settings for ItemSettings {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = content.tabs.clone().unwrap();
             ItemSettings {
                 close_position: content.close_position.unwrap(),
@@ -1176,7 +1181,7 @@ mod tests {
     }
 
     impl Settings for DefaultLanguageSettings {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = &content.project.all_languages.defaults;
             DefaultLanguageSettings {
                 tab_size: content.tab_size.unwrap(),
@@ -1200,9 +1205,9 @@ mod tests {
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
-        store.register_setting::<AutoUpdateSetting>();
-        store.register_setting::<ItemSettings>();
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<AutoUpdateSetting>(cx);
+        store.register_setting::<ItemSettings>(cx);
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
@@ -1308,7 +1313,7 @@ mod tests {
         store
             .set_user_settings(r#"{ "auto_update": false }"#, cx)
             .unwrap();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
@@ -1516,9 +1521,9 @@ mod tests {
     #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
-        store.register_setting::<ItemSettings>();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         // create settings that werent present
         check_vscode_import(
@@ -1637,7 +1642,7 @@ mod tests {
     #[gpui::test]
     fn test_global_settings(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<ItemSettings>();
+        store.register_setting::<ItemSettings>(cx);
 
         // Set global settings - these should override defaults but not user settings
         store
@@ -1686,7 +1691,7 @@ mod tests {
     #[gpui::test]
     fn test_get_value_for_field_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
@@ -1743,8 +1748,8 @@ mod tests {
     #[gpui::test]
     fn test_get_value_for_field_local_worktrees_dont_interfere(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
 
@@ -1872,7 +1877,7 @@ mod tests {
     #[gpui::test]
     fn test_get_overrides_for_field(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
         let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());

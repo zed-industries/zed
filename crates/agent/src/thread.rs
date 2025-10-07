@@ -3276,6 +3276,7 @@ mod tests {
     use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
+    use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
 
@@ -5336,7 +5337,7 @@ fn main() {{
             thread_store::init(fs.clone(), cx);
             workspace::init_settings(cx);
             language_model::init_settings(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            ThemeSettings::register(cx);
             ToolRegistry::default_global(cx);
             assistant_tool::init(cx);
 

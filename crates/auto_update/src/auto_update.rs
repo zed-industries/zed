@@ -127,7 +127,7 @@ struct AutoUpdateSetting(bool);
 ///
 /// Default: true
 impl Settings for AutoUpdateSetting {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self(content.auto_update.unwrap())
     }
 }

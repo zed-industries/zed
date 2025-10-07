@@ -4,6 +4,7 @@ use crate::{
     self as settings,
     settings_content::{BaseKeymapContent, SettingsContent},
 };
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, VsCodeSettings};
@@ -130,7 +131,7 @@ impl BaseKeymap {
 }
 
 impl Settings for BaseKeymap {
-    fn from_settings(s: &crate::settings_content::SettingsContent) -> Self {
+    fn from_settings(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
         s.base_keymap.unwrap().into()
     }
 
