@@ -1,5 +1,5 @@
 use notify_debouncer_full::{
-    Debouncer, RecommendedCache, new_debouncer,
+    Debouncer, FileIdMap, new_debouncer,
     notify::{self, EventKind},
 };
 use parking_lot::Mutex;
@@ -154,7 +154,7 @@ struct WatcherState {
 
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
-    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
+    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, FileIdMap>>,
 }
 
 impl GlobalWatcher {
