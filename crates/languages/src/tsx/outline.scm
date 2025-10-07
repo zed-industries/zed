@@ -31,6 +31,9 @@
     "interface" @context
     name: (_) @name) @item
 
+(property_signature
+    name: (_) @name) @item
+
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
@@ -189,6 +192,23 @@
         (variable_declarator
             name: (identifier) @name
             !value) @item))
+
+; Lexical declarations directly inside arrow function bodies
+; This captures variables at the immediate level of the arrow function
+(arrow_function
+    body: (statement_block
+        . (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name) @item)))
+
+; Lexical declarations directly inside function expression bodies
+(function_expression
+    body: (statement_block
+        . (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name) @item)))
 
 (class_declaration
     "class" @context
