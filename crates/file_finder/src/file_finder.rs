@@ -1392,7 +1392,11 @@ impl FileFinderDelegate {
                         active_editor
                             .downgrade()
                             .update_in(cx, |editor, window, cx| {
-                                editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                                editor.go_to_singleton_buffer_point(
+                                    Point::new(row, col),
+                                    window,
+                                    cx,
+                                );
                             })
                             .log_err();
                     }
@@ -1409,7 +1413,11 @@ impl FileFinderDelegate {
                         active_editor
                             .downgrade()
                             .update_in(cx, |editor, window, cx| {
-                                editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                                editor.go_to_singleton_buffer_point(
+                                    Point::new(row, col),
+                                    window,
+                                    cx,
+                                );
                             })
                             .log_err();
                     }

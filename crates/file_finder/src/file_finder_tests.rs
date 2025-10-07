@@ -2923,7 +2923,10 @@ async fn test_open_without_dismiss(cx: &mut TestAppContext) {
     // Search for file1 and open it without dismissing
     cx.simulate_input("file1");
     picker.update(cx, |picker, _| {
-        assert!(!picker.delegate.matches.matches.is_empty(), "Should have matches for file1");
+        assert!(
+            !picker.delegate.matches.matches.is_empty(),
+            "Should have matches for file1"
+        );
         assert_match_at_position(picker, 0, "file1.txt");
     });
 
@@ -2940,7 +2943,10 @@ async fn test_open_without_dismiss(cx: &mut TestAppContext) {
     // Verify that the file finder is still open (most important test)
     cx.read(|cx| {
         let file_finder = workspace.read(cx).active_modal::<FileFinder>(cx);
-        assert!(file_finder.is_some(), "File finder should still be open after OpenWithoutDismiss");
+        assert!(
+            file_finder.is_some(),
+            "File finder should still be open after OpenWithoutDismiss"
+        );
     });
 
     // Now test the regular confirm to ensure it still dismisses
@@ -2949,7 +2955,10 @@ async fn test_open_without_dismiss(cx: &mut TestAppContext) {
     // Verify that the file finder is now closed
     cx.read(|cx| {
         let file_finder = workspace.read(cx).active_modal::<FileFinder>(cx);
-        assert!(file_finder.is_none(), "File finder should be dismissed after regular confirm");
+        assert!(
+            file_finder.is_none(),
+            "File finder should be dismissed after regular confirm"
+        );
     });
 }
 
