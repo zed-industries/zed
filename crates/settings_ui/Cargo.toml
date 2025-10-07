@@ -39,6 +39,7 @@ util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

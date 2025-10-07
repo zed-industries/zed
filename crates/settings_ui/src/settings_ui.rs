@@ -34,6 +34,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
+use workspace::{OpenOptions, OpenVisible, Workspace};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
@@ -219,8 +220,12 @@ pub fn init(cx: &mut App) {
                 }
             });
             if has_flag {
-                div.on_action(cx.listener(|_, _: &OpenSettingsEditor, _, cx| {
-                    open_settings_editor(cx).ok();
+                div.on_action(cx.listener(|_, _: &OpenSettingsEditor, window, cx| {
+                    let window_handle = window
+                        .window_handle()
+                        .downcast::<Workspace>()
+                        .expect("Workspaces are root Windows");
+                    open_settings_editor(window_handle, cx).ok();
                 }))
             } else {
                 div
@@ -431,7 +436,10 @@ fn init_renderers(cx: &mut App) {
     // });
 }
 
-pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
+pub fn open_settings_editor(
+    workspace: WindowHandle<Workspace>,
+    cx: &mut App,
+) -> anyhow::Result<WindowHandle<SettingsWindow>> {
     let existing_window = cx
         .windows()
         .into_iter()
@@ -460,7 +468,7 @@ pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<Setting
             window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| SettingsWindow::new(window, cx)),
+        |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace), window, cx)),
     )
 }
 
@@ -485,6 +493,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 }
 
 pub struct SettingsWindow {
+    original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
@@ -763,6 +772,16 @@ enum SettingsUiFile {
 }
 
 impl SettingsUiFile {
+    fn file_location_str(&self) -> String {
+        match self {
+            SettingsUiFile::User => "settings.json".to_string(),
+            SettingsUiFile::Local((_, path)) => {
+                format!("{}/.zed/settings.json", path.display(PathStyle::local()))
+            }
+            SettingsUiFile::Server(file) => format!("{}/.zed/settings.json", file),
+        }
+    }
+
     fn name(&self) -> SharedString {
         match self {
             SettingsUiFile::User => SharedString::new_static("User"),
@@ -801,7 +820,11 @@ impl SettingsUiFile {
 }
 
 impl SettingsWindow {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        original_window: Option<WindowHandle<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let font_family_cache = theme::FontFamilyCache::global(cx);
 
         cx.spawn(async move |this, cx| {
@@ -835,6 +858,7 @@ impl SettingsWindow {
         .detach();
 
         let mut this = Self {
+            original_window,
             files: vec![],
             current_file: current_file,
             pages: vec![],
@@ -1198,7 +1222,7 @@ impl SettingsWindow {
         self.build_ui(cx);
     }
 
-    fn render_files(
+    fn render_files_header(
         &self,
         _window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -1233,7 +1257,16 @@ impl SettingsWindow {
                             }),
                     ),
             )
-            .child(Button::new("temp", "Edit in settings.json").style(ButtonStyle::Outlined)) // This should be replaced by the actual, functioning button
+            .child(
+                Button::new(
+                    "edit-in-json",
+                    format!("Edit in {}", self.current_file.file_location_str()),
+                )
+                .style(ButtonStyle::Outlined)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_current_settings_file(cx);
+                })),
+            )
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
@@ -1492,7 +1525,8 @@ impl SettingsWindow {
         let page_content;
 
         if sub_page_stack().len() == 0 {
-            page_header = self.render_files(window, cx).into_any_element();
+            page_header = self.render_files_header(window, cx).into_any_element();
+
             page_content = self
                 .render_page_items(self.page_items(), window, cx)
                 .into_any_element();
@@ -1533,6 +1567,113 @@ impl SettingsWindow {
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
             );
+    }
+
+    fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
+        match &self.current_file {
+            SettingsUiFile::User => {
+                let Some(original_window) = self.original_window.clone() else {
+                    return;
+                };
+                original_window
+                    .update(cx, |workspace, window, cx| {
+                        workspace
+                            .with_local_workspace(window, cx, |workspace, window, cx| {
+                                let create_task = workspace.project().update(cx, |project, cx| {
+                                    project.find_or_create_worktree(
+                                        paths::config_dir().as_path(),
+                                        false,
+                                        cx,
+                                    )
+                                });
+                                let open_task = workspace.open_paths(
+                                    vec![paths::settings_file().to_path_buf()],
+                                    OpenOptions {
+                                        visible: Some(OpenVisible::None),
+                                        ..Default::default()
+                                    },
+                                    None,
+                                    window,
+                                    cx,
+                                );
+
+                                cx.spawn_in(window, async move |workspace, cx| {
+                                    create_task.await.ok();
+                                    open_task.await;
+
+                                    workspace.update_in(cx, |_, window, cx| {
+                                        window.activate_window();
+                                        cx.notify();
+                                    })
+                                })
+                                .detach();
+                            })
+                            .detach();
+                    })
+                    .ok();
+            }
+            SettingsUiFile::Local((worktree_id, path)) => {
+                let mut corresponding_workspace: Option<WindowHandle<Workspace>> = None;
+                let settings_path = path.join(paths::local_settings_file_relative_path());
+                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
+                    return;
+                };
+                for workspace in app_state.workspace_store.read(cx).workspaces() {
+                    let contains_settings_file = workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.project().read(cx).contains_local_settings_file(
+                                *worktree_id,
+                                settings_path.as_ref(),
+                                cx,
+                            )
+                        })
+                        .ok();
+                    if Some(true) == contains_settings_file {
+                        corresponding_workspace = Some(workspace.clone());
+
+                        break;
+                    }
+                }
+
+                let Some(corresponding_workspace) = corresponding_workspace else {
+                    log::error!(
+                        "No corresponding workspace found for settings file {}",
+                        settings_path.as_std_path().display()
+                    );
+
+                    return;
+                };
+
+                // TODO: move zed::open_local_file() APIs to this crate, and
+                // re-implement the "initial_contents" behavior
+                corresponding_workspace
+                    .update(cx, |workspace, window, cx| {
+                        let open_task = workspace.open_path(
+                            (*worktree_id, settings_path.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+
+                        cx.spawn_in(window, async move |workspace, cx| {
+                            if open_task.await.log_err().is_some() {
+                                workspace
+                                    .update_in(cx, |_, window, cx| {
+                                        window.activate_window();
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
+                    })
+                    .ok();
+            }
+            SettingsUiFile::Server(_) => {
+                return;
+            }
+        };
     }
 
     fn current_page_index(&self) -> usize {
@@ -1896,7 +2037,7 @@ mod test {
         }
 
         fn new_builder(window: &mut Window, cx: &mut Context<Self>) -> Self {
-            let mut this = Self::new(window, cx);
+            let mut this = Self::new(None, window, cx);
             this.navbar_entries.clear();
             this.pages.clear();
             this
@@ -2046,6 +2187,7 @@ mod test {
         }
 
         let mut settings_window = SettingsWindow {
+            original_window: None,
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
             pages,
