@@ -101,6 +101,7 @@ impl BufferInlayHints {
                 } else {
                     chunk_start + 1
                 };
+                // TODO kb is this correct? Are LSP ranges inclusive or exclusive?
                 let chunk_end = std::cmp::min(
                     chunk_start + MAX_ROWS_IN_A_CHUNK - 1,
                     *buffer_row_range.end(),
@@ -131,8 +132,13 @@ impl BufferInlayHints {
         let row_range = point_range.start.row..=point_range.end.row;
         self.buffer_chunks
             .iter()
-            .filter(move |chunk_range| {
-                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
+            .filter(move |chunk| {
+                let chunk_range = chunk.start..chunk.end;
+                // TODO kb is this right?
+                chunk_range.contains(&row_range.start())
+                    || chunk_range.contains(&row_range.end())
+                    || row_range.contains(&chunk_range.start)
+                    || row_range.contains(&chunk_range.end)
             })
             .copied()
     }

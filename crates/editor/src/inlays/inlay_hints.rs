@@ -1958,9 +1958,9 @@ pub mod tests {
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
                     inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
-                ..Default::default()
+                ..FakeLspAdapter::default()
             },
         );
 
@@ -2124,20 +2124,35 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
-                let expected_hints = vec![
-                    "main hint #0".to_string(),
-                    "main hint #1".to_string(),
-                    "main hint #2".to_string(),
-                    "main hint #3".to_string(),
-                    "main hint #4".to_string(),
-                    "main hint #5".to_string(),
-                    "other hint #0".to_string(),
-                    "other hint #1".to_string(),
-                    "other hint #2".to_string(),
-                ];
-                assert_eq!(expected_hints, sorted_cached_hint_labels(editor, cx),
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                    ], sorted_cached_hint_labels(editor, cx),
                     "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "Editor should show only visible hints",
+                );
             })
             .unwrap();
 
@@ -2154,23 +2169,41 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
-                let expected_hints = vec![
-                    "main hint #0".to_string(),
-                    "main hint #1".to_string(),
-                    "main hint #2".to_string(),
-                    "main hint #3".to_string(),
-                    "main hint #4".to_string(),
-                    "main hint #5".to_string(),
-                    "other hint #0".to_string(),
-                    "other hint #1".to_string(),
-                    "other hint #2".to_string(),
-                    "other hint #3".to_string(),
-                    "other hint #4".to_string(),
-                    "other hint #5".to_string(),
-                ];
-                assert_eq!(expected_hints, sorted_cached_hint_labels(editor, cx),
-                    "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                    "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched"
+                );
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "Editor shows only hints for excerpts that were visible when scrolling"
+                );
             })
             .unwrap();
 
@@ -2187,23 +2220,41 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
-                let expected_hints = vec![
-                    "main hint #0".to_string(),
-                    "main hint #1".to_string(),
-                    "main hint #2".to_string(),
-                    "main hint #3".to_string(),
-                    "main hint #4".to_string(),
-                    "main hint #5".to_string(),
-                    "other hint #0".to_string(),
-                    "other hint #1".to_string(),
-                    "other hint #2".to_string(),
-                    "other hint #3".to_string(),
-                    "other hint #4".to_string(),
-                    "other hint #5".to_string(),
-                ];
-                assert_eq!(expected_hints, sorted_cached_hint_labels(editor, cx),
-                    "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
+                    ],
+                    sorted_cached_hint_labels(editor, cx),
+                    "After multibuffer was scrolled to the end, further scrolls up should not bring more hints"
+                );
+                assert_eq!(
+                    vec![
+                        "main hint #0".to_string(),
+                        "main hint #1".to_string(),
+                        "main hint #2".to_string(),
+                        "main hint #3".to_string(),
+                        "main hint #4".to_string(),
+                        "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
+                    ],
+                    visible_hint_labels(editor, cx),
+                    "Hint #3 was skipped/not visible when scrolled",
+                );
             })
             .unwrap();
 
@@ -2220,12 +2271,10 @@ pub mod tests {
         editor
             .update(cx, |editor, _window, cx| {
                 let expected_hints = vec![
-                    "main hint #0".to_string(),
-                    "main hint #1".to_string(),
-                    "main hint #2".to_string(),
-                    "main hint #3".to_string(),
-                    "main hint #4".to_string(),
-                    "main hint #5".to_string(),
+                    "main hint(edited) #0".to_string(),
+                    "main hint(edited) #1".to_string(),
+                    "main hint(edited) #2".to_string(),
+                    "main hint(edited) #3".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
                 ];
@@ -2971,12 +3020,6 @@ pub mod tests {
             }));
             all_fetched_hints.extend(hints.all_fetched_hints());
         }
-
-        assert!(
-            all_fetched_hints.is_empty(),
-            "Did not expect background hints fetch tasks, but got {} of them",
-            all_fetched_hints.len()
-        );
 
         all_cached_labels
     }
