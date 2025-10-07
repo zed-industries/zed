@@ -369,6 +369,9 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
+        .add_renderer::<settings::MinimumContrast>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
         .add_renderer::<settings::ShowScrollbar>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })

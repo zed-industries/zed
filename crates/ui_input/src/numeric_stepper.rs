@@ -8,7 +8,7 @@ use std::{
 use editor::{Editor, EditorStyle};
 use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
-use settings::CodeFade;
+use settings::{CodeFade, MinimumContrast};
 use ui::{IconButtonShape, prelude::*};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -85,6 +85,30 @@ impl NumericStepperType for settings::CodeFade {
     }
     fn saturating_sub(self, rhs: Self) -> Self {
         CodeFade((self.0 - rhs.0).max(Self::min_value().0))
+    }
+}
+
+impl NumericStepperType for settings::MinimumContrast {
+    fn default_step() -> Self {
+        MinimumContrast(1.0)
+    }
+    fn large_step() -> Self {
+        MinimumContrast(10.0)
+    }
+    fn small_step() -> Self {
+        MinimumContrast(0.5)
+    }
+    fn min_value() -> Self {
+        MinimumContrast(0.0)
+    }
+    fn max_value() -> Self {
+        MinimumContrast(106.0)
+    }
+    fn saturating_add(self, rhs: Self) -> Self {
+        MinimumContrast((self.0 + rhs.0).min(Self::max_value().0))
+    }
+    fn saturating_sub(self, rhs: Self) -> Self {
+        MinimumContrast((self.0 - rhs.0).max(Self::min_value().0))
     }
 }
 

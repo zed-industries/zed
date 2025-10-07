@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::num;
 
 use collections::HashMap;
@@ -153,7 +154,8 @@ pub struct EditorSettingsContent {
     ///
     /// Values range from 0 to 106. Set to 0 to disable adjustments.
     /// Default: 45
-    pub minimum_contrast_for_highlights: Option<f32>,
+    #[schemars(range(min = 0, max = 106))]
+    pub minimum_contrast_for_highlights: Option<MinimumContrast>,
 
     /// Whether to follow-up empty go to definition responses from the language server or not.
     /// `FindAllReferences` allows to look up references of the same symbol instead.
@@ -764,4 +766,29 @@ pub enum DisplayIn {
     /// Show the minimap on the active editor only.
     #[default]
     ActiveEditor,
+}
+
+/// Minimum APCA perceptual contrast for text over highlight backgrounds.
+///
+/// Valid range: 0.0 to 106.0
+/// Default: 45.0
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct MinimumContrast(pub f32);
+
+impl Display for MinimumContrast {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.1}", self.0)
+    }
 }

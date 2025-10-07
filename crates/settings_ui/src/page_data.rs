@@ -712,6 +712,41 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Expand Excerpt Lines",
+                    description: "How many lines to expand the multibuffer excerpts by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.expand_excerpt_lines,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.expand_excerpt_lines
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Excerpt Context Lines",
+                    description: "How many lines of context to provide in multibuffer excerpts by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.excerpt_context_lines,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.excerpt_context_lines
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast For Highlights",
+                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.minimum_contrast_for_highlights
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.minimum_contrast_for_highlights
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Scrolling"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scroll Beyond Last Line",
