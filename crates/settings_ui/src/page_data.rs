@@ -1676,7 +1676,129 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Project Search Settings"),
+                SettingsPageItem::SectionHeader("Tab Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Activate On Close",
+                    description: "What to do after closing the current tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.activate_on_close
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .activate_on_close
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Show Diagnostics",
+                    description: "Which files containing diagnostic errors/warnings to mark in the tabs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.show_diagnostics
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .show_diagnostics
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Close Button",
+                    description: "Controls the appearance behavior of the tab's close button",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.show_close_button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .tabs
+                                .get_or_insert_default()
+                                .show_close_button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Preview Tabs"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Preview Tabs Enabled",
+                    description: "Whether to show opened editors as preview tabs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enabled
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From File Finder",
+                    description: "Whether to open tabs in preview mode when selected from the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enable_preview_from_file_finder
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_file_finder
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Enable Preview From Code Navigation",
+                    description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(preview_tabs) = &settings_content.preview_tabs {
+                                &preview_tabs.enable_preview_from_code_navigation
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .preview_tabs
+                                .get_or_insert_default()
+                                .enable_preview_from_code_navigation
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Search Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Whole Word",
                     description: "Whether to search for whole words by default",
@@ -1862,7 +1984,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
-            title: "Panels & Tools",
+            title: "Panels",
             items: vec![
                 SettingsPageItem::SectionHeader("Project Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2579,128 +2701,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Tab Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Activate On Close",
-                    description: "What to do after closing the current tab",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.activate_on_close
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .tabs
-                                .get_or_insert_default()
-                                .activate_on_close
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Tab Show Diagnostics",
-                    description: "Which files containing diagnostic errors/warnings to mark in the tabs",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.show_diagnostics
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .tabs
-                                .get_or_insert_default()
-                                .show_diagnostics
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Close Button",
-                    description: "Controls the appearance behavior of the tab's close button",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tabs) = &settings_content.tabs {
-                                &tabs.show_close_button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .tabs
-                                .get_or_insert_default()
-                                .show_close_button
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Preview Tabs"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Preview Tabs Enabled",
-                    description: "Whether to show opened editors as preview tabs",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(preview_tabs) = &settings_content.preview_tabs {
-                                &preview_tabs.enabled
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .preview_tabs
-                                .get_or_insert_default()
-                                .enabled
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Preview From File Finder",
-                    description: "Whether to open tabs in preview mode when selected from the file finder",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(preview_tabs) = &settings_content.preview_tabs {
-                                &preview_tabs.enable_preview_from_file_finder
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .preview_tabs
-                                .get_or_insert_default()
-                                .enable_preview_from_file_finder
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Enable Preview From Code Navigation",
-                    description: "Whether a preview tab gets replaced when code navigation is used to navigate away from the tab",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(preview_tabs) = &settings_content.preview_tabs {
-                                &preview_tabs.enable_preview_from_code_navigation
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .preview_tabs
-                                .get_or_insert_default()
-                                .enable_preview_from_code_navigation
-                        },
-                    }),
-                    metadata: None,
-                }),
             ],
         },
         SettingsPage {
@@ -2709,7 +2709,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Git"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Gutter",
-                    description: "Control whether the git gutter is shown",
+                    description: "Control whether git status is shown in the editor's gutter",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -2743,7 +2743,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     metadata: None,
                 // }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Enabled",
+                    title: "Inline Git Blame",
                     description: "Whether or not to show git blame data inline in the currently focused line",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2769,7 +2769,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Delay",
+                    title: "Inline Git Blame Delay",
                     description: "The delay after which the inline blame information is shown",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2795,7 +2795,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Padding",
+                    title: "Inline Git Blame Padding",
                     description: "Padding between the end of the source line and the start of the inline blame in columns",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -2821,7 +2821,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Blame Min Column",
+                    title: "Inline Git Blame Min Column",
                     description: "The minimum column number to show the inline blame information at",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
