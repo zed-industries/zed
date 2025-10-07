@@ -385,7 +385,19 @@ pub struct WhitespaceMapContent {
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Debug,
+    PartialEq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
@@ -500,7 +512,7 @@ pub struct CompletionSettingsContent {
     /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
     ///
     /// Default: 3
-    pub words_min_length: Option<usize>,
+    pub words_min_length: Option<u32>,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
@@ -516,7 +528,19 @@ pub struct CompletionSettingsContent {
     pub lsp_insert_mode: Option<LspInsertMode>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LspInsertMode {
     /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
@@ -532,7 +556,19 @@ pub enum LspInsertMode {
 }
 
 /// Controls how document's words are completed.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum WordsCompletionMode {
     /// Always fetch document's words for completions along with LSP completions.
@@ -559,17 +595,29 @@ pub struct PrettierSettingsContent {
 
     /// Forces Prettier integration to use specific plugins when formatting files with the language.
     /// The default Prettier will be installed with these plugins.
-    #[serde(default)]
-    pub plugins: HashSet<String>,
+    pub plugins: Option<HashSet<String>>,
 
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
-    pub options: HashMap<String, serde_json::Value>,
+    pub options: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// TODO: this should just be a bool
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
@@ -745,11 +793,10 @@ pub struct IndentGuideSettingsContent {
 
 /// The task settings for a particular language.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
-    #[serde(default)]
-    pub variables: HashMap<String, String>,
+    pub variables: Option<HashMap<String, String>>,
     pub enabled: Option<bool>,
     /// Use LSP tasks over Zed language extension ones.
     /// If no LSP tasks are returned due to error/timeout or regular execution,
@@ -768,7 +815,18 @@ pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsConte
 
 /// Determines how indent guides are colored.
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideColoring {
@@ -783,7 +841,18 @@ pub enum IndentGuideColoring {
 
 /// Determines how indent guide backgrounds are colored.
 #[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideBackgroundColoring {
@@ -835,5 +904,26 @@ mod test {
         let raw_auto = "{\"formatter\": {}}";
         let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_prettier_options() {
+        let raw_prettier = r#"{"allowed": false, "tabWidth": 4, "semi": false}"#;
+        let result = serde_json::from_str::<PrettierSettingsContent>(raw_prettier)
+            .expect("Failed to parse prettier options");
+        assert!(
+            result
+                .options
+                .as_ref()
+                .expect("options were flattened")
+                .contains_key("semi")
+        );
+        assert!(
+            result
+                .options
+                .as_ref()
+                .expect("options were flattened")
+                .contains_key("tabWidth")
+        );
     }
 }

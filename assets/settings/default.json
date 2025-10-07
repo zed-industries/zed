@@ -1876,21 +1876,19 @@
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // // Whether to consider prettier formatter or not when attempting to format a file.
-    "allowed": false
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
-    // "plugins": [],
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
+    // Enables or disables formatting with Prettier for any given language.
+    "allowed": false,
+    // Forces Prettier integration to use a specific parser name when formatting files with the language.
+    "plugins": [],
+    // Default Prettier options, in the format as in package.json section for Prettier.
+    // If project installs Prettier via its package.json, these options will be ignored.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
     // "singleQuote": true
+    // Forces Prettier integration to use a specific parser name when formatting files with the language
+    // when set to a non-empty string.
+    "parser": ""
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
