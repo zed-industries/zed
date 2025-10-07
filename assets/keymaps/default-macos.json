@@ -1341,7 +1341,7 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-escape": "onboarding::Finish",
+      "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
     }

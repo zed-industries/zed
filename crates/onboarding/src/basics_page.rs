@@ -2,15 +2,16 @@ use std::sync::Arc;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{Action, App, IntoElement};
+use gpui::{Action, App, IntoElement, ScrollHandle};
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
     ThemeSettings,
 };
 use ui::{
-    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
-    ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
+    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon,
+    WithScrollbar, prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -73,6 +74,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         )
                     }),
                 )
+                .size(ToggleButtonGroupSize::Medium)
                 .tab_index(tab_index)
                 .selected_index(theme_mode as usize)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
@@ -410,29 +412,24 @@ fn render_setting_import_button(
     label: SharedString,
     action: &dyn Action,
     imported: bool,
-) -> impl IntoElement {
+) -> impl IntoElement + 'static {
     let action = action.boxed_clone();
     h_flex().w_full().child(
         ButtonLike::new(label.clone())
             .style(ButtonStyle::Outlined)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .toggle_state(imported)
+            .size(ButtonSize::Medium)
             .tab_index(tab_index)
             .child(
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small))
                     .when(imported, |this| {
-                        this.child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .color(Color::Success)
-                                        .size(IconSize::XSmall),
-                                )
-                                .child(Label::new("Imported").size(LabelSize::Small)),
-                        )
-                    }),
+                        this.child(Icon::new(IconName::Check).color(Color::Success))
+                    })
+                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small)), // .border_1()
+                                                                                     // .border_color(cx.theme().colors().border_variant),
             )
             .on_click(move |_, window, cx| {
                 telemetry::event!("Welcome Import Settings", import_source = label,);
@@ -476,9 +473,10 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
         .child(h_flex().gap_2().child(vscode).child(cursor))
 }
 
-pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
+pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let mut tab_index = 0;
     v_flex()
+        .id("basics-page")
         .gap_6()
         .child(render_theme_section(&mut tab_index, cx))
         .child(render_base_keymap_section(&mut tab_index, cx))

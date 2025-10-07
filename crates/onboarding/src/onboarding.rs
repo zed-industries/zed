@@ -14,8 +14,8 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName, WithScrollbar,
-    prelude::*, rems_from_px,
+    KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
+    WithScrollbar as _, prelude::*, rems_from_px,
 };
 pub use ui_input::font_picker;
 use workspace::{
@@ -298,14 +298,14 @@ impl Onboarding {
         cx.open_url(&zed_urls::account_url(cx))
     }
 
-    fn render_page(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::basics_page::render_basics_page(cx).into_any_element()
+    fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        crate::basics_page::render_basics_page(window, cx).into_any_element()
     }
 }
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
+        div()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
@@ -329,18 +329,18 @@ impl Render for Onboarding {
             }))
             .child(
                 div()
-                    .max_w(rems_from_px(1100.))
-                    .max_h(rems_from_px(850.))
-                    .m_auto()
-                    .px_12()
+                    .max_w(Rems(48.0))
+                    .mx_auto()
                     .size_full()
+                    .gap_6()
                     .child(
                         v_flex()
                             .id("page-content")
-                            .gap_12()
+                            .gap_6()
                             .size_full()
                             .max_w_full()
                             .min_w_0()
+                            .p_12()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
                             .overflow_y_scroll()
                             .child(
@@ -349,14 +349,24 @@ impl Render for Onboarding {
                                     .gap_4()
                                     .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
                                     .child(
-                                        Headline::new("Welcome to Zed!").size(HeadlineSize::Small),
+                                        v_flex()
+                                            .child(
+                                                Headline::new("Welcome to Zed")
+                                                    .size(HeadlineSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("The editor for what's next")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small)
+                                                    .italic(),
+                                            ),
                                     )
                                     .child(div().w_full())
                                     .child({
-                                        // TODO: Change "Finish Setup" to have an arrow.
                                         Button::new("finish_setup", "Finish Setup")
-                                            .style(ButtonStyle::Outlined)
-                                            .size(ButtonSize::Medium)
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Large)
+                                            .width(Rems(12.0))
                                             .key_binding(
                                                 KeyBinding::for_action_in(
                                                     &Finish,
@@ -371,7 +381,7 @@ impl Render for Onboarding {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
                                     })
-                                    .pb_12()
+                                    .pb_6()
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border_variant.opacity(0.5)),
                             )
