@@ -48,8 +48,8 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Corner, DismissEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
-    WeakEntity, prelude::*,
+    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ReadGlobal as _, Subscription, Task,
+    UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -519,6 +519,14 @@ impl AgentPanel {
                         cx,
                     )
                 });
+
+                if SettingsStore::global(cx)
+                    .get::<DisableAiSettings>(None)
+                    .disable_ai
+                {
+                    return panel;
+                }
+
                 panel.as_mut(cx).loading = true;
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
