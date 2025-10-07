@@ -737,12 +737,9 @@ pub mod tests {
     use std::ops::Range;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
-    use std::time::Duration;
     use text::{Point, ToPoint as _};
     use ui::App;
     use util::path;
-
-    const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 500;
 
     #[gpui::test]
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
@@ -1765,7 +1762,7 @@ pub mod tests {
                         );
                     }
                 })),
-                ..Default::default()
+                ..FakeLspAdapter::default()
             },
         );
 
@@ -1777,55 +1774,20 @@ pub mod tests {
             .unwrap();
         let editor =
             cx.add_window(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
-
         cx.executor().run_until_parked();
-
         let _fake_server = fake_servers.next().await.unwrap();
-
-        // in large buffers, requests are made for more than visible range of a buffer.
-        // invisible parts are queried later, to avoid excessive requests on quick typing.
-        // wait the timeout needed to get all requests.
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
-        let initial_visible_range = editor_visible_range(&editor, cx);
-        let lsp_initial_visible_range = lsp::Range::new(
-            lsp::Position::new(
-                initial_visible_range.start.row,
-                initial_visible_range.start.column,
-            ),
-            lsp::Position::new(
-                initial_visible_range.end.row,
-                initial_visible_range.end.column,
-            ),
+
+        let ranges = lsp_request_ranges
+            .lock()
+            .drain(..)
+            .sorted_by_key(|r| r.start)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ranges.len(),
+            1,
+            "Should query 1 range initially, but got: {ranges:?}"
         );
-        let expected_initial_query_range_end =
-            lsp::Position::new(initial_visible_range.end.row * 2, 2);
-        let mut expected_invisible_query_start = lsp_initial_visible_range.end;
-        expected_invisible_query_start.character += 1;
-        editor.update(cx, |editor, _window, cx| {
-            let ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
-            assert_eq!(ranges.len(), 2,
-                "When scroll is at the edge of a big document, its visible part and the same range further should be queried in order, but got: {ranges:?}");
-            let visible_query_range = &ranges[0];
-            assert_eq!(visible_query_range.start, lsp_initial_visible_range.start);
-            assert_eq!(visible_query_range.end, lsp_initial_visible_range.end);
-            let invisible_query_range = &ranges[1];
-
-            assert_eq!(invisible_query_range.start, expected_invisible_query_start, "Should initially query visible edge of the document");
-            assert_eq!(invisible_query_range.end, expected_initial_query_range_end, "Should initially query visible edge of the document");
-
-            let requests_count = lsp_request_count.load(Ordering::Acquire);
-            assert_eq!(requests_count, 2, "Visible + invisible request");
-            let expected_hints = vec!["47".to_string(), "94".to_string()];
-            assert_eq!(
-                expected_hints,
-                cached_hint_labels(editor, cx),
-                "Should have hints from both LSP requests made for a big file"
-            );
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx), "Should display only hints from the visible range");
-        }).unwrap();
 
         editor
             .update(cx, |editor, window, cx| {
@@ -1838,9 +1800,6 @@ pub mod tests {
                 editor.scroll_screen(&ScrollAmount::Page(1.0), window, cx);
             })
             .unwrap();
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
         let visible_range_after_scrolls = editor_visible_range(&editor, cx);
         let visible_line_count = editor
@@ -1863,37 +1822,26 @@ pub mod tests {
                 let first_scroll = &ranges[0];
                 let second_scroll = &ranges[1];
                 assert_eq!(
-                    first_scroll.end, second_scroll.start,
+                    first_scroll.end.line + 1,
+                    second_scroll.start.line,
                     "Should query 2 adjacent ranges after the scrolls, but got: {ranges:?}"
                 );
-                assert_eq!(
-                first_scroll.start, expected_initial_query_range_end,
-                "First scroll should start the query right after the end of the original scroll",
-            );
-                assert_eq!(
-                second_scroll.end,
-                lsp::Position::new(
-                    visible_range_after_scrolls.end.row
-                        + visible_line_count.ceil() as u32,
-                    1,
-                ),
-                "Second scroll should query one more screen down after the end of the visible range"
-            );
 
                 let lsp_requests = lsp_request_count.load(Ordering::Acquire);
-                assert_eq!(lsp_requests, 4, "Should query for hints after every scroll");
-                let expected_hints = vec![
-                    "47".to_string(),
-                    "94".to_string(),
-                    "139".to_string(),
-                    "184".to_string(),
-                ];
                 assert_eq!(
-                    expected_hints,
-                    cached_hint_labels(editor, cx),
-                    "Should have hints from the new LSP response after the edit"
+                    lsp_requests, 3,
+                    "Should query hints initially, and after each scroll (2 times)"
                 );
-                assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+                assert_eq!(
+                    vec!["49".to_string(), "100".to_string(), "150".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Chunks of 50 line width should have been queried each time"
+                );
+                assert_eq!(
+                    vec!["49".to_string(), "100".to_string()],
+                    visible_hint_labels(editor, cx),
+                    "Editor should show only hints that it's scrolled to"
+                );
 
                 let mut selection_in_cached_range = visible_range_after_scrolls.end;
                 selection_in_cached_range.row -= visible_line_count.ceil() as u32;
@@ -1911,9 +1859,6 @@ pub mod tests {
                 );
             })
             .unwrap();
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
         editor.update(cx, |_, _, _| {
             let ranges = lsp_request_ranges
@@ -1922,7 +1867,7 @@ pub mod tests {
                 .sorted_by_key(|r| r.start)
                 .collect::<Vec<_>>();
             assert!(ranges.is_empty(), "No new ranges or LSP queries should be made after returning to the selection with cached hints");
-            assert_eq!(lsp_request_count.load(Ordering::Acquire), 4);
+            assert_eq!(lsp_request_count.load(Ordering::Acquire), 3, "No new requests should be made when selecting within cached chunks");
         }).unwrap();
 
         editor
@@ -1930,38 +1875,25 @@ pub mod tests {
                 editor.handle_input("++++more text++++", window, cx);
             })
             .unwrap();
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
         editor.update(cx, |editor, _window, cx| {
             let mut ranges = lsp_request_ranges.lock().drain(..).collect::<Vec<_>>();
             ranges.sort_by_key(|r| r.start);
 
-            assert_eq!(ranges.len(), 3,
-                "On edit, should scroll to selection and query a range around it: visible + same range above and below. Instead, got query ranges {ranges:?}");
-            let above_query_range = &ranges[0];
-            let visible_query_range = &ranges[1];
-            let below_query_range = &ranges[2];
-            assert!(above_query_range.end.character < visible_query_range.start.character || above_query_range.end.line + 1 == visible_query_range.start.line,
-                "Above range {above_query_range:?} should be before visible range {visible_query_range:?}");
-            assert!(visible_query_range.end.character < below_query_range.start.character || visible_query_range.end.line  + 1 == below_query_range.start.line,
-                "Visible range {visible_query_range:?} should be before below range {below_query_range:?}");
-            assert!(above_query_range.start.line < selection_in_cached_range.row,
+            assert_eq!(ranges.len(), 2,
+                "On edit, should scroll to selection and query a range around it: that range should split into 2 50 rows wide chunks. Instead, got query ranges {ranges:?}");
+            let first_chunk = &ranges[0];
+            let second_chunk = &ranges[1];
+            assert!(first_chunk.end.line + 1 == second_chunk.start.line,
+                "First chunk {first_chunk:?} should be before second chunk {second_chunk:?}");
+            assert!(first_chunk.start.line < selection_in_cached_range.row,
                 "Hints should be queried with the selected range after the query range start");
-            assert!(below_query_range.end.line > selection_in_cached_range.row,
-                "Hints should be queried with the selected range before the query range end");
-            assert!(above_query_range.start.line <= selection_in_cached_range.row - (visible_line_count * 3.0 / 2.0) as u32,
-                "Hints query range should contain one more screen before");
-            assert!(below_query_range.end.line >= selection_in_cached_range.row + (visible_line_count * 3.0 / 2.0) as u32,
-                "Hints query range should contain one more screen after");
 
             let lsp_requests = lsp_request_count.load(Ordering::Acquire);
-            assert_eq!(lsp_requests, 7, "There should be a visible range and two ranges above and below it queried");
-            let expected_hints = vec!["67".to_string(), "115".to_string(), "163".to_string()];
-            assert_eq!(expected_hints, cached_hint_labels(editor, cx),
-                "Should have hints from the new LSP response after the edit");
-            assert_eq!(expected_hints, visible_hint_labels(editor, cx));
+            assert_eq!(lsp_requests, 5, "Two chunks should be re-queried");
+            assert_eq!(vec!["100".to_string(), "150".to_string()], cached_hint_labels(editor, cx),
+                "Should have (less) hints from the new LSP response after the edit");
+            assert_eq!(vec!["100".to_string()], visible_hint_labels(editor, cx), "Should show only visible hints (in the center) from the new cached set");
         }).unwrap();
     }
 
@@ -2219,9 +2151,6 @@ pub mod tests {
                 );
             })
             .unwrap();
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {
@@ -2255,9 +2184,6 @@ pub mod tests {
                 );
             })
             .unwrap();
-        cx.executor().advance_clock(Duration::from_millis(
-            INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
-        ));
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, _window, cx| {

@@ -96,8 +96,15 @@ impl BufferInlayHints {
             .step_by(MAX_ROWS_IN_A_CHUNK as usize)
             .enumerate()
             .map(|(id, chunk_start)| {
-                let chunk_end =
-                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, *buffer_row_range.end());
+                let chunk_start = if id == 0 {
+                    chunk_start
+                } else {
+                    chunk_start + 1
+                };
+                let chunk_end = std::cmp::min(
+                    chunk_start + MAX_ROWS_IN_A_CHUNK - 1,
+                    *buffer_row_range.end(),
+                );
                 BufferChunk {
                     id,
                     start: chunk_start,
