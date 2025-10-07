@@ -288,205 +288,6 @@ impl Onboarding {
         cx.emit(ItemEvent::UpdateTab);
     }
 
-    fn render_nav_buttons(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> [impl IntoElement; 3] {
-        let pages = [
-            SelectedPage::Basics,
-            SelectedPage::Editing,
-            SelectedPage::AiSetup,
-        ];
-
-        let text = ["Basics", "Editing", "AI Setup"];
-
-        let actions: [&dyn Action; 3] = [
-            &ActivateBasicsPage,
-            &ActivateEditingPage,
-            &ActivateAISetupPage,
-        ];
-
-        let mut binding = actions.map(|action| {
-            KeyBinding::for_action_in(action, &self.focus_handle, window, cx)
-                .map(|kb| kb.size(rems_from_px(12.)))
-        });
-
-        pages.map(|page| {
-            let i = page as usize;
-            let selected = self.selected_page == page;
-            h_flex()
-                .id(text[i])
-                .relative()
-                .w_full()
-                .gap_2()
-                .px_2()
-                .py_0p5()
-                .justify_between()
-                .rounded_sm()
-                .when(selected, |this| {
-                    this.child(
-                        div()
-                            .h_4()
-                            .w_px()
-                            .bg(cx.theme().colors().text_accent)
-                            .absolute()
-                            .left_0(),
-                    )
-                })
-                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                .child(Label::new(text[i]).map(|this| {
-                    if selected {
-                        this.color(Color::Default)
-                    } else {
-                        this.color(Color::Muted)
-                    }
-                }))
-                .child(binding[i].take().map_or(
-                    gpui::Empty.into_any_element(),
-                    IntoElement::into_any_element,
-                ))
-                .on_click(cx.listener(move |this, click_event, _, cx| {
-                    let click = match click_event {
-                        gpui::ClickEvent::Mouse(_) => "mouse",
-                        gpui::ClickEvent::Keyboard(_) => "keyboard",
-                    };
-
-                    this.set_page(page, Some(click), cx);
-                }))
-        })
-    }
-
-    fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .h_full()
-            .w(rems_from_px(220.))
-            .flex_shrink_0()
-            .gap_4()
-            .justify_between()
-            .child(
-                v_flex()
-                    .gap_6()
-                    .child(
-                        h_flex()
-                            .px_2()
-                            .gap_4()
-                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
-                            .child(
-                                v_flex()
-                                    .child(
-                                        Headline::new("Welcome to Zed").size(HeadlineSize::Small),
-                                    )
-                                    .child(
-                                        Label::new("The editor for what's next")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small)
-                                            .italic(),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .gap_4()
-                            .child(
-                                v_flex()
-                                    .py_4()
-                                    .border_y_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                                    .gap_1()
-                                    .children(self.render_nav_buttons(window, cx)),
-                            )
-                            .map(|this| {
-                                if let Some(user) = self.user_store.read(cx).current_user() {
-                                    this.child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(
-                                                h_flex()
-                                                    .ml_2()
-                                                    .gap_2()
-                                                    .max_w_full()
-                                                    .w_full()
-                                                    .child(Avatar::new(user.avatar_uri.clone()))
-                                                    .child(
-                                                        Label::new(user.github_login.clone())
-                                                            .truncate(),
-                                                    ),
-                                            )
-                                            .child(
-                                                ButtonLike::new("open_account")
-                                                    .size(ButtonSize::Medium)
-                                                    .child(
-                                                        h_flex()
-                                                            .ml_1()
-                                                            .w_full()
-                                                            .justify_between()
-                                                            .child(Label::new("Open Account"))
-                                                            .children(
-                                                                KeyBinding::for_action_in(
-                                                                    &OpenAccount,
-                                                                    &self.focus_handle,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .map(|kb| {
-                                                                    kb.size(rems_from_px(12.))
-                                                                }),
-                                                            ),
-                                                    )
-                                                    .on_click(|_, window, cx| {
-                                                        window.dispatch_action(
-                                                            OpenAccount.boxed_clone(),
-                                                            cx,
-                                                        );
-                                                    }),
-                                            ),
-                                    )
-                                } else {
-                                    this.child(
-                                        ButtonLike::new("sign_in")
-                                            .size(ButtonSize::Medium)
-                                            .child(
-                                                h_flex()
-                                                    .ml_1()
-                                                    .w_full()
-                                                    .justify_between()
-                                                    .child(Label::new("Sign In"))
-                                                    .children(
-                                                        KeyBinding::for_action_in(
-                                                            &SignIn,
-                                                            &self.focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .map(|kb| kb.size(rems_from_px(12.))),
-                                                    ),
-                                            )
-                                            .on_click(|_, window, cx| {
-                                                telemetry::event!("Welcome Sign In Clicked");
-                                                window.dispatch_action(SignIn.boxed_clone(), cx);
-                                            }),
-                                    )
-                                }
-                            }),
-                    ),
-            )
-            .child({
-                Button::new("start_building", "Start Building")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .size(ButtonSize::Medium)
-                    .key_binding(
-                        KeyBinding::for_action_in(&Finish, &self.focus_handle, window, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
-                    )
-                    .on_click(|_, window, cx| {
-                        telemetry::event!("Welcome Start Building Clicked");
-                        window.dispatch_action(Finish.boxed_clone(), cx);
-                    })
-            })
-    }
-
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
         telemetry::event!("Welcome Skip Clicked");
         go_to_welcome_page(cx);
@@ -563,35 +364,25 @@ impl Render for Onboarding {
                 cx.notify();
             }))
             .child(
-                h_flex()
+                div()
                     .max_w(rems_from_px(1100.))
                     .max_h(rems_from_px(850.))
-                    .size_full()
                     .m_auto()
                     .py_20()
                     .px_12()
-                    .items_start()
-                    .gap_12()
-                    .child(self.render_nav(window, cx))
+                    .size_full()
                     .child(
-                        div()
+                        v_flex()
+                            .id("page-content")
                             .size_full()
-                            .pr_6()
-                            .child(
-                                v_flex()
-                                    .id("page-content")
-                                    .size_full()
-                                    .max_w_full()
-                                    .min_w_0()
-                                    .pl_12()
-                                    .border_l_1()
-                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                                    .overflow_y_scroll()
-                                    .child(self.render_page(window, cx))
-                                    .track_scroll(&self.scroll_handle),
-                            )
-                            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
-                    ),
+                            .max_w_full()
+                            .min_w_0()
+                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .overflow_y_scroll()
+                            .child(self.render_page(window, cx))
+                            .track_scroll(&self.scroll_handle),
+                    )
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
     }
 }
