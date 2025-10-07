@@ -950,15 +950,31 @@ impl SettingsWindow {
         self.build_ui(cx);
     }
 
-    fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_files(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
         h_flex()
+            .w_full()
             .gap_1()
-            .children(self.files.iter().enumerate().map(|(ix, file)| {
-                Button::new(ix, file.name())
-                    .toggle_state(file == &self.current_file)
-                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
-            }))
+            .justify_between()
+            .child(
+                h_flex()
+                    .id("file_buttons_container")
+                    .w_64() // Temporary fix until; long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
+                    .gap_1()
+                    .overflow_x_scroll()
+                    .children(self.files.iter().enumerate().map(|(ix, file)| {
+                        Button::new(ix, file.name())
+                            .toggle_state(file == &self.current_file)
+                            .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .on_click(
+                                cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)),
+                            )
+                    })),
+            )
+            .child(Button::new("temp", "Edit in settings.json").style(ButtonStyle::Outlined))
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
