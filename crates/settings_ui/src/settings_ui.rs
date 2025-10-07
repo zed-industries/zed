@@ -28,8 +28,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape,
-    KeybindingPosition, PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeybindingPosition,
+    PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -1265,7 +1265,7 @@ impl SettingsWindow {
         let page_content;
 
         if sub_page_stack().len() == 0 {
-            page_header = self.render_files(window, cx);
+            page_header = self.render_files(window, cx).into_any_element();
             page_content = self
                 .render_page_items(self.page_items(), window, cx)
                 .into_any_element();
@@ -1281,7 +1281,8 @@ impl SettingsWindow {
                             this.pop_sub_page(cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs());
+                .child(self.render_sub_page_breadcrumbs())
+                .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
             page_content = (active_page_render_fn)(self, window, cx);
