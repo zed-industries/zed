@@ -3480,6 +3480,7 @@ pub struct LspStore {
     pub lsp_data: HashMap<BufferId, BufferLspData>,
 }
 
+#[derive(Debug)]
 pub struct BufferLspData {
     buffer_version: Global,
     document_colors: DocumentColorData,
@@ -6476,7 +6477,6 @@ impl LspStore {
     pub fn inlay_hints(
         &mut self,
         invalidate: InvalidationStrategy,
-        debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
@@ -6573,57 +6573,48 @@ impl LspStore {
                 })
                 .collect()))
         } else {
-            let next_hint_id = lsp_data.next_hint_id.clone();
-            cx.spawn(async move |lsp_store, cx| {
-                if let Some(debounce) = debounce {
-                    cx.background_executor().timer(debounce).await;
-                }
-                lsp_store.update(cx, |lsp_store, cx| {
-                    for (chunk, range_to_query) in ranges_to_query {
-                        let new_fetch_task =
-                            lsp_store.fetch_inlay_hints(for_server, &buffer, range_to_query, cx);
-                        let next_hint_id = next_hint_id.clone();
-                        let new_inlay_hints = cx
-                            .background_spawn(async move {
-                                new_fetch_task
-                                    .await
-                                    .map(|new_hints_by_server| {
-                                        new_hints_by_server
-                                            .into_iter()
-                                            .map(|(server_id, new_hints)| {
-                                                (
-                                                    server_id,
-                                                    new_hints
-                                                        .into_iter()
-                                                        .map(|new_hint| {
-                                                            (
-                                                                InlayId::Hint(
-                                                                    next_hint_id.fetch_add(
-                                                                        1,
-                                                                        atomic::Ordering::AcqRel,
-                                                                    ),
-                                                                ),
-                                                                new_hint,
-                                                            )
-                                                        })
-                                                        .collect(),
-                                                )
-                                            })
-                                            .collect()
+            for (chunk, range_to_query) in ranges_to_query {
+                let next_hint_id = lsp_data.next_hint_id.clone().clone();
+                let buffer = buffer.clone();
+                let new_inlay_hints = cx
+                    .spawn(async move |lsp_store, cx| {
+                        let new_fetch_task = lsp_store.update(cx, |lsp_store, cx| {
+                            lsp_store.fetch_inlay_hints(for_server, &buffer, range_to_query, cx)
+                        })?;
+                        new_fetch_task
+                            .await
+                            .map(|new_hints_by_server| {
+                                new_hints_by_server
+                                    .into_iter()
+                                    .map(|(server_id, new_hints)| {
+                                        (
+                                            server_id,
+                                            new_hints
+                                                .into_iter()
+                                                .map(|new_hint| {
+                                                    (
+                                                        InlayId::Hint(next_hint_id.fetch_add(
+                                                            1,
+                                                            atomic::Ordering::AcqRel,
+                                                        )),
+                                                        new_hint,
+                                                    )
+                                                })
+                                                .collect(),
+                                        )
                                     })
-                                    .map_err(Arc::new)
+                                    .collect()
                             })
-                            .shared();
-                        if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
-                            let fetch_task = lsp_data.inlay_hints.fetched_hints(&chunk);
-                            if fetch_task.is_none() {
-                                *fetch_task = Some(new_inlay_hints.clone());
-                            }
-                            hint_fetch_tasks.push((chunk, new_inlay_hints));
-                        }
-                    }
-                })?;
+                            .map_err(Arc::new)
+                    })
+                    .shared();
 
+                let fetch_task = lsp_data.inlay_hints.fetched_hints(&chunk);
+                *fetch_task = Some(new_inlay_hints.clone());
+                hint_fetch_tasks.push((chunk, new_inlay_hints));
+            }
+
+            cx.spawn(async move |lsp_store, cx| {
                 let new_inlay_hints = join_all(
                     hint_fetch_tasks
                         .into_iter()
