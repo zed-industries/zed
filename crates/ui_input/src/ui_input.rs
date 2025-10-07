@@ -4,10 +4,12 @@
 //!
 //! It can't be located in the `ui` crate because it depends on `editor`.
 //!
+mod font_picker;
 mod numeric_stepper;
 
 use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
+pub use font_picker::*;
 use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, Length, TextStyle};
 pub use numeric_stepper::*;
 use settings::Settings;

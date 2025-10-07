@@ -3801,7 +3801,7 @@ impl AcpThreadView {
                             .id(("file-name", index))
                             .pr_8()
                             .gap_1p5()
-                            .max_w_full()
+                            .w_full()
                             .overflow_x_scroll()
                             .child(file_icon)
                             .child(h_flex().gap_0p5().children(file_name).children(file_path))
@@ -6086,7 +6086,7 @@ pub(crate) mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
             prompt_store::init(cx)

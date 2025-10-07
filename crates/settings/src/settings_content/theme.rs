@@ -1,5 +1,5 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight};
+use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, SharedString};
 use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -237,6 +237,18 @@ impl AsRef<str> for FontFamilyName {
     }
 }
 
+impl From<SharedString> for FontFamilyName {
+    fn from(value: SharedString) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<FontFamilyName> for SharedString {
+    fn from(value: FontFamilyName) -> Self {
+        SharedString::new(value.0)
+    }
+}
+
 impl From<String> for FontFamilyName {
     fn from(value: String) -> Self {
         Self(Arc::from(value))
@@ -250,18 +262,7 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    JsonSchema,
-    MergeFrom,
-    Default,
-    strum::VariantNames,
-)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -271,10 +272,6 @@ pub enum BufferLineHeight {
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
-}
-
-impl strum::VariantArray for BufferLineHeight {
-    const VARIANTS: &'static [Self] = &[Self::Comfortable, Self::Standard];
 }
 
 fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>

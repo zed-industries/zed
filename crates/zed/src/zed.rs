@@ -1231,54 +1231,57 @@ pub fn handle_settings_file_changes(
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Helper function to process settings content
-    let process_settings = move |content: String,
-                                 is_user: bool,
-                                 store: &mut SettingsStore,
-                                 cx: &mut App|
-          -> bool {
-        let id = NotificationId::Named("failed-to-migrate-settings".into());
-        // Apply migrations to both user and global settings
-        let (processed_content, content_migrated) = match migrate_settings(&content) {
-            Ok(result) => {
-                dismiss_app_notification(&id, cx);
-                if let Some(migrated_content) = result {
-                    (migrated_content, true)
-                } else {
-                    (content, false)
+    let process_settings =
+        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
+            let id = NotificationId::Named("failed-to-migrate-settings".into());
+            // Apply migrations to both user and global settings
+            let (processed_content, content_migrated) = match migrate_settings(&content) {
+                Ok(result) => {
+                    dismiss_app_notification(&id, cx);
+                    if let Some(migrated_content) = result {
+                        (migrated_content, true)
+                    } else {
+                        (content, false)
+                    }
                 }
-            }
-            Err(err) => {
-                show_app_notification(id, cx, move |cx| {
-                    cx.new(|cx| {
-                        MessageNotification::new(format!("Failed to migrate settings\n{err}"), cx)
+                Err(err) => {
+                    show_app_notification(id, cx, move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(
+                                format!(
+                                    "Failed to migrate settings\n\
+                                    {err}"
+                                ),
+                                cx,
+                            )
                             .primary_message("Open Settings File")
                             .primary_icon(IconName::Settings)
                             .primary_on_click(|window, cx| {
                                 window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                                 cx.emit(DismissEvent);
                             })
-                    })
-                });
-                // notify user here
-                (content, false)
+                        })
+                    });
+                    // notify user here
+                    (content, false)
+                }
+            };
+
+            let result = if is_user {
+                store.set_user_settings(&processed_content, cx)
+            } else {
+                store.set_global_settings(&processed_content, cx)
+            };
+
+            if let Err(err) = &result {
+                let settings_type = if is_user { "user" } else { "global" };
+                log::error!("Failed to load {} settings: {err}", settings_type);
             }
+
+            settings_changed(result.err(), cx);
+
+            content_migrated
         };
-
-        let result = if is_user {
-            store.set_user_settings(&processed_content, cx)
-        } else {
-            store.set_global_settings(&processed_content, cx)
-        };
-
-        if let Err(err) = &result {
-            let settings_type = if is_user { "user" } else { "global" };
-            log::error!("Failed to load {} settings: {err}", settings_type);
-        }
-
-        settings_changed(result.err(), cx);
-
-        content_migrated
-    };
 
     // Initial load of both settings files
     let global_content = cx
@@ -1994,8 +1997,11 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::rel_path};
+    use theme::ThemeRegistry;
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -4593,7 +4599,7 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+            if theme.name.as_ref() == "One Dark" {
                 has_default_theme = true;
             }
         }
