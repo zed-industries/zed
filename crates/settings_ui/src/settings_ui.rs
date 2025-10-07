@@ -996,9 +996,6 @@ impl SettingsWindow {
             .p_2p5()
             .pt_10()
             .gap_3()
-            .track_focus(&self.navbar_focus_handle)
-            .tab_group()
-            .tab_index(NAVBAR_GROUP_TAB_INDEX)
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
@@ -1007,6 +1004,9 @@ impl SettingsWindow {
             .child(
                 v_flex()
                     .flex_grow()
+                    .track_focus(&self.navbar_focus_handle)
+                    .tab_group()
+                    .tab_index(NAVBAR_GROUP_TAB_INDEX)
                     .child(
                         uniform_list(
                             "settings-ui-nav-bar",
@@ -1031,10 +1031,16 @@ impl SettingsWindow {
                                                 },
                                             ))
                                         })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.navbar_entry = ix;
-                                            cx.notify();
-                                        }))
+                                        .on_click(cx.listener(
+                                            move |this, evt: &gpui::ClickEvent, window, cx| {
+                                                this.navbar_entry = ix;
+                                                if evt.is_keyboard() {
+                                                    // todo(settings_ui): Focus the actual item and scroll to it
+                                                    this.focus_first_content_item(window, cx);
+                                                }
+                                                cx.notify();
+                                            },
+                                        ))
                                         .into_any_element()
                                     })
                                     .collect()
@@ -1064,6 +1070,18 @@ impl SettingsWindow {
                     .key_binding_position(KeybindingPosition::Start),
                 ),
             )
+    }
+
+    fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navbar_focus_handle.focus(window);
+        window.focus_next();
+        cx.notify();
+    }
+
+    fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.content_focus_handle.focus(window);
+        window.focus_next();
+        cx.notify();
     }
 
     fn page_items(&self) -> impl Iterator<Item = &SettingsPageItem> {
@@ -1274,16 +1292,10 @@ impl Render for SettingsWindow {
             }))
             .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
                 if this.navbar_focus_handle.contains_focused(window, cx) {
-                    this.content_focus_handle.focus(window)
+                    this.focus_first_content_item(window, cx);
                 } else {
-                    this.navbar_focus_handle.focus(window)
+                    this.focus_first_nav_item(window, cx);
                 }
-                // todo! WIP -
-                // this focus_next is not working because the content_focus_handle does not have a focus index
-                // and therefore the next always goes to the nav
-
-                // focus the first tab_index item in nav or context
-                window.focus_next();
             }))
             .on_action(|_: &menu::SelectNext, window, _| {
                 window.focus_next();
@@ -1709,6 +1721,7 @@ mod test {
             search_task: None,
             scroll_handle: ScrollHandle::new(),
             navbar_focus_handle: cx.focus_handle(),
+            content_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_search_matches();
