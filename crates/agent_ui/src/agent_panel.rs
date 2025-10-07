@@ -53,7 +53,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
-use project::{DisableAiSettings, Project, ProjectPath, Worktree};
+use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
@@ -519,6 +519,7 @@ impl AgentPanel {
                         cx,
                     )
                 });
+
                 panel.as_mut(cx).loading = true;
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
@@ -669,43 +670,6 @@ impl AgentPanel {
                 cx,
             )
         });
-
-        let mut old_disable_ai = false;
-        cx.observe_global_in::<SettingsStore>(window, move |panel, window, cx| {
-            let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
-            if old_disable_ai != disable_ai {
-                let agent_panel_id = cx.entity_id();
-                let agent_panel_visible = panel
-                    .workspace
-                    .update(cx, |workspace, cx| {
-                        let agent_dock_position = panel.position(window, cx);
-                        let agent_dock = workspace.dock_at_position(agent_dock_position);
-                        let agent_panel_focused = agent_dock
-                            .read(cx)
-                            .active_panel()
-                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
-
-                        let active_panel_visible = agent_dock
-                            .read(cx)
-                            .visible_panel()
-                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
-
-                        if agent_panel_focused {
-                            cx.dispatch_action(&ToggleFocus);
-                        }
-
-                        active_panel_visible
-                    })
-                    .unwrap_or_default();
-
-                if agent_panel_visible {
-                    cx.emit(PanelEvent::Close);
-                }
-
-                old_disable_ai = disable_ai;
-            }
-        })
-        .detach();
 
         Self {
             active_view,

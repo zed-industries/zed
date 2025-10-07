@@ -24,4 +24,4 @@ runs:
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
       run: |
-        cargo nextest run --workspace --no-fail-fast
+        cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
