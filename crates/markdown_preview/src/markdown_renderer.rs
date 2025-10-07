@@ -217,11 +217,7 @@ fn render_markdown_list_item(
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let padding = cx.scaled_rems(
-        parsed
-            .depth
-            .saturating_sub(if parsed.nested { 2 } else { 1 }) as f32,
-    );
+    let padding = cx.scaled_rems(if parsed.nested { 0 } else { parsed.depth - 1 } as f32);
 
     let bullet = match &parsed.item_type {
         Ordered(order) => format!("{}.", order).into_any_element(),
@@ -282,6 +278,7 @@ fn render_markdown_list_item(
 
     let item = h_flex()
         .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .when(parsed.nested && parsed.depth > 1, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
