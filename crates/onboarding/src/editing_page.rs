@@ -228,7 +228,7 @@ fn render_setting_import_button(
     )
 }
 
-fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoElement {
+pub fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoElement {
     let import_state = SettingsImportState::global(cx);
     let imports: [(SharedString, IconName, &dyn Action, bool); 2] = [
         (
@@ -252,14 +252,9 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoE
 
     v_flex()
         .gap_4()
-        .child(
-            v_flex()
-                .child(Label::new("Import Settings").size(LabelSize::Large))
-                .child(
-                    Label::new("Automatically pull your settings from other editors.")
-                        .color(Color::Muted),
-                ),
-        )
+        .child(v_flex().child(Label::new("Import Settings")).child(
+            Label::new("Automatically pull your settings from other editors.").color(Color::Muted),
+        ))
         .child(h_flex().w_full().gap_4().child(vscode).child(cursor))
 }
 
