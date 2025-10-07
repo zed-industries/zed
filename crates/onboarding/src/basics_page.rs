@@ -2,20 +2,20 @@ use std::sync::Arc;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{Action, App, IntoElement};
+use gpui::{Action, App, FocusHandle, IntoElement};
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
     ThemeSettings,
 };
 use ui::{
-    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
-    ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
+    ButtonLike, KeyBinding, ParentElement as _, StatefulInteractiveElement, SwitchField,
+    ToggleButtonGroup, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
 use crate::{
-    ImportCursorSettings, ImportVsCodeSettings, SettingsImportState,
+    Finish, ImportCursorSettings, ImportVsCodeSettings, SettingsImportState,
     theme_preview::{ThemePreviewStyle, ThemePreviewTile},
 };
 
@@ -454,7 +454,12 @@ fn render_setting_import_button(
     )
 }
 
-fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoElement {
+fn render_import_settings_section(
+    tab_index: &mut isize,
+    focus_handle: &FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     let import_state = SettingsImportState::global(cx);
     let imports: [(SharedString, IconName, &dyn Action, bool); 2] = [
         (
@@ -476,19 +481,50 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoE
         render_setting_import_button(*tab_index - 1, label, icon_name, action, imported)
     });
 
-    v_flex()
-        .gap_4()
-        .child(v_flex().child(Label::new("Import Settings")).child(
-            Label::new("Automatically pull your settings from other editors.").color(Color::Muted),
-        ))
-        .child(h_flex().w_full().gap_4().child(vscode).child(cursor))
+    h_flex()
+        .w_full()
+        .items_start()
+        .child(
+            v_flex()
+                .gap_4()
+                .child(
+                    v_flex().child(Label::new("Import Settings")).child(
+                        Label::new("Automatically pull your settings from other editors.")
+                            .color(Color::Muted),
+                    ),
+                )
+                .child(h_flex().w_full().gap_4().child(vscode).child(cursor)),
+        )
+        .child(div().w_full())
+        .child({
+            Button::new("finish_setup", "Finish Setup")
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .key_binding(
+                    KeyBinding::for_action_in(&Finish, focus_handle, window, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+                .on_click(|_, window, cx| {
+                    telemetry::event!("Welcome Start Building Clicked");
+                    window.dispatch_action(Finish.boxed_clone(), cx);
+                })
+        })
 }
 
-pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
+pub(crate) fn render_basics_page(
+    focus_handle: &FocusHandle,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
     let mut tab_index = 0;
     v_flex()
         .gap_6()
-        .child(render_import_settings_section(&mut tab_index, cx))
+        .child(render_import_settings_section(
+            &mut tab_index,
+            focus_handle,
+            window,
+            cx,
+        ))
         .child(render_theme_section(&mut tab_index, cx))
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))

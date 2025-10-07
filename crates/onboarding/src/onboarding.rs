@@ -13,10 +13,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use ui::{
-    KeyBinding, ParentElement as _, StatefulInteractiveElement, WithScrollbar, prelude::*,
-    rems_from_px,
-};
+use ui::{ParentElement as _, StatefulInteractiveElement, WithScrollbar, prelude::*, rems_from_px};
 pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -303,7 +300,10 @@ impl Onboarding {
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
+            SelectedPage::Basics => {
+                crate::basics_page::render_basics_page(&self.focus_handle, window, cx)
+                    .into_any_element()
+            }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
@@ -352,30 +352,6 @@ impl Render for Onboarding {
                             .min_w_0()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
                             .overflow_y_scroll()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .items_start()
-                                    .child(div().w_full())
-                                    .child({
-                                        Button::new("finish_setup", "Finish Setup")
-                                            .style(ButtonStyle::Outlined)
-                                            .size(ButtonSize::Medium)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &Finish,
-                                                    &self.focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(12.))),
-                                            )
-                                            .on_click(|_, window, cx| {
-                                                telemetry::event!("Welcome Start Building Clicked");
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            })
-                                    }),
-                            )
                             .child(self.render_page(window, cx))
                             .track_scroll(&self.scroll_handle),
                     )
