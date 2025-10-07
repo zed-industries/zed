@@ -85,7 +85,8 @@ trait AnySettingField {
     fn as_any(&self) -> &dyn Any;
     fn type_name(&self) -> &'static str;
     fn type_id(&self) -> TypeId;
-    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile;
+    // Returns the file this value was set in and true, or File::Default and false to indicate it was not found in any file (missing default)
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool);
 }
 
 impl<T> AnySettingField for SettingField<T> {
@@ -101,17 +102,15 @@ impl<T> AnySettingField for SettingField<T> {
         TypeId::of::<T>()
     }
 
-    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile {
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool) {
         if AnySettingField::type_id(self) == TypeId::of::<UnimplementedSettingField>() {
-            return file.to_settings();
+            return (file.to_settings(), true);
         }
 
-        let (file, _) = cx.global::<SettingsStore>().get_value_from_file(
-            file.to_settings(),
-            self.pick,
-            self.type_name(),
-        );
-        return file;
+        let (file, value) = cx
+            .global::<SettingsStore>()
+            .get_value_from_file(file.to_settings(), self.pick);
+        return (file, value.is_some());
     }
 }
 
@@ -548,8 +547,8 @@ impl SettingsPageItem {
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
-                let file_set_in =
-                    SettingsUiFile::from_settings(setting_item.field.file_set_in(file.clone(), cx));
+                let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
+                let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
                 h_flex()
                     .id(setting_item.title)
@@ -595,13 +594,24 @@ impl SettingsPageItem {
                                     .color(Color::Muted),
                             ),
                     )
-                    .child(renderer.render(
-                        setting_item.field.as_ref(),
-                        file,
-                        setting_item.metadata.as_deref(),
-                        window,
-                        cx,
-                    ))
+                    .child(if cfg!(debug_assertions) && !found {
+                        Button::new("no-default-field", "NO DEFAULT")
+                            .size(ButtonSize::Medium)
+                            .icon(IconName::XCircle)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .into_any_element()
+                    } else {
+                        renderer.render(
+                            setting_item.field.as_ref(),
+                            file,
+                            setting_item.metadata.as_deref(),
+                            window,
+                            cx,
+                        )
+                    })
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
@@ -1472,17 +1482,14 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     metadata: Option<&SettingsFieldMetadata>,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, initial_text) = SettingsStore::global(cx).get_value_from_file(
-        file.to_settings(),
-        field.pick,
-        field.type_name(),
-    );
-    let initial_text = Some(initial_text.clone()).filter(|s| !s.as_ref().is_empty());
+    let (_, initial_text) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let initial_text = initial_text.filter(|s| !s.as_ref().is_empty());
 
     SettingsEditor::new()
         .tab_index(0)
         .when_some(initial_text, |editor, text| {
-            editor.with_initial_text(text.into())
+            editor.with_initial_text(text.as_ref().to_string())
         })
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
@@ -1504,13 +1511,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     file: SettingsUiFile,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(
-        file.to_settings(),
-        field.pick,
-        field.type_name(),
-    );
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
-    let toggle_state = if value.into() {
+    let toggle_state = if value.copied().map_or(false, Into::into) {
         ToggleState::Selected
     } else {
         ToggleState::Unselected
@@ -1539,9 +1542,10 @@ fn render_font_picker(
     cx: &mut App,
 ) -> AnyElement {
     let current_value = SettingsStore::global(cx)
-        .get_value_from_file(file.to_settings(), field.pick, field.type_name())
+        .get_value_from_file(file.to_settings(), field.pick)
         .1
-        .clone();
+        .cloned()
+        .unwrap_or_else(|| SharedString::default().into());
 
     let font_picker = cx.new(|cx| {
         ui_input::font_picker(
@@ -1596,12 +1600,8 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(
-        file.to_settings(),
-        field.pick,
-        field.type_name(),
-    );
-
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = value.copied().unwrap_or_else(T::min_value);
     NumericStepper::new("numeric_stepper", value, window, cx)
         .on_change({
             move |value, _window, cx| {
@@ -1629,11 +1629,9 @@ where
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
-    let (_, &current_value) = SettingsStore::global(cx).get_value_from_file(
-        file.to_settings(),
-        field.pick,
-        field.type_name(),
-    );
+    let (_, current_value) =
+        SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = current_value.copied().unwrap_or(variants()[0]);
 
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
