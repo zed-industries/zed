@@ -1021,9 +1021,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
-        let visible_count = visible_entries.len();
-
+        let visible_count = self.visible_navbar_entries().count();
         let nav_background = cx.theme().colors().panel_background;
 
         v_flex()
@@ -1193,26 +1191,7 @@ impl SettingsWindow {
             .size_full()
             .gap_4()
             .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .on_scroll_wheel(cx.listener(move |this, _, _, _| {
-                let scroll_index = this.scroll_handle.logical_scroll_top().0;
-
-                let mut page_index = this.navbar_entry;
-
-                while !this.navbar_entries[page_index].is_root {
-                    page_index -= 1;
-                }
-
-                if this.navbar_entries[page_index].expanded {
-                    let section_index = this
-                        .page_items()
-                        .take(scroll_index + 1)
-                        .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-                        .count();
-
-                    this.navbar_entry = section_index + page_index;
-                }
-            }));
+            .track_scroll(&self.scroll_handle);
 
         let items: Vec<_> = items.collect();
         let items_len = items.len();
@@ -1386,6 +1365,23 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
+
+        let scroll_index = self.scroll_handle.logical_scroll_top().0;
+        let mut page_index = self.navbar_entry;
+
+        while !self.navbar_entries[page_index].is_root {
+            page_index -= 1;
+        }
+
+        if self.navbar_entries[page_index].expanded {
+            let section_index = self
+                .page_items()
+                .take(scroll_index + 1)
+                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
+                .count();
+
+            self.navbar_entry = section_index + page_index;
+        }
 
         div()
             .id("settings-window")
