@@ -649,11 +649,31 @@ struct SettingItem {
     files: FileMask,
 }
 
+#[derive(PartialEq, Eq, Clone, Copy)]
 struct FileMask(u8);
+
+impl std::fmt::Debug for FileMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FileMask(")?;
+        let mut items = vec![];
+
+        if self.contains(USER) {
+            items.push("USER");
+        }
+        if self.contains(LOCAL) {
+            items.push("LOCAL");
+        }
+        if self.contains(SERVER) {
+            items.push("SERVER");
+        }
+
+        write!(f, "{})", items.join(" | "))
+    }
+}
 
 const USER: FileMask = FileMask(1 << 0);
 const LOCAL: FileMask = FileMask(1 << 2);
-const REMOTE: FileMask = FileMask(1 << 3);
+const SERVER: FileMask = FileMask(1 << 3);
 
 impl std::ops::BitAnd for FileMask {
     type Output = Self;
@@ -693,9 +713,16 @@ impl PartialEq for SettingItem {
     }
 }
 
+#[derive(PartialEq, Clone)]
+struct SubPageLinkSection {
+    files: FileMask,
+    links: Vec<SubPageLink>,
+}
+
 #[derive(Clone)]
 struct SubPageLink {
     title: &'static str,
+    files: FileMask,
     render: Arc<
         dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
             + 'static
@@ -722,7 +749,7 @@ impl SettingsUiFile {
     fn pages(&self) -> Vec<SettingsPage> {
         match self {
             SettingsUiFile::User => page_data::user_settings_data(),
-            SettingsUiFile::Local(_) => page_data::project_settings_data(),
+            SettingsUiFile::Local(_) => page_data::user_settings_data(),
             SettingsUiFile::Server(_) => page_data::user_settings_data(),
         }
     }
@@ -752,6 +779,14 @@ impl SettingsUiFile {
             SettingsUiFile::User => settings::SettingsFile::User,
             SettingsUiFile::Local(location) => settings::SettingsFile::Local(location.clone()),
             SettingsUiFile::Server(_) => settings::SettingsFile::Server,
+        }
+    }
+
+    fn mask(&self) -> FileMask {
+        match self {
+            SettingsUiFile::User => USER,
+            SettingsUiFile::Local(_) => LOCAL,
+            SettingsUiFile::Server(_) => SERVER,
         }
     }
 }
@@ -944,6 +979,40 @@ impl SettingsWindow {
         })
     }
 
+    fn filter_matches_to_file(&mut self) {
+        let current_file = self.current_file.mask();
+        for (page, page_filter) in std::iter::zip(&self.pages, &mut self.search_matches) {
+            let mut header_index = 0;
+            let mut any_found_since_last_header = false;
+            for (index, item) in page.items.iter().enumerate() {
+                match item {
+                    SettingsPageItem::SectionHeader(_) => {
+                        page_filter[header_index] = any_found_since_last_header;
+                        header_index = index;
+                        any_found_since_last_header = false;
+                    }
+                    SettingsPageItem::SettingItem(setting_item) => {
+                        if !setting_item.files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
+                    }
+                    SettingsPageItem::SubPageLink(sub_page_link) => {
+                        if !sub_page_link.files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
+                    }
+                }
+            }
+            if let Some(last_header) = page_filter.get_mut(header_index) {
+                *last_header = any_found_since_last_header;
+            }
+        }
+    }
+
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
         let query = self.search_bar.read(cx).text(cx);
@@ -951,6 +1020,7 @@ impl SettingsWindow {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
+            self.filter_matches_to_file();
             cx.notify();
             return;
         }
@@ -1016,6 +1086,7 @@ impl SettingsWindow {
                     page[header_index] = true;
                     page[item_index] = true;
                 }
+                this.filter_matches_to_file();
                 let first_navbar_entry_index = this
                     .visible_navbar_entries()
                     .next()
@@ -1041,9 +1112,7 @@ impl SettingsWindow {
         self.build_search_matches();
         self.build_navbar();
 
-        if !self.search_bar.read(cx).is_empty(cx) {
-            self.update_matches(cx);
-        }
+        self.update_matches(cx);
 
         cx.notify();
     }
@@ -1829,6 +1898,7 @@ mod test {
     impl SettingsPageItem {
         fn basic_item(title: &'static str, description: &'static str) -> Self {
             SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
                 title,
                 description,
                 field: Box::new(SettingField {

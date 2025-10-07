@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    LOCAL, REMOTE, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    LOCAL, SERVER, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
     SettingsPageItem, SubPageLink, USER, sub_page_stack,
 };
 
@@ -1576,6 +1576,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader(LANGUAGES_SECTION_HEADER),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "JSON",
+                    files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(language_settings_data().iter(), window, cx)
                             .into_any_element()
@@ -1583,6 +1584,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "JSONC",
+                    files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(language_settings_data().iter(), window, cx)
                             .into_any_element()
@@ -1590,6 +1592,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "Rust",
+                    files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(language_settings_data().iter(), window, cx)
                             .into_any_element()
@@ -1597,6 +1600,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "Python",
+                    files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(language_settings_data().iter(), window, cx)
                             .into_any_element()
@@ -1604,6 +1608,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SubPageLink(SubPageLink {
                     title: "TSX",
+                    files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
                         this.render_page_items(language_settings_data().iter(), window, cx)
                             .into_any_element()
