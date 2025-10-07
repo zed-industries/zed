@@ -7,9 +7,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
-    point, prelude::*, px, size, uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
 use schemars::JsonSchema;
@@ -28,8 +28,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
-    Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape,
+    KeybindingPosition, PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -428,6 +428,8 @@ pub struct SettingsWindow {
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
     scroll_handle: ScrollHandle,
+    navbar_focus_handle: FocusHandle,
+    content_focus_handle: FocusHandle,
 }
 
 struct SubPage {
@@ -713,6 +715,8 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
+            navbar_focus_handle: cx.focus_handle(),
+            content_focus_handle: cx.focus_handle(),
         };
 
         this.fetch_files(cx);
@@ -974,18 +978,22 @@ impl SettingsWindow {
         let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
         let visible_count = visible_entries.len();
 
+        let nav_background = cx.theme().colors().panel_background;
+
         v_flex()
             .w_64()
             .p_2p5()
             .pt_10()
             .gap_3()
+            .track_focus(&self.navbar_focus_handle)
             .tab_group()
             .tab_index(0)
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().panel_background)
+            .bg(nav_background)
             .child(self.render_search(window, cx))
+            .relative()
             .child(
                 v_flex()
                     .size_full()
@@ -1026,6 +1034,30 @@ impl SettingsWindow {
                         .flex_grow(),
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .absolute()
+                    .bottom_2()
+                    .bg(nav_background)
+                    .child(
+                        Button::new(
+                            "nav-key-hint",
+                            if self.navbar_focus_handle.contains_focused(window, cx) {
+                                "Focus Content"
+                            } else {
+                                "Focus Navbar"
+                            },
+                        )
+                        .key_binding(ui::KeyBinding::for_action_in(
+                            &ToggleFocusNav,
+                            &self.navbar_focus_handle,
+                            window,
+                            cx,
+                        ))
+                        .key_binding_position(KeybindingPosition::Start),
+                    ),
             )
     }
 
@@ -1073,8 +1105,6 @@ impl SettingsWindow {
             .size_full()
             .gap_4()
             .overflow_y_scroll()
-            .tab_group()
-            .tab_index(1)
             .track_scroll(&self.scroll_handle);
 
         let items: Vec<_> = items.collect();
@@ -1136,43 +1166,50 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let mut page = v_flex()
-            .w_full()
-            .pt_4()
-            .pb_6()
-            .px_6()
-            .gap_4()
-            .bg(cx.theme().colors().editor_background)
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
-
+        let page_header;
         let page_content;
 
         if sub_page_stack().len() == 0 {
-            page = page.child(self.render_files(window, cx));
+            page_header = self.render_files(window, cx);
             page_content = self
                 .render_page_items(self.page_items(), window, cx)
                 .into_any_element();
         } else {
-            page = page.child(
-                h_flex()
-                    .ml_neg_1p5()
-                    .gap_1()
-                    .child(
-                        IconButton::new("back-btn", IconName::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .shape(IconButtonShape::Square)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.pop_sub_page(cx);
-                            })),
-                    )
-                    .child(self.render_sub_page_breadcrumbs()),
-            );
+            page_header = h_flex()
+                .ml_neg_1p5()
+                .gap_1()
+                .child(
+                    IconButton::new("back-btn", IconName::ArrowLeft)
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.pop_sub_page(cx);
+                        })),
+                )
+                .child(self.render_sub_page_breadcrumbs());
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
             page_content = (active_page_render_fn)(self, window, cx);
         }
 
-        return page.child(page_content);
+        return v_flex()
+            .w_full()
+            .pt_4()
+            .pb_6()
+            .px_6()
+            .gap_4()
+            .track_focus(&self.content_focus_handle)
+            .bg(cx.theme().colors().editor_background)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .child(page_header)
+            .child(
+                div()
+                    .size_full()
+                    .track_focus(&self.content_focus_handle)
+                    .tab_group()
+                    .tab_index(1)
+                    .child(page_content),
+            );
     }
 
     fn current_page_index(&self) -> usize {
@@ -1229,6 +1266,19 @@ impl Render for SettingsWindow {
             .text_color(cx.theme().colors().text)
             .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
                 this.search_bar.focus_handle(cx).focus(window);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
+                if this.navbar_focus_handle.contains_focused(window, cx) {
+                    this.content_focus_handle.focus(window)
+                } else {
+                    this.navbar_focus_handle.focus(window)
+                }
+                // todo! WIP -
+                // this focus_next is not working because the content_focus_handle does not have a focus index
+                // and therefore the next always goes to the nav
+
+                // focus the first tab_index item in nav or context
+                window.focus_next();
             }))
             .on_action(|_: &menu::SelectNext, window, _| {
                 window.focus_next();
