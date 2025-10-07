@@ -2369,7 +2369,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
-                    description: "Whether to reveal it in the outline panel automatically when a corresponding outline entry becomes active",
+                    description: "Whether to reveal when a corresponding outline entry becomes active",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
