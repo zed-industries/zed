@@ -3210,6 +3210,7 @@ impl ProjectPanel {
                     for worktree_snapshot in visible_worktrees {
                         let worktree_id = worktree_snapshot.id();
 
+                        // TODO: this is used to run binary search for each item O(N * log(n))
                         let expanded_dir_ids = match new_state.expanded_dir_ids.entry(worktree_id) {
                             hash_map::Entry::Occupied(e) => e.into_mut(),
                             hash_map::Entry::Vacant(e) => {
@@ -3260,6 +3261,7 @@ impl ProjectPanel {
                                 if !new_state.unfolded_dir_ids.contains(&entry.id)
                                     && let Some(root_path) = worktree_snapshot.root_entry()
                                 {
+                                    // TODO: this is really expensive: O(D * log(n)) where D is the number of directories
                                     let mut child_entries =
                                         worktree_snapshot.child_entries(&entry.path);
                                     if let Some(child) = child_entries.next()
@@ -3301,6 +3303,7 @@ impl ProjectPanel {
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
                             {
                                 entry.id == new_entry_id || {
+                                    // TODO: expensive
                                     new_state.ancestors.get(&entry.id).is_some_and(|entries| {
                                         entries.ancestors.contains(&new_entry_id)
                                     })
@@ -3335,6 +3338,7 @@ impl ProjectPanel {
                                 else {
                                     continue;
                                 };
+                                // TODO: expensive
                                 let depth = entry.path.ancestors().count() - 1;
                                 (depth, path_name.chars().count())
                             } else {
@@ -3363,6 +3367,7 @@ impl ProjectPanel {
                                         })
                                     })
                                     .unwrap_or_else(|| entry.path.clone());
+                                // TODO: expensive
                                 let depth = path.components().count();
                                 (depth, path.as_unix_str().chars().count())
                             };
