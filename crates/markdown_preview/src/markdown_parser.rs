@@ -648,6 +648,7 @@ impl<'a> MarkdownParser<'a> {
                             content: list_item.content,
                             depth,
                             item_type: list_item.item_type,
+                            nested: false,
                         });
 
                         if let Some(index) = insertion_indices.get(&depth) {
@@ -1065,6 +1066,7 @@ impl<'a> MarkdownParser<'a> {
                                 ParsedMarkdownListItemType::Unordered
                             },
                             content,
+                            nested: true,
                         }));
                     }
                 }
@@ -1500,13 +1502,13 @@ mod tests {
         assert_eq!(
             ParsedMarkdown {
                 children: vec![
-                    list_item(
+                    nested_list_item(
                         0..82,
                         1,
                         ParsedMarkdownListItemType::Unordered,
                         vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
                     ),
-                    list_item(
+                    nested_list_item(
                         0..82,
                         1,
                         ParsedMarkdownListItemType::Unordered,
@@ -1531,13 +1533,13 @@ mod tests {
         assert_eq!(
             ParsedMarkdown {
                 children: vec![
-                    list_item(
+                    nested_list_item(
                         0..82,
                         1,
                         ParsedMarkdownListItemType::Ordered(1),
                         vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
                     ),
-                    list_item(
+                    nested_list_item(
                         0..82,
                         1,
                         ParsedMarkdownListItemType::Ordered(2),
@@ -1567,25 +1569,25 @@ mod tests {
         assert_eq!(
             ParsedMarkdown {
                 children: vec![
-                    list_item(
+                    nested_list_item(
                         0..216,
                         1,
                         ParsedMarkdownListItemType::Ordered(1),
                         vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
                     ),
-                    list_item(
+                    nested_list_item(
                         0..216,
                         1,
                         ParsedMarkdownListItemType::Ordered(2),
                         vec![
                             ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
-                            list_item(
+                            nested_list_item(
                                 0..216,
                                 2,
                                 ParsedMarkdownListItemType::Ordered(1),
                                 vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
                             ),
-                            list_item(
+                            nested_list_item(
                                 0..216,
                                 2,
                                 ParsedMarkdownListItemType::Ordered(2),
@@ -1617,25 +1619,25 @@ mod tests {
         assert_eq!(
             ParsedMarkdown {
                 children: vec![
-                    list_item(
+                    nested_list_item(
                         0..216,
                         1,
                         ParsedMarkdownListItemType::Unordered,
                         vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
                     ),
-                    list_item(
+                    nested_list_item(
                         0..216,
                         1,
                         ParsedMarkdownListItemType::Unordered,
                         vec![
                             ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
-                            list_item(
+                            nested_list_item(
                                 0..216,
                                 2,
                                 ParsedMarkdownListItemType::Unordered,
                                 vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
                             ),
-                            list_item(
+                            nested_list_item(
                                 0..216,
                                 2,
                                 ParsedMarkdownListItemType::Unordered,
@@ -2400,6 +2402,22 @@ fn main() {
             item_type,
             depth,
             content,
+            nested: false,
+        })
+    }
+
+    fn nested_list_item(
+        source_range: Range<usize>,
+        depth: u16,
+        item_type: ParsedMarkdownListItemType,
+        content: Vec<ParsedMarkdownElement>,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
+            source_range,
+            item_type,
+            depth,
+            content,
+            nested: true,
         })
     }
 

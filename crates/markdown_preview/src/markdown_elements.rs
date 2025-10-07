@@ -64,6 +64,8 @@ pub struct ParsedMarkdownListItem {
     pub depth: u16,
     pub item_type: ParsedMarkdownListItemType,
     pub content: Vec<ParsedMarkdownElement>,
+    /// whether we can expect nested list items
+    pub nested: bool,
 }
 
 #[derive(Debug)]
