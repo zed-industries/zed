@@ -80,10 +80,7 @@ impl Watcher for FsWatcher {
         let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
-        #[cfg(target_os = "windows")]
         let mode = notify::RecursiveMode::Recursive;
-        #[cfg(target_os = "linux")]
-        let mode = notify::RecursiveMode::NonRecursive;
 
         let registration_id = global({
             let path = path.clone();
