@@ -805,6 +805,12 @@
     //
     // Default: false
     "sort_by_path": false,
+    // The mode for organizing files in the git panel.
+    // - "zed": Files are grouped by type (Conflicts, Tracked, Untracked)
+    // - "vscode": Files are grouped by stagin status (Staged Changes, Changes)
+    //
+    // Default: zed
+    "panel_mode": "zed",
     // Whether to collapse untracked files in the diff panel.
     //
     // Default: false

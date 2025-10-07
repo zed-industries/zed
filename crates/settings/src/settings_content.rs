@@ -476,6 +476,13 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub collapse_untracked_diff: Option<bool>,
+
+    /// The mode for organizing files in the git panel.
+    /// - "zed": Files are grouped by type (Conflicts, Tracked, Untracked)
+    /// - "vscode": Files are grouped by stagin status (Staged Changes, Changes)
+    ///
+    /// Default: zed
+    pub panel_mode: Option<GitPanelMode>,
 }
 
 #[derive(
@@ -486,6 +493,16 @@ pub enum StatusStyle {
     #[default]
     Icon,
     LabelColor,
+}
+
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelMode {
+    #[default]
+    Zed,
+    Vscode,
 }
 
 #[skip_serializing_none]
