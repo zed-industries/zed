@@ -314,6 +314,9 @@ fn init_renderers(cx: &mut App) {
                 render_dropdown(*settings_field, file, window, cx)
             },
         )
+        .add_renderer::<settings::FileFinderWidthContent>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
         .add_renderer::<settings::ShowDiagnostics>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
