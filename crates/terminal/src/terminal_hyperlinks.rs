@@ -290,20 +290,18 @@ fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize)> {
         }
     }
 
-    surrounded_by(path)
-        .map(|surrounded| match surrounded {
-            Surrounded::Matched => Some((1, 1)),
-            Surrounded::Unmatched => {
-                if let Some(Surrounded::Matched) = surrounded_by(&path[1..]) {
-                    Some((2, 1))
-                } else if let Some(Surrounded::Matched) = surrounded_by(&path[..(path.len() - 1)]) {
-                    Some((1, 2))
-                } else {
-                    None
-                }
+    surrounded_by(path).and_then(|surrounded| match surrounded {
+        Surrounded::Matched => Some((1, 1)),
+        Surrounded::Unmatched => {
+            if let Some(Surrounded::Matched) = surrounded_by(&path[1..]) {
+                Some((2, 1))
+            } else if let Some(Surrounded::Matched) = surrounded_by(&path[..path.len() - 1]) {
+                Some((1, 2))
+            } else {
+                None
             }
-        })
-        .flatten()
+        }
+    })
 }
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
