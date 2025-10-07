@@ -951,8 +951,7 @@ impl SettingsWindow {
         let current_file_still_exists = self
             .files
             .iter()
-            .find(|(file, _)| file == &self.current_file)
-            .is_some();
+            .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
             self.change_file(0, cx);
         }
