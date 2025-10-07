@@ -966,7 +966,7 @@ impl RemoteServerProjects {
                         telemetry::event!("WSL Distro Added");
                         this.retained_connections.push(client);
                         this.add_wsl_distro(connection_options, cx);
-                        this.mode = Mode::default_mode(&BTreeSet::new(), cx);
+                        this.mode = Mode::default_mode(&BTreeSet::new(), &BTreeSet::new(), cx);
                         this.focus_handle(cx).focus(window);
                         cx.notify()
                     })
@@ -1449,14 +1449,13 @@ impl RemoteServerProjects {
                 (wsl_connection_options.distro_name.clone(), None, true)
             }
             RemoteConnection::P2p(conn) => {
+                let short_ticket = conn.ticket.chars().take(32).collect::<String>();
+
                 if let Some(nickname) = conn.nickname.clone() {
-                    (nickname.into(), None, false)
+                    let aux_label = SharedString::from(format!("({})", short_ticket));
+                    (nickname.into(), Some(aux_label), false)
                 } else {
-                    (
-                        conn.ticket.chars().take(32).collect::<String>().into(),
-                        None,
-                        false,
-                    )
+                    (short_ticket.into(), None, false)
                 }
             }
         };
@@ -2181,7 +2180,7 @@ impl RemoteServerProjects {
                     .render(window, cx)
                     .into_any_element(),
                     ViewServerOptionsState::P2p { connection, .. } => SshConnectionHeader {
-                        connection_string: connection.ticket.to_string().into(),
+                        connection_string: connection.ticket.node_addr().node_id.fmt_short().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
                         is_wsl: false,
@@ -2601,14 +2600,21 @@ impl RemoteServerProjects {
                         }
                     })
                     .child(
-                        ListItem::new("copy-server-address")
+                        ListItem::new("copy-ticket")
                             .toggle_state(entries[1].focus_handle.contains_focused(window, cx))
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
-                            .child(Label::new("Copy Server Address"))
+                            .child(Label::new("Copy Ticket"))
                             .end_hover_slot(
-                                Label::new(connection_string.clone()).color(Color::Muted),
+                                Label::new(
+                                    connection_string
+                                        .as_str()
+                                        .chars()
+                                        .take(16)
+                                        .collect::<String>(),
+                                )
+                                .color(Color::Muted),
                             )
                             .on_click({
                                 let connection_string = connection_string.clone();
@@ -2804,7 +2810,18 @@ impl RemoteServerProjects {
                 _ => None,
             }));
 
-        if ssh_connections_changed || wsl_connections_changed {
+        let p2p_connections_changed = ssh_settings.p2p_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::P2p(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
+
+        if ssh_connections_changed || wsl_connections_changed || p2p_connections_changed {
             should_rebuild = true;
         };
 
