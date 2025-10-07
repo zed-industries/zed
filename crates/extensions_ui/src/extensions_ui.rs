@@ -29,7 +29,7 @@ use ui::{
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    Workspace, WorkspaceId,
+    Workspace,
     item::{Item, ItemEvent},
 };
 use zed_actions::ExtensionCategoryFilter;
@@ -1549,15 +1549,6 @@ impl Item for ExtensionsPage {
 
     fn show_toolbar(&self) -> bool {
         false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
