@@ -986,6 +986,29 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn calculate_navbar_entry_from_scroll_position(&mut self) {
+        let top = self.scroll_handle.top_item();
+        let bottom = self.scroll_handle.bottom_item();
+
+        let scroll_index = (top + bottom) / 2;
+        let scroll_index = scroll_index.clamp(top, bottom);
+        let mut page_index = self.navbar_entry;
+
+        while !self.navbar_entries[page_index].is_root {
+            page_index -= 1;
+        }
+
+        if self.navbar_entries[page_index].expanded {
+            let section_index = self
+                .page_items()
+                .take(scroll_index + 1)
+                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
+                .count();
+
+            self.navbar_entry = section_index + page_index;
+        }
+    }
+
     fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
@@ -1064,9 +1087,7 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
-        let visible_count = visible_entries.len();
-
+        let visible_count = self.visible_navbar_entries().count();
         let nav_background = cx.theme().colors().panel_background;
 
         v_flex()
@@ -1112,6 +1133,36 @@ impl SettingsWindow {
                                         .on_click(cx.listener(
                                             move |this, evt: &gpui::ClickEvent, window, cx| {
                                                 this.navbar_entry = ix;
+
+                                                if !this.navbar_entries[ix].is_root {
+                                                    let mut selected_page_ix = ix;
+
+                                                    while !this.navbar_entries[selected_page_ix]
+                                                        .is_root
+                                                    {
+                                                        selected_page_ix -= 1;
+                                                    }
+
+                                                    let section_header = ix - selected_page_ix;
+
+                                                    if let Some(section_index) = this
+                                                        .page_items()
+                                                        .enumerate()
+                                                        .filter(|item| {
+                                                            matches!(
+                                                                item.1,
+                                                                SettingsPageItem::SectionHeader(_)
+                                                            )
+                                                        })
+                                                        .take(section_header)
+                                                        .last()
+                                                        .map(|pair| pair.0)
+                                                    {
+                                                        this.scroll_handle
+                                                            .scroll_to_top_of_item(section_index);
+                                                    }
+                                                }
+
                                                 if evt.is_keyboard() {
                                                     // todo(settings_ui): Focus the actual item and scroll to it
                                                     this.focus_first_content_item(window, cx);
@@ -1380,6 +1431,7 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
+        self.calculate_navbar_entry_from_scroll_position();
 
         div()
             .id("settings-window")
