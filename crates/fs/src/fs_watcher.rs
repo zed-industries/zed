@@ -1,4 +1,7 @@
-use notify_debouncer_full::{new_debouncer, notify::{self, EventKind}, Debouncer, RecommendedCache};
+use notify_debouncer_full::{
+    Debouncer, RecommendedCache, new_debouncer,
+    notify::{self, EventKind},
+};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -85,30 +88,27 @@ impl Watcher for FsWatcher {
         let registration_id = global({
             let path = path.clone();
             |g| {
-                g.add(
-                    path,
-                    mode,
-                    move |events: &[notify::Event]| {
-                        let mut path_events = Vec::new();
+                g.add(path, mode, move |events: &[notify::Event]| {
+                    let mut path_events = Vec::new();
 
-                        for event in events {
-                            let kind = match event.kind {
-                                EventKind::Create(_) => Some(PathEventKind::Created),
-                                EventKind::Modify(_) => Some(PathEventKind::Changed),
-                                EventKind::Remove(_) => Some(PathEventKind::Removed),
-                                _ => None,
-                            };
+                    for event in events {
+                        let kind = match event.kind {
+                            EventKind::Create(_) => Some(PathEventKind::Created),
+                            EventKind::Modify(_) => Some(PathEventKind::Changed),
+                            EventKind::Remove(_) => Some(PathEventKind::Removed),
+                            _ => None,
+                        };
 
-                            for event_path in &event.paths {
-                                let event_path = SanitizedPath::new(event_path);
-                                if event_path.starts_with(&root_path) {
-                                    path_events.push(PathEvent {
-                                        path: event_path.as_path().to_path_buf(),
-                                        kind,
-                                    });
-                                }
+                        for event_path in &event.paths {
+                            let event_path = SanitizedPath::new(event_path);
+                            if event_path.starts_with(&root_path) {
+                                path_events.push(PathEvent {
+                                    path: event_path.as_path().to_path_buf(),
+                                    kind,
+                                });
                             }
                         }
+                    }
 
                     if !path_events.is_empty() {
                         path_events.sort();
@@ -207,12 +207,9 @@ impl GlobalWatcher {
     }
 }
 
-static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, String>> =
-    OnceLock::new();
+static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, String>> = OnceLock::new();
 
-fn handle_debounced_events(
-    result: notify_debouncer_full::DebounceEventResult,
-) {
+fn handle_debounced_events(result: notify_debouncer_full::DebounceEventResult) {
     let events = match result {
         Ok(events) => events,
         Err(errors) => {
