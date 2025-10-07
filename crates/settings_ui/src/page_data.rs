@@ -1254,6 +1254,112 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                SettingsPageItem::SectionHeader("Toolbar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Breadcrumbs",
+                    description: "Whether to show breadcrumbs",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(toolbar) = &settings_content.editor.toolbar {
+                                &toolbar.breadcrumbs
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .toolbar
+                                .get_or_insert_default()
+                                .breadcrumbs
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Quick Actions",
+                    description: "Whether to show quick action buttons",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(toolbar) = &settings_content.editor.toolbar {
+                                &toolbar.quick_actions
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .toolbar
+                                .get_or_insert_default()
+                                .quick_actions
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Selections Menu",
+                    description: "Whether to show the selections menu in the editor toolbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(toolbar) = &settings_content.editor.toolbar {
+                                &toolbar.selections_menu
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .toolbar
+                                .get_or_insert_default()
+                                .selections_menu
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Review",
+                    description: "Whether to show agent review buttons in the editor toolbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(toolbar) = &settings_content.editor.toolbar {
+                                &toolbar.agent_review
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .toolbar
+                                .get_or_insert_default()
+                                .agent_review
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Code Actions",
+                    description: "Whether to show code action buttons in the editor toolbar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(toolbar) = &settings_content.editor.toolbar {
+                                &toolbar.code_actions
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .toolbar
+                                .get_or_insert_default()
+                                .code_actions
+                        },
+                    }),
+                    metadata: None,
+                }),
             ],
         },
         SettingsPage {
