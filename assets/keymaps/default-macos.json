@@ -435,7 +435,8 @@
     "context": "SettingsWindow",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-w": "workspace::CloseWindow"
+      "cmd-w": "workspace::CloseWindow",
+      "cmd-m": "settings_ui::Minimize"
     }
   },
   {

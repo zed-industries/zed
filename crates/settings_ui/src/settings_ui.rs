@@ -8,8 +8,8 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, div, point,
-    prelude::*, px, size, uniform_list,
+    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
+    point, prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -34,6 +34,8 @@ use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
+
+actions!(settings_ui, [Minimize]);
 
 #[derive(Clone, Copy)]
 struct SettingField<T: 'static> {
@@ -1219,6 +1221,9 @@ impl Render for SettingsWindow {
 
         div()
             .key_context("SettingsWindow")
+            .on_action(|_: &Minimize, window, _cx| {
+                window.minimize_window();
+            })
             .flex()
             .flex_row()
             .size_full()
