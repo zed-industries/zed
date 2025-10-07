@@ -25,7 +25,6 @@ use workspace::{
 
 mod base_keymap_picker;
 mod basics_page;
-mod editing_page;
 pub mod multibuffer_hint;
 mod theme_preview;
 mod welcome;
@@ -209,14 +208,12 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedPage {
     Basics,
-    Editing,
 }
 
 impl SelectedPage {
     fn name(&self) -> &'static str {
         match self {
             SelectedPage::Basics => "Basics",
-            SelectedPage::Editing => "Editing",
         }
     }
 }
@@ -303,9 +300,6 @@ impl Onboarding {
             SelectedPage::Basics => {
                 crate::basics_page::render_basics_page(&self.focus_handle, window, cx)
                     .into_any_element()
-            }
-            SelectedPage::Editing => {
-                crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
         }
     }
@@ -583,7 +577,6 @@ impl workspace::SerializableItem for Onboarding {
             {
                 let page = match page_number {
                     0 => Some(SelectedPage::Basics),
-                    1 => Some(SelectedPage::Editing),
                     _ => None,
                 };
                 workspace.update(cx, |workspace, cx| {
