@@ -808,6 +808,24 @@ impl SettingsWindow {
     }
 
     fn build_navbar(&mut self) {
+        let mut prev_navbar_state = HashMap::new();
+        let mut root_entry = "";
+        let mut prev_selected_entry = None;
+        for (index, entry) in self.navbar_entries.iter().enumerate() {
+            let sub_entry_title;
+            if entry.is_root {
+                sub_entry_title = None;
+                root_entry = entry.title;
+            } else {
+                sub_entry_title = Some(entry.title);
+            }
+            let key = (root_entry, sub_entry_title);
+            if index == self.navbar_entry {
+                prev_selected_entry = Some(key);
+            }
+            prev_navbar_state.insert(key, entry.expanded);
+        }
+
         let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
         for (page_index, page) in self.pages.iter().enumerate() {
             navbar_entries.push(NavBarEntry {
@@ -830,6 +848,27 @@ impl SettingsWindow {
                     item_index: Some(item_index),
                 });
             }
+        }
+
+        let mut root_entry = "";
+        let mut found_nav_entry = false;
+        for (index, entry) in navbar_entries.iter_mut().enumerate() {
+            let sub_entry_title;
+            if entry.is_root {
+                root_entry = entry.title;
+                sub_entry_title = None;
+            } else {
+                sub_entry_title = Some(entry.title);
+            };
+            let key = (root_entry, sub_entry_title);
+            if Some(key) == prev_selected_entry {
+                self.navbar_entry = index;
+                found_nav_entry = true;
+            }
+            entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
+        }
+        if !found_nav_entry {
+            self.navbar_entry = 0;
         }
         self.navbar_entries = navbar_entries;
     }
@@ -1013,7 +1052,7 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        self.navbar_entry = 0;
+        // self.navbar_entry = 0;
         self.build_ui(cx);
     }
 
