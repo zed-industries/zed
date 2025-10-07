@@ -124,8 +124,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             let mut word_match = word_match;
             let mut file_path = file_path.as_str();
 
-            if is_path_surrounded_by_common_symbols(file_path) {
-                shrink_by(1, 1, &mut word_match, &mut file_path);
+            if let Some((trim_left, trim_right)) = path_surrounded_by_common_symbols(file_path) {
+                shrink_by(trim_left, trim_right, &mut word_match, &mut file_path);
                 if is_path_surrounded_by_quotes(file_path) {
                     shrink_by(1, 1, &mut word_match, &mut file_path);
                 }
@@ -261,20 +261,49 @@ fn is_path_surrounded_by_quotes(path: &str) -> bool {
     }
 }
 
-/// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`
-fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
-    let mut chars = path.chars();
-    if let Some(first_char) = chars.next()
-        && let Some(last_char) = chars.next_back()
-        && chars.next().is_some()
-    {
-        match (first_char, last_char) {
-            ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => true,
-            _ => false,
-        }
-    } else {
-        false
+/// Check if path is surrounded by brackets: `[]` or `()` or `{}` or `<>`.
+/// Supports one level of imbalance, e.g., `([]` or `<>]`
+fn path_surrounded_by_common_symbols(path: &str) -> Option<(usize, usize)> {
+    enum Surrounded {
+        Matched,
+        Unmatched,
     }
+
+    fn surrounded_by(path: &str) -> Option<Surrounded> {
+        let mut chars = path.chars();
+        if let Some(first_char) = chars.next()
+            && let Some(last_char) = chars.next_back()
+            && chars.next().is_some()
+        {
+            match (first_char, last_char) {
+                ('[', ']') | ('(', ')') | ('{', '}') | ('<', '>') => Some(Surrounded::Matched),
+                _ => match first_char {
+                    '[' | '(' | '{' | '<' => match last_char {
+                        ']' | ')' | '}' | '>' => Some(Surrounded::Unmatched),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+            }
+        } else {
+            None
+        }
+    }
+
+    surrounded_by(path)
+        .map(|surrounded| match surrounded {
+            Surrounded::Matched => Some((1, 1)),
+            Surrounded::Unmatched => {
+                if let Some(Surrounded::Matched) = surrounded_by(&path[1..]) {
+                    Some((2, 1))
+                } else if let Some(Surrounded::Matched) = surrounded_by(&path[..(path.len() - 1)]) {
+                    Some((1, 2))
+                } else {
+                    None
+                }
+            }
+        })
+        .flatten()
 }
 
 /// Based on alacritty/src/display/hint.rs > regex_match_at
@@ -639,6 +668,10 @@ mod tests {
 
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
             test_path!("'‹«(/test/co👉ol.rs:4)»›'");
+
+            // Imbalanced
+            test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
         }
 
         #[test]
