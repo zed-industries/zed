@@ -118,6 +118,7 @@
                 (template_string)
                 (array)
                 (object)
+                (member_expression)
             ]) @item))
 
 (program
@@ -179,6 +180,7 @@
                 (template_string)
                 (array)
                 (object)
+                (member_expression)
             ]) @item))
 
 (class_declaration
