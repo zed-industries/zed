@@ -7,6 +7,7 @@ use alacritty_terminal::{
 };
 use regex::Regex;
 use std::{ops::Index, sync::LazyLock};
+use util::paths::PathWithPosition;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
@@ -94,14 +95,31 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let shrink_by =
-                |left: usize, right: usize, word_match: &mut Match, file_path: &mut &str| {
-                    *word_match = Match::new(
-                        word_match.start().add(term, Boundary::Grid, left),
-                        word_match.end().sub(term, Boundary::Grid, right),
+            let shrink_by = |left_bytes: usize,
+                             right_bytes: usize,
+                             word_match: &mut Match,
+                             file_path: &mut &str| {
+                let mut word_start = *word_match.start();
+                for _ in 0..file_path[..left_bytes].chars().count() {
+                    word_start = term.expand_wide(word_start, AlacDirection::Right).add(
+                        term,
+                        Boundary::Grid,
+                        1,
                     );
-                    *file_path = &file_path[left..file_path.len() - right];
-                };
+                }
+                let mut word_end = *word_match.end();
+                let trim_right = file_path[file_path.len() - right_bytes..].chars().count();
+                for _ in 0..trim_right {
+                    word_end = term.expand_wide(word_end, AlacDirection::Left).sub(
+                        term,
+                        Boundary::Grid,
+                        1,
+                    );
+                }
+
+                *word_match = Match::new(word_start, word_end);
+                *file_path = &file_path[left_bytes..file_path.len() - right_bytes];
+            };
 
             let mut word_match = word_match;
             let mut file_path = file_path.as_str();
@@ -123,35 +141,33 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             while file_path.ends_with(':') {
                 shrink_by(0, 1, &mut word_match, &mut file_path);
             }
-            let mut colon_count = 0;
+            let mut row_col_delim_count = 0;
             for c in file_path.chars() {
-                if c == ':' {
-                    colon_count += 1;
+                match c {
+                    ':' | '(' | ')' => row_col_delim_count += 1,
+                    _ => {}
                 }
             }
             // strip trailing comment after colon in case of
-            // file/at/path.rs:row:column:description or error message
-            // so that the file path is `file/at/path.rs:row:column`
-            if colon_count > 2 {
-                let last_index = file_path.rfind(':').unwrap();
-                let prev_is_digit = last_index > 0
-                    && file_path
-                        .chars()
-                        .nth(last_index - 1)
-                        .is_some_and(|c| c.is_ascii_digit());
-                let next_is_digit = last_index < file_path.len() - 1
-                    && file_path
-                        .chars()
-                        .nth(last_index + 1)
-                        .is_none_or(|c| c.is_ascii_digit());
-                if prev_is_digit && !next_is_digit {
-                    shrink_by(
-                        0,
-                        file_path.len() - last_index,
-                        &mut word_match,
-                        &mut file_path,
-                    );
-                }
+            //   file/at/path.rs:row:column:description or error message
+            //   so that the file path is `file/at/path.rs:row:column`
+            // or
+            //   file/at/path.rs(row,column):description or error message
+            //   so that the file path is `file/at/path.rs(row,column)`
+            if row_col_delim_count > 2
+                && let Some(last_colon_index) = file_path.rfind(':')
+                && let PathWithPosition {
+                    row: Some(_),
+                    column: Some(_),
+                    ..
+                } = PathWithPosition::parse_str(&file_path[..last_colon_index])
+            {
+                shrink_by(
+                    0,
+                    file_path.len() - last_colon_index,
+                    &mut word_match,
+                    &mut file_path,
+                );
             }
 
             break 'sanitize (word_match, file_path.to_owned());
@@ -559,6 +575,8 @@ mod tests {
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
+            test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
+            test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
 
             // path, line, column, and description
             test_path!("‹«/test/cool.rs»:«4»:«2»›👉:Error!");
@@ -577,6 +595,25 @@ mod tests {
             test_path!("    ‹File \"«/awe👉some.py»\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awesome.py»👉\", line «42»›: Wat?");
             test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
+        }
+
+        #[test]
+        fn simple_with_descriptions() {
+            // path, line, column and description
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«2»›:例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»,«2»)›:例Desc例👉例例");
+
+            // path, line, column and description w/extra colons
+            test_path!("‹«/👉test/cool.rs»:«4»:«2»:›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«👉2»:›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»:«4»:«2»:›:例Desc例👉例例");
+            test_path!("‹«/👉test/cool.rs»(«4»,«2»):›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»,«2»👉):›:例Desc例例例");
+            test_path!("‹«/test/cool.rs»(«4»,«2»):›:例Desc例👉例例");
         }
 
         #[test]
@@ -749,13 +786,6 @@ mod tests {
             fn invalid_row_column_should_be_part_of_path() {
                 test_path!("‹«/👉test/cool.rs:1:618033988749»›");
                 test_path!("‹«/👉test/cool.rs(1,618033988749)»›");
-            }
-
-            #[test]
-            #[should_panic(expected = "Path = «»")]
-            fn colon_suffix_succeeds_in_finding_an_empty_maybe_path() {
-                test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
-                test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
             }
 
             #[test]
