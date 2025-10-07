@@ -142,7 +142,6 @@ impl RenderOnce for TreeViewItem {
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
-            .when_some(self.tab_index, |this, index| this.tab_index(index))
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
@@ -150,6 +149,7 @@ impl RenderOnce for TreeViewItem {
                     .cursor_pointer()
                     .size_full()
                     .relative()
+                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                     .map(|this| {
                         let label = self.label;
                         if self.root_item {
@@ -159,16 +159,10 @@ impl RenderOnce for TreeViewItem {
                                 .gap_2p5()
                                 .rounded_sm()
                                 .border_1()
-                                .map(|this| {
-                                    if self.focused && self.selected {
-                                        this.border_color(focused_border).bg(selected_bg)
-                                    } else if self.focused {
-                                        this.border_color(focused_border)
-                                    } else if self.selected {
-                                        this.border_color(selected_border).bg(selected_bg)
-                                    } else {
-                                        this.border_color(transparent_border)
-                                    }
+                                .focus(|s| s.border_color(focused_border))
+                                .border_color(transparent_border)
+                                .when(self.selected, |this| {
+                                    this.border_color(selected_border).bg(selected_bg)
                                 })
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
@@ -189,21 +183,17 @@ impl RenderOnce for TreeViewItem {
                         } else {
                             this.child(indentation_line).child(
                                 h_flex()
+                                    .id("nested_inner_tree_view_item")
                                     .w_full()
                                     .flex_grow()
                                     .px_1()
                                     .rounded_sm()
                                     .border_1()
-                                    .map(|this| {
-                                        if self.focused && self.selected {
-                                            this.border_color(focused_border).bg(selected_bg)
-                                        } else if self.focused {
-                                            this.border_color(focused_border)
-                                        } else if self.selected {
-                                            this.border_color(selected_border).bg(selected_bg)
-                                        } else {
-                                            this.border_color(transparent_border)
-                                        }
+                                    .focusable()
+                                    .in_focus(|s| s.border_color(focused_border))
+                                    .border_color(transparent_border)
+                                    .when(self.selected, |this| {
+                                        this.border_color(selected_border).bg(selected_bg)
                                     })
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
@@ -217,11 +207,13 @@ impl RenderOnce for TreeViewItem {
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
                         |this, on_click| {
-                            if self.root_item && self.on_toggle.is_some() {
-                                let on_toggle = self.on_toggle.clone().unwrap();
-
+                            if self.root_item
+                                && let Some(on_toggle) = self.on_toggle.clone()
+                            {
                                 this.on_click(move |event, window, cx| {
-                                    on_click(event, window, cx);
+                                    if !event.is_keyboard() {
+                                        on_click(event, window, cx);
+                                    }
                                     on_toggle(event, window, cx);
                                 })
                             } else {
