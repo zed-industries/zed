@@ -10,9 +10,9 @@ use crate::{
 pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
-            title: "General Page",
+            title: "General",
             items: vec![
-                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
@@ -57,7 +57,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
-                    description: "What to do when using 'close active item' with no tabs",
+                    description: "What to do when using the 'close active item' action with no tabs",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.when_closing_with_no_tabs
@@ -81,7 +81,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
-                    description: "Whether to use system dialogs for Open and Save As",
+                    description: "Whether to use native OS dialogs for 'Open' and 'Save As'",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.use_system_path_prompts
@@ -94,7 +94,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
-                    description: "Whether to use system prompts for confirmations",
+                    description: "Whether to use native OS dialogs for confirmations",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.use_system_prompts,
                         pick_mut: |settings_content| {
@@ -103,7 +103,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Scoped Settings"),
+                // SettingsPageItem::SectionHeader("Scoped Settings"),
                 // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Preview Channel",
@@ -130,7 +130,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Privacy"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Diagnostics",
-                    description: "Send debug info like crash reports.",
+                    description: "Send debug information like crash reports",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
@@ -150,7 +150,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Metrics",
-                    description: "Send anonymized usage data like what languages you're using Zed with.",
+                    description: "Send anonymized usage data like what languages you're using Zed with",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(telemetry) = &settings_content.telemetry {
@@ -170,7 +170,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
         SettingsPage {
             title: "Appearance & Behavior",
             items: vec![
-                SettingsPageItem::SectionHeader("Theme"),
+                // SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Theme Mode",
@@ -192,38 +192,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
-                SettingsPageItem::SectionHeader("Layout"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Bottom Dock Layout",
-                    description: "Layout mode for the bottom dock",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.bottom_dock_layout
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "Whether to allow windows to tab together based on the user's tabbing preference (macOS only)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
-                        },
-                    }),
-                    metadata: None,
-                }),
                 SettingsPageItem::SectionHeader("Fonts"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Family",
@@ -467,39 +435,39 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Window"),
-                // todo(settings_ui): Should we filter by platform?
+                SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use System Window Tabs",
-                    description: "Whether to allow windows to tab together (macOS only)",
+                    title: "Bottom Dock Layout",
+                    description: "Layout mode for the bottom dock",
                     field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
                         pick_mut: |settings_content| {
-                            &mut settings_content.workspace.use_system_window_tabs
+                            &mut settings_content.workspace.bottom_dock_layout
                         },
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Layout"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
-                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
-                    }),
-                    metadata: None,
-                }),
-                // todo(settings_ui): Needs numeric stepper   option within an option
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
                 //     description: "Left padding for centered layout",
                 //     field: Box::new(SettingField {
                 //         pick: |settings_content| {
-                //             &settings_content.workspace.centered_layout.left_padding
+                //             if let Some(centered_layout) =
+                //                 &settings_content.workspace.centered_layout
+                //             {
+                //                 &centered_layout.left_padding
+                //             } else {
+                //                 &None
+                //             }
                 //         },
                 //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.centered_layout.left_padding
+                //             if let Some(mut centered_layout) =
+                //                 settings_content.workspace.centered_layout
+                //             {
+                //                 &mut centered_layout.left_padding
+                //             } else {
+                //                 &mut None
+                //             }
                 //         },
                 //     }),
                 //     metadata: None,
@@ -530,12 +498,34 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     metadata: None,
                 // }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Bottom Dock Layout",
-                    description: "Layout mode of the bottom dock",
+                    title: "Zoomed Padding",
+                    description: "Whether to show padding for zoomed panels",
                     field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.bottom_dock_layout,
+                        pick: |settings_content| &settings_content.workspace.zoomed_padding,
+                        pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Window Tabs",
+                    description: "(macOS-only) Whether to allow windows to merge based on the user's tabbing preference",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
                         pick_mut: |settings_content| {
-                            &mut settings_content.workspace.bottom_dock_layout
+                            &mut settings_content.workspace.use_system_window_tabs
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Window"),
+                // todo(settings_ui): Should we filter by platform?
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use System Window Tabs",
+                    description: "Whether to allow windows to tab together (macOS only)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.use_system_window_tabs
                         },
                     }),
                     metadata: None,
@@ -546,7 +536,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             title: "Editor",
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Size",
                     description: "How many columns a tab should occupy",
@@ -608,16 +597,27 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Wrapping"),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Preferred Line Length",
-                //     description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.project.all_languages.defaults.preferred_line_length,
-                //         pick_mut: |settings_content| &mut settings_content.project.all_languages.defaults.preferred_line_length,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Preferred Line Length",
+                    description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .preferred_line_length
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project
+                                .all_languages
+                                .defaults
+                                .preferred_line_length
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Soft Wrap",
                     description: "How to soft-wrap long lines of text",
@@ -656,7 +656,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Smartcase Search",
-                    description: "Whether to use smartcase search",
+                    description: "Whether to use smartcase (i.e., case-sensitive) search",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.editor.use_smartcase_search,
                         pick_mut: |settings_content| {
@@ -690,7 +690,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Double Click In Multibuffer",
-                    description: "What to do when multibuffer is double clicked in some of its excerpts",
+                    description: "What to do when multibuffer is double-clicked in some of its excerpts",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.editor.double_click_in_multibuffer
@@ -928,7 +928,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Completions"),
+                SettingsPageItem::SectionHeader("Language Server Completions"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Completions On Input",
                     description: "Whether to pop the completions menu while typing in an editor without explicitly requesting it",
@@ -1066,32 +1066,25 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Drag And Drop Selection Delay",
-                //     description: "Delay in milliseconds before drag and drop selection starts",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(drag_and_drop) = &settings_content.editor.drag_and_drop_selection {
-                //                 &drag_and_drop.delay
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.editor.drag_and_drop_selection.get_or_insert_default().delay
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                SettingsPageItem::SectionHeader("Line Numbers"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Relative Line Numbers",
-                    description: "Whether the line numbers on editors gutter are relative or not",
+                    title: "Drag And Drop Selection Delay",
+                    description: "Delay in milliseconds before drag and drop selection starts",
                     field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.relative_line_numbers,
+                        pick: |settings_content| {
+                            if let Some(drag_and_drop) =
+                                &settings_content.editor.drag_and_drop_selection
+                            {
+                                &drag_and_drop.delay
+                            } else {
+                                &None
+                            }
+                        },
                         pick_mut: |settings_content| {
-                            &mut settings_content.editor.relative_line_numbers
+                            &mut settings_content
+                                .editor
+                                .drag_and_drop_selection
+                                .get_or_insert_default()
+                                .delay
                         },
                     }),
                     metadata: None,
@@ -1114,6 +1107,17 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                                 .gutter
                                 .get_or_insert_default()
                                 .line_numbers
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Relative Line Numbers",
+                    description: "Whether the line numbers on editors gutter are relative or not",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.relative_line_numbers,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.relative_line_numbers
                         },
                     }),
                     metadata: None,
@@ -1246,16 +1250,15 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Maximum Tabs",
-                //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.max_tabs,
-                //         pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Maximum Tabs",
+                    description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.max_tabs,
+                        pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Breadcrumbs",
@@ -1280,7 +1283,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Quick Actions",
-                    description: "Whether to show quick action buttons",
+                    description: "Whether to show quick action buttons (e.g., search, selection, editor controls, etc.)",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(toolbar) = &settings_content.editor.toolbar {
