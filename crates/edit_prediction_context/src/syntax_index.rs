@@ -30,6 +30,8 @@ use crate::outline::declarations_in_buffer;
 // `buffer_declarations_containing_range` assumes that the index is always immediately up to date.
 //
 // * Add a per language configuration for skipping indexing.
+//
+// * Handle tsx / ts / js referencing each-other
 
 // Potential future improvements:
 //

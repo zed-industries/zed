@@ -654,7 +654,9 @@ pub async fn retrieval_stats(
     });
 
     futures::future::try_join_all(tasks).await?;
+    println!("Tasks completed");
     let results = results_task.await;
+    println!("Results received");
 
     let mut references_count = 0;
 
@@ -663,7 +665,6 @@ pub async fn retrieval_stats(
     let mut top_match_count = 0;
     let mut non_top_match_count = 0;
     let mut ranking_involved_top_match_count = 0;
-    let mut ranking_involved_non_top_match_count = 0;
 
     let mut no_match_count = 0;
     let mut no_match_none_retrieved = 0;
@@ -684,9 +685,6 @@ pub async fn retrieval_stats(
                     }
                 } else {
                     non_top_match_count += 1;
-                    if multiple {
-                        ranking_involved_non_top_match_count += 1;
-                    }
                 }
             }
             RetrievalOutcome::NoMatch => {
@@ -727,27 +725,23 @@ pub async fn retrieval_stats(
         count_and_percentage(top_match_count, match_count)
     );
     println!(
-        "│ │ ╰ involving ranking: {}",
+        "│ │ ╰─╴ involving ranking: {}",
         count_and_percentage(ranking_involved_top_match_count, top_match_count)
     );
     println!(
-        "│ ╰─╮ non-top match: {}",
+        "│ ╰─╴ non-top match: {}",
         count_and_percentage(non_top_match_count, match_count)
-    );
-    println!(
-        "│   ╰ involving ranking: {}",
-        count_and_percentage(ranking_involved_non_top_match_count, non_top_match_count)
     );
     println!(
         "├─╮ no match: {}",
         count_and_percentage(no_match_count, references_count)
     );
     println!(
-        "│ ├─ none retrieved: {}",
+        "│ ├─╴ none retrieved: {}",
         count_and_percentage(no_match_none_retrieved, no_match_count)
     );
     println!(
-        "│ ╰─ wrong retrieval: {}",
+        "│ ╰─╴ wrong retrieval: {}",
         count_and_percentage(no_match_wrong_retrieval, no_match_count)
     );
     println!(
