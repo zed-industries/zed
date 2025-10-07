@@ -3034,7 +3034,20 @@ struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
-    active_item: Option<usize>,
+    active_item: Option<ScrollActiveItem>,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct ScrollActiveItem {
+    index: usize,
+    strategy: ScrollStrategy,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+enum ScrollStrategy {
+    #[default]
+    FirstVisible,
+    Top,
 }
 
 /// A handle to the scrollable aspects of an element.
@@ -3084,6 +3097,25 @@ impl ScrollHandle {
         }
     }
 
+    /// Get the bottom child that's scrolled into view.
+    pub fn bottom_item(&self) -> usize {
+        let state = self.0.borrow();
+        let bottom = state.bounds.bottom() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if bottom < bounds.top() {
+                Ordering::Greater
+            } else if bottom > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
+    }
+
     /// Return the bounds into which this child is painted
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().bounds
@@ -3097,26 +3129,48 @@ impl ScrollHandle {
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
     pub fn scroll_to_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
-        state.active_item = Some(ix);
+        state.active_item = Some(ScrollActiveItem {
+            index: ix,
+            strategy: ScrollStrategy::default(),
+        });
     }
 
-    /// Scrolls the minimal amount to ensure that the child is
-    /// fully visible
+    /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
+    /// This scrolls the minimal amount to ensure that the child is the first visible element
+    pub fn scroll_to_top_of_item(&self, ix: usize) {
+        let mut state = self.0.borrow_mut();
+        state.active_item = Some(ScrollActiveItem {
+            index: ix,
+            strategy: ScrollStrategy::Top,
+        });
+    }
+
+    /// Scrolls the minimal amount to either ensure that the child is
+    /// fully visible or the top element of the view depends on the
+    /// scroll strategy
     fn scroll_to_active_item(&self) {
         let mut state = self.0.borrow_mut();
 
-        let Some(active_item_index) = state.active_item else {
+        let Some(active_item) = state.active_item else {
             return;
         };
-        let active_item = match state.child_bounds.get(active_item_index) {
+
+        let active_item = match state.child_bounds.get(active_item.index) {
             Some(bounds) => {
                 let mut scroll_offset = state.offset.borrow_mut();
 
-                if state.overflow.y == Overflow::Scroll {
-                    if bounds.top() + scroll_offset.y < state.bounds.top() {
+                match active_item.strategy {
+                    ScrollStrategy::FirstVisible => {
+                        if state.overflow.y == Overflow::Scroll {
+                            if bounds.top() + scroll_offset.y < state.bounds.top() {
+                                scroll_offset.y = state.bounds.top() - bounds.top();
+                            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
+                                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
+                            }
+                        }
+                    }
+                    ScrollStrategy::Top => {
                         scroll_offset.y = state.bounds.top() - bounds.top();
-                    } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                        scroll_offset.y = state.bounds.bottom() - bounds.bottom();
                     }
                 }
 
@@ -3129,7 +3183,7 @@ impl ScrollHandle {
                 }
                 None
             }
-            None => Some(active_item_index),
+            None => Some(active_item),
         };
         state.active_item = active_item;
     }
@@ -3157,6 +3211,21 @@ impl ScrollHandle {
             (
                 ix,
                 child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    /// Get the logical scroll bottom, based on a child index and a pixel offset.
+    pub fn logical_scroll_bottom(&self) -> (usize, Pixels) {
+        let ix = self.bottom_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.bottom() + state.offset.borrow().y - state.bounds.bottom(),
             )
         } else {
             (ix, px(0.))
