@@ -184,9 +184,18 @@ impl ClickEvent {
             // Click events are only generated from keyboard events _without any modifiers_, so we know the modifiers are always Default
             ClickEvent::Keyboard(_) => Modifiers::default(),
             // Click events on the web only reflect the modifiers for the keyup event,
-            // tested via observing the behavior of the `ClickEvent.shiftKey` field in Chrome 138
-            // under various combinations of modifiers and keyUp / keyDown events.
-            ClickEvent::Mouse(event) => event.up.modifiers,
+            // but we specifically reflect modifiers held for both keyup and keydown.
+            // Some input devices report very delayed keyup events, which can cause
+            // keyup -> control to be reported as keyup+control, causing frustrating
+            // behavior during common editing actions, like moving the cursor into
+            // a word with the mouse and then quickly triggering a keyboard shortcut.
+            ClickEvent::Mouse(event) => Modifiers {
+                control: event.up.modifiers.control && event.down.modifiers.control,
+                alt: event.up.modifiers.alt && event.down.modifiers.alt,
+                shift: event.up.modifiers.shift && event.down.modifiers.shift,
+                platform: event.up.modifiers.platform && event.down.modifiers.platform,
+                function: event.up.modifiers.function && event.down.modifiers.function,
+            },
         }
     }
 
