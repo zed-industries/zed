@@ -26,6 +26,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 libc.workspace = true
+log.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true

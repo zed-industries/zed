@@ -1,9 +1,9 @@
 use anyhow::Result;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
-    ThemeColorsContent, ThemeContent, ThemeStyleContent,
+    ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };
 
 use crate::ThemeMetadata;
@@ -56,7 +56,7 @@ impl VsCodeThemeConverter {
             name: self.theme_metadata.name,
             appearance,
             style: ThemeStyleContent {
-                window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
+                window_background_appearance: Some(WindowBackgroundContent::Opaque),
                 accents: Vec::new(), //TODO can we read this from the theme?
                 colors: theme_colors,
                 status: status_colors,
@@ -212,7 +212,7 @@ impl VsCodeThemeConverter {
     }
 
     fn convert_syntax_theme(&self) -> Result<IndexMap<String, HighlightStyleContent>> {
-        let mut highlight_styles = IndexMap::new();
+        let mut highlight_styles = IndexMap::default();
 
         for syntax_token in ZedSyntaxToken::iter() {
             let override_match = self

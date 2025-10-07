@@ -376,7 +376,7 @@ impl LspLogView {
                     let worktree_root_name = state
                         .worktree_id
                         .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name().to_string())
+                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
                         .unwrap_or_else(|| "Unknown worktree".to_string());
 
                     LogMenuItem {

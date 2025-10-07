@@ -1,14 +1,11 @@
-use crate::api_key::ApiKeyState;
-use crate::ui::InstructionListItem;
 use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent,
     ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
-use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, FontStyle, Task, TextStyle, WhiteSpace};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, ConfigurationViewTargetAgent, LanguageModel,
@@ -18,17 +15,20 @@ use language_model::{
     LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
+
+use crate::api_key::ApiKeyState;
+use crate::ui::InstructionListItem;
+
+pub use settings::AnthropicAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
@@ -40,58 +40,9 @@ pub struct AnthropicSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The model's context window size.
-    pub max_tokens: u64,
-    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
-    pub tool_override: Option<String>,
-    /// Configuration of Anthropic's caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    #[serde(default)]
-    pub extra_beta_headers: Vec<String>,
-    /// The model's mode (e.g. thinking)
-    pub mode: Option<ModelMode>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
-}
-
-impl From<ModelMode> for AnthropicModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => AnthropicModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-impl From<AnthropicModelMode> for ModelMode {
-    fn from(value: AnthropicModelMode) -> Self {
-        match value {
-            AnthropicModelMode::Default => ModelMode::Default,
-            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
 pub struct AnthropicLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 const API_KEY_ENV_VAR_NAME: &str = "ANTHROPIC_API_KEY";
@@ -172,7 +123,7 @@ impl AnthropicLanguageModelProvider {
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -200,8 +151,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::ClaudeSonnet4,
-            anthropic::Model::ClaudeSonnet4Thinking,
+            anthropic::Model::ClaudeSonnet4_5,
+            anthropic::Model::ClaudeSonnet4_5Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -237,7 +188,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.clone().unwrap_or_default().into(),
+                    mode: model.mode.unwrap_or_default().into(),
                 },
             );
         }
@@ -275,7 +226,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 pub struct AnthropicModel {
     id: LanguageModelId,
     model: anthropic::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -872,8 +823,8 @@ fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
     target_agent: ConfigurationViewTargetAgent,
 }
@@ -882,7 +833,7 @@ impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
     fn new(
-        state: gpui::Entity<State>,
+        state: Entity<State>,
         target_agent: ConfigurationViewTargetAgent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -911,11 +862,7 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, window, cx);
-                editor
-            }),
+            api_key_editor: cx.new(|cx| SingleLineInput::new(window, cx, Self::PLACEHOLDER_TEXT)),
             state,
             load_credentials_task,
             target_agent,
@@ -954,31 +901,6 @@ impl ConfigurationView {
         .detach_and_log_err(cx);
     }
 
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
-    }
-
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
@@ -1011,18 +933,7 @@ impl Render for ConfigurationView {
                             InstructionListItem::text_only("Paste your API key below and hit enter to start using the agent")
                         )
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
                         format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."),

@@ -109,7 +109,7 @@ Zed simplifies language server management for users:
 2. Storage Location:
 
    - macOS: `~/Library/Application Support/Zed/languages`
-   - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
+   - Linux: `$XDG_DATA_HOME/zed/languages`, `$FLATPAK_XDG_DATA_HOME/zed/languages`, or `$HOME/.local/share/zed/languages`
 
 3. Automatic Updates: Zed keeps your language servers up-to-date, ensuring you always have the latest features and improvements.
 
@@ -134,6 +134,12 @@ In this example:
 - `...` expands to the rest of the language servers that are registered for PHP
 
 This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
+
+### Toolchains
+
+Some language servers need to be configured with a current "toolchain", which is an installation of a specific version of a programming language compiler or/and interpreter, which can possibly include a full set of dependencies of a project.
+An example of what Zed considers a toolchain is a virtual environment in Python.
+Not all languages in Zed support toolchain discovery and selection, but for those that do, you can specify the toolchain from a toolchain picker (via {#action toolchain::Select}). To learn more about toolchains in Zed, see [`toolchains`](./toolchains.md).
 
 ### Configuring Language Servers
 

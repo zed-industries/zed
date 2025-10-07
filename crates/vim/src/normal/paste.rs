@@ -159,9 +159,11 @@ impl Vim {
                     let point_range = display_range.start.to_point(&display_map)
                         ..display_range.end.to_point(&display_map);
                     let anchor = if is_multiline || vim.mode == Mode::VisualLine {
-                        display_map.buffer_snapshot.anchor_before(point_range.start)
+                        display_map
+                            .buffer_snapshot()
+                            .anchor_before(point_range.start)
                     } else {
-                        display_map.buffer_snapshot.anchor_after(point_range.end)
+                        display_map.buffer_snapshot().anchor_after(point_range.end)
                     };
 
                     if *preserve {
@@ -311,17 +313,13 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
-        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
-    use language::{
-        LanguageName,
-        language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    };
-    use settings::SettingsStore;
+    use language::{LanguageName, language_settings::LanguageSettingsContent};
+    use settings::{SettingsStore, UseSystemClipboard};
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -408,8 +406,8 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -444,8 +442,9 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::OnYank)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard =
+                    Some(UseSystemClipboard::OnYank)
             });
         });
 
@@ -709,9 +708,9 @@ mod test {
             Mode::Normal,
         );
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.0.insert(
-                    LanguageName::new("Rust"),
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.languages.0.insert(
+                    LanguageName::new("Rust").0,
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),
                         ..Default::default()
@@ -772,8 +771,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -818,8 +817,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -847,8 +846,8 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 
@@ -906,8 +905,8 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_system_clipboard = Some(UseSystemClipboard::Never)
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_system_clipboard = Some(UseSystemClipboard::Never)
             });
         });
 

@@ -13,6 +13,7 @@ use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
 use rpc::{RECEIVE_TIMEOUT, proto::PeerId};
 use serde_json::json;
 use std::ops::Range;
+use util::rel_path::rel_path;
 use workspace::CollaboratorId;
 
 #[gpui::test]
@@ -256,7 +257,13 @@ async fn test_channel_notes_participant_indices(
     executor.start_waiting();
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
+            workspace.open_path(
+                (worktree_id_a, rel_path("file.txt")),
+                None,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap()
@@ -265,7 +272,13 @@ async fn test_channel_notes_participant_indices(
     executor.start_waiting();
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
+            workspace.open_path(
+                (worktree_id_a, rel_path("file.txt")),
+                None,
+                true,
+                window,
+                cx,
+            )
         })
         .await
         .unwrap()
@@ -310,8 +323,8 @@ fn assert_remote_selections(
             let CollaboratorId::PeerId(peer_id) = s.collaborator_id else {
                 panic!("unexpected collaborator id");
             };
-            let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
-            let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
+            let start = s.selection.start.to_offset(snapshot.buffer_snapshot());
+            let end = s.selection.end.to_offset(snapshot.buffer_snapshot());
             let user_id = collaborators.get(&peer_id).unwrap().user_id;
             let participant_index = hub.user_participant_indices(cx).get(&user_id).copied();
             (participant_index, start..end)

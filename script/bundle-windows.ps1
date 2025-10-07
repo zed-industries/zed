@@ -146,6 +146,13 @@ function DownloadAMDGpuServices {
     Expand-Archive -Path $zipPath -DestinationPath "." -Force
 }
 
+function DownloadConpty {
+    $url = "https://www.nuget.org/api/v2/package/CI.Microsoft.Windows.Console.ConPTY/1.22.250314001"
+    $zipPath = ".\conpty.zip"
+    Invoke-WebRequest -Uri $url -OutFile $zipPath
+    Expand-Archive -Path $zipPath -DestinationPath ".\conpty" -Force
+}
+
 function CollectFiles {
     Move-Item -Path "$innoDir\zed_explorer_command_injector.appx" -Destination "$innoDir\appx\zed_explorer_command_injector.appx" -Force
     Move-Item -Path "$innoDir\zed_explorer_command_injector.dll" -Destination "$innoDir\appx\zed_explorer_command_injector.dll" -Force
@@ -153,6 +160,8 @@ function CollectFiles {
     Move-Item -Path "$innoDir\zed.sh" -Destination "$innoDir\bin\zed" -Force
     Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
     Move-Item -Path ".\AGS_SDK-6.3.0\ags_lib\lib\amd_ags_x64.dll" -Destination "$innoDir\amd_ags_x64.dll" -Force
+    Move-Item -Path ".\conpty\build\native\runtimes\x64\OpenConsole.exe" -Destination "$innoDir\OpenConsole.exe" -Force
+    Move-Item -Path ".\conpty\runtimes\win10-x64\native\conpty.dll" -Destination "$innoDir\conpty.dll" -Force
 }
 
 function BuildInstaller {
@@ -280,6 +289,7 @@ MakeAppx
 SignZedAndItsFriends
 ZipZedAndItsFriendsDebug
 DownloadAMDGpuServices
+DownloadConpty
 CollectFiles
 BuildInstaller
 

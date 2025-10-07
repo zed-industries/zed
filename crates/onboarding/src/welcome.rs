@@ -5,7 +5,7 @@ use gpui::{
 use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use workspace::{
-    NewFile, Open, WorkspaceId,
+    NewFile, Open,
     item::{Item, ItemEvent},
     with_active_or_new_workspace,
 };
@@ -337,15 +337,6 @@ impl Item for WelcomePage {
 
     fn show_toolbar(&self) -> bool {
         false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

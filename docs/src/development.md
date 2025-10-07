@@ -79,6 +79,12 @@ Here's a typical workflow for comparing frame rendering performance between diff
 
 The `script/histogram` tool can accept as many measurement files as you like and will generate a histogram visualization comparing the frame rendering performance data between the provided versions.
 
+### Using `util_macros::perf`
+
+For benchmarking unit tests, annotate them with the `#[perf]` attribute from the `util_macros` crate. Then run `cargo
+perf-test -p $CRATE` to benchmark them. See the rustdoc documentation on `crates/util_macros` and `tooling/perf` for
+in-depth examples and explanations.
+
 ## Contributor links
 
 - [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)

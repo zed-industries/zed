@@ -1850,8 +1850,18 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
+    // Create a thread using new_thread
+    let connection_rc = Rc::new(connection.clone());
+    let acp_thread = cx
+        .update(|cx| connection_rc.new_thread(project, cwd, cx))
+        .await
+        .expect("new_thread should succeed");
+
+    // Get the session_id from the AcpThread
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
     // Test model_selector returns Some
-    let selector_opt = connection.model_selector();
+    let selector_opt = connection.model_selector(&session_id);
     assert!(
         selector_opt.is_some(),
         "agent2 should always support ModelSelector"
@@ -1868,23 +1878,16 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     };
     assert!(!listed_models.is_empty(), "should have at least one model");
     assert_eq!(
-        listed_models[&AgentModelGroupName("Fake".into())][0].id.0,
+        listed_models[&AgentModelGroupName("Fake".into())][0]
+            .id
+            .0
+            .as_ref(),
         "fake/fake"
     );
 
-    // Create a thread using new_thread
-    let connection_rc = Rc::new(connection.clone());
-    let acp_thread = cx
-        .update(|cx| connection_rc.new_thread(project, cwd, cx))
-        .await
-        .expect("new_thread should succeed");
-
-    // Get the session_id from the AcpThread
-    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-
     // Test selected_model returns the default
     let model = cx
-        .update(|cx| selector.selected_model(&session_id, cx))
+        .update(|cx| selector.selected_model(cx))
         .await
         .expect("selected_model should succeed");
     let model = cx
