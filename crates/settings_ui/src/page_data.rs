@@ -1477,6 +1477,23 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Diagnostics Button",
+                    description: "Whether to show the project diagnostics button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                &diagnostics.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.diagnostics.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Search Button",
                     description: "Whether to show the project search button in the status bar",
                     field: Box::new(SettingField {
@@ -2985,24 +3002,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
         SettingsPage {
             title: "Diagnostics & Errors",
             items: vec![
-                SettingsPageItem::SectionHeader("Display"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Diagnostics Button",
-                    description: "Whether to show the project diagnostics button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                &diagnostics.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.diagnostics.get_or_insert_default().button
-                        },
-                    }),
-                    metadata: None,
-                }),
                 SettingsPageItem::SectionHeader("Filtering"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Severity",
@@ -3062,7 +3061,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Update Debounce",
                     description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
@@ -3089,7 +3087,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Padding",
                     description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
@@ -3116,7 +3113,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings_ui): Needs numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Min Column",
                     description: "The minimum column to display inline diagnostics",
@@ -3146,7 +3142,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Performance"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "LSP Pull Diagnostics Enabled",
-                    description: "Whether to pull for diagnostics or not",
+                    description: "Whether to pull for language server-powered diagnostics or not",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(diagnostics) = &settings_content.diagnostics {
