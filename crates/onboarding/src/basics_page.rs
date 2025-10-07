@@ -416,7 +416,7 @@ fn render_setting_import_button(
     let action = action.boxed_clone();
     h_flex().w_full().child(
         ButtonLike::new(label.clone())
-            .style(ButtonStyle::Outlined)
+            .style(ButtonStyle::OutlinedTransparent)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(imported)
             .size(ButtonSize::Medium)
