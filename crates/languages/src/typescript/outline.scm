@@ -37,7 +37,23 @@
         ; Multiple names may be exported - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (_) @name) @item))
+            name: (identifier) @name) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name)) @item))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                [(shorthand_property_identifier_pattern) @name
+                 (pair_pattern
+                     value: (identifier) @name)])) @item))
 
 (program
     (lexical_declaration
@@ -45,7 +61,23 @@
         ; Multiple names may be defined - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (_) @name) @item))
+            name: (identifier) @name) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name)) @item))
+
+(program
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                [(shorthand_property_identifier_pattern) @name
+                 (pair_pattern
+                     value: (identifier) @name)])) @item))
 
 (class_declaration
     "class" @context
@@ -123,5 +155,18 @@
         )
     )
 ) @item
+
+; Nested const/let declarations in function/method bodies
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: [
+                (identifier) @name
+                (array_pattern (identifier) @name)
+                (object_pattern
+                    [(shorthand_property_identifier_pattern) @name
+                     (pair_pattern value: (identifier) @name)])
+            ]) @item))
 
 (comment) @annotation

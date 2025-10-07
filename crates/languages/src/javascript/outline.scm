@@ -116,4 +116,39 @@
     )
 ) @item
 
+; Object methods (properties with function values)
+(pair
+    key: [
+        (property_identifier) @name
+        (string (string_fragment) @name)
+        (number) @name
+    ]
+    value: [
+        (function_expression)
+        (arrow_function)
+        (generator_function)
+    ]) @item
+
+; Object properties with object values (nested structures)
+(pair
+    key: [
+        (property_identifier) @name
+        (string (string_fragment) @name)
+        (number) @name
+    ]
+    value: (object)) @item
+
+; Nested const/let declarations in function/method bodies
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: [
+                (identifier) @name
+                (array_pattern (identifier) @name)
+                (object_pattern
+                    [(shorthand_property_identifier_pattern) @name
+                     (pair_pattern value: (identifier) @name)])
+            ]) @item))
+
 (comment) @annotation
