@@ -1,6 +1,6 @@
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use itertools::Itertools;
-use picker::{Picker, PickerDelegate};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::Repository};
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
@@ -156,6 +156,10 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a repository...".into()
+    }
+
+    fn editor_position(&self) -> PickerEditorPosition {
+        PickerEditorPosition::End
     }
 
     fn update_matches(
