@@ -26,7 +26,6 @@ use workspace::{
     open_new, register_serializable_item, with_active_or_new_workspace,
 };
 
-mod ai_setup_page;
 mod base_keymap_picker;
 mod basics_page;
 mod editing_page;
@@ -214,7 +213,6 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
 enum SelectedPage {
     Basics,
     Editing,
-    AiSetup,
 }
 
 impl SelectedPage {
@@ -222,7 +220,6 @@ impl SelectedPage {
         match self {
             SelectedPage::Basics => "Basics",
             SelectedPage::Editing => "Editing",
-            SelectedPage::AiSetup => "AI Setup",
         }
     }
 }
@@ -305,21 +302,11 @@ impl Onboarding {
     }
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let client = Client::global(cx);
-
         match self.selected_page {
             SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
-                self.workspace.clone(),
-                self.user_store.clone(),
-                client,
-                window,
-                cx,
-            )
-            .into_any_element(),
         }
     }
 }
@@ -629,7 +616,6 @@ impl workspace::SerializableItem for Onboarding {
                 let page = match page_number {
                     0 => Some(SelectedPage::Basics),
                     1 => Some(SelectedPage::Editing),
-                    2 => Some(SelectedPage::AiSetup),
                     _ => None,
                 };
                 workspace.update(cx, |workspace, cx| {
