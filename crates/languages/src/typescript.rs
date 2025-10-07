@@ -1189,6 +1189,7 @@ mod tests {
                 ("p3", 1),
                 ("const q", 0),
                 ("r", 1),
+                ("s", 2),
                 ("t", 1),
                 ("function getData()", 0),
                 ("const local", 1),

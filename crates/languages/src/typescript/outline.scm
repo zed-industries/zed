@@ -183,15 +183,13 @@
     )
 ) @item
 
-; All object properties within variable declarations (including methods, functions, and primitives)
-(variable_declarator
-    value: (object
-        (pair
-            key: [
-                (property_identifier) @name
-                (string (string_fragment) @name)
-                (number) @name
-            ]) @item))
+; All object properties
+(pair
+    key: [
+        (property_identifier) @name
+        (string (string_fragment) @name)
+        (number) @name
+    ]) @item
 
 ; Nested const/let declarations in function/method bodies
 (statement_block
