@@ -1095,7 +1095,7 @@ impl SettingsWindow {
                                                         .map(|pair| pair.0)
                                                     {
                                                         this.scroll_handle
-                                                            .scroll_to_item(section_index);
+                                                            .scroll_to_top_of_item(section_index);
                                                     }
                                                 }
 
