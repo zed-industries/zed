@@ -133,6 +133,9 @@ pub enum ButtonStyle {
     /// a fully transparent button.
     Outlined,
 
+    /// Transparent button that always has an outline.
+    OutlinedTransparent,
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
@@ -144,11 +147,38 @@ pub enum ButtonStyle {
     Transparent,
 }
 
+/// Rounding for a button that may have straight edges.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) enum ButtonLikeRounding {
-    All,
-    Left,
-    Right,
+pub(crate) struct ButtonLikeRounding {
+    /// Top-left corner rounding
+    pub tl: bool,
+    /// Top-right corner rounding
+    pub tr: bool,
+    /// Bottom-right corner rounding
+    pub br: bool,
+    /// Bottom-left corner rounding
+    pub bl: bool,
+}
+
+impl ButtonLikeRounding {
+    pub const ALL: Self = Self {
+        tl: true,
+        tr: true,
+        br: true,
+        bl: true,
+    };
+    pub const LEFT: Self = Self {
+        tl: true,
+        tr: false,
+        br: false,
+        bl: true,
+    };
+    pub const RIGHT: Self = Self {
+        tl: false,
+        tr: true,
+        br: true,
+        bl: false,
+    };
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +219,12 @@ impl ButtonStyle {
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, cx),
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_variant,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -238,6 +274,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_hover,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -276,6 +318,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_active,
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
@@ -304,6 +352,12 @@ impl ButtonStyle {
                 icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border,
                 label_color: Color::Default.color(cx),
@@ -341,6 +395,12 @@ impl ButtonStyle {
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -419,7 +479,7 @@ impl ButtonLike {
             width: None,
             height: None,
             size: ButtonSize::Default,
-            rounding: Some(ButtonLikeRounding::All),
+            rounding: Some(ButtonLikeRounding::ALL),
             tooltip: None,
             hoverable_tooltip: None,
             children: SmallVec::new(),
@@ -432,15 +492,15 @@ impl ButtonLike {
     }
 
     pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Left)
+        Self::new(id).rounding(ButtonLikeRounding::LEFT)
     }
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Right)
+        Self::new(id).rounding(ButtonLikeRounding::RIGHT)
     }
 
     pub fn new_rounded_all(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::All)
+        Self::new(id).rounding(ButtonLikeRounding::ALL)
     }
 
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -585,10 +645,11 @@ impl RenderOnce for ButtonLike {
             .when(matches!(self.style, ButtonStyle::Outlined), |this| {
                 this.border_1()
             })
-            .when_some(self.rounding, |this, rounding| match rounding {
-                ButtonLikeRounding::All => this.rounded_sm(),
-                ButtonLikeRounding::Left => this.rounded_l_sm(),
-                ButtonLikeRounding::Right => this.rounded_r_sm(),
+            .when_some(self.rounding, |this, rounding| {
+                this.when(rounding.tl, |this| this.rounded_tl_sm())
+                    .when(rounding.tr, |this| this.rounded_tr_sm())
+                    .when(rounding.br, |this| this.rounded_br_sm())
+                    .when(rounding.bl, |this| this.rounded_bl_sm())
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
