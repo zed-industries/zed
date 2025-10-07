@@ -203,11 +203,12 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(theme: Arc<Theme>, cx: &mut App) {
-        SettingsStore::update_global(cx, |store, _| {
+        SettingsStore::update_global(cx, |store, cx| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            let name = theme.as_ref().name.clone().into();
-            theme_settings.theme = theme::ThemeSelection::Static(theme::ThemeName(name));
+            theme_settings.active_theme = theme;
+            theme_settings.apply_theme_overrides();
             store.override_global(theme_settings);
+            cx.refresh_windows();
         });
     }
 }

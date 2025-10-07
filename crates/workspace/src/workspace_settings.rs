@@ -2,6 +2,7 @@ use std::num::NonZeroUsize;
 
 use crate::DockPosition;
 use collections::HashMap;
+use gpui::App;
 use serde::Deserialize;
 pub use settings::AutosaveSetting;
 use settings::Settings;
@@ -61,7 +62,7 @@ pub struct TabBarSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let workspace = &content.workspace;
         Self {
             active_pane_modifiers: ActivePanelModifiers {
@@ -196,7 +197,7 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let tab_bar = content.tab_bar.clone().unwrap();
         TabBarSettings {
             show: tab_bar.show.unwrap(),
@@ -230,7 +231,7 @@ pub struct StatusBarSettings {
 }
 
 impl Settings for StatusBarSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let status_bar = content.status_bar.clone().unwrap();
         StatusBarSettings {
             show: status_bar.show.unwrap(),
