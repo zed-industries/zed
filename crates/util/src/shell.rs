@@ -176,13 +176,11 @@ impl ShellKind {
 
     pub fn new(program: impl AsRef<Path>) -> Self {
         let program = program.as_ref();
-        let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) && program.to_string_lossy().contains("\\") {
-                ShellKind::PowerShell
-            } else {
-                ShellKind::Posix
-            };
-        };
+        let program = program
+            .file_stem()
+            .unwrap_or_else(|| program.as_os_str())
+            .to_string_lossy();
+
         if program == "powershell" || program == "pwsh" {
             ShellKind::PowerShell
         } else if program == "cmd" {
