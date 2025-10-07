@@ -3206,7 +3206,9 @@ impl Editor {
                 data.selections = inmemory_selections;
             });
 
-            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+            if self.serialize_dirty_buffers
+                && WorkspaceSettings::get(None, cx).restore_on_startup
+                    != RestoreOnStartupBehavior::None
                 && let Some(workspace_id) =
                     self.workspace.as_ref().and_then(|workspace| workspace.1)
             {
@@ -3241,7 +3243,8 @@ impl Editor {
         use text::ToOffset as _;
         use text::ToPoint as _;
 
-        if self.mode.is_minimap()
+        if !self.serialize_dirty_buffers
+            || self.mode.is_minimap()
             || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
         {
             return;
