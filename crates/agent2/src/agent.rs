@@ -25,21 +25,23 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use util::ResultExt;
 use util::rel_path::RelPath;
 
-const RULES_FILE_NAMES: [&str; 9] = [
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "CLAUDE.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "GEMINI.md",
-];
+static RULES_FILE_NAMES: LazyLock<[&RelPath; 9]> = LazyLock::new(|| {
+    [
+        RelPath::unix(".rules").unwrap(),
+        RelPath::unix(".cursorrules").unwrap(),
+        RelPath::unix(".windsurfrules").unwrap(),
+        RelPath::unix(".clinerules").unwrap(),
+        RelPath::unix(".github/copilot-instructions.md").unwrap(),
+        RelPath::unix("CLAUDE.md").unwrap(),
+        RelPath::unix("AGENT.md").unwrap(),
+        RelPath::unix("AGENTS.md").unwrap(),
+        RelPath::unix("GEMINI.md").unwrap(),
+    ]
+});
 
 pub struct RulesLoadingError {
     pub message: SharedString,
@@ -475,7 +477,7 @@ impl NativeAgent {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::unix(name).unwrap())
+                    .entry_for_path(name)
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -556,11 +558,10 @@ impl NativeAgent {
                 self.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                if items.iter().any(|(path, _, _)| {
-                    RULES_FILE_NAMES
-                        .iter()
-                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                }) {
+                if items
+                    .iter()
+                    .any(|(path, _, _)| RULES_FILE_NAMES.iter().any(|name| path.as_ref() == *name))
+                {
                     self.project_context_needs_refresh.send(()).ok();
                 }
             }
