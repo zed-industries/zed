@@ -449,12 +449,16 @@ impl TerminalPanel {
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>());
-        let working_directory = terminal_view.as_ref().and_then(|terminal_view| {
-            let terminal = terminal_view.read(cx).terminal().read(cx);
-            terminal
-                .working_directory()
-                .or_else(|| default_working_directory(workspace, cx))
-        });
+        let working_directory = terminal_view
+            .as_ref()
+            .and_then(|terminal_view| {
+                terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .working_directory()
+            })
+            .or_else(|| default_working_directory(workspace, cx));
         let is_zoomed = active_pane.read(cx).is_zoomed();
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
@@ -462,7 +466,7 @@ impl TerminalPanel {
                     Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
-                        || working_directory,
+                        working_directory,
                     )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })

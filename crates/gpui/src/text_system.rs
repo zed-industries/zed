@@ -19,7 +19,7 @@ use crate::{
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
 use core::fmt;
-use derive_more::Deref;
+use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -605,8 +605,21 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, FromStr)]
+#[serde(transparent)]
 pub struct FontWeight(pub f32);
+
+impl Display for FontWeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<f32> for FontWeight {
+    fn from(weight: f32) -> Self {
+        FontWeight(weight)
+    }
+}
 
 impl Default for FontWeight {
     #[inline]
@@ -655,6 +668,23 @@ impl FontWeight {
         Self::EXTRA_BOLD,
         Self::BLACK,
     ];
+}
+
+impl schemars::JsonSchema for FontWeight {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FontWeight".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::THIN,
+            "maximum": Self::BLACK,
+            "default": Self::default(),
+            "description": "Font weight value between 100 (thin) and 900 (black)"
+        })
+    }
 }
 
 /// Allows italic or oblique faces to be selected.

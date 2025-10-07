@@ -47,7 +47,7 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 
 ## Zed-specific features
 
-Zed is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
+Zed is built on a modern foundation that (among other things) uses Tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
 
 Vim mode has several "core Zed" key bindings that will help you make the most of Zed's specific feature set.
 
@@ -82,9 +82,9 @@ The following commands use the language server to help you navigate and refactor
 | Unstage and next (in diff view) | `d U`            |
 | Restore change                  | `d p`            |
 
-### Treesitter
+### Tree-sitter
 
-Treesitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
+Tree-sitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
 | Command                         | Default Shortcut            |
 | ------------------------------- | --------------------------- |
@@ -117,7 +117,7 @@ if there are no classes, then functions are also used. Similarly `gc` is used to
 
 The definition of functions, classes and comments is language dependent, and support can be added
 to extensions by adding a [`textobjects.scm`]. The definition of arguments and tags operates at
-the tree-sitter level, but looks for certain patterns in the parse tree and is not currently configurable
+the Tree-sitter level, but looks for certain patterns in the parse tree and is not currently configurable
 per language.
 
 ### Multi cursor

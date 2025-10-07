@@ -18,7 +18,7 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -32,8 +32,8 @@ use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{
-    ResultExt, get_default_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
-    time::duration_alt_display,
+    ResultExt, get_default_system_shell_preferring_bash, markdown::MarkdownInlineCode,
+    size::format_file_size, time::duration_alt_display,
 };
 use workspace::Workspace;
 
@@ -122,7 +122,16 @@ impl Tool for TerminalTool {
         let cwd = working_dir.clone();
         let env = match &cwd {
             Some(dir) => project.update(cx, |project, cx| {
-                let shell = TerminalSettings::get_global(cx).shell.clone();
+                let worktree = project.find_worktree(dir.as_path(), cx);
+                let shell = TerminalSettings::get(
+                    worktree.as_ref().map(|(worktree, path)| SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: &path,
+                    }),
+                    cx,
+                )
+                .shell
+                .clone();
                 project.directory_environment(&shell, dir.as_path().into(), cx)
             }),
             None => Task::ready(None).shared(),
@@ -133,7 +142,7 @@ impl Tool for TerminalTool {
                     .remote_client()
                     .and_then(|r| r.read(cx).default_system_shell())
             })
-            .unwrap_or_else(|| get_default_system_shell());
+            .unwrap_or_else(|| get_default_system_shell_preferring_bash());
 
         let env = cx.spawn(async move |_| {
             let mut env = env.await.unwrap_or_default();
@@ -695,7 +704,6 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use terminal::terminal_settings::TerminalSettings;
-    use theme::ThemeSettings;
     use util::{ResultExt as _, test::TempTree};
 
     use super::*;
@@ -710,7 +718,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             TerminalSettings::register(cx);
             EditorSettings::register(cx);
         });

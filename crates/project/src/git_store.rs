@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::{AskPassDelegate, EncryptedPassword};
+use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -298,10 +298,11 @@ pub enum RepositoryState {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
+    PathsChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -2110,13 +2111,19 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass.ask_password(envelope.payload.prompt).await?;
+        let response = askpass
+            .ask_password(envelope.payload.prompt)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
 
         delegates
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        response.try_into()
+        // In fact, we don't quite know what we're doing here, as we're sending askpass password unencrypted, but..
+        Ok(proto::AskPassResponse {
+            response: response.decrypt(IKnowWhatIAmDoingAndIHaveReadTheDocs)?,
+        })
     }
 
     async fn handle_check_for_pushed_commits(
@@ -4836,17 +4843,21 @@ impl Repository {
                         this.snapshot.scan_id += 1;
                     }
 
-                    if needs_update && let Some(updates_tx) = updates_tx {
+                    if needs_update {
+                        cx.emit(RepositoryEvent::Updated {
+                            full_scan: false,
+                            new_instance: false,
+                        });
+                    }
+
+                    if let Some(updates_tx) = updates_tx {
                         updates_tx
                             .unbounded_send(DownstreamUpdate::UpdateRepository(
                                 this.snapshot.clone(),
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::Updated {
-                        full_scan: false,
-                        new_instance: false,
-                    });
+                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );

@@ -98,10 +98,6 @@ impl Item for ImageView {
         f(self.image_item.entity_id(), self.image_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
-    }
-
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         let abs_path = self.image_item.read(cx).abs_path(cx)?;
         let file_path = abs_path.compact().to_string_lossy().into_owned();

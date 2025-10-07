@@ -36,10 +36,11 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use task::Shell;
 
 use crate::{
-    agent_server_store::{AgentServerStore, AllAgentServersSettings},
+    agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
 };
+pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -979,7 +980,7 @@ pub struct DisableAiSettings {
 }
 
 impl settings::Settings for DisableAiSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
             disable_ai: content.disable_ai.unwrap().0,
         }

@@ -109,9 +109,9 @@ impl Vim {
                     };
                     let point = display_point.to_point(&display_map);
                     let anchor = if action.before {
-                        display_map.buffer_snapshot.anchor_after(point)
+                        display_map.buffer_snapshot().anchor_after(point)
                     } else {
-                        display_map.buffer_snapshot.anchor_before(point)
+                        display_map.buffer_snapshot().anchor_before(point)
                     };
                     edits.push((point..point, to_insert.repeat(count)));
                     new_selections.push((anchor, to_insert.len() * count));

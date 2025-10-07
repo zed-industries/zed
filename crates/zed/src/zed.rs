@@ -1542,7 +1542,8 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     }
     cx.bind_keys(user_key_bindings);
 
-    cx.set_menus(app_menus());
+    let menus = app_menus(cx);
+    cx.set_menus(menus);
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
@@ -1993,8 +1994,11 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::rel_path};
+    use theme::ThemeRegistry;
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -4592,7 +4596,7 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+            if theme.name.as_ref() == "One Dark" {
                 has_default_theme = true;
             }
         }
