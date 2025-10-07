@@ -369,6 +369,20 @@ fn init_renderers(cx: &mut App) {
 }
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
+    let existing_window = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>());
+
+    if let Some(existing_window) = existing_window {
+        existing_window
+            .update(cx, |_, window, _| {
+                window.activate_window();
+            })
+            .ok();
+        return Ok(existing_window);
+    }
+
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
