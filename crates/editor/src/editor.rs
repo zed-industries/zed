@@ -22448,7 +22448,6 @@ pub trait SemanticsProvider {
     fn inlay_hints(
         &self,
         _invalidate: InvalidationStrategy,
-        _debounce: Option<Duration>,
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
         _cx: &mut App,
@@ -22954,13 +22953,12 @@ impl SemanticsProvider for Entity<Project> {
     fn inlay_hints(
         &self,
         invalidate: InvalidationStrategy,
-        debounce: Option<Duration>,
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
-            lsp_store.inlay_hints(invalidate, debounce, buffer, range, cx)
+            lsp_store.inlay_hints(invalidate, buffer, range, cx)
         }))
     }
 

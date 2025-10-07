@@ -378,26 +378,31 @@ impl Editor {
                 buffer_snapshot.anchor_before(range.start)..buffer_snapshot.anchor_after(range.end);
             let buffer_point_range = buffer_anchor_range.to_point(&buffer_snapshot);
 
-            let Some(new_hints) = semantics_provider.inlay_hints(
-                invalidate_cache,
-                debounce,
-                buffer,
-                buffer_anchor_range.clone(),
-                cx,
-            ) else {
-                return;
-            };
             let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
             // TODO kb check if the range is covered already by the fetched chunks, for non-invalidate cases
             // TODO kb we can have new allowed hint kids applied, with old spliced away and duplicates in the new inlay hints
             // TODO kb also, avoid splices that remove and re-add same inlays
             let a = &inlay_hints.hint_chunks_received;
 
+            let semantics_provider = semantics_provider.clone();
             inlay_hints.hint_tasks.entry(buffer_id).or_default().insert(
                 // TODO kb this is a range of the visible excerpt
                 // does not look appropriate?
                 hints_range.clone(),
                 cx.spawn(async move |editor, cx| {
+                    if let Some(debounce) = debounce {
+                        cx.background_executor().timer(debounce).await;
+                    }
+                    let Ok(Some(new_hints)) = cx.update(|cx| {
+                        semantics_provider.inlay_hints(
+                            invalidate_cache,
+                            buffer,
+                            buffer_anchor_range.clone(),
+                            cx,
+                        )
+                    }) else {
+                        return;
+                    };
                     let new_hints = new_hints.await;
                     editor
                         .update(cx, |editor, cx| {
@@ -1592,6 +1597,8 @@ pub mod tests {
         })
         .await;
 
+        // TODO kb we seem to run inlay fetch both on editor registration and on editor creation?
+        // TODO kb also, what's up with the color task inside lsp_data, for zero color capabilities?
         let mut expected_changes = Vec::new();
         for change_after_opening in [
             "initial change #1",
