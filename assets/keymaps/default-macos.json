@@ -1370,18 +1370,18 @@
       // "up": "menu::SelectPrevious",
       // "down": "menu::SelectNext",
       // todo: cut this down based on the max files and overflow UI
-      "alt-1": ["settings_editor::FocusFile", 1],
-      "alt-2": ["settings_editor::FocusFile", 2],
-      "alt-3": ["settings_editor::FocusFile", 3],
-      "alt-4": ["settings_editor::FocusFile", 4],
-      "alt-5": ["settings_editor::FocusFile", 5],
-      "alt-6": ["settings_editor::FocusFile", 6],
-      "alt-7": ["settings_editor::FocusFile", 7],
-      "alt-8": ["settings_editor::FocusFile", 8],
-      "alt-9": ["settings_editor::FocusFile", 9],
-      "alt-0": ["settings_editor::FocusFile", 10],
-      "cmd-shift-[": "settings_editor::FocusPreviousFile",
-      "cmd-shift-]": "settings_editor::FocusNextFile"
+      "ctrl-1": ["settings_editor::FocusFile", 0],
+      "ctrl-2": ["settings_editor::FocusFile", 1],
+      "ctrl-3": ["settings_editor::FocusFile", 2],
+      "ctrl-4": ["settings_editor::FocusFile", 3],
+      "ctrl-5": ["settings_editor::FocusFile", 4],
+      "ctrl-6": ["settings_editor::FocusFile", 5],
+      "ctrl-7": ["settings_editor::FocusFile", 6],
+      "ctrl-8": ["settings_editor::FocusFile", 7],
+      "ctrl-9": ["settings_editor::FocusFile", 8],
+      "ctrl-0": ["settings_editor::FocusFile", 9],
+      "cmd-{": "settings_editor::FocusPreviousFile",
+      "cmd-}": "settings_editor::FocusNextFile"
     }
   }
 ]

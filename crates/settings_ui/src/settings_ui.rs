@@ -423,7 +423,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 }
 
 pub struct SettingsWindow {
-    files: Vec<SettingsUiFile>,
+    files: Vec<(SettingsUiFile, FocusHandle)>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
@@ -435,6 +435,7 @@ pub struct SettingsWindow {
     scroll_handle: ScrollHandle,
     navbar_focus_handle: FocusHandle,
     content_focus_handle: FocusHandle,
+    files_focus_handle: FocusHandle,
 }
 
 struct SubPage {
@@ -728,6 +729,7 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(CONTENT_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
+            files_focus_handle: cx.focus_handle().tab_stop(false),
         };
 
         this.fetch_files(cx);
@@ -928,6 +930,7 @@ impl SettingsWindow {
     }
 
     fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
+        let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
         let all_files = settings_store.get_all_files();
@@ -935,11 +938,22 @@ impl SettingsWindow {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
             };
-            ui_files.push(settings_ui_file);
+            let focus_handle = prev_files
+                .iter()
+                .find_map(|(prev_file, handle)| {
+                    (prev_file == &settings_ui_file).then(|| handle.clone())
+                })
+                .unwrap_or_else(|| cx.focus_handle());
+            ui_files.push((settings_ui_file, focus_handle));
         }
         ui_files.reverse();
         self.files = ui_files;
-        if !self.files.contains(&self.current_file) {
+        let current_file_still_exists = self
+            .files
+            .iter()
+            .find(|(file, _)| file == &self.current_file)
+            .is_some();
+        if !current_file_still_exists {
             self.change_file(0, cx);
         }
     }
@@ -949,23 +963,31 @@ impl SettingsWindow {
             self.current_file = SettingsUiFile::User;
             return;
         }
-        if self.files[ix] == self.current_file {
+        if self.files[ix].0 == self.current_file {
             return;
         }
-        self.current_file = self.files[ix].clone();
+        self.current_file = self.files[ix].0.clone();
         self.navbar_entry = 0;
         self.build_ui(cx);
     }
 
     fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        h_flex()
-            .gap_1()
-            .children(self.files.iter().enumerate().map(|(ix, file)| {
+        h_flex().gap_1().children(self.files.iter().enumerate().map(
+            |(ix, (file, focus_handle))| {
                 Button::new(ix, file.name())
                     .toggle_state(file == &self.current_file)
                     .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
-            }))
+                    .track_focus(focus_handle)
+                    .on_click(
+                        cx.listener(move |this, evt: &gpui::ClickEvent, window, cx| {
+                            this.change_file(ix, cx);
+                            if evt.is_keyboard() {
+                                this.focus_first_nav_item(window, cx);
+                            }
+                        }),
+                    )
+            },
+        ))
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
@@ -1272,6 +1294,31 @@ impl SettingsWindow {
         sub_page_stack_mut().pop();
         cx.notify();
     }
+
+    fn focus_file_at_index(&mut self, index: usize, window: &mut Window) {
+        if let Some((_, handle)) = self.files.get(index) {
+            handle.focus(window);
+        }
+    }
+
+    fn focused_file_index(&self, window: &Window, cx: &Context<Self>) -> usize {
+        if self.files_focus_handle.contains_focused(window, cx)
+            && let Some(index) = self
+                .files
+                .iter()
+                .position(|(_, handle)| handle.is_focused(window))
+        {
+            return index;
+        }
+        if let Some(current_file_index) = self
+            .files
+            .iter()
+            .position(|(file, _)| file == &self.current_file)
+        {
+            return current_file_index;
+        }
+        0
+    }
 }
 
 impl Render for SettingsWindow {
@@ -1296,6 +1343,22 @@ impl Render for SettingsWindow {
                 } else {
                     this.focus_first_nav_item(window, cx);
                 }
+            }))
+            .on_action(
+                cx.listener(|this, FocusFile(file_index): &FocusFile, window, _| {
+                    this.focus_file_at_index(*file_index as usize, window);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
+                let next_index = usize::min(
+                    this.focused_file_index(window, cx) + 1,
+                    this.files.len().saturating_sub(1),
+                );
+                this.focus_file_at_index(next_index, window);
+            }))
+            .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
+                let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
+                this.focus_file_at_index(prev_index, window);
             }))
             .on_action(|_: &menu::SelectNext, window, _| {
                 window.focus_next();
@@ -1722,6 +1785,7 @@ mod test {
             scroll_handle: ScrollHandle::new(),
             navbar_focus_handle: cx.focus_handle(),
             content_focus_handle: cx.focus_handle(),
+            files_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_search_matches();
