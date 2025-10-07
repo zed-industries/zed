@@ -1268,6 +1268,9 @@ pub enum WindowKind {
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
+
+    /// A floating window that appears in top of their parent window
+    Floating,
 }
 
 /// The appearance of the window, as defined by the operating system.
