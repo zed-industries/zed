@@ -891,7 +891,7 @@ impl GitPanel {
                 let file_path_str = repo_path.0.display(PathStyle::Posix);
 
                 let repo_root = active_repository.read_with(cx, |repository, _| {
-                    repository.snapshot().work_directory_abs_path.clone()
+                    repository.snapshot().work_directory_abs_path
                 })?;
 
                 let gitignore_abs_path = repo_root.join(".gitignore");
