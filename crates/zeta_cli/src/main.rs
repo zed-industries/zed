@@ -583,37 +583,50 @@ pub async fn retrieval_stats(
                         continue;
                     }
 
+                    let mut best_match = None;
+                    let mut has_external_definition = false;
+                    for (index, retrieved_definition) in retrieved_definitions.iter().enumerate() {
+                        for lsp_definition in &lsp_definitions {
+                            let SourceRange {
+                                path,
+                                point_range,
+                                offset_range: _,
+                            } = lsp_definition;
+                            let lsp_point_range =
+                                SerializablePoint::into_language_point_range(point_range.clone());
+                            has_external_definition = has_external_definition
+                                || path.is_absolute()
+                                || path
+                                    .components()
+                                    .any(|component| component.as_os_str() == "node_modules");
+                            let is_match = path.as_path()
+                                == retrieved_definition.path.as_std_path()
+                                && retrieved_definition
+                                    .range
+                                    .contains_inclusive(&lsp_point_range);
+                            if is_match {
+                                if best_match.is_none() {
+                                    best_match = Some(index);
+                                }
+                            }
+                        }
+                    }
+
+                    let outcome = if let Some(best_match) = best_match {
+                        RetrievalOutcome::Match { best_match }
+                    } else if has_external_definition {
+                        RetrievalOutcome::NoMatchDueToExternalLspDefinitions
+                    } else {
+                        RetrievalOutcome::NoMatch
+                    };
+
                     let result = RetrievalStatsResult {
+                        outcome,
                         path: path.clone(),
                         identifier: reference.identifier,
                         point: query_point,
-                        outcome: RetrievalStatsOutcome::Success {
-                            matches: lsp_definitions
-                                .iter()
-                                .map(
-                                    |SourceRange {
-                                         path, point_range, ..
-                                     }| {
-                                        retrieved_definitions.iter().position(
-                                            |RetrievedDefinition {
-                                                 path: retrieved_path,
-                                                 range: retrieved_range,
-                                                 ..
-                                             }| {
-                                                path.as_path() == retrieved_path.as_std_path()
-                                                && retrieved_range.contains_inclusive(
-                                                    &SerializablePoint::into_language_point_range(
-                                                        point_range.clone(),
-                                                    ),
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                                .collect(),
-                            lsp_definitions,
-                            retrieved_definitions,
-                        },
+                        lsp_definitions,
+                        retrieved_definitions,
                     };
 
                     output_tx.unbounded_send(result).ok();
@@ -641,81 +654,107 @@ pub async fn retrieval_stats(
 
     drop(tasks);
 
-    let mut definitions_count = 0f64;
-    let mut top_match_count = 0f64;
-    let mut non_top_match_count = 0f64;
-    let mut ranking_involved_top_match_count = 0f64;
-    let mut ranking_involved_non_top_match_count = 0f64;
+    let mut references_count = 0;
+
+    let mut match_count = 0;
+    let mut both_absent_count = 0;
+    let mut top_match_count = 0;
+    let mut non_top_match_count = 0;
+    let mut ranking_involved_top_match_count = 0;
+    let mut ranking_involved_non_top_match_count = 0;
+
+    let mut no_match_count = 0;
+    let mut no_match_none_retrieved = 0;
+    let mut no_match_wrong_retrieval = 0;
+
+    let mut expected_no_match_count = 0;
+
     for result in results {
+        references_count += 1;
         match &result.outcome {
-            RetrievalStatsOutcome::Success {
-                matches,
-                retrieved_definitions,
-                ..
-            } => {
-                definitions_count += 1.;
-                let top_matches = matches.contains(&Some(0));
-                if top_matches {
-                    top_match_count += 1.;
-                }
-                let non_top_matches = !top_matches
-                    && matches
-                        .iter()
-                        .any(|index| index.is_some_and(|index| index != 0));
-                if non_top_matches {
-                    non_top_match_count += 1.;
-                }
-                if (top_matches || non_top_matches) && retrieved_definitions.len() > 1 {
-                    if top_matches {
-                        ranking_involved_top_match_count += 1.;
+            RetrievalOutcome::Match { best_match } => {
+                match_count += 1;
+                let multiple = result.retrieved_definitions.len() > 1;
+                if *best_match == 0 {
+                    top_match_count += 1;
+                    if multiple {
+                        ranking_involved_top_match_count += 1;
                     }
-                    if non_top_matches {
-                        ranking_involved_non_top_match_count += 1.;
+                } else {
+                    non_top_match_count += 1;
+                    if multiple {
+                        ranking_involved_non_top_match_count += 1;
                     }
                 }
+            }
+            RetrievalOutcome::NoMatch => {
+                if result.lsp_definitions.is_empty() {
+                    match_count += 1;
+                    both_absent_count += 1;
+                } else {
+                    no_match_count += 1;
+                    if result.retrieved_definitions.is_empty() {
+                        no_match_none_retrieved += 1;
+                    } else {
+                        no_match_wrong_retrieval += 1;
+                    }
+                }
+            }
+            RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
+                expected_no_match_count += 1;
             }
         }
     }
 
-    println!("\nStats:\n");
+    fn count_and_percentage(part: usize, total: usize) -> String {
+        format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
+    }
 
-    let present_count = top_match_count + non_top_match_count;
+    println!("");
+    println!("╮ references: {}", references_count);
+    println!(
+        "├─╮ match: {}",
+        count_and_percentage(match_count, references_count)
+    );
+    println!(
+        "│ ├─╴ both absent: {}",
+        count_and_percentage(both_absent_count, match_count)
+    );
+    println!(
+        "│ ├─╮ top match: {}",
+        count_and_percentage(top_match_count, match_count)
+    );
+    println!(
+        "│ │ ╰ involving ranking: {}",
+        count_and_percentage(ranking_involved_top_match_count, top_match_count)
+    );
+    println!(
+        "│ ╰─╮ non-top match: {}",
+        count_and_percentage(non_top_match_count, match_count)
+    );
+    println!(
+        "│   ╰ involving ranking: {}",
+        count_and_percentage(ranking_involved_non_top_match_count, non_top_match_count)
+    );
+    println!(
+        "├─╮ no match: {}",
+        count_and_percentage(no_match_count, references_count)
+    );
+    println!(
+        "│ ├─ none retrieved: {}",
+        count_and_percentage(no_match_none_retrieved, no_match_count)
+    );
+    println!(
+        "│ ╰─ wrong retrieval: {}",
+        count_and_percentage(no_match_wrong_retrieval, no_match_count)
+    );
+    println!(
+        "╰─╴ expected no match: {}",
+        count_and_percentage(expected_no_match_count, references_count)
+    );
 
-    println!("╮ Definitions: {}", definitions_count);
-    println!(
-        "╰─╮ Present (recall): {} ({:.2}%)",
-        top_match_count + non_top_match_count,
-        ((top_match_count + non_top_match_count) / definitions_count) * 100.0
-    );
-    println!(
-        "  ├─╴ Top Match: {} ({:.2}%)",
-        top_match_count,
-        (top_match_count / present_count) * 100.0
-    );
-    println!(
-        "  ├─╴ Non-Top Match: {} ({:.2}%)",
-        non_top_match_count,
-        (non_top_match_count / present_count) * 100.0
-    );
-
-    let multiple_results_count =
-        ranking_involved_top_match_count + ranking_involved_non_top_match_count;
-
-    println!(
-        "  ╰─╮ Multiple Results: {} ({:.2}%)",
-        multiple_results_count,
-        (multiple_results_count / present_count) * 100.0
-    );
-    println!(
-        "    ├─╴ Top Match: {} ({:.2}%)",
-        ranking_involved_top_match_count,
-        (ranking_involved_top_match_count / multiple_results_count) * 100.0
-    );
-    println!(
-        "    ╰─╴ Non-Top Match: {} ({:.2}%)",
-        ranking_involved_non_top_match_count,
-        (ranking_involved_non_top_match_count / multiple_results_count) * 100.0
-    );
+    println!("");
+    println!("LSP definition cache at {}", lsp_definitions_path.display());
 
     Ok("".to_string())
 }
@@ -902,9 +941,7 @@ async fn gather_lsp_definitions(
             match lsp_result {
                 Ok(lsp_definitions) => {
                     let mut targets = Vec::new();
-                    let mut is_outside_worktree = false;
                     for target in lsp_definitions.unwrap_or_default() {
-                        // TODO: Do something with "origin"?
                         let buffer = target.target.buffer;
                         let anchor_range = target.target.range;
                         buffer.read_with(cx, |buffer, cx| {
@@ -914,20 +951,20 @@ async fn gather_lsp_definitions(
                             let file_worktree = file.worktree.read(cx);
                             let file_worktree_id = file_worktree.id();
                             // Relative paths for worktree files, absolute for all others
-                            if worktree_id == file_worktree_id {
-                                let path = file.path.as_std_path().to_path_buf();
-                                let offset_range = anchor_range.to_offset(&buffer);
-                                let point_range = SerializablePoint::from_language_point_range(
-                                    offset_range.to_point(&buffer),
-                                );
-                                targets.push(SourceRange {
-                                    path,
-                                    offset_range,
-                                    point_range,
-                                })
+                            let path = if worktree_id != file_worktree_id {
+                                file.worktree.read(cx).absolutize(&file.path)
                             } else {
-                                is_outside_worktree = true;
+                                file.path.as_std_path().to_path_buf()
                             };
+                            let offset_range = anchor_range.to_offset(&buffer);
+                            let point_range = SerializablePoint::from_language_point_range(
+                                offset_range.to_point(&buffer),
+                            );
+                            targets.push(SourceRange {
+                                path,
+                                offset_range,
+                                point_range,
+                            });
                         })?;
                     }
 
@@ -1005,23 +1042,26 @@ impl From<SerializablePoint> for Point {
 
 #[derive(Debug)]
 struct RetrievalStatsResult {
+    outcome: RetrievalOutcome,
     #[allow(dead_code)]
     path: Arc<RelPath>,
     #[allow(dead_code)]
     identifier: Identifier,
     #[allow(dead_code)]
     point: Point,
-    outcome: RetrievalStatsOutcome,
+    #[allow(dead_code)]
+    lsp_definitions: Vec<SourceRange>,
+    retrieved_definitions: Vec<RetrievedDefinition>,
 }
 
 #[derive(Debug)]
-enum RetrievalStatsOutcome {
-    Success {
-        matches: Vec<Option<usize>>,
-        #[allow(dead_code)]
-        lsp_definitions: Vec<SourceRange>,
-        retrieved_definitions: Vec<RetrievedDefinition>,
+enum RetrievalOutcome {
+    Match {
+        /// Lowest index within retrieved_definitions that matches an LSP definition.
+        best_match: usize,
     },
+    NoMatch,
+    NoMatchDueToExternalLspDefinitions,
 }
 
 #[derive(Debug)]
@@ -1029,7 +1069,9 @@ struct RetrievedDefinition {
     path: Arc<RelPath>,
     range: Range<Point>,
     score: f32,
+    #[allow(dead_code)]
     retrieval_score: f32,
+    #[allow(dead_code)]
     components: DeclarationScoreComponents,
 }
 
