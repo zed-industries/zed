@@ -2211,7 +2211,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Terminal"),
+                SettingsPageItem::SectionHeader("Terminal Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Dock",
                     description: "Where to dock the terminal panel",
@@ -2229,6 +2229,210 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Outline Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Button",
+                    description: "Whether to show the outline panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Dock",
+                    description: "Where to dock the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.outline_panel.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Outline Panel Default Width",
+                    description: "Default width of the outline panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Whether to show file icons in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Folder Icons",
+                    description: "Whether to show folder icons or chevrons for directories in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.folder_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .folder_icons
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Whether to show the git status in the outline panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Indent Size",
+                    description: "Amount of indentation for nested items",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.indent_size
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .indent_size
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Reveal Entries",
+                    description: "Whether to reveal it in the outline panel automatically when a corresponding outline entry becomes active",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.auto_reveal_entries
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .auto_reveal_entries
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Fold Directories",
+                    description: "Whether to fold directories automatically when a directory has only one directory inside",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(outline_panel) = &settings_content.outline_panel {
+                                &outline_panel.auto_fold_dirs
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .outline_panel
+                                .get_or_insert_default()
+                                .auto_fold_dirs
+                        },
+                    }),
+                    metadata: None,
+                }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Indent Guides Show",
+                //     description: "When to show indent guides in the outline panel",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| {
+                //             if let Some(outline_panel) = &settings_content.outline_panel {
+                //                 if let Some(indent_guides) = &outline_panel.indent_guides {
+                //                     &indent_guides.show
+                //                 } else {
+                //                     &None
+                //                 }
+                //             } else {
+                //                 &None
+                //             }
+                //         },
+                //         pick_mut: |settings_content| {
+                //             &mut settings_content
+                //                 .outline_panel
+                //                 .get_or_insert_default()
+                //                 .indent_guides
+                //                 .get_or_insert_default()
+                //                 .show
+                //         },
+                //     }),
+                //     metadata: None,
+                // }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
