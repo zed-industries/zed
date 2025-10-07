@@ -26,7 +26,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::initial_server_settings_content;
+use settings::{Settings as _, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -69,6 +69,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -443,7 +444,7 @@ impl HeadlessProject {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_string_lossy().to_string(),
+                canonicalized_path: canonicalized.to_string_lossy().into_owned(),
             }
         })?;
 
@@ -673,7 +674,7 @@ impl HeadlessProject {
         while let Some(path) = response.next().await {
             let path = path?;
             if let Some(file_name) = path.file_name() {
-                entries.push(file_name.to_string_lossy().to_string());
+                entries.push(file_name.to_string_lossy().into_owned());
                 if check_info {
                     let is_dir = fs.is_dir(&path).await;
                     entry_info.push(proto::EntryInfo { is_dir });
@@ -700,7 +701,7 @@ impl HeadlessProject {
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_string_lossy().to_string(),
+            path: expanded.to_string_lossy().into_owned(),
         })
     }
 
@@ -744,7 +745,7 @@ impl HeadlessProject {
             let command = process
                 .cmd()
                 .iter()
-                .map(|s| s.to_string_lossy().to_string())
+                .map(|s| s.to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
 
             processes.push(proto::ProcessInfo {

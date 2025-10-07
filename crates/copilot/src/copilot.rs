@@ -25,6 +25,7 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
+use semver::Version;
 use serde_json::json;
 use settings::Settings;
 use settings::SettingsStore;
@@ -485,6 +486,8 @@ impl Copilot {
         let start_language_server = async {
             let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
+            ensure_node_version_for_copilot(&node_path).await?;
+
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
                 path: node_path,
@@ -1159,6 +1162,44 @@ async fn clear_copilot_dir() {
 
 async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
+}
+
+async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()> {
+    const MIN_COPILOT_NODE_VERSION: Version = Version::new(20, 8, 0);
+
+    log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
+
+    let output = util::command::new_smol_command(node_path)
+        .arg("--version")
+        .output()
+        .await
+        .with_context(|| format!("checking Node.js version at {:?}", node_path))?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "failed to run node --version for Copilot. stdout: {}, stderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let version = Version::parse(version_str.trim().trim_start_matches('v'))
+        .with_context(|| format!("parsing Node.js version from '{}'", version_str.trim()))?;
+
+    if version < MIN_COPILOT_NODE_VERSION {
+        anyhow::bail!(
+            "GitHub Copilot language server requires Node.js {MIN_COPILOT_NODE_VERSION} or later, but found {version}. \
+            Please update your Node.js version or configure a different Node.js path in settings."
+        );
+    }
+
+    log::info!(
+        "Node.js version {} meets Copilot requirements (>= {})",
+        version,
+        MIN_COPILOT_NODE_VERSION
+    );
+    Ok(())
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {

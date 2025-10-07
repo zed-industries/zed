@@ -194,13 +194,6 @@ fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
-fn linear_to_srgb_component(linear: f32) -> f32 {
-    let cutoff = linear < 0.0031308;
-    let higher = 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
-    let lower = linear * 12.92;
-    return select(higher, lower, cutoff);
-}
-
 /// Convert a linear color to sRGBA space.
 fn linear_to_srgba(color: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(linear_to_srgb(color.rgb), color.a);
@@ -243,12 +236,7 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
         color.b += x;
     }
 
-    // Input colors are assumed to be in sRGB space,
-    // but blending and rendering needs to happen in linear space.
-    // The output will be converted to sRGB by either the target
-    // texture format or the swapchain color space.
-    let linear = srgb_to_linear(color);
-    return vec4<f32>(linear, a);
+    return vec4<f32>(color, a);
 }
 
 /// Convert a linear sRGB to Oklab space.
@@ -1169,10 +1157,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 @fragment
 fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
-    // converting to linear space to do color operations as cosmic_text outputs texture data in srgb format
-    // cannot make the gpu automatically do the conversion as there's no R8UnormSrgb format
-    let sample_linear = srgb_to_linear_component(sample);
-    let alpha_corrected = apply_contrast_and_gamma_correction(sample_linear, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    let alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
 
     // Alpha clip after using the derivatives.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
@@ -1180,7 +1165,7 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     }
 
     // convert to srgb space as the rest of the code (output swapchain) expects that
-    return blend_color(input.color, linear_to_srgb_component(alpha_corrected));
+    return blend_color(input.color, alpha_corrected);
 }
 
 // --- polychrome sprites --- //
@@ -1233,7 +1218,7 @@ fn fs_poly_sprite(input: PolySpriteVarying) -> @location(0) vec4<f32> {
         let grayscale = dot(color.rgb, GRAYSCALE_FACTORS);
         color = vec4<f32>(vec3<f32>(grayscale), sample.a);
     }
-    return blend_color(color, linear_to_srgb_component(sprite.opacity * saturate(0.5 - distance)));
+    return blend_color(color, sprite.opacity * saturate(0.5 - distance));
 }
 
 // --- surfaces --- //

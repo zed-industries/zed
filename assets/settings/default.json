@@ -1,5 +1,7 @@
 {
-  "project_name": null,
+  /// The displayed name of this project. If not set or empty, the root directory name
+  /// will be displayed.
+  "project_name": "",
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -72,8 +74,10 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // The default font size for text in the agent panel. Falls back to the UI font size if unset.
-  "agent_font_size": null,
+  // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
+  "agent_ui_font_size": null,
+  // The default font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+  "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -1227,6 +1231,10 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    ///
+    /// Default: null
+    "gutter_debounce": null,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
@@ -1241,6 +1249,9 @@
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    "blame": {
+      "show_avatar": true
     },
     // Control which information is shown in the branch picker.
     "branch_picker": {
@@ -1322,6 +1333,8 @@
   },
   // Status bar-related settings.
   "status_bar": {
+    // Whether to show the status bar.
+    "experimental.show": true,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1557,6 +1570,14 @@
   "auto_install_extensions": {
     "html": true
   },
+  // The capabilities granted to extensions.
+  //
+  // This list can be customized to restrict what extensions are able to do.
+  "granted_extension_capabilities": [
+    { "kind": "process:exec", "command": "*", "args": ["**"] },
+    { "kind": "download_file", "host": "*", "path": ["**"] },
+    { "kind": "npm:install", "package": "*" }
+  ],
   // Controls how completions are processed for this language.
   "completions": {
     // Controls how words are completed.
@@ -1855,21 +1876,19 @@
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // // Whether to consider prettier formatter or not when attempting to format a file.
-    "allowed": false
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
-    // "plugins": [],
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
+    // Enables or disables formatting with Prettier for any given language.
+    "allowed": false,
+    // Forces Prettier integration to use a specific parser name when formatting files with the language.
+    "plugins": [],
+    // Default Prettier options, in the format as in package.json section for Prettier.
+    // If project installs Prettier via its package.json, these options will be ignored.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
     // "singleQuote": true
+    // Forces Prettier integration to use a specific parser name when formatting files with the language
+    // when set to a non-empty string.
+    "parser": ""
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
@@ -2019,7 +2038,7 @@
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_font_size": 20.0,
+  //     "agent_ui_font_size": 20.0,
   //     "buffer_font_size": 20.0,
   //     "theme": "One Light",
   //     "ui_font_size": 20.0

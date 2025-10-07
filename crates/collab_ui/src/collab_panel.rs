@@ -922,7 +922,7 @@ impl CollabPanel {
 
         ListItem::new(user.github_login.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
-            .child(Label::new(user.github_login.clone()))
+            .child(render_participant_name_and_handle(user))
             .toggle_state(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
@@ -2505,7 +2505,7 @@ impl CollabPanel {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Label::new(github_login.clone()))
+                    .child(render_participant_name_and_handle(&contact.user))
                     .when(calling, |el| {
                         el.child(Label::new("Calling").color(Color::Muted))
                     })
@@ -2940,6 +2940,14 @@ fn render_tree_branch(
     .h(line_height)
 }
 
+fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
+    Label::new(if let Some(ref display_name) = user.name {
+        format!("{display_name} ({})", user.github_login)
+    } else {
+        user.github_login.to_string()
+    })
+}
+
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -3170,8 +3178,8 @@ struct JoinChannelTooltip {
 }
 
 impl Render for JoinChannelTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tooltip_container(window, cx, |container, _, cx| {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(cx, |container, cx| {
             let participants = self
                 .channel_store
                 .read(cx)
@@ -3183,7 +3191,7 @@ impl Render for JoinChannelTooltip {
                     h_flex()
                         .gap_2()
                         .child(Avatar::new(participant.avatar_uri.clone()))
-                        .child(Label::new(participant.github_login.clone()))
+                        .child(render_participant_name_and_handle(participant))
                 }))
         })
     }

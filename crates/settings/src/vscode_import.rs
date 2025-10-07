@@ -51,7 +51,7 @@ impl VsCodeSettings {
                 "No settings file found, expected to find it in one of the following paths:\n{}",
                 candidate_paths
                     .into_iter()
-                    .map(|path| path.to_string_lossy().to_string())
+                    .map(|path| path.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join("\n")
             ));
@@ -122,6 +122,12 @@ impl VsCodeSettings {
     pub fn f32_setting(&self, key: &str, setting: &mut Option<f32>) {
         if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
             *setting = Some(s as f32)
+        }
+    }
+
+    pub fn from_f32_setting<T: From<f32>>(&self, key: &str, setting: &mut Option<T>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
+            *setting = Some(T::from(s as f32))
         }
     }
 

@@ -278,7 +278,7 @@ impl ToolchainStore {
                 let path = PathBuf::from(toolchain.path.to_string());
                 proto::Toolchain {
                     name: toolchain.name.into(),
-                    path: path.to_string_lossy().to_string(),
+                    path: path.to_string_lossy().into_owned(),
                     raw_json: toolchain.as_json.to_string(),
                 }
             }),
@@ -330,7 +330,7 @@ impl ToolchainStore {
                     let path = PathBuf::from(toolchain.path.to_string());
                     proto::Toolchain {
                         name: toolchain.name.to_string(),
-                        path: path.to_string_lossy().to_string(),
+                        path: path.to_string_lossy().into_owned(),
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
@@ -609,7 +609,7 @@ impl RemoteToolchainStore {
                             language_name: toolchain.language_name.into(),
                             toolchain: Some(proto::Toolchain {
                                 name: toolchain.name.into(),
-                                path: path.to_string_lossy().to_string(),
+                                path: path.to_string_lossy().into_owned(),
                                 raw_json: toolchain.as_json.to_string(),
                             }),
                             path: Some(project_path.path.to_proto()),

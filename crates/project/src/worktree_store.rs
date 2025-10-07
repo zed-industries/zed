@@ -395,7 +395,7 @@ impl WorktreeStore {
                                 // Otherwise, the FS watcher would do it on the `RootUpdated` event,
                                 // but with a noticeable delay, so we handle it proactively.
                                 local.update_abs_path_and_refresh(
-                                    Some(SanitizedPath::new_arc(&abs_new_path)),
+                                    SanitizedPath::new_arc(&abs_new_path),
                                     cx,
                                 );
                                 Task::ready(Ok(this.root_entry().cloned()))
@@ -536,8 +536,8 @@ impl WorktreeStore {
             let root_path_buf = PathBuf::from(response.canonicalized_path.clone());
             let root_name = root_path_buf
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(root_path_buf.to_string_lossy().to_string());
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(root_path_buf.to_string_lossy().into_owned());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -860,7 +860,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().to_string(),
+                    abs_path: worktree.abs_path().to_string_lossy().into_owned(),
                 }
             })
             .collect()

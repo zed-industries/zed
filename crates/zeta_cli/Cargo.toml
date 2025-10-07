@@ -30,6 +30,7 @@ language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
+log.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
@@ -47,3 +48,5 @@ watch.workspace = true
 workspace-hack.workspace = true
 zeta.workspace = true
 zeta2.workspace = true
+zlog.workspace = true
+ordered-float.workspace = true

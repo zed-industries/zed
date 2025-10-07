@@ -2875,7 +2875,7 @@ impl Thread {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
-                let path = worktree.abs_path().to_string_lossy().to_string();
+                let path = worktree.abs_path().to_string_lossy().into_owned();
                 let snapshot = worktree.snapshot();
                 (path, snapshot)
             });
@@ -3276,7 +3276,6 @@ mod tests {
     use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
-    use theme::ThemeSettings;
     use util::path;
     use workspace::Workspace;
 
@@ -5337,7 +5336,7 @@ fn main() {{
             thread_store::init(fs.clone(), cx);
             workspace::init_settings(cx);
             language_model::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             ToolRegistry::default_global(cx);
             assistant_tool::init(cx);
 
