@@ -1,9 +1,10 @@
-use notify::EventKind;
+use notify_debouncer_full::{new_debouncer, notify::{self, EventKind}, Debouncer, FileIdMap};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
     ops::DerefMut,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 use util::{ResultExt, paths::SanitizedPath};
 
@@ -84,24 +85,30 @@ impl Watcher for FsWatcher {
         let registration_id = global({
             let path = path.clone();
             |g| {
-                g.add(path, mode, move |event: &notify::Event| {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-                    let mut path_events = event
-                        .paths
-                        .iter()
-                        .filter_map(|event_path| {
-                            let event_path = SanitizedPath::new(event_path);
-                            event_path.starts_with(&root_path).then(|| PathEvent {
-                                path: event_path.as_path().to_path_buf(),
-                                kind,
-                            })
-                        })
-                        .collect::<Vec<_>>();
+                g.add(
+                    path,
+                    mode,
+                    move |events: &[notify::Event]| {
+                        let mut path_events = Vec::new();
+
+                        for event in events {
+                            let kind = match event.kind {
+                                EventKind::Create(_) => Some(PathEventKind::Created),
+                                EventKind::Modify(_) => Some(PathEventKind::Changed),
+                                EventKind::Remove(_) => Some(PathEventKind::Removed),
+                                _ => None,
+                            };
+
+                            for event_path in &event.paths {
+                                let event_path = SanitizedPath::new(event_path);
+                                if event_path.starts_with(&root_path) {
+                                    path_events.push(PathEvent {
+                                        path: event_path.as_path().to_path_buf(),
+                                        kind,
+                                    });
+                                }
+                            }
+                        }
 
                     if !path_events.is_empty() {
                         path_events.sort();
@@ -138,7 +145,7 @@ impl Watcher for FsWatcher {
 pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
-    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
+    callback: Arc<dyn Fn(&[notify::Event]) + Send + Sync>,
     path: Arc<std::path::Path>,
 }
 
@@ -150,15 +157,7 @@ struct WatcherState {
 
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
-
-    // DANGER: never keep the state lock while holding the watcher lock
-    // two mutexes because calling watcher.add triggers an watcher.event, which needs watchers.
-    #[cfg(target_os = "linux")]
-    watcher: Mutex<notify::INotifyWatcher>,
-    #[cfg(target_os = "freebsd")]
-    watcher: Mutex<notify::KqueueWatcher>,
-    #[cfg(target_os = "windows")]
-    watcher: Mutex<notify::ReadDirectoryChangesWatcher>,
+    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, FileIdMap>>,
 }
 
 impl GlobalWatcher {
@@ -167,11 +166,9 @@ impl GlobalWatcher {
         &self,
         path: Arc<std::path::Path>,
         mode: notify::RecursiveMode,
-        cb: impl Fn(&notify::Event) + Send + Sync + 'static,
+        cb: impl Fn(&[notify::Event]) + Send + Sync + 'static,
     ) -> anyhow::Result<WatcherRegistrationId> {
-        use notify::Watcher;
-
-        self.watcher.lock().watch(&path, mode)?;
+        self.debouncer.lock().watch(&path, mode)?;
 
         let mut state = self.state.lock();
 
@@ -189,7 +186,6 @@ impl GlobalWatcher {
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
-        use notify::Watcher;
         let mut state = self.state.lock();
         let Some(registration_state) = state.watchers.remove(&id) else {
             return;
@@ -203,7 +199,7 @@ impl GlobalWatcher {
             state.path_registrations.remove(&registration_state.path);
 
             drop(state);
-            self.watcher
+            self.debouncer
                 .lock()
                 .unwatch(&registration_state.path)
                 .log_err();
@@ -211,18 +207,38 @@ impl GlobalWatcher {
     }
 }
 
-static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
+static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, String>> =
     OnceLock::new();
 
-fn handle_event(event: Result<notify::Event, notify::Error>) {
-    // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
-    // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
-    let Some(event) = event
-        .log_err()
-        .filter(|event| !matches!(event.kind, EventKind::Access(_)))
-    else {
-        return;
+fn handle_debounced_events(
+    result: notify_debouncer_full::DebounceEventResult,
+) {
+    let events = match result {
+        Ok(events) => events,
+        Err(errors) => {
+            for error in errors {
+                log::error!("File watcher error: {:?}", error);
+            }
+            return;
+        }
     };
+
+    // Convert debounced events to notify events and filter
+    let notify_events: Vec<notify::Event> = events
+        .into_iter()
+        .filter_map(|debounced_event| {
+            // Filter out access events
+            if matches!(debounced_event.event.kind, EventKind::Access(_)) {
+                return None;
+            }
+            Some(debounced_event.event)
+        })
+        .collect();
+
+    if notify_events.is_empty() {
+        return;
+    }
+
     global::<()>(move |watcher| {
         let callbacks = {
             let state = watcher.state.lock();
@@ -233,7 +249,7 @@ fn handle_event(event: Result<notify::Event, notify::Error>) {
                 .collect::<Vec<_>>()
         };
         for callback in callbacks {
-            callback(&event);
+            callback(&notify_events);
         }
     })
     .log_err();
@@ -241,14 +257,18 @@ fn handle_event(event: Result<notify::Event, notify::Error>) {
 
 pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     let result = FS_WATCHER_INSTANCE.get_or_init(|| {
-        notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-            state: Mutex::new(WatcherState {
-                watchers: Default::default(),
-                path_registrations: Default::default(),
-                last_registration: Default::default(),
-            }),
-            watcher: Mutex::new(file_watcher),
-        })
+        let debounce_duration = Duration::from_millis(200);
+
+        new_debouncer(debounce_duration, None, handle_debounced_events)
+            .map(|debouncer| GlobalWatcher {
+                state: Mutex::new(WatcherState {
+                    watchers: Default::default(),
+                    path_registrations: Default::default(),
+                    last_registration: Default::default(),
+                }),
+                debouncer: Mutex::new(debouncer),
+            })
+            .map_err(|e| format!("Failed to create debouncer: {}", e))
     });
     match result {
         Ok(g) => Ok(f(g)),

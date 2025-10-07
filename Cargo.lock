@@ -5883,6 +5883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "file-id"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
+dependencies = [
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "file_finder"
 version = "0.1.0"
 dependencies = [
@@ -6172,6 +6181,7 @@ dependencies = [
  "libc",
  "log",
  "notify 8.0.0",
+ "notify-debouncer-full",
  "objc",
  "parking_lot",
  "paths",
@@ -10121,6 +10131,19 @@ dependencies = [
  "notify-types",
  "walkdir",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "notify-debouncer-full"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2d88b1a7538054351c8258338df7c931a590513fb3745e8c15eb9ff4199b8d1"
+dependencies = [
+ "file-id",
+ "log",
+ "notify 8.0.0",
+ "notify-types",
+ "walkdir",
 ]
 
 [[package]]
