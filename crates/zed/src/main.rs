@@ -41,8 +41,8 @@ use std::{
     sync::Arc,
 };
 use theme::{
-    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
-    ThemeSettings,
+    ActiveTheme, GlobalTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
+    ThemeRegistry, ThemeSettings,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
@@ -170,6 +170,13 @@ pub fn main() {
 
     let args = Args::parse();
 
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    #[cfg(not(target_os = "windows"))]
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return;
+    }
+
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path());
@@ -209,6 +216,15 @@ pub fn main() {
 
         if args.foreground {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    match util::get_zed_cli_path() {
+        Ok(path) => askpass::set_askpass_program(path),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            process::exit(1);
         }
     }
 
@@ -526,7 +542,6 @@ pub fn main() {
             cx,
         );
 
-        SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         theme_extension::init(
             extension_host_proxy.clone(),
@@ -1266,6 +1281,13 @@ struct Args {
     #[arg(hide = true)]
     dock_action: Option<usize>,
 
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long)]
+    #[cfg(not(target_os = "windows"))]
+    #[arg(hide = true)]
+    askpass: Option<String>,
+
     #[arg(long, hide = true)]
     dump_all_actions: bool,
 
@@ -1340,49 +1362,49 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     let theme_settings = ThemeSettings::get_global(cx);
     let appearance = SystemAppearance::global(cx).0;
 
-    if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
-        let theme_name = theme_selection.theme(appearance);
-        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_)))
-            && let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name)
-        {
-            cx.spawn({
-                let theme_registry = theme_registry.clone();
-                let fs = fs.clone();
-                async move |cx| {
-                    theme_registry.load_user_theme(&theme_path, fs).await?;
+    let theme_name = theme_settings.theme.name(appearance);
+    if matches!(
+        theme_registry.get(&theme_name.0),
+        Err(ThemeNotFoundError(_))
+    ) && let Some(theme_path) = extension_store
+        .read(cx)
+        .path_to_extension_theme(&theme_name.0)
+    {
+        cx.spawn({
+            let theme_registry = theme_registry.clone();
+            let fs = fs.clone();
+            async move |cx| {
+                theme_registry.load_user_theme(&theme_path, fs).await?;
 
-                    cx.update(|cx| {
-                        ThemeSettings::reload_current_theme(cx);
-                    })
-                }
-            })
-            .detach_and_log_err(cx);
-        }
+                cx.update(|cx| {
+                    GlobalTheme::reload_theme(cx);
+                })
+            }
+        })
+        .detach_and_log_err(cx);
     }
 
-    if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
-        let icon_theme_name = icon_theme_selection.icon_theme(appearance);
-        if matches!(
-            theme_registry.get_icon_theme(icon_theme_name),
-            Err(IconThemeNotFoundError(_))
-        ) && let Some((icon_theme_path, icons_root_path)) = extension_store
-            .read(cx)
-            .path_to_extension_icon_theme(icon_theme_name)
-        {
-            cx.spawn({
-                let fs = fs.clone();
-                async move |cx| {
-                    theme_registry
-                        .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
-                        .await?;
+    let icon_theme_name = theme_settings.icon_theme.name(appearance);
+    if matches!(
+        theme_registry.get_icon_theme(&icon_theme_name.0),
+        Err(IconThemeNotFoundError(_))
+    ) && let Some((icon_theme_path, icons_root_path)) = extension_store
+        .read(cx)
+        .path_to_extension_icon_theme(&icon_theme_name.0)
+    {
+        cx.spawn({
+            let fs = fs.clone();
+            async move |cx| {
+                theme_registry
+                    .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                    .await?;
 
-                    cx.update(|cx| {
-                        ThemeSettings::reload_current_icon_theme(cx);
-                    })
-                }
-            })
-            .detach_and_log_err(cx);
-        }
+                cx.update(|cx| {
+                    GlobalTheme::reload_icon_theme(cx);
+                })
+            }
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -1410,7 +1432,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                     }
                 }
                 theme_registry.load_user_themes(themes_dir, fs).await?;
-                cx.update(ThemeSettings::reload_current_theme)?;
+                cx.update(GlobalTheme::reload_theme)?;
             }
             anyhow::Ok(())
         }
@@ -1436,7 +1458,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
                         .await
                         .log_err()
                 {
-                    cx.update(ThemeSettings::reload_current_theme).log_err();
+                    cx.update(GlobalTheme::reload_theme).log_err();
                 }
             }
         }

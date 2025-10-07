@@ -82,7 +82,7 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path);
+        let mut child = util::command::new_smol_command(&command.path);
         child
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
@@ -97,6 +97,11 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
+        log::info!(
+            "Spawning external agent server: {:?}, {:?}",
+            command.path,
+            command.args
+        );
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
