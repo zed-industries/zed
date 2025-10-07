@@ -4314,14 +4314,16 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         get: fn(&LanguageSettingsContent) -> &Option<T>,
     ) -> &Option<T> {
         let all_languages = &settings_content.project.all_languages;
-        let mut language_content = None;
-        if let Some(current_language) = current_language() {
-            language_content = all_languages.languages.0.get(&current_language);
+        if let Some(current_language_name) = current_language() {
+            if let Some(current_language) = all_languages.languages.0.get(&current_language_name) {
+                let value = get(current_language);
+                if value.is_some() {
+                    return value;
+                }
+            }
         }
-        let value = language_content
-            .map(get)
-            .unwrap_or_else(|| get(&all_languages.defaults));
-        return value;
+        let default_value = get(&all_languages.defaults);
+        return default_value;
     }
 
     fn language_settings_field_mut<T>(
