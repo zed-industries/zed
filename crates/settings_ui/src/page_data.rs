@@ -1468,9 +1468,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     title: "Current Line Highlight",
                     description: "How to highlight the current line in the minimap",
                     field: Box::new(SettingField {
-                        // todo(settings_ui): Double check that this is the right behavior
-                        // minimap current line highlight fallsback to editor.current_line_highlight
-                        // when it's null
                         pick: |settings_content| {
                             if let Some(minimap) = &settings_content.editor.minimap
                                 && minimap.current_line_highlight.is_some()
@@ -3072,23 +3069,23 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 // todo(settings_ui): Figure out the right default for this value in default.json
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Gutter Debounce",
-                //     description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(git) = &settings_content.git {
-                //                 &git.gutter_debounce
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.git.get_or_insert_default().gutter_debounce
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Gutter Debounce",
+                    description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.gutter_debounce
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().gutter_debounce
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Git Blame",
                     description: "Whether or not to show git blame data inline in the currently focused line",
