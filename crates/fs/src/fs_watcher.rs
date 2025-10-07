@@ -203,10 +203,13 @@ impl GlobalWatcher {
             state.path_registrations.remove(&registration_state.path);
 
             drop(state);
-            self.watcher
-                .lock()
-                .unwatch(&registration_state.path)
-                .log_err();
+
+            if !cfg!(target_os = "linux") {
+                self.watcher
+                    .lock()
+                    .unwatch(&registration_state.path)
+                    .log_err();
+            }
         }
     }
 }
