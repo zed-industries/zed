@@ -88,7 +88,6 @@ impl EditPredictionContext {
         Self::gather_context_with_references_fn(
             cursor_point,
             buffer,
-            parent_abs_path,
             &imports,
             options,
             index_state,
@@ -99,7 +98,6 @@ impl EditPredictionContext {
     pub fn gather_context_with_references_fn(
         cursor_point: Point,
         buffer: &BufferSnapshot,
-        parent_abs_path: Option<&Path>,
         imports: &Imports,
         options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,

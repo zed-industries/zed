@@ -17,7 +17,7 @@ use language::{Buffer, OffsetRangeExt};
 use language::{LanguageId, ParseStatus};
 use language_model::LlmApiToken;
 use ordered_float::OrderedFloat;
-use project::{Project, ProjectPath, Worktree};
+use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -271,16 +271,17 @@ async fn get_context(
     let mut ready_languages = HashSet::default();
     let (_lsp_open_handle, buffer) = if use_language_server {
         let (lsp_open_handle, _, buffer) = open_buffer_with_language_server(
-            &project,
-            &worktree,
-            &cursor.path,
+            project.clone(),
+            worktree.clone(),
+            cursor.path.clone(),
             &mut ready_languages,
             cx,
         )
         .await?;
         (Some(lsp_open_handle), buffer)
     } else {
-        let buffer = open_buffer(&project, &worktree, &cursor.path, cx).await?;
+        let buffer =
+            open_buffer(project.clone(), worktree.clone(), cursor.path.clone(), cx).await?;
         (None, buffer)
     };
 
@@ -466,15 +467,67 @@ pub async fn retrieval_stats(
             .into_inner(),
     );
 
+    struct FileSnapshot {
+        project_entry_id: ProjectEntryId,
+        snapshot: BufferSnapshot,
+        hash: u64,
+        parent_abs_path: Arc<Path>,
+    }
+
+    let files: Vec<FileSnapshot> = futures::future::try_join_all({
+        filtered_files
+            .iter()
+            .map(|file| {
+                let buffer_task =
+                    open_buffer(project.clone(), worktree.clone(), file.path.clone(), cx);
+                cx.spawn(async move |cx| {
+                    let buffer = buffer_task.await?;
+                    let (project_entry_id, parent_abs_path, snapshot) =
+                        buffer.read_with(cx, |buffer, cx| {
+                            let file = project::File::from_dyn(buffer.file()).unwrap();
+                            let project_entry_id = file.project_entry_id().unwrap();
+                            let mut parent_abs_path = file.worktree.read(cx).absolutize(&file.path);
+                            if !parent_abs_path.pop() {
+                                panic!("Invalid worktree path");
+                            }
+
+                            (project_entry_id, parent_abs_path, buffer.snapshot())
+                        })?;
+
+                    anyhow::Ok(
+                        cx.background_spawn(async move {
+                            let mut hasher = collections::FxHasher::default();
+                            snapshot.text().hash(&mut hasher);
+                            FileSnapshot {
+                                project_entry_id,
+                                snapshot,
+                                hash: hasher.finish(),
+                                parent_abs_path: parent_abs_path.into(),
+                            }
+                        })
+                        .await,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+    .await?;
+
+    let mut file_snapshots = HashMap::default();
     let mut hasher = collections::FxHasher::default();
-    worktree.read_with(cx, |worktree, _cx| {
-        for file in &filtered_files {
-            let content = std::fs::read(worktree.absolutize(&file.path))?;
-            content.hash(&mut hasher);
-        }
-        anyhow::Ok(())
-    })??;
+    for FileSnapshot {
+        project_entry_id,
+        snapshot,
+        hash,
+        ..
+    } in &files
+    {
+        file_snapshots.insert(*project_entry_id, snapshot.clone());
+        hash.hash(&mut hasher);
+    }
     let files_hash = hasher.finish();
+    let file_snapshots = Arc::new(file_snapshots);
+
     let lsp_definitions_path = std::env::current_dir()?.join(format!(
         "target/zeta2-lsp-definitions-{:x}.json",
         files_hash
@@ -498,44 +551,27 @@ pub async fn retrieval_stats(
     }
     .into();
 
-    let filtered_files = filtered_files
-        .into_iter()
-        .skip(skip_files.unwrap_or(0))
-        .take(file_limit.unwrap_or(usize::MAX))
-        .collect::<Vec<_>>();
-    let filtered_files_len = filtered_files.len();
+    let files_len = files.len().min(file_limit.unwrap_or(usize::MAX));
     let done_count = Arc::new(AtomicUsize::new(0));
 
     let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
     let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
 
-    let tasks = filtered_files
+    let tasks = files
         .into_iter()
-        .map(|project_path| {
+        .skip(skip_files.unwrap_or(0))
+        .take(file_limit.unwrap_or(usize::MAX))
+        .into_iter()
+        .map(|project_file| {
             let index_state = index_state.clone();
             let lsp_definitions = lsp_definitions.clone();
             let options = options.clone();
-            let project = project.clone();
-            let worktree = worktree.clone();
             let output_tx = output_tx.clone();
             let done_count = done_count.clone();
-            cx.spawn(async move |cx| {
-                let buffer = open_buffer(&project, &worktree, &project_path.path, cx).await?;
+            let file_snapshots = file_snapshots.clone();
+            cx.background_spawn(async move {
+                let snapshot = project_file.snapshot;
 
-                let Some((snapshot, path, parent_abs_path)) =
-                    buffer.read_with(cx, |buffer, cx| {
-                        project::File::from_dyn(buffer.file()).and_then(|f| {
-                            let mut path = f.worktree.read(cx).absolutize(&f.path);
-                            if path.pop() {
-                                Some((buffer.snapshot(), f.path.clone(), path))
-                            } else {
-                                None
-                            }
-                        })
-                    })?
-                else {
-                    anyhow::bail!("Buffer had no path")
-                };
                 let full_range = 0..snapshot.len();
                 let references = references_in_range(
                     full_range,
@@ -547,11 +583,12 @@ pub async fn retrieval_stats(
                 println!("references: {}", references.len(),);
 
                 let imports = if options.context.use_imports {
-                    Imports::gather(&snapshot, Some(&parent_abs_path))
+                    Imports::gather(&snapshot, Some(&project_file.parent_abs_path))
                 } else {
                     Imports::default()
                 };
-                let imports = Arc::new(imports);
+
+                let path = snapshot.file().unwrap().path();
 
                 for reference in references {
                     let query_point = snapshot.offset_to_point(reference.range.start);
@@ -573,15 +610,12 @@ pub async fn retrieval_stats(
 
                     let retrieved_definitions = retrieve_definitions(
                         &reference,
-                        imports.clone(),
+                        &imports,
                         query_point,
-                        snapshot.clone(),
-                        Some(parent_abs_path.clone()),
-                        index_state.clone(),
-                        &project,
-                        &worktree,
-                        options.context.clone(),
-                        cx,
+                        &snapshot,
+                        &index_state,
+                        &file_snapshots,
+                        &options,
                     )
                     .await?;
 
@@ -643,10 +677,10 @@ pub async fn retrieval_stats(
                 println!(
                     "{:02}/{:02} done",
                     done_count.fetch_add(1, atomic::Ordering::Relaxed) + 1,
-                    filtered_files_len,
+                    files_len,
                 );
 
-                Ok(())
+                anyhow::Ok(())
             })
         })
         .collect::<Vec<_>>();
@@ -768,31 +802,23 @@ pub async fn retrieval_stats(
 
 async fn retrieve_definitions(
     reference: &Reference,
-    imports: Arc<Imports>,
+    imports: &Imports,
     query_point: Point,
-    snapshot: BufferSnapshot,
-    parent_abs_path: Option<PathBuf>,
-    index: Arc<SyntaxIndexState>,
-    project: &Entity<Project>,
-    worktree: &Entity<Worktree>,
-    options: EditPredictionContextOptions,
-    cx: &mut AsyncApp,
+    snapshot: &BufferSnapshot,
+    index: &Arc<SyntaxIndexState>,
+    file_snapshots: &Arc<HashMap<ProjectEntryId, BufferSnapshot>>,
+    options: &Arc<zeta2::ZetaOptions>,
 ) -> Result<Vec<RetrievedDefinition>> {
     let mut single_reference_map = HashMap::default();
     single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
-    let edit_prediction_context = cx
-        .background_spawn(async move {
-            EditPredictionContext::gather_context_with_references_fn(
-                query_point,
-                &snapshot,
-                parent_abs_path.as_deref(),
-                &imports,
-                &options,
-                Some(&index),
-                |_, _, _| single_reference_map,
-            )
-        })
-        .await;
+    let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
+        query_point,
+        snapshot,
+        imports,
+        &options.context,
+        Some(&index),
+        |_, _, _| single_reference_map,
+    );
 
     let Some(edit_prediction_context) = edit_prediction_context else {
         return Ok(Vec::new());
@@ -806,29 +832,15 @@ async fn retrieve_definitions(
                 declaration,
                 ..
             } => {
-                let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                    worktree
-                        .entry_for_id(*project_entry_id)
-                        .map(|entry| entry.path.clone())
-                })?
-                else {
+                let Some(snapshot) = file_snapshots.get(&project_entry_id) else {
                     log::error!("bug: file project entry not found");
                     continue;
                 };
-                let project_path = ProjectPath {
-                    worktree_id: worktree.read_with(cx, |worktree, _cx| worktree.id())?,
-                    path: path.clone(),
-                };
-                let buffer = project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                    .await?;
-                let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
-                // intentionally leak buffers so that they don't get continuously re-opened
-                std::mem::forget(buffer);
+                let path = snapshot.file().unwrap().path().clone();
                 retrieved_definitions.push(RetrievedDefinition {
                     path,
-                    range: rope.offset_to_point(declaration.item_range.start)
-                        ..rope.offset_to_point(declaration.item_range.end),
+                    range: snapshot.offset_to_point(declaration.item_range.start)
+                        ..snapshot.offset_to_point(declaration.item_range.end),
                     score: scored_declaration.score(DeclarationStyle::Declaration),
                     retrieval_score: scored_declaration.retrieval_score(),
                     components: scored_declaration.components,
@@ -840,16 +852,12 @@ async fn retrieve_definitions(
                 declaration,
                 ..
             } => {
-                let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                    worktree
-                        .entry_for_id(*project_entry_id)
-                        .map(|entry| entry.path.clone())
-                })?
-                else {
+                let Some(snapshot) = file_snapshots.get(&project_entry_id) else {
                     // This case happens when dependency buffers have been opened by
                     // go-to-definition, resulting in single-file worktrees.
                     continue;
                 };
+                let path = snapshot.file().unwrap().path().clone();
                 retrieved_definitions.push(RetrievedDefinition {
                     path,
                     range: rope.offset_to_point(declaration.item_range.start)
@@ -907,9 +915,9 @@ async fn gather_lsp_definitions(
         );
 
         let Some((lsp_open_handle, language_server_id, buffer)) = open_buffer_with_language_server(
-            &project,
-            &worktree,
-            &project_path.path,
+            project.clone(),
+            worktree.clone(),
+            project_path.path.clone(),
             &mut ready_languages,
             cx,
         )
@@ -1090,37 +1098,39 @@ struct RetrievedDefinition {
     components: DeclarationScoreComponents,
 }
 
-pub async fn open_buffer(
-    project: &Entity<Project>,
-    worktree: &Entity<Worktree>,
-    path: &RelPath,
-    cx: &mut AsyncApp,
-) -> Result<Entity<Buffer>> {
-    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-        worktree_id: worktree.id(),
-        path: path.into(),
-    })?;
+pub fn open_buffer(
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<RelPath>,
+    cx: &AsyncApp,
+) -> Task<Result<Entity<Buffer>>> {
+    cx.spawn(async move |cx| {
+        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+            worktree_id: worktree.id(),
+            path: path.into(),
+        })?;
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-        .await?;
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?;
 
-    let mut parse_status = buffer.read_with(cx, |buffer, _cx| buffer.parse_status())?;
-    while *parse_status.borrow() != ParseStatus::Idle {
-        parse_status.changed().await?;
-    }
+        let mut parse_status = buffer.read_with(cx, |buffer, _cx| buffer.parse_status())?;
+        while *parse_status.borrow() != ParseStatus::Idle {
+            parse_status.changed().await?;
+        }
 
-    Ok(buffer)
+        Ok(buffer)
+    })
 }
 
 pub async fn open_buffer_with_language_server(
-    project: &Entity<Project>,
-    worktree: &Entity<Worktree>,
-    path: &RelPath,
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<RelPath>,
     ready_languages: &mut HashSet<LanguageId>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Entity<Buffer>>, LanguageServerId, Entity<Buffer>)> {
-    let buffer = open_buffer(project, worktree, path, cx).await?;
+    let buffer = open_buffer(project.clone(), worktree, path.clone(), cx).await?;
 
     let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
         (

@@ -385,7 +385,7 @@ impl SyntaxIndex {
 
         let Some((project_entry_id, cached_path)) = project::File::from_dyn(buffer.file())
             .and_then(|f| {
-                let project_entry_id = f.project_entry_id(cx)?;
+                let project_entry_id = f.project_entry_id()?;
                 let cached_path = CachedDeclarationPath::new(
                     f.worktree.read(cx).abs_path(),
                     &f.path,
