@@ -145,7 +145,7 @@ impl Project {
             project.update(cx, move |this, cx| {
                 let format_to_run = || {
                     if let Some(command) = &spawn_task.command {
-                        let mut command: Option<Cow<str>> = shlex::try_quote(command).ok();
+                        let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
                         if let Some(command) = &mut command
                             && command.starts_with('"')
                             && let Some(prefix) = shell_kind.command_prefix()
@@ -156,15 +156,7 @@ impl Project {
                         let args = spawn_task
                             .args
                             .iter()
-                            .filter_map(|arg| shlex::try_quote(&arg).ok())
-                            .map(|arg| {
-                                // If we are running in PowerShell, we want to take extra care when escaping strings.
-                                // In particular, we want to escape strings with a backtick (`) rather than a backslash (\).
-                                match shell_kind {
-                                    ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
-                                    _ => arg,
-                                }
-                            });
+                            .filter_map(|arg| shell_kind.try_quote(&arg));
 
                         command.into_iter().chain(args).join(" ")
                     } else {
