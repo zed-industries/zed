@@ -2,19 +2,22 @@ use std::sync::Arc;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{App, IntoElement};
+use gpui::{Action, App, IntoElement};
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
     ThemeSettings,
 };
 use ui::{
-    ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
+    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
     ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
-use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
+use crate::{
+    ImportCursorSettings, ImportVsCodeSettings, SettingsImportState,
+    theme_preview::{ThemePreviewStyle, ThemePreviewTile},
+};
 
 const LIGHT_THEMES: [&str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
 const DARK_THEMES: [&str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
@@ -402,10 +405,90 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     })
 }
 
+fn render_setting_import_button(
+    tab_index: isize,
+    label: SharedString,
+    icon_name: IconName,
+    action: &dyn Action,
+    imported: bool,
+) -> impl IntoElement {
+    let action = action.boxed_clone();
+    h_flex().w_full().child(
+        ButtonLike::new(label.clone())
+            .full_width()
+            .style(ButtonStyle::Outlined)
+            .size(ButtonSize::Large)
+            .tab_index(tab_index)
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .px_1()
+                            .child(
+                                Icon::new(icon_name)
+                                    .color(Color::Muted)
+                                    .size(IconSize::XSmall),
+                            )
+                            .child(Label::new(label.clone())),
+                    )
+                    .when(imported, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .color(Color::Success)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(Label::new("Imported").size(LabelSize::Small)),
+                        )
+                    }),
+            )
+            .on_click(move |_, window, cx| {
+                telemetry::event!("Welcome Import Settings", import_source = label,);
+                window.dispatch_action(action.boxed_clone(), cx);
+            }),
+    )
+}
+
+fn render_import_settings_section(tab_index: &mut isize, cx: &App) -> impl IntoElement {
+    let import_state = SettingsImportState::global(cx);
+    let imports: [(SharedString, IconName, &dyn Action, bool); 2] = [
+        (
+            "VS Code".into(),
+            IconName::EditorVsCode,
+            &ImportVsCodeSettings { skip_prompt: false },
+            import_state.vscode,
+        ),
+        (
+            "Cursor".into(),
+            IconName::EditorCursor,
+            &ImportCursorSettings { skip_prompt: false },
+            import_state.cursor,
+        ),
+    ];
+
+    let [vscode, cursor] = imports.map(|(label, icon_name, action, imported)| {
+        *tab_index += 1;
+        render_setting_import_button(*tab_index - 1, label, icon_name, action, imported)
+    });
+
+    v_flex()
+        .gap_4()
+        .child(v_flex().child(Label::new("Import Settings")).child(
+            Label::new("Automatically pull your settings from other editors.").color(Color::Muted),
+        ))
+        .child(h_flex().w_full().gap_4().child(vscode).child(cursor))
+}
+
 pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
     let mut tab_index = 0;
     v_flex()
         .gap_6()
+        .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_theme_section(&mut tab_index, cx))
         .child(render_base_keymap_section(&mut tab_index, cx))
         .child(render_vim_mode_switch(&mut tab_index, cx))

@@ -356,14 +356,6 @@ impl Render for Onboarding {
                                 h_flex()
                                     .w_full()
                                     .items_start()
-                                    // TODO: Clean this up. We likely shouldn't
-                                    // need the `render_import_settings_section`
-                                    // function to be public, nor do we need to
-                                    // provide it with the page's index, now
-                                    // that there's only one page.
-                                    .child(crate::editing_page::render_import_settings_section(
-                                        &mut 0, cx,
-                                    ))
                                     .child(div().w_full())
                                     .child({
                                         Button::new("finish_setup", "Finish Setup")
