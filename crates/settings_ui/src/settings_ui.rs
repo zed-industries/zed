@@ -943,6 +943,25 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn calculate_navbar_entry_from_scroll_position(&mut self) {
+        let scroll_index = self.scroll_handle.logical_scroll_top().0;
+        let mut page_index = self.navbar_entry;
+
+        while !self.navbar_entries[page_index].is_root {
+            page_index -= 1;
+        }
+
+        if self.navbar_entries[page_index].expanded {
+            let section_index = self
+                .page_items()
+                .take(scroll_index + 1)
+                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
+                .count();
+
+            self.navbar_entry = section_index + page_index;
+        }
+    }
+
     fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
@@ -1365,23 +1384,7 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
-
-        let scroll_index = self.scroll_handle.logical_scroll_top().0;
-        let mut page_index = self.navbar_entry;
-
-        while !self.navbar_entries[page_index].is_root {
-            page_index -= 1;
-        }
-
-        if self.navbar_entries[page_index].expanded {
-            let section_index = self
-                .page_items()
-                .take(scroll_index + 1)
-                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-                .count();
-
-            self.navbar_entry = section_index + page_index;
-        }
+        self.calculate_navbar_entry_from_scroll_position();
 
         div()
             .id("settings-window")
