@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{Action, App, IntoElement, ScrollHandle};
+use gpui::{Action, App, IntoElement};
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
@@ -10,8 +10,8 @@ use theme::{
 };
 use ui::{
     ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon,
-    WithScrollbar, prelude::*, rems_from_px,
+    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*,
+    rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -473,7 +473,7 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
         .child(h_flex().gap_2().child(vscode).child(cursor))
 }
 
-pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
+pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {
     let mut tab_index = 0;
     v_flex()
         .id("basics-page")

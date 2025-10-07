@@ -298,8 +298,8 @@ impl Onboarding {
         cx.open_url(&zed_urls::account_url(cx))
     }
 
-    fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        crate::basics_page::render_basics_page(window, cx).into_any_element()
+    fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        crate::basics_page::render_basics_page(cx).into_any_element()
     }
 }
 
@@ -385,7 +385,7 @@ impl Render for Onboarding {
                                     .border_b_1()
                                     .border_color(cx.theme().colors().border_variant.opacity(0.5)),
                             )
-                            .child(self.render_page(window, cx))
+                            .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )
                     .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
