@@ -474,7 +474,6 @@ impl RenderOnce for Button {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
 impl Component for Button {
     fn scope() -> ComponentScope {
         ComponentScope::Input

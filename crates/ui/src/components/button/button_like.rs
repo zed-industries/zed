@@ -625,7 +625,13 @@ impl RenderOnce for ButtonLike {
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
-                    .focus(focus_color)
+                    .map(|this| {
+                        if matches!(self.style, ButtonStyle::Outlined) {
+                            this.focus(|s| s.border_color(cx.theme().colors().border_focused))
+                        } else {
+                            this.focus(focus_color)
+                        }
+                    })
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
