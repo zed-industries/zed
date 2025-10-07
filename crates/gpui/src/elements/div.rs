@@ -3097,6 +3097,25 @@ impl ScrollHandle {
         }
     }
 
+    /// Get the bottom child that's scrolled into view.
+    pub fn bottom_item(&self) -> usize {
+        let state = self.0.borrow();
+        let bottom = state.bounds.bottom() - state.offset.borrow().y;
+
+        match state.child_bounds.binary_search_by(|bounds| {
+            if bottom < bounds.top() {
+                Ordering::Greater
+            } else if bottom > bounds.bottom() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(ix) => ix,
+            Err(ix) => ix.min(state.child_bounds.len().saturating_sub(1)),
+        }
+    }
+
     /// Return the bounds into which this child is painted
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().bounds
@@ -3192,6 +3211,21 @@ impl ScrollHandle {
             (
                 ix,
                 child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
+            )
+        } else {
+            (ix, px(0.))
+        }
+    }
+
+    /// Get the logical scroll bottom, based on a child index and a pixel offset.
+    pub fn logical_scroll_bottom(&self) -> (usize, Pixels) {
+        let ix = self.bottom_item();
+        let state = self.0.borrow();
+
+        if let Some(child_bounds) = state.child_bounds.get(ix) {
+            (
+                ix,
+                child_bounds.bottom() + state.offset.borrow().y - state.bounds.bottom(),
             )
         } else {
             (ix, px(0.))
