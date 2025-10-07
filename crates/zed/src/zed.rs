@@ -4579,7 +4579,6 @@ mod tests {
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
-                "settings_ui",
                 "snippets",
                 "stash_picker",
                 "supermaven",
