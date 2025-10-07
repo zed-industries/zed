@@ -51,6 +51,13 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let repository = workspace.project().read(cx).active_repository(cx);
+
+    if let Some(repo) = repository.as_ref() {
+        if repo.read(cx).current_job().is_some() {
+            return;
+        }
+    }
+
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -410,37 +417,20 @@ impl PickerDelegate for BranchListDelegate {
             return;
         }
 
-        cx.spawn_in(window, {
-            let branch = entry.branch.clone();
-            async move |picker, cx| {
-                let branch_change_task = picker.update(cx, |this, cx| {
-                    let repo = this
-                        .delegate
-                        .repo
-                        .as_ref()
-                        .context("No active repository")?
-                        .clone();
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
 
-                    let mut cx = cx.to_async();
+        let branch = entry.branch.clone();
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, _| repo.change_branch(branch.name().to_string()))?
+                .await?;
 
-                    anyhow::Ok(async move {
-                        repo.update(&mut cx, |repo, _| {
-                            repo.change_branch(branch.name().to_string())
-                        })?
-                        .await?
-                    })
-                })??;
-
-                branch_change_task.await?;
-
-                picker.update(cx, |_, cx| {
-                    cx.emit(DismissEvent);
-
-                    anyhow::Ok(())
-                })
-            }
+            anyhow::Ok(())
         })
         .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
+
+        cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
