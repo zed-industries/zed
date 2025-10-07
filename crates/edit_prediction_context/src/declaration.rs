@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::{borrow::Cow, path::Path};
 use text::{Bias, BufferId, Rope};
-use util::paths::PathExt;
+use util::paths::{path_ends_with, strip_path_suffix};
 use util::rel_path::RelPath;
 
 use crate::outline::OutlineDeclaration;
@@ -265,14 +265,11 @@ impl CachedDeclarationPath {
     }
 
     pub fn ends_with_posix_path(&self, path: &Path) -> bool {
-        if path.as_os_str().len() <= self.rel_path.len() {
-            let Ok(path) = RelPath::unix(path) else {
-                return false;
-            };
-            self.rel_path.ends_with(path)
+        if path.as_os_str().len() <= self.rel_path.as_unix_str().len() {
+            path_ends_with(self.rel_path.as_std_path(), path)
         } else {
-            if let Some(remaining) = path.strip_path_suffix(self.rel_path.as_std_path()) {
-                self.worktree_abs_path.path_ends_with(remaining)
+            if let Some(remaining) = strip_path_suffix(path, self.rel_path.as_std_path()) {
+                path_ends_with(&self.worktree_abs_path, remaining)
             } else {
                 false
             }
@@ -280,7 +277,7 @@ impl CachedDeclarationPath {
     }
 
     pub fn equals_absolute_path(&self, path: &Path) -> bool {
-        if let Some(remaining) = path.strip_path_suffix(&self.rel_path.as_std_path()) {
+        if let Some(remaining) = strip_path_suffix(path, &self.rel_path.as_std_path()) {
             self.worktree_abs_path.as_ref() == remaining
         } else {
             false

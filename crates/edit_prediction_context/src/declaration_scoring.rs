@@ -461,3 +461,50 @@ fn score_declaration(
         components: score_components,
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::path::PathBuf;
+
+    use util::rel_path::rel_path;
+
+    use super::*;
+
+    #[test]
+    fn test_declaration_path_matches() {
+        let declaration_path = CachedDeclarationPath {
+            worktree_abs_path: PathBuf::from("/home/user/project").into(),
+            rel_path: rel_path("src/maths.ts").into(),
+        };
+
+        assert!(declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("maths.ts").into()
+        ));
+
+        assert!(declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("project/src/maths.ts").into()
+        ));
+
+        assert!(declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("user/project/src/maths.ts").into()
+        ));
+
+        assert!(declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("/home/user/project/src/maths.ts").into()
+        ));
+
+        assert!(!declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("other.ts").into()
+        ));
+
+        assert!(!declaration_path_matches_import(
+            &declaration_path,
+            &Path::new("/home/user/project/src/other.ts").into()
+        ));
+    }
+}

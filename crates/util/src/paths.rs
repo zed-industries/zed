@@ -63,8 +63,6 @@ pub trait PathExt {
     }
     fn local_to_wsl(&self) -> Option<PathBuf>;
     fn multiple_extensions(&self) -> Option<String>;
-    fn path_ends_with<P: AsRef<Path>>(&self, suffix: P) -> bool;
-    fn strip_path_suffix<P: AsRef<Path>>(&self, suffix: P) -> Option<&Path>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -156,28 +154,31 @@ impl<T: AsRef<Path>> PathExt for T {
 
         Some(parts.into_iter().join("."))
     }
+}
 
-    fn path_ends_with<P: AsRef<Path>>(&self, suffix: P) -> bool {
-        self.strip_path_suffix(suffix).is_some()
-    }
+pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
+    strip_path_suffix(base, suffix).is_some()
+}
 
-    fn strip_path_suffix<P: AsRef<Path>>(&self, suffix: P) -> Option<&Path> {
-        if let Some(suffix) = self
-            .as_ref()
-            .as_os_str()
-            .as_encoded_bytes()
-            .strip_suffix(suffix.as_ref().as_os_str().as_encoded_bytes())
+pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
+    if let Some(remainder) = base
+        .as_os_str()
+        .as_encoded_bytes()
+        .strip_suffix(suffix.as_os_str().as_encoded_bytes())
+    {
+        if remainder
+            .last()
+            .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
         {
-            if suffix
-                .last()
-                .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
-            {
-                let os_str = unsafe { OsStr::from_encoded_bytes_unchecked(suffix) };
-                return Some(Path::new(os_str));
-            }
+            let os_str = unsafe {
+                OsStr::from_encoded_bytes_unchecked(
+                    &remainder[0..remainder.len().saturating_sub(1)],
+                )
+            };
+            return Some(Path::new(os_str));
         }
-        None
     }
+    None
 }
 
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
@@ -1869,5 +1870,36 @@ mod tests {
         // Longer sample extension
         let path = Path::new("/a/b/c/long.app.tar.gz");
         assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
+    }
+
+    #[test]
+    fn test_strip_path_suffix() {
+        let base = Path::new("/a/b/c/file_name");
+        let suffix = Path::new("file_name");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.tsx");
+        let suffix = Path::new("file_name.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.stories.tsx");
+        let suffix = Path::new("c/file_name.stories.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/no_match.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
     }
 }
