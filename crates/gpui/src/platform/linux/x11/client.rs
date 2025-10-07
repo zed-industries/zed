@@ -1,5 +1,6 @@
 use crate::{Capslock, xcb_flush};
 use anyhow::{Context as _, anyhow};
+use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -1651,6 +1652,16 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+
+    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+        let state = self.0.borrow();
+        state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window as u64)
+            .map(|x_window| std::future::ready(Some(WindowIdentifier::from_xid(x_window))))
+            .unwrap_or(std::future::ready(None))
     }
 }
 
