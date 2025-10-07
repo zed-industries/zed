@@ -284,7 +284,7 @@ pub(crate) struct X11WindowStatePtr {
     pub state: Rc<RefCell<X11WindowState>>,
     pub(crate) callbacks: Rc<RefCell<Callbacks>>,
     xcb: Rc<XCBConnection>,
-    x_window: xproto::Window,
+    pub(crate) x_window: xproto::Window,
 }
 
 impl rwh::HasWindowHandle for RawWindow {
@@ -1204,7 +1204,7 @@ impl PlatformWindow for X11Window {
             self.0.xcb.query_pointer(self.0.x_window),
         )
         .log_err()
-        .map_or(Point::new(Pixels(0.0), Pixels(0.0)), |reply| {
+        .map_or(Point::new(Pixels::ZERO, Pixels::ZERO), |reply| {
             Point::new((reply.root_x as u32).into(), (reply.root_y as u32).into())
         })
     }

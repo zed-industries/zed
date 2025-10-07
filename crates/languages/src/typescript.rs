@@ -5,6 +5,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use http_client::github_download::download_server_binary;
 use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
@@ -25,7 +26,7 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe};
 use util::{merge_json_value_into, rel_path::RelPath};
 
-use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
+use crate::{PackageJson, PackageJsonData};
 
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
@@ -269,7 +270,7 @@ impl TypeScriptContextProvider {
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let new_json_data = file_relative_path
             .ancestors()
-            .map(|path| worktree_root.join(path))
+            .map(|path| worktree_root.join(path.as_std_path()))
             .map(|parent_path| {
                 self.package_json_data(&parent_path, self.last_package_json.clone(), fs.clone(), cx)
             })
@@ -533,7 +534,7 @@ impl TypeScriptLspAdapter {
     }
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(RelPath::new(".yarn/sdks/typescript/lib/typescript.js").unwrap())
+            .read_text_file(RelPath::unix(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 
@@ -853,7 +854,7 @@ impl LspInstaller for EsLintLspAdapter {
             remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
-                delegate,
+                &*delegate.http_client(),
                 &version.url,
                 None,
                 &destination_path,

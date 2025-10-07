@@ -310,10 +310,10 @@ impl AutoUpdater {
         // the app after an update, we use `set_restart_path` to run the auto
         // update helper instead of the app, so that it can overwrite the app
         // and then spawn the new binary.
-        let quit_subscription = Some(cx.on_app_quit(|_, _| async move {
-            #[cfg(target_os = "windows")]
-            finalize_auto_update_on_quit();
-        }));
+        #[cfg(target_os = "windows")]
+        let quit_subscription = Some(cx.on_app_quit(|_, _| finalize_auto_update_on_quit()));
+        #[cfg(not(target_os = "windows"))]
+        let quit_subscription = None;
 
         cx.on_app_restart(|this, _| {
             this.quit_subscription.take();
@@ -942,11 +942,12 @@ async fn install_release_windows(downloaded_installer: PathBuf) -> Result<Option
     let helper_path = std::env::current_exe()?
         .parent()
         .context("No parent dir for Zed.exe")?
-        .join("tools\\auto_update_helper.exe");
+        .join("tools")
+        .join("auto_update_helper.exe");
     Ok(Some(helper_path))
 }
 
-pub fn finalize_auto_update_on_quit() {
+pub async fn finalize_auto_update_on_quit() {
     let Some(installer_path) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.join("updates")))
@@ -959,12 +960,14 @@ pub fn finalize_auto_update_on_quit() {
     if flag_file.exists()
         && let Some(helper) = installer_path
             .parent()
-            .map(|p| p.join("tools\\auto_update_helper.exe"))
+            .map(|p| p.join("tools").join("auto_update_helper.exe"))
     {
-        let mut command = std::process::Command::new(helper);
+        let mut command = smol::process::Command::new(helper);
         command.arg("--launch");
         command.arg("false");
-        let _ = command.spawn();
+        if let Ok(mut cmd) = command.spawn() {
+            _ = cmd.status().await;
+        }
     }
 }
 

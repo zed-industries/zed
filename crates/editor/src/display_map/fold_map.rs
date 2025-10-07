@@ -624,10 +624,10 @@ impl FoldMap {
 
 #[derive(Clone)]
 pub struct FoldSnapshot {
+    pub inlay_snapshot: InlaySnapshot,
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
     fold_metadata_by_id: TreeMap<FoldId, FoldMetadata>,
-    pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
 }
 
@@ -1443,11 +1443,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 [(self.inlay_offset - buffer_chunk_start).0..(chunk_end - buffer_chunk_start).0];
 
             let bit_end = (chunk_end - buffer_chunk_start).0;
-            let mask = if bit_end >= 128 {
-                u128::MAX
-            } else {
-                (1u128 << bit_end) - 1
-            };
+            let mask = 1u128.unbounded_shl(bit_end as u32).wrapping_sub(1);
 
             chunk.tabs = (chunk.tabs >> (self.inlay_offset - buffer_chunk_start).0) & mask;
             chunk.chars = (chunk.chars >> (self.inlay_offset - buffer_chunk_start).0) & mask;

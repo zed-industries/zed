@@ -16,7 +16,7 @@ impl ListBulletItem {
 
 impl RenderOnce for ListBulletItem {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let line_height = 0.85 * window.line_height();
+        let line_height = window.line_height() * 0.85;
 
         ListItem::new("list-item")
             .selectable(false)

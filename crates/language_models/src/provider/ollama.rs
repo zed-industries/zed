@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -48,7 +48,7 @@ pub struct OllamaSettings {
 
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -209,7 +209,7 @@ impl OllamaLanguageModelProvider {
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -322,7 +322,7 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 impl OllamaLanguageModel {
@@ -623,13 +623,13 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    api_key_editor: gpui::Entity<SingleLineInput>,
-    api_url_editor: gpui::Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    api_url_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
 
@@ -900,7 +900,7 @@ impl Render for ConfigurationView {
                             this.child(
                                 ButtonLike::new("connected")
                                     .disabled(true)
-                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                    .cursor_style(CursorStyle::Arrow)
                                     .child(
                                         h_flex()
                                             .gap_2()

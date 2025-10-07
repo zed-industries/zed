@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -41,7 +41,7 @@ pub struct LmStudioSettings {
 
 pub struct LmStudioLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -162,7 +162,7 @@ impl LmStudioLanguageModelProvider {
 impl LanguageModelProviderState for LmStudioLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -635,12 +635,12 @@ fn add_message_content_part(
 }
 
 struct ConfigurationView {
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     loading_models_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {

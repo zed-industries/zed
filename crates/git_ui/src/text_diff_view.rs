@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 
@@ -322,10 +322,6 @@ impl Item for TextDiffView {
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.diff_editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn act_as_type<'a>(

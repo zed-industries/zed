@@ -5,6 +5,7 @@ use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
@@ -26,7 +27,6 @@ use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
@@ -92,7 +92,7 @@ impl ManifestProvider for CargoManifestProvider {
     ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::new("Cargo.toml").unwrap());
+            let p = path.join(RelPath::unix("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
@@ -484,7 +484,7 @@ impl LspInstaller for RustLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -1029,7 +1029,7 @@ fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
         // filter out just that module.
         Some("--lib".to_owned())
     } else if stem == "mod" {
-        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().to_string()) })
+        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().into_owned()) })
     } else if stem == "main" {
         if let (Some(bin_name), Some(bin_kind)) = (
             variables.get(&RUST_BIN_NAME_TASK_VARIABLE),

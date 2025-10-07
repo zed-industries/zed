@@ -138,11 +138,11 @@ impl JsDebugAdapter {
         };
 
         let arguments = if let Some(mut args) = user_args {
-            args.insert(0, adapter_path.to_string_lossy().to_string());
+            args.insert(0, adapter_path.to_string_lossy().into_owned());
             args
         } else {
             vec![
-                adapter_path.to_string_lossy().to_string(),
+                adapter_path.to_string_lossy().into_owned(),
                 port.to_string(),
                 host.to_string(),
             ]

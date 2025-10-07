@@ -43,8 +43,8 @@ struct CommitMetadataFile {
     worktree_id: WorktreeId,
 }
 
-const COMMIT_METADATA_NAMESPACE: u32 = 0;
-const FILE_NAMESPACE: u32 = 1;
+const COMMIT_METADATA_NAMESPACE: u64 = 0;
+const FILE_NAMESPACE: u64 = 1;
 
 impl CommitView {
     pub fn open(
@@ -128,7 +128,7 @@ impl CommitView {
         let mut metadata_buffer_id = None;
         if let Some(worktree_id) = first_worktree_id {
             let file = Arc::new(CommitMetadataFile {
-                title: RelPath::new(&format!("commit {}", commit.sha))
+                title: RelPath::unix(&format!("commit {}", commit.sha))
                     .unwrap()
                     .into(),
                 worktree_id,
@@ -145,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.as_str().into()),
+                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -193,7 +193,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path.as_str().into()),
+                            PathKey::namespaced(FILE_NAMESPACE, path),
                             buffer,
                             diff_hunk_ranges,
                             multibuffer_context_lines(cx),
@@ -275,7 +275,7 @@ impl language::File for CommitMetadataFile {
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        PathBuf::from(self.title.as_str().to_owned())
+        PathBuf::from(self.title.as_unix_str().to_owned())
     }
 
     fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
@@ -452,10 +452,6 @@ impl Item for CommitView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -521,6 +517,29 @@ impl Item for CommitView {
         self.editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
         });
+    }
+
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<workspace::WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new(|cx| {
+            let editor = cx.new(|cx| {
+                self.editor
+                    .update(cx, |editor, cx| editor.clone(window, cx))
+            });
+            let multibuffer = editor.read(cx).buffer().clone();
+            Self {
+                editor,
+                multibuffer,
+                commit: self.commit.clone(),
+            }
+        }))
     }
 }
 

@@ -170,8 +170,8 @@ fn client_source(abs_path: &Path) -> dap::Source {
     dap::Source {
         name: abs_path
             .file_name()
-            .map(|filename| filename.to_string_lossy().to_string()),
-        path: Some(abs_path.to_string_lossy().to_string()),
+            .map(|filename| filename.to_string_lossy().into_owned()),
+        path: Some(abs_path.to_string_lossy().into_owned()),
         source_reference: None,
         presentation_hint: None,
         origin: None,

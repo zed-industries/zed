@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -26,7 +26,7 @@ use gpui::{
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
     ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
     TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
-    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, pulsating_between,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
 use language::Buffer;
 
@@ -289,8 +289,9 @@ pub struct AcpThreadView {
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
+    resume_thread_metadata: Option<DbThreadMetadata>,
     _cancel_task: Option<Task<()>>,
-    _subscriptions: [Subscription; 4],
+    _subscriptions: [Subscription; 5],
 }
 
 enum ThreadState {
@@ -380,11 +381,17 @@ impl AcpThreadView {
             )
         });
 
+        let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = [
-            cx.observe_global_in::<SettingsStore>(window, Self::agent_font_size_changed),
-            cx.observe_global_in::<AgentFontSize>(window, Self::agent_font_size_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(&message_editor, window, Self::handle_message_editor_event),
             cx.subscribe_in(&entry_view_state, window, Self::handle_entry_view_event),
+            cx.subscribe_in(
+                &agent_server_store,
+                window,
+                Self::handle_agent_servers_updated,
+            ),
         ];
 
         Self {
@@ -392,7 +399,14 @@ impl AcpThreadView {
             workspace: workspace.clone(),
             project: project.clone(),
             entry_view_state,
-            thread_state: Self::initial_state(agent, resume_thread, workspace, project, window, cx),
+            thread_state: Self::initial_state(
+                agent.clone(),
+                resume_thread.clone(),
+                workspace.clone(),
+                project.clone(),
+                window,
+                cx,
+            ),
             login: None,
             message_editor,
             model_selector: None,
@@ -421,13 +435,14 @@ impl AcpThreadView {
             _cancel_task: None,
             focus_handle: cx.focus_handle(),
             new_server_version_available: None,
+            resume_thread_metadata: resume_thread,
         }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_state = Self::initial_state(
             self.agent.clone(),
-            None,
+            self.resume_thread_metadata.clone(),
             self.workspace.clone(),
             self.project.clone(),
             window,
@@ -775,6 +790,25 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    fn handle_agent_servers_updated(
+        &mut self,
+        _agent_server_store: &Entity<project::AgentServerStore>,
+        _event: &project::AgentServersUpdated,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // If we're in a LoadError state OR have a thread_error set (which can happen
+        // when agent.connect() fails during loading), retry loading the thread.
+        // This handles the case where a thread is restored before authentication completes.
+        let should_retry =
+            matches!(&self.thread_state, ThreadState::LoadError(_)) || self.thread_error.is_some();
+
+        if should_retry {
+            self.thread_error = None;
+            self.reset(window, cx);
+        }
+    }
+
     pub fn workspace(&self) -> &WeakEntity<Workspace> {
         &self.workspace
     }
@@ -1012,11 +1046,13 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            if !connection
-                .auth_methods()
-                .iter()
-                .any(|method| method.id.0.as_ref() == "claude-login")
-            {
+            let auth_methods = connection.auth_methods();
+            let has_supported_auth = auth_methods.iter().any(|method| {
+                let id = method.id.0.as_ref();
+                id == "claude-login" || id == "spawn-gemini-cli"
+            });
+            let can_login = has_supported_auth || auth_methods.is_empty() || self.login.is_some();
+            if !can_login {
                 return;
             };
             let this = cx.weak_entity();
@@ -1579,31 +1615,20 @@ impl AcpThreadView {
             return Task::ready(Ok(()));
         };
         let project = workspace.read(cx).project().clone();
-        let cwd = project.read(cx).first_project_directory(cx);
-        let shell = project.read(cx).terminal_settings(&cwd, cx).shell.clone();
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
+            task.shell = task::Shell::WithArguments {
+                program: task.command.take().expect("login command should be set"),
+                args: std::mem::take(&mut task.args),
+                title_override: None
+            };
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
             task.use_new_terminal = true;
             task.allow_concurrent_runs = true;
             task.hide = task::HideStrategy::Always;
-            task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
                 terminal_panel.spawn_task(&task, window, cx)
@@ -2725,7 +2750,7 @@ impl AcpThreadView {
 
         let working_dir = working_dir
             .as_ref()
-            .map(|path| format!("{}", path.display()))
+            .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
@@ -3363,6 +3388,12 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    fn activity_bar_bg(&self, cx: &Context<Self>) -> Hsla {
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let active_color = cx.theme().colors().element_selected;
+        editor_bg_color.blend(active_color.opacity(0.3))
+    }
+
     fn render_activity_bar(
         &self,
         thread_entity: &Entity<AcpThread>,
@@ -3378,10 +3409,6 @@ impl AcpThreadView {
             return None;
         }
 
-        let editor_bg_color = cx.theme().colors().editor_background;
-        let active_color = cx.theme().colors().element_selected;
-        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
-
         // Temporarily always enable ACP edit controls. This is temporary, to lessen the
         // impact of a nasty bug that causes them to sometimes be disabled when they shouldn't
         // be, which blocks you from being able to accept or reject edits. This switches the
@@ -3392,7 +3419,7 @@ impl AcpThreadView {
         v_flex()
             .mt_1()
             .mx_2()
-            .bg(bg_edit_files_disclosure)
+            .bg(self.activity_bar_bg(cx))
             .border_1()
             .border_b_0()
             .border_color(cx.theme().colors().border)
@@ -3433,27 +3460,33 @@ impl AcpThreadView {
             .into()
     }
 
-    fn render_plan_summary(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
+    fn render_plan_summary(
+        &self,
+        plan: &Plan,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let stats = plan.stats();
 
         let title = if let Some(entry) = stats.in_progress_entry
             && !self.plan_expanded
         {
             h_flex()
-                .w_full()
                 .cursor_default()
+                .relative()
+                .w_full()
                 .gap_1()
-                .text_xs()
-                .text_color(cx.theme().colors().text_muted)
-                .justify_between()
+                .truncate()
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Label::new("Current:")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
+                    Label::new("Current:")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().colors().text_muted)
+                        .line_clamp(1)
                         .child(MarkdownElement::new(
                             entry.content.clone(),
                             plan_label_markdown_style(&entry.status, window, cx),
@@ -3461,10 +3494,23 @@ impl AcpThreadView {
                 )
                 .when(stats.pending > 0, |this| {
                     this.child(
-                        Label::new(format!("{} left", stats.pending))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .mr_1(),
+                        h_flex()
+                            .absolute()
+                            .top_0()
+                            .right_0()
+                            .h_full()
+                            .child(div().min_w_8().h_full().bg(linear_gradient(
+                                90.,
+                                linear_color_stop(self.activity_bar_bg(cx), 1.),
+                                linear_color_stop(self.activity_bar_bg(cx).opacity(0.2), 0.),
+                            )))
+                            .child(
+                                div().pr_0p5().bg(self.activity_bar_bg(cx)).child(
+                                    Label::new(format!("{} left", stats.pending))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            ),
                     )
                 })
         } else {
@@ -3494,23 +3540,19 @@ impl AcpThreadView {
         };
 
         h_flex()
+            .id("plan_summary")
             .p_1()
-            .justify_between()
+            .w_full()
+            .gap_1()
             .when(self.plan_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
-            .child(
-                h_flex()
-                    .id("plan_summary")
-                    .w_full()
-                    .gap_1()
-                    .child(Disclosure::new("plan_disclosure", self.plan_expanded))
-                    .child(title)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.plan_expanded = !this.plan_expanded;
-                        cx.notify();
-                    })),
-            )
+            .child(Disclosure::new("plan_disclosure", self.plan_expanded))
+            .child(title)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.plan_expanded = !this.plan_expanded;
+                cx.notify();
+            }))
     }
 
     fn render_plan_entries(&self, plan: &Plan, window: &mut Window, cx: &Context<Self>) -> Div {
@@ -3712,13 +3754,10 @@ impl AcpThreadView {
                         None
                     } else {
                         Some(
-                            Label::new(format!(
-                                "{separator}{}{separator}",
-                                parent.display(path_style)
-                            ))
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
+                            Label::new(format!("{}{separator}", parent.display(path_style)))
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .buffer_font(cx),
                         )
                     }
                 });
@@ -3762,7 +3801,7 @@ impl AcpThreadView {
                             .id(("file-name", index))
                             .pr_8()
                             .gap_1p5()
-                            .max_w_full()
+                            .w_full()
                             .overflow_x_scroll()
                             .child(file_icon)
                             .child(h_flex().gap_0p5().children(file_name).children(file_path))
@@ -4914,9 +4953,9 @@ impl AcpThreadView {
         )
     }
 
-    fn agent_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.entry_view_state.update(cx, |entry_view_state, cx| {
-            entry_view_state.agent_font_size_changed(cx);
+            entry_view_state.agent_ui_font_size_changed(cx);
         });
     }
 
@@ -5546,23 +5585,23 @@ fn default_markdown_style(
         }),
         code_block: StyleRefinement {
             padding: EdgesRefinement {
-                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
+                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
             },
             margin: EdgesRefinement {
-                top: Some(Length::Definite(Pixels(8.).into())),
-                left: Some(Length::Definite(Pixels(0.).into())),
-                right: Some(Length::Definite(Pixels(0.).into())),
-                bottom: Some(Length::Definite(Pixels(12.).into())),
+                top: Some(Length::Definite(px(8.).into())),
+                left: Some(Length::Definite(px(0.).into())),
+                right: Some(Length::Definite(px(0.).into())),
+                bottom: Some(Length::Definite(px(12.).into())),
             },
             border_style: Some(BorderStyle::Solid),
             border_widths: EdgesRefinement {
-                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                top: Some(AbsoluteLength::Pixels(px(1.))),
+                left: Some(AbsoluteLength::Pixels(px(1.))),
+                right: Some(AbsoluteLength::Pixels(px(1.))),
+                bottom: Some(AbsoluteLength::Pixels(px(1.))),
             },
             border_color: Some(colors.border_variant),
             background: Some(colors.editor_background.into()),

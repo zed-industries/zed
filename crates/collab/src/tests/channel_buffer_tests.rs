@@ -323,8 +323,8 @@ fn assert_remote_selections(
             let CollaboratorId::PeerId(peer_id) = s.collaborator_id else {
                 panic!("unexpected collaborator id");
             };
-            let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
-            let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
+            let start = s.selection.start.to_offset(snapshot.buffer_snapshot());
+            let end = s.selection.end.to_offset(snapshot.buffer_snapshot());
             let user_id = collaborators.get(&peer_id).unwrap().user_id;
             let participant_index = hub.user_participant_indices(cx).get(&user_id).copied();
             (participant_index, start..end)

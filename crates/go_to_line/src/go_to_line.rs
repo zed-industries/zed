@@ -3,7 +3,8 @@ pub mod cursor_position;
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
     Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
-    actions::Tab, scroll::Autoscroll,
+    actions::Tab,
+    scroll::{Autoscroll, ScrollOffset},
 };
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
@@ -26,7 +27,7 @@ pub struct GoToLine {
     line_editor: Entity<Editor>,
     active_editor: Entity<Editor>,
     current_text: SharedString,
-    prev_scroll_position: Option<gpui::Point<f32>>,
+    prev_scroll_position: Option<gpui::Point<ScrollOffset>>,
     _subscriptions: Vec<Subscription>,
 }
 

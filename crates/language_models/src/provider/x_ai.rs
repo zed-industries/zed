@@ -36,7 +36,7 @@ pub struct XAiSettings {
 
 pub struct XAiLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -114,7 +114,7 @@ impl XAiLanguageModelProvider {
 impl LanguageModelProviderState for XAiLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -158,6 +158,9 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    supports_images: model.supports_images,
+                    supports_tools: model.supports_tools,
+                    parallel_tool_calls: model.parallel_tool_calls,
                 },
             );
         }
@@ -195,7 +198,7 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
 pub struct XAiLanguageModel {
     id: LanguageModelId,
     model: x_ai::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -357,12 +360,12 @@ pub fn count_xai_tokens(
 
 struct ConfigurationView {
     api_key_editor: Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             SingleLineInput::new(
                 window,

@@ -86,6 +86,7 @@ impl Tool for ListDirectoryTool {
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
+        let path_style = project.read(cx).path_style(cx);
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
@@ -100,7 +101,7 @@ impl Tool for ListDirectoryTool {
                 .filter_map(|worktree| {
                     worktree.read(cx).root_entry().and_then(|entry| {
                         if entry.is_dir() {
-                            Some(entry.path.as_str())
+                            Some(entry.path.display(path_style))
                         } else {
                             None
                         }

@@ -228,7 +228,7 @@ impl TaskSourceKind {
                 id_base,
                 directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", directory_in_worktree.as_str())
+                format!("{id_base}_{id}_{}", directory_in_worktree.as_unix_str())
             }
             Self::Language { name } => format!("language_{name}"),
             Self::Lsp {
@@ -1027,7 +1027,7 @@ impl ContextProvider for BasicContextProvider {
             let path_style = worktree.path_style();
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree.abs_path().to_string_lossy().to_string(),
+                worktree.abs_path().to_string_lossy().into_owned(),
             );
             if let Some(current_file) = current_file.as_ref() {
                 let relative_path = current_file.path();
@@ -1062,7 +1062,7 @@ impl ContextProvider for BasicContextProvider {
                 task_variables.insert(VariableName::Dirname, dirname.into());
             }
 
-            task_variables.insert(VariableName::File, path.to_string_lossy().to_string());
+            task_variables.insert(VariableName::File, path.to_string_lossy().into_owned());
         }
 
         Task::ready(Ok(task_variables))
@@ -1182,7 +1182,7 @@ mod tests {
         let worktree_id = WorktreeId::from_usize(0);
         let local_worktree_location = SettingsLocation {
             worktree_id,
-            path: RelPath::new("foo").unwrap(),
+            path: rel_path("foo"),
         };
         inventory.update(cx, |inventory, _| {
             inventory
@@ -1476,7 +1476,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_1,
-                        path: RelPath::new(".zed").unwrap(),
+                        path: rel_path(".zed"),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
@@ -1487,7 +1487,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_2,
-                        path: RelPath::new(".zed").unwrap(),
+                        path: rel_path(".zed"),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),

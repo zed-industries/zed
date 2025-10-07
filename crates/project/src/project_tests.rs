@@ -1,7 +1,10 @@
 #![allow(clippy::format_collect)]
 
 use crate::{
-    Event, git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation,
+    Event,
+    git_store::{GitStoreEvent, RepositoryEvent, StatusEntry},
+    task_inventory::TaskContexts,
+    task_store::TaskSettingsLocation,
     *,
 };
 use async_trait::async_trait;
@@ -20,9 +23,10 @@ use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use itertools::Itertools;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
-    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
-    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList, ToolchainLister,
+    Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet, DiagnosticSourceKind,
+    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
+    ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList,
+    ToolchainLister,
     language_settings::{LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -38,7 +42,14 @@ use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{env, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
+use std::{
+    env, mem,
+    num::NonZeroU32,
+    ops::Range,
+    str::FromStr,
+    sync::{Arc, OnceLock},
+    task::Poll,
+};
 use task::{ResolvedTask, ShellKind, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -194,7 +205,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             let file_language = project
                 .read(cx)
                 .languages()
-                .language_for_file_path(file.path.as_std_path());
+                .load_language_for_file_path(file.path.as_std_path());
             let file_language = cx
                 .background_executor()
                 .block(file_language)
@@ -608,7 +619,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             }: ManifestQuery,
         ) -> Option<Arc<RelPath>> {
             for path in path.ancestors().take(depth) {
-                let p = path.join(RelPath::new("pyproject.toml").unwrap());
+                let p = path.join(rel_path("pyproject.toml"));
                 if delegate.exists(&p, Some(false)) {
                     return Some(path.into());
                 }
@@ -737,7 +748,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         })
         .await
         .expect("A toolchain to be discovered");
-    assert_eq!(root_path.as_ref(), RelPath::new("project-b").unwrap());
+    assert_eq!(root_path.as_ref(), rel_path("project-b"));
     assert_eq!(available_toolchains_for_b.toolchains().len(), 1);
     let currently_active_toolchain = project
         .update(cx, |this, cx| {
@@ -1285,7 +1296,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_str(), entry.is_ignored))
+                .map(|entry| (entry.path.as_unix_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 ("", false),
@@ -1379,7 +1390,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     cx.executor().run_until_parked();
     assert_eq!(mem::take(&mut *file_changes.lock()), &[]);
-    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
+    assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 4);
 
     let mut new_watched_paths = fs.watched_paths();
     new_watched_paths.retain(|path| {
@@ -1403,7 +1414,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_str(), entry.is_ignored))
+                .map(|entry| (entry.path.as_unix_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 ("", false),
@@ -1847,9 +1858,9 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
             .collect::<Vec<_>>();
         assert_eq!(
             diagnostics,
-            &[DiagnosticEntry {
+            &[DiagnosticEntryRef {
                 range: Point::new(0, 9)..Point::new(0, 10),
-                diagnostic: Diagnostic {
+                diagnostic: &Diagnostic {
                     severity: lsp::DiagnosticSeverity::ERROR,
                     message: "undefined variable 'A'".to_string(),
                     group_id: 0,
@@ -2024,7 +2035,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message)
+                .map(|entry| entry.diagnostic.message.clone())
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -2050,7 +2061,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message)
+                .map(|entry| entry.diagnostic.message.clone())
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -7796,7 +7807,9 @@ async fn test_staging_random_hunks(
         path!("/dir/.git").as_ref(),
         &[("file.txt", index_text.clone())],
     );
-    let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let buffer = project
@@ -8828,6 +8841,310 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
+async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    const IGNORE_RULE: &str = "**/target";
+
+    let root = TempTree::new(json!({
+        "project": {
+            "src": {
+                "main.rs": "fn main() {}"
+            },
+            "target": {
+                "debug": {
+                    "important_text.txt": "important text",
+                },
+            },
+            ".gitignore": IGNORE_RULE
+        },
+
+    }));
+    let root_path = root.path();
+
+    // Set up git repository before creating the worktree.
+    let work_dir = root.path().join("project");
+    let repo = git_init(work_dir.as_path());
+    repo.add_ignore_rule(IGNORE_RULE).unwrap();
+    git_add("src/main.rs", &repo);
+    git_add(".gitignore", &repo);
+    git_commit("Initial commit", &repo);
+
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [root_path], cx).await;
+    let repository_updates = Arc::new(Mutex::new(Vec::new()));
+    let project_events = Arc::new(Mutex::new(Vec::new()));
+    project.update(cx, |project, cx| {
+        let repo_events = repository_updates.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
+                repo_events.lock().push(e.clone());
+            }
+        })
+        .detach();
+        let project_events = project_events.clone();
+        cx.subscribe_self(move |_, e, _| {
+            if let Event::WorktreeUpdatedEntries(_, updates) = e {
+                project_events.lock().extend(
+                    updates
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change))
+                        .filter(|(path, _)| path != "fs-event-sentinel"),
+                );
+            }
+        })
+        .detach();
+    });
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("project/target/debug/important_text.txt"), cx)
+    })
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("project/"), false),
+                (rel_path("project/.gitignore"), false),
+                (rel_path("project/src"), false),
+                (rel_path("project/src/main.rs"), false),
+                (rel_path("project/target"), true),
+                (rel_path("project/target/debug"), true),
+                (rel_path("project/target/debug/important_text.txt"), true),
+            ]
+        );
+    });
+
+    assert_eq!(
+        repository_updates.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            RepositoryEvent::Updated {
+                full_scan: true,
+                new_instance: false,
+            },
+            RepositoryEvent::MergeHeadsChanged,
+        ],
+        "Initial worktree scan should produce a repo update event"
+    );
+    assert_eq!(
+        project_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            ("project/target".to_string(), PathChange::Loaded),
+            ("project/target/debug".to_string(), PathChange::Loaded),
+            (
+                "project/target/debug/important_text.txt".to_string(),
+                PathChange::Loaded
+            ),
+        ],
+        "Initial project changes should show that all not-ignored and all opened files are loaded"
+    );
+
+    let deps_dir = work_dir.join("target").join("debug").join("deps");
+    std::fs::create_dir_all(&deps_dir).unwrap();
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+    std::fs::write(deps_dir.join("aa.tmp"), "something tmp").unwrap();
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+    std::fs::remove_dir_all(&deps_dir).unwrap();
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.update(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("project/"), false),
+                (rel_path("project/.gitignore"), false),
+                (rel_path("project/src"), false),
+                (rel_path("project/src/main.rs"), false),
+                (rel_path("project/target"), true),
+                (rel_path("project/target/debug"), true),
+                (rel_path("project/target/debug/important_text.txt"), true),
+            ],
+            "No stray temp files should be left after the flycheck changes"
+        );
+    });
+
+    assert_eq!(
+        repository_updates
+            .lock()
+            .iter()
+            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
+            .cloned()
+            .collect::<Vec<_>>(),
+        Vec::new(),
+        "No further RepositoryUpdated events should happen, as only ignored dirs' contents was changed",
+    );
+    assert_eq!(
+        project_events.lock().as_slice(),
+        vec![
+            ("project/target/debug/deps".to_string(), PathChange::Added),
+            ("project/target/debug/deps".to_string(), PathChange::Removed),
+        ],
+        "Due to `debug` directory being tracket, it should get updates for entries inside it.
+        No updates for more nested directories should happen as those are ignored",
+    );
+}
+
+#[gpui::test]
+async fn test_odd_events_for_ignored_dirs(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "**/target/",
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "target": {
+                "debug": {
+                    "foo.txt": "foo",
+                    "deps": {}
+                }
+            }
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[
+            (".gitignore", "**/target/".into()),
+            ("src/main.rs", "fn main() {}".into()),
+        ],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let repository_updates = Arc::new(Mutex::new(Vec::new()));
+    let project_events = Arc::new(Mutex::new(Vec::new()));
+    project.update(cx, |project, cx| {
+        let repository_updates = repository_updates.clone();
+        cx.subscribe(project.git_store(), move |_, _, e, _| {
+            if let GitStoreEvent::RepositoryUpdated(_, e, _) = e {
+                repository_updates.lock().push(e.clone());
+            }
+        })
+        .detach();
+        let project_events = project_events.clone();
+        cx.subscribe_self(move |_, e, _| {
+            if let Event::WorktreeUpdatedEntries(_, updates) = e {
+                project_events.lock().extend(
+                    updates
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change))
+                        .filter(|(path, _)| path != "fs-event-sentinel"),
+                );
+            }
+        })
+        .detach();
+    });
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.update(cx, |tree, cx| {
+        tree.load_file(rel_path("target/debug/foo.txt"), cx)
+    })
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+    tree.update(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path(".gitignore"), false),
+                (rel_path("src"), false),
+                (rel_path("src/main.rs"), false),
+                (rel_path("target"), true),
+                (rel_path("target/debug"), true),
+                (rel_path("target/debug/deps"), true),
+                (rel_path("target/debug/foo.txt"), true),
+            ]
+        );
+    });
+
+    assert_eq!(
+        repository_updates
+            .lock()
+            .drain(..)
+            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
+            .collect::<Vec<_>>(),
+        vec![
+            RepositoryEvent::Updated {
+                full_scan: true,
+                new_instance: false,
+            },
+            RepositoryEvent::MergeHeadsChanged,
+        ],
+        "Initial worktree scan should produce a repo update event"
+    );
+    assert_eq!(
+        project_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            ("target".to_string(), PathChange::Loaded),
+            ("target/debug".to_string(), PathChange::Loaded),
+            ("target/debug/deps".to_string(), PathChange::Loaded),
+            ("target/debug/foo.txt".to_string(), PathChange::Loaded),
+        ],
+        "All non-ignored entries and all opened firs should be getting a project event",
+    );
+
+    // Emulate a flycheck spawn: it emits a `INODE_META_MOD`-flagged FS event on target/debug/deps, then creates and removes temp files inside.
+    // This may happen multiple times during a single flycheck, but once is enough for testing.
+    fs.emit_fs_event("/root/target/debug/deps", None);
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        repository_updates
+            .lock()
+            .iter()
+            .filter(|update| !matches!(update, RepositoryEvent::PathsChanged))
+            .cloned()
+            .collect::<Vec<_>>(),
+        Vec::new(),
+        "No further RepositoryUpdated events should happen, as only ignored dirs received FS events",
+    );
+    assert_eq!(
+        project_events.lock().as_slice(),
+        Vec::new(),
+        "No further project events should happen, as only ignored dirs received FS events",
+    );
+}
+
+#[gpui::test]
 async fn test_repos_in_invisible_worktrees(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -9336,7 +9653,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
-                let venv_path = worktree_root.join(ancestor).join(".venv");
+                let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
                 if self.0.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
                         name: SharedString::new("Python Venv"),

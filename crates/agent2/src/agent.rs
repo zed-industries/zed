@@ -475,7 +475,7 @@ impl NativeAgent {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::new(name).unwrap())
+                    .entry_for_path(RelPath::unix(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -559,7 +559,7 @@ impl NativeAgent {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
+                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
                 }) {
                     self.project_context_needs_refresh.send(()).ok();
                 }
@@ -1205,7 +1205,7 @@ mod tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use indoc::indoc;
+    use indoc::formatdoc;
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1502,13 +1502,17 @@ mod tests {
         summary_model.end_last_completion_stream();
 
         send.await.unwrap();
+        let uri = MentionUri::File {
+            abs_path: path!("/a/b.md").into(),
+        }
+        .to_uri();
         acp_thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
-                indoc! {"
+                formatdoc! {"
                     ## User
 
-                    What does [@b.md](file:///a/b.md) mean?
+                    What does [@b.md]({uri}) mean?
 
                     ## Assistant
 
@@ -1544,10 +1548,10 @@ mod tests {
         acp_thread.read_with(cx, |thread, cx| {
             assert_eq!(
                 thread.to_markdown(cx),
-                indoc! {"
+                formatdoc! {"
                     ## User
 
-                    What does [@b.md](file:///a/b.md) mean?
+                    What does [@b.md]({uri}) mean?
 
                     ## Assistant
 

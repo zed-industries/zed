@@ -1,4 +1,6 @@
+use anyhow::Context;
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -11,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
 };
+
+use crate::rel_path::RelPath;
 
 static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -32,8 +36,19 @@ pub fn home_dir() -> &'static PathBuf {
 }
 
 pub trait PathExt {
+    /// Compacts a given file path by replacing the user's home directory
+    /// prefix with a tilde (`~`).
+    ///
+    /// # Returns
+    ///
+    /// * A `PathBuf` containing the compacted file path. If the input path
+    ///   does not have the user's home directory prefix, or if we are not on
+    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf;
+
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -45,7 +60,6 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
-            use anyhow::Context as _;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -57,18 +71,24 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf>;
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
+    fn multiple_extensions(&self) -> Option<String>;
+
+    /// Try to make a shell-safe representation of the path.
+    ///
+    /// For Unix, the path is escaped to be safe for POSIX shells
+    fn try_shell_safe(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
-    /// Compacts a given file path by replacing the user's home directory
-    /// prefix with a tilde (`~`).
-    ///
-    /// # Returns
-    ///
-    /// * A `PathBuf` containing the compacted file path. If the input path
-    ///   does not have the user's home directory prefix, or if we are not on
-    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
@@ -85,7 +105,6 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
@@ -98,10 +117,10 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Converts a local path to one that can be used inside of WSL.
-    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf> {
-        let mut new_path = PathBuf::new();
+        // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
+        // todo: ideally rework them..?
+        let mut new_path = std::ffi::OsString::new();
         for component in self.as_ref().components() {
             match component {
                 std::path::Component::Prefix(prefix) => {
@@ -111,11 +130,57 @@ impl<T: AsRef<Path>> PathExt for T {
                     new_path.push(format!("/mnt/{}", drive_letter));
                 }
                 std::path::Component::RootDir => {}
-                _ => new_path.push(component),
+                std::path::Component::CurDir => {
+                    new_path.push("/.");
+                }
+                std::path::Component::ParentDir => {
+                    new_path.push("/..");
+                }
+                std::path::Component::Normal(os_str) => {
+                    new_path.push("/");
+                    new_path.push(os_str);
+                }
             }
         }
 
-        Some(new_path)
+        Some(new_path.into())
+    }
+
+    fn multiple_extensions(&self) -> Option<String> {
+        let path = self.as_ref();
+        let file_name = path.file_name()?.to_str()?;
+
+        let parts: Vec<&str> = file_name
+            .split('.')
+            // Skip the part with the file name extension
+            .skip(1)
+            .collect();
+
+        if parts.len() < 2 {
+            return None;
+        }
+
+        Some(parts.into_iter().join("."))
+    }
+
+    fn try_shell_safe(&self) -> anyhow::Result<String> {
+        #[cfg(target_os = "windows")]
+        {
+            Ok(self.as_ref().to_string_lossy().to_string())
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let path_str = self
+                .as_ref()
+                .to_str()
+                .with_context(|| "Path contains invalid UTF-8")?;
+
+            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+            // errors are introduced in the future :(
+            Ok(shlex::try_quote(path_str)?.into_owned())
+        }
     }
 }
 
@@ -280,6 +345,17 @@ impl PathStyle {
             ))
         }
     }
+
+    pub fn split(self, path_like: &str) -> (Option<&str>, &str) {
+        let Some(pos) = path_like.rfind(self.separator()) else {
+            return (None, path_like);
+        };
+        let filename_start = pos + self.separator().len();
+        (
+            Some(&path_like[..filename_start]),
+            &path_like[filename_start..],
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -380,7 +456,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -411,7 +487,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -784,6 +860,81 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
         }
     }
 }
+pub fn compare_rel_paths(
+    (path_a, a_is_file): (&RelPath, bool),
+    (path_b, b_is_file): (&RelPath, bool),
+) -> Ordering {
+    let mut components_a = path_a.components();
+    let mut components_b = path_b.components();
+
+    fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
+        if filename.is_empty() {
+            return (None, None);
+        }
+
+        match filename.rsplit_once('.') {
+            // Case 1: No dot was found. The entire name is the stem.
+            None => (Some(filename), None),
+
+            // Case 2: A dot was found.
+            Some((before, after)) => {
+                // This is the crucial check for dotfiles like ".bashrc".
+                // If `before` is empty, the dot was the first character.
+                // In that case, we revert to the "whole name is the stem" logic.
+                if before.is_empty() {
+                    (Some(filename), None)
+                } else {
+                    // Otherwise, we have a standard stem and extension.
+                    (Some(before), Some(after))
+                }
+            }
+        }
+    }
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = a_is_file && components_a.rest().is_empty();
+                let b_is_file = b_is_file && components_b.rest().is_empty();
+
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let (a_stem, a_extension) = a_is_file
+                        .then(|| stem_and_extension(component_a))
+                        .unwrap_or_default();
+                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
+
+                    let (b_stem, b_extension) = b_is_file
+                        .then(|| stem_and_extension(component_b))
+                        .unwrap_or_default();
+                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
+
+                    let compare_components = match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => natural_sort(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    };
+
+                    compare_components.then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = a_extension.unwrap_or_default();
+                            let ext_b = b_extension.unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                });
+
+                if !ordering.is_eq() {
+                    return ordering;
+                }
+            }
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
+        }
+    }
+}
 
 pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
@@ -847,8 +998,9 @@ pub fn compare_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use util_macros::perf;
 
-    #[test]
+    #[perf]
     fn compare_paths_with_dots() {
         let mut paths = vec![
             (Path::new("test_dirs"), false),
@@ -886,7 +1038,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn compare_paths_with_same_name_different_extensions() {
         let mut paths = vec![
             (Path::new("test_dirs/file.rs"), true),
@@ -908,7 +1060,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn compare_paths_case_semi_sensitive() {
         let mut paths = vec![
             (Path::new("test_DIRS"), false),
@@ -940,7 +1092,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn path_with_position_parse_posix_path() {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename
@@ -1027,7 +1179,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(not(target_os = "windows"))]
     fn path_with_position_parse_posix_path_with_suffix() {
         assert_eq!(
@@ -1083,7 +1235,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn path_with_position_parse_windows_path() {
         assert_eq!(
@@ -1105,7 +1257,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn path_with_position_parse_windows_path_with_suffix() {
         assert_eq!(
@@ -1218,10 +1370,10 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_path_compact() {
         let path: PathBuf = [
-            home_dir().to_string_lossy().to_string(),
+            home_dir().to_string_lossy().into_owned(),
             "some_file.txt".to_string(),
         ]
         .iter()
@@ -1233,7 +1385,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[perf]
     fn test_extension_or_hidden_file_name() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
@@ -1256,7 +1408,7 @@ mod tests {
         assert_eq!(path.extension_or_hidden_file_name(), Some("eslintrc.js"));
     }
 
-    #[test]
+    #[perf]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
         let path_matcher =
@@ -1267,7 +1419,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
         let path_matcher =
@@ -1278,7 +1430,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
         let path = Path::new("C:\\Users\\someone\\test_file.rs");
@@ -1296,7 +1448,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_compare_numeric_segments() {
         // Helper function to create peekable iterators and test
         fn compare(a: &str, b: &str) -> Ordering {
@@ -1364,7 +1516,7 @@ mod tests {
         assert_eq!(b_iter.collect::<String>(), "def");
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort() {
         // Basic alphanumeric
         assert_eq!(natural_sort("a", "b"), Ordering::Less);
@@ -1418,7 +1570,7 @@ mod tests {
         assert_eq!(natural_sort("File_a1", "File_A1"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_compare_paths() {
         // Helper function for cleaner tests
         fn compare(a: &str, is_a_file: bool, b: &str, is_b_file: bool) -> Ordering {
@@ -1504,8 +1656,9 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_case_sensitivity() {
+        std::thread::sleep(std::time::Duration::from_millis(100));
         // Same letter different case - lowercase should come first
         assert_eq!(natural_sort("a", "A"), Ordering::Less);
         assert_eq!(natural_sort("A", "a"), Ordering::Greater);
@@ -1523,7 +1676,7 @@ mod tests {
         assert_eq!(natural_sort("a", "B"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_with_numbers() {
         // Basic number ordering
         assert_eq!(natural_sort("file1", "file2"), Ordering::Less);
@@ -1601,7 +1754,7 @@ mod tests {
         assert_eq!(natural_sort("file1", "File2"), Ordering::Less);
     }
 
-    #[test]
+    #[perf]
     fn test_natural_sort_edge_cases() {
         // Empty strings
         assert_eq!(natural_sort("", ""), Ordering::Equal);
@@ -1625,5 +1778,24 @@ mod tests {
         assert_eq!(natural_sort("file-1a", "file-1b"), Ordering::Less);
         assert_eq!(natural_sort("file-1.2", "file-1.10"), Ordering::Less);
         assert_eq!(natural_sort("file-1.10", "file-1.2"), Ordering::Greater);
+    }
+
+    #[test]
+    fn test_multiple_extensions() {
+        // No extensions
+        let path = Path::new("/a/b/c/file_name");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Only one extension
+        let path = Path::new("/a/b/c/file_name.tsx");
+        assert_eq!(path.multiple_extensions(), None);
+
+        // Stories sample extension
+        let path = Path::new("/a/b/c/file_name.stories.tsx");
+        assert_eq!(path.multiple_extensions(), Some("stories.tsx".to_string()));
+
+        // Longer sample extension
+        let path = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
     }
 }

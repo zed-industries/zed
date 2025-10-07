@@ -161,9 +161,9 @@ impl WorktreeStore {
         for tree in self.worktrees() {
             let path_style = tree.read(cx).path_style();
             if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
-                && let Ok(relative_path) = RelPath::from_std_path(relative_path, path_style)
+                && let Ok(relative_path) = RelPath::new(relative_path, path_style)
             {
-                return Some((tree.clone(), relative_path));
+                return Some((tree.clone(), relative_path.into_arc()));
             }
         }
         None
@@ -395,7 +395,7 @@ impl WorktreeStore {
                                 // Otherwise, the FS watcher would do it on the `RootUpdated` event,
                                 // but with a noticeable delay, so we handle it proactively.
                                 local.update_abs_path_and_refresh(
-                                    Some(SanitizedPath::new_arc(&abs_new_path)),
+                                    SanitizedPath::new_arc(&abs_new_path),
                                     cx,
                                 );
                                 Task::ready(Ok(this.root_entry().cloned()))
@@ -536,8 +536,8 @@ impl WorktreeStore {
             let root_path_buf = PathBuf::from(response.canonicalized_path.clone());
             let root_name = root_path_buf
                 .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(root_path_buf.to_string_lossy().to_string());
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or(root_path_buf.to_string_lossy().into_owned());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -860,7 +860,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().to_string(),
+                    abs_path: worktree.abs_path().to_string_lossy().into_owned(),
                 }
             })
             .collect()
@@ -1025,9 +1025,9 @@ impl WorktreeStore {
                     continue;
                 }
                 let relative_path = file.strip_prefix(snapshot.abs_path())?;
-                let relative_path = RelPath::from_std_path(&relative_path, snapshot.path_style())
+                let relative_path = RelPath::new(&relative_path, snapshot.path_style())
                     .context("getting relative path")?;
-                results.push((relative_path, !metadata.is_dir))
+                results.push((relative_path.into_arc(), !metadata.is_dir))
             }
             results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
             for (path, is_file) in results {
@@ -1052,7 +1052,7 @@ impl WorktreeStore {
                             worktree_root: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
-                                path,
+                                path: path.into_arc(),
                             },
                         })
                         .await?;

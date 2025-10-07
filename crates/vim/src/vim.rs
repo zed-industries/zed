@@ -240,6 +240,12 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Selects (count) next menu item
+        MenuSelectNext,
+        /// Selects (count) previous menu item
+        MenuSelectPrevious,
+        /// Clears count or toggles project panel focus
+        ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
     ]
@@ -269,6 +275,53 @@ pub fn init(cx: &mut App) {
             update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
+        });
+
+        workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &ToggleProjectPanelFocus, window, cx| {
+            if Vim::take_count(cx).is_none() {
+                window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|workspace, n: &Number, window, cx| {
+            let vim = workspace
+                .focused_pane(window, cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
+            if let Some(vim) = vim {
+                let digit = n.0;
+                vim.entity.update(cx, |_, cx| {
+                    cx.defer_in(window, move |vim, window, cx| {
+                        vim.push_count_digit(digit, window, cx)
+                    })
+                });
+            } else {
+                let count = Vim::globals(cx).pre_count.unwrap_or(0);
+                Vim::globals(cx).pre_count = Some(
+                    count
+                        .checked_mul(10)
+                        .and_then(|c| c.checked_add(n.0))
+                        .unwrap_or(count),
+                );
+            };
         });
 
         workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {
@@ -424,14 +477,23 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity();
 
-        let mut initial_mode = VimSettings::get_global(cx).default_mode;
-        if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {
-            initial_mode = Mode::HelixNormal;
-        }
+        let initial_vim_mode = VimSettings::get_global(cx).default_mode;
+        let (mode, last_mode) = if HelixModeSetting::get_global(cx).0 {
+            let initial_helix_mode = match initial_vim_mode {
+                Mode::Normal => Mode::HelixNormal,
+                Mode::Insert => Mode::Insert,
+                // Otherwise, we panic with a note that we should never get there due to the
+                // possible values of VimSettings::get_global(cx).default_mode being either Mode::Normal or Mode::Insert.
+                _ => unreachable!("Invalid default mode"),
+            };
+            (initial_helix_mode, Mode::HelixNormal)
+        } else {
+            (initial_vim_mode, Mode::Normal)
+        };
 
         cx.new(|cx| Vim {
-            mode: initial_mode,
-            last_mode: Mode::Normal,
+            mode,
+            last_mode,
             temp_mode: false,
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
@@ -1080,11 +1142,11 @@ impl Vim {
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot());
                     end = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot().anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1350,7 +1412,8 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);
 
-            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let snapshot = editor.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
                 snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
             if kind == Some(CharKind::Word) {
@@ -1845,7 +1908,6 @@ impl From<settings::ModeContent> for Mode {
         match mode {
             ModeContent::Normal => Self::Normal,
             ModeContent::Insert => Self::Insert,
-            ModeContent::HelixNormal => Self::HelixNormal,
         }
     }
 }

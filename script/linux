@@ -14,17 +14,6 @@ function finalize {
   cat <<EOF
 Note: It's recommended to install and configure Wild or Mold for faster builds.
       Run script/install-wild or script/install-mold.
-      Then add these lines to your ~/.cargo/config.toml:
-
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-
-
 
 Finished installing Linux dependencies with script/linux
 EOF

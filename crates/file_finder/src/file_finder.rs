@@ -369,9 +369,9 @@ impl FileFinder {
         match width_setting {
             FileFinderWidth::Small => small_width,
             FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - Pixels(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - Pixels(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - Pixels(1024.)).max(small_width),
+            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
+            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
+            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
         }
     }
 }
@@ -574,7 +574,12 @@ impl Matches {
 
         let new_history_matches = matching_history_items(history_items, currently_opened, query);
         let new_search_matches: Vec<Match> = new_search_matches
-            .filter(|path_match| !new_history_matches.contains_key(&path_match.0.path))
+            .filter(|path_match| {
+                !new_history_matches.contains_key(&ProjectPath {
+                    path: path_match.0.path.clone(),
+                    worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                })
+            })
             .map(Match::Search)
             .collect();
 
@@ -681,7 +686,7 @@ impl Matches {
         }
 
         if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_str();
+            let path_str = panel_match.0.path.as_unix_str();
 
             if let Some(filename_pos) = path_str.rfind(filename)
                 && panel_match.0.positions[0] >= filename_pos
@@ -705,7 +710,7 @@ fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
     query: &FileSearchQuery,
-) -> HashMap<Arc<RelPath>, Match> {
+) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
     let history_items_by_worktrees = history_items
@@ -759,9 +764,9 @@ fn matching_history_items<'a>(
                         worktree_id: WorktreeId::from_usize(path_match.worktree_id),
                         path: Arc::clone(&path_match.path),
                     })
-                    .map(|(_, found_path)| {
+                    .map(|(project_path, found_path)| {
                         (
-                            Arc::clone(&path_match.path),
+                            project_path.clone(),
                             Match::History {
                                 path: found_path.clone(),
                                 panel_match: Some(ProjectPanelOrdMatch(path_match)),
@@ -955,7 +960,7 @@ impl FileFinderDelegate {
 
             let path_style = self.project.read(cx).path_style(cx);
             let query_path = query.raw_query.as_str();
-            if let Ok(mut query_path) = RelPath::from_std_path(Path::new(query_path), path_style) {
+            if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
                     .read(cx)
@@ -968,7 +973,7 @@ impl FileFinderDelegate {
                     let worktree_root = worktree.read(cx).root_name();
                     if worktree_count > 1 {
                         if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
-                            query_path = suffix.into();
+                            query_path = Cow::Owned(suffix.to_owned());
                             expect_worktree = Some(worktree);
                             break;
                         }
@@ -988,7 +993,7 @@ impl FileFinderDelegate {
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
-                            path: query_path,
+                            path: query_path.into_arc(),
                         }));
                     }
                 }
@@ -1143,7 +1148,7 @@ impl FileFinderDelegate {
         let mut path_positions = path_match.positions.clone();
 
         let file_name = full_path.file_name().unwrap_or("");
-        let file_name_start = full_path.as_str().len() - file_name.len();
+        let file_name_start = full_path.as_unix_str().len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {
@@ -1498,7 +1503,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::new(prefix.split_at(1).0).unwrap())
+                            .entry_for_path(RelPath::unix(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {

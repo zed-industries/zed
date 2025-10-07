@@ -105,15 +105,10 @@ pub fn highlight_ranges(
         let mut end_ix = start_ix;
 
         loop {
-            end_ix = end_ix + text[end_ix..].chars().next().unwrap().len_utf8();
-            if let Some(&next_ix) = highlight_indices.peek()
-                && next_ix == end_ix
-            {
-                end_ix = next_ix;
-                highlight_indices.next();
-                continue;
+            end_ix += text[end_ix..].chars().next().map_or(0, |c| c.len_utf8());
+            if highlight_indices.next_if(|&ix| ix == end_ix).is_none() {
+                break;
             }
-            break;
         }
 
         highlights.push((start_ix..end_ix, style));

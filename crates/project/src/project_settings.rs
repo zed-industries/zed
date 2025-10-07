@@ -300,13 +300,15 @@ pub struct GitSettings {
     pub git_gutter: settings::GitGutterSetting,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
-    pub gutter_debounce: Option<u64>,
+    /// Default: 0
+    pub gutter_debounce: u64,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: on
     pub inline_blame: InlineBlameSettings,
+    /// Git blame settings.
+    pub blame: BlameSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -342,6 +344,14 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BlameSettings {
+    /// Whether to show the avatar of the author of the commit.
+    ///
+    /// Default: true
+    pub show_avatar: bool,
 }
 
 impl GitSettings {
@@ -436,7 +446,7 @@ impl Settings for ProjectSettings {
         let git = content.git.as_ref().unwrap();
         let git_settings = GitSettings {
             git_gutter: git.git_gutter.unwrap(),
-            gutter_debounce: git.gutter_debounce,
+            gutter_debounce: git.gutter_debounce.unwrap_or_default(),
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
@@ -445,6 +455,12 @@ impl Settings for ProjectSettings {
                     padding: inline.padding.unwrap(),
                     min_column: inline.min_column.unwrap(),
                     show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            blame: {
+                let blame = git.blame.unwrap();
+                BlameSettings {
+                    show_avatar: blame.show_avatar.unwrap(),
                 }
             },
             branch_picker: {
@@ -859,7 +875,7 @@ impl SettingsObserver {
                     .unwrap()
                     .into();
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(RelPath::new(EDITORCONFIG_NAME).unwrap()) {
+            } else if path.ends_with(RelPath::unix(EDITORCONFIG_NAME).unwrap()) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
@@ -881,7 +897,7 @@ impl SettingsObserver {
                         Some(
                             async move {
                                 let content = fs.load(&abs_path).await?;
-                                if abs_path.ends_with(local_vscode_tasks_file_relative_path()) {
+                                if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeTaskFile>(&content)
                                             .with_context(|| {
@@ -898,7 +914,7 @@ impl SettingsObserver {
                                             "serializing Zed tasks into JSON, file {abs_path:?}"
                                         )
                                     })
-                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path()) {
+                                } else if abs_path.ends_with(local_vscode_launch_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
                                         parse_json_with_comments::<VsCodeDebugTaskFile>(&content)
                                             .with_context(|| {
@@ -984,7 +1000,7 @@ impl SettingsObserver {
                             Ok(()) => {
                                 cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(directory
                                     .as_std_path()
-                                    .join(local_settings_file_relative_path()))));
+                                    .join(local_settings_file_relative_path().as_std_path()))));
                             }
                         }
                     }),
@@ -1013,7 +1029,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(task_file_name()))));
                         }
                     }
                 }
@@ -1044,7 +1060,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(task_file_name()))));
                         }
                     }
                 }
