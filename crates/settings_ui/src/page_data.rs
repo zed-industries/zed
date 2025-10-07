@@ -521,7 +521,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 // todo(settings_ui): Should we filter by platform?
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Window Tabs",
-                    description: "Whether to allow windows to tab together (macOS only)",
+                    description: "(macOS only) Whether to allow windows to tab together",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.use_system_window_tabs,
                         pick_mut: |settings_content| {
@@ -1250,15 +1250,15 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Maximum Tabs",
-                    description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.max_tabs,
-                        pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
-                    }),
-                    metadata: None,
-                }),
+                // SettingsPageItem::SettingItem(SettingItem {
+                //     title: "Maximum Tabs",
+                //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                //     field: Box::new(SettingField {
+                //         pick: |settings_content| &settings_content.workspace.max_tabs,
+                //         pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
+                //     }),
+                //     metadata: None,
+                // }),
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Breadcrumbs",
@@ -1418,24 +1418,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
         SettingsPage {
             title: "Workbench & Window",
             items: vec![
-                SettingsPageItem::SectionHeader("Workbench"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Editor Tabs",
-                    description: "Whether or not to show the tab bar in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(tab_bar) = &settings_content.tab_bar {
-                                &tab_bar.show
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.tab_bar.get_or_insert_default().show
-                        },
-                    }),
-                    metadata: None,
-                }),
+                SettingsPageItem::SectionHeader("Status Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Language Button",
                     description: "Whether to show the active language button in the status bar",
@@ -1476,7 +1459,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Terminal"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Button",
                     description: "Whether to show the terminal button in the status bar",
@@ -1490,6 +1472,45 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content.terminal.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Search Button",
+                    description: "Whether to show the project search button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SectionHeader("Tab Bar"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Editor Tabs",
+                    description: "Whether or not to show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
                         },
                     }),
                     metadata: None,
@@ -1655,28 +1676,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                SettingsPageItem::SectionHeader("Search Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search Button",
-                    description: "Whether to show the project search button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .button
-                        },
-                    }),
-                    metadata: None,
-                }),
+                SettingsPageItem::SectionHeader("Project Search Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Whole Word",
                     description: "Whether to search for whole words by default",
