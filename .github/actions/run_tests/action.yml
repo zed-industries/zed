@@ -18,6 +18,9 @@ runs:
       shell: bash -euxo pipefail {0}
       run: script/clear-target-dir-if-larger-than 100
 
+      # FIXME
     - name: Run tests
       shell: bash -euxo pipefail {0}
-      run: cargo nextest run --workspace --no-fail-fast --failure-output immediate-final
+      env:
+        RUST_LOG: project=debug,project_panel=debug
+      run: cargo nextest run -p project_panel --no-fail-fast --failure-output immediate-final --no-capture

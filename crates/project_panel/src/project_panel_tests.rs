@@ -6799,6 +6799,7 @@ fn visible_entries_as_strings(
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        env_logger::try_init().ok();
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         init_settings(cx);

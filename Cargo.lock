@@ -12078,6 +12078,7 @@ dependencies = [
  "criterion",
  "db",
  "editor",
+ "env_logger 0.11.8",
  "file_icons",
  "git",
  "git_ui",
