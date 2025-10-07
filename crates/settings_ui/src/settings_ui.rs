@@ -746,14 +746,6 @@ enum SettingsUiFile {
 }
 
 impl SettingsUiFile {
-    fn pages(&self) -> Vec<SettingsPage> {
-        match self {
-            SettingsUiFile::User => page_data::user_settings_data(),
-            SettingsUiFile::Local(_) => page_data::user_settings_data(),
-            SettingsUiFile::Server(_) => page_data::user_settings_data(),
-        }
-    }
-
     fn name(&self) -> SharedString {
         match self {
             SettingsUiFile::User => SharedString::new_static("User"),
@@ -1108,7 +1100,9 @@ impl SettingsWindow {
     }
 
     fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.pages = self.current_file.pages();
+        if self.pages.is_empty() {
+            self.pages = page_data::settings_data();
+        }
         self.build_search_matches();
         self.build_navbar();
 
