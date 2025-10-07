@@ -2,7 +2,7 @@ mod headless;
 
 use anyhow::{Context as _, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
-use cloud_llm_client::predict_edits_v3;
+use cloud_llm_client::predict_edits_v3::{self, DeclarationScoreComponents};
 use edit_prediction_context::{
     Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, Reference,
@@ -595,7 +595,11 @@ pub async fn retrieval_stats(
                                          path, point_range, ..
                                      }| {
                                         retrieved_definitions.iter().position(
-                                            |(retrieved_path, retrieved_range, _, _)| {
+                                            |RetrievedDefinition {
+                                                 path: retrieved_path,
+                                                 range: retrieved_range,
+                                                 ..
+                                             }| {
                                                 path.as_path() == retrieved_path.as_std_path()
                                                 && retrieved_range.contains_inclusive(
                                                     &SerializablePoint::into_language_point_range(
@@ -726,7 +730,7 @@ async fn retrieve_definitions(
     worktree: &Entity<Worktree>,
     options: &EditPredictionContextOptions,
     cx: &mut AsyncApp,
-) -> Result<Vec<(Arc<RelPath>, Range<Point>, f32, f32)>> {
+) -> Result<Vec<RetrievedDefinition>> {
     let mut single_reference_map = HashMap::default();
     single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
     let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
@@ -767,13 +771,14 @@ async fn retrieve_definitions(
                     .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                     .await?;
                 let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
-                retrieved_definitions.push((
+                retrieved_definitions.push(RetrievedDefinition {
                     path,
-                    rope.offset_to_point(declaration.item_range.start)
+                    range: rope.offset_to_point(declaration.item_range.start)
                         ..rope.offset_to_point(declaration.item_range.end),
-                    scored_declaration.score(DeclarationStyle::Declaration),
-                    scored_declaration.retrieval_score(),
-                ));
+                    score: scored_declaration.score(DeclarationStyle::Declaration),
+                    retrieval_score: scored_declaration.retrieval_score(),
+                    components: scored_declaration.components,
+                });
             }
             Declaration::Buffer {
                 project_entry_id,
@@ -791,17 +796,18 @@ async fn retrieve_definitions(
                     // go-to-definition, resulting in single-file worktrees.
                     continue;
                 };
-                retrieved_definitions.push((
+                retrieved_definitions.push(RetrievedDefinition {
                     path,
-                    rope.offset_to_point(declaration.item_range.start)
+                    range: rope.offset_to_point(declaration.item_range.start)
                         ..rope.offset_to_point(declaration.item_range.end),
-                    scored_declaration.score(DeclarationStyle::Declaration),
-                    scored_declaration.retrieval_score(),
-                ));
+                    score: scored_declaration.score(DeclarationStyle::Declaration),
+                    retrieval_score: scored_declaration.retrieval_score(),
+                    components: scored_declaration.components,
+                });
             }
         }
     }
-    retrieved_definitions.sort_by_key(|(_, _, score, _)| Reverse(OrderedFloat(*score)));
+    retrieved_definitions.sort_by_key(|definition| Reverse(OrderedFloat(definition.score)));
 
     Ok(retrieved_definitions)
 }
@@ -1014,8 +1020,17 @@ enum RetrievalStatsOutcome {
         matches: Vec<Option<usize>>,
         #[allow(dead_code)]
         lsp_definitions: Vec<SourceRange>,
-        retrieved_definitions: Vec<(Arc<RelPath>, Range<Point>, f32, f32)>,
+        retrieved_definitions: Vec<RetrievedDefinition>,
     },
+}
+
+#[derive(Debug)]
+struct RetrievedDefinition {
+    path: Arc<RelPath>,
+    range: Range<Point>,
+    score: f32,
+    retrieval_score: f32,
+    components: DeclarationScoreComponents,
 }
 
 pub async fn open_buffer(
