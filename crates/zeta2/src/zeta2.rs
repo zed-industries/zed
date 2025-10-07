@@ -1350,7 +1350,7 @@ mod tests {
 
                                 let (res_tx, res_rx) = oneshot::channel();
                                 req_tx.unbounded_send((req, res_tx)).unwrap();
-                                serde_json::to_string(&res_rx.await.unwrap()).unwrap()
+                                serde_json::to_string(&res_rx.await?).unwrap()
                             }
                             _ => {
                                 panic!("Unexpected path: {}", uri)
