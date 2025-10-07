@@ -3793,6 +3793,83 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Microphone Volume",
+                    description: "Automatically adjust microphone volume (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_microphone_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_microphone_volume
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Speaker Volume",
+                    description: "Automatically adjust volume of other call members (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_speaker_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_speaker_volume
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Denoise",
+                    description: "Remove background noises (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.denoise
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.audio.get_or_insert_default().denoise
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Legacy Audio Compatible",
+                    description: "Use audio parameters compatible with previous versions (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.legacy_audio_compatible
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .legacy_audio_compatible
+                        },
+                    }),
+                    metadata: None,
+                }),
             ],
         },
         SettingsPage {
