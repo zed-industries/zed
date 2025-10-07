@@ -107,7 +107,8 @@ impl RenderOnce for ListHeader {
                         h_flex()
                             .gap(DynamicSpacing::Base04.rems(cx))
                             .children(self.toggle.map(|is_open| {
-                                Disclosure::new("toggle", is_open).on_toggle(self.on_toggle.clone())
+                                Disclosure::new("toggle", is_open)
+                                    .on_toggle_expanded(self.on_toggle.clone())
                             }))
                             .child(
                                 div()

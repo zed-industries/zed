@@ -46,7 +46,7 @@
 //! This should probably not be called manually unless you're working on the profiler
 //! itself; use the `cargo perf-test` alias (after building this crate) instead.
 
-use perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
+use zed_perf::{FailKind, Importance, Output, TestMdata, Timings, consts};
 
 use std::{
     fs::OpenOptions,

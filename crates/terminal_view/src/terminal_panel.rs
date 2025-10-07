@@ -19,7 +19,7 @@ use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::{Settings, TerminalDockPosition};
-use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
@@ -449,12 +449,16 @@ impl TerminalPanel {
             .read(cx)
             .active_item()
             .and_then(|item| item.downcast::<TerminalView>());
-        let working_directory = terminal_view.as_ref().and_then(|terminal_view| {
-            let terminal = terminal_view.read(cx).terminal().read(cx);
-            terminal
-                .working_directory()
-                .or_else(|| default_working_directory(workspace, cx))
-        });
+        let working_directory = terminal_view
+            .as_ref()
+            .and_then(|terminal_view| {
+                terminal_view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .working_directory()
+            })
+            .or_else(|| default_working_directory(workspace, cx));
         let is_zoomed = active_pane.read(cx).is_zoomed();
         cx.spawn_in(window, async move |panel, cx| {
             let terminal = project
@@ -462,7 +466,7 @@ impl TerminalPanel {
                     Some(view) => Task::ready(project.clone_terminal(
                         &view.read(cx).terminal.clone(),
                         cx,
-                        || working_directory,
+                        working_directory,
                     )),
                     None => project.create_terminal_shell(working_directory, cx),
                 })
@@ -543,7 +547,15 @@ impl TerminalPanel {
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell());
 
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &task.shell);
+        let shell = if let Some(remote_shell) = remote_shell
+            && task.shell == Shell::System
+        {
+            Shell::Program(remote_shell)
+        } else {
+            task.shell.clone()
+        };
+
+        let builder = ShellBuilder::new(&shell);
         let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
         let (command, args) = builder.build(task.command.clone(), &task.args);
 

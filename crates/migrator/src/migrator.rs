@@ -200,6 +200,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_10_01,
         ),
         MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
+        MigrationType::TreeSitter(
+            migrations::m_2025_10_03::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_10_03,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -317,6 +321,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_10_01,
     migrations::m_2025_10_01::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_10_03,
+    migrations::m_2025_10_03::SETTINGS_PATTERNS
 );
 
 // custom query

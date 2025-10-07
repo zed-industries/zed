@@ -1,5 +1,6 @@
 mod agent;
 mod editor;
+mod extension;
 mod language;
 mod language_model;
 mod project;
@@ -9,6 +10,7 @@ mod workspace;
 
 pub use agent::*;
 pub use editor::*;
+pub use extension::*;
 pub use language::*;
 pub use language_model::*;
 pub use project::*;
@@ -58,6 +60,7 @@ pub struct SettingsContent {
 
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
+    pub status_bar: Option<StatusBarSettingsContent>,
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
@@ -394,7 +397,19 @@ pub enum SteppingGranularity {
     Instruction,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DockPosition {
     Left,
@@ -431,21 +446,6 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
-}
-
-#[skip_serializing_none]
-#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema, MergeFrom)]
-pub struct ExtensionSettingsContent {
-    /// The extensions that should be automatically installed by Zed.
-    ///
-    /// This is used to make functionality provided by extensions (e.g., language support)
-    /// available out-of-the-box.
-    ///
-    /// Default: { "html": true }
-    #[serde(default)]
-    pub auto_install_extensions: HashMap<Arc<str>, bool>,
-    #[serde(default)]
-    pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
 #[skip_serializing_none]
@@ -583,7 +583,18 @@ pub struct FileFinderSettingsContent {
 }
 
 #[derive(
-    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidthContent {
@@ -745,7 +756,19 @@ pub enum DockSide {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, MergeFrom)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
     Always,

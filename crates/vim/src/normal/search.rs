@@ -263,7 +263,7 @@ impl Vim {
         if prior_selections.iter().any(|s| {
             self.update_editor(cx, |_, editor, cx| {
                 !s.start
-                    .is_valid(&editor.snapshot(window, cx).buffer_snapshot)
+                    .is_valid(&editor.snapshot(window, cx).buffer_snapshot())
             })
             .unwrap_or(true)
         }) {
@@ -469,7 +469,8 @@ impl Vim {
         };
         if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
             let range = action.range.buffer_range(vim, editor, window, cx)?;
-            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let snapshot = editor.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
             let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
             let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                 ..snapshot.anchor_after(end_point);

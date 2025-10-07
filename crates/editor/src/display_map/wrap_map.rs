@@ -30,7 +30,7 @@ pub struct WrapMap {
 
 #[derive(Clone)]
 pub struct WrapSnapshot {
-    tab_snapshot: TabSnapshot,
+    pub(super) tab_snapshot: TabSnapshot,
     transforms: SumTree<Transform>,
     interpolated: bool,
 }

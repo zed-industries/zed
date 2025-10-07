@@ -48,8 +48,8 @@ use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Corner, DismissEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
-    WeakEntity, prelude::*,
+    ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels, ReadGlobal as _, Subscription, Task,
+    UpdateGlobal, WeakEntity, prelude::*,
 };
 use language::LanguageRegistry;
 use language_model::{ConfigurationError, LanguageModelRegistry};
@@ -519,6 +519,14 @@ impl AgentPanel {
                         cx,
                     )
                 });
+
+                if SettingsStore::global(cx)
+                    .get::<DisableAiSettings>(None)
+                    .disable_ai
+                {
+                    return panel;
+                }
+
                 panel.as_mut(cx).loading = true;
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
@@ -1108,15 +1116,15 @@ impl AgentPanel {
             WhichFontSize::AgentFont => {
                 if persist {
                     update_settings_file(self.fs.clone(), cx, move |settings, cx| {
-                        let agent_font_size =
-                            ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                        let agent_ui_font_size =
+                            ThemeSettings::get_global(cx).agent_ui_font_size(cx) + delta;
                         let _ = settings
                             .theme
-                            .agent_font_size
-                            .insert(theme::clamp_font_size(agent_font_size).into());
+                            .agent_ui_font_size
+                            .insert(theme::clamp_font_size(agent_ui_font_size).into());
                     });
                 } else {
-                    theme::adjust_agent_font_size(cx, |size| size + delta);
+                    theme::adjust_agent_ui_font_size(cx, |size| size + delta);
                 }
             }
             WhichFontSize::BufferFont => {
@@ -1136,10 +1144,10 @@ impl AgentPanel {
     ) {
         if action.persist {
             update_settings_file(self.fs.clone(), cx, move |settings, _| {
-                settings.theme.agent_font_size = None;
+                settings.theme.agent_ui_font_size = None;
             });
         } else {
-            theme::reset_agent_font_size(cx);
+            theme::reset_agent_ui_font_size(cx);
         }
     }
 
@@ -2570,7 +2578,7 @@ impl Render for AgentPanel {
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
                     .child(content)
                     .into_any()

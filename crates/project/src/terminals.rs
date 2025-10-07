@@ -404,31 +404,40 @@ impl Project {
         &mut self,
         terminal: &Entity<Terminal>,
         cx: &mut Context<'_, Project>,
-        cwd: impl FnOnce() -> Option<PathBuf>,
+        cwd: Option<PathBuf>,
     ) -> Result<Entity<Terminal>> {
-        terminal.read(cx).clone_builder(cx, cwd).map(|builder| {
-            let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+        let local_path = if self.is_via_remote_server() {
+            None
+        } else {
+            cwd
+        };
 
-            self.terminals
-                .local_handles
-                .push(terminal_handle.downgrade());
+        terminal
+            .read(cx)
+            .clone_builder(cx, local_path)
+            .map(|builder| {
+                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
 
-            let id = terminal_handle.entity_id();
-            cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                let handles = &mut project.terminals.local_handles;
+                self.terminals
+                    .local_handles
+                    .push(terminal_handle.downgrade());
 
-                if let Some(index) = handles
-                    .iter()
-                    .position(|terminal| terminal.entity_id() == id)
-                {
-                    handles.remove(index);
-                    cx.notify();
-                }
+                let id = terminal_handle.entity_id();
+                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                    let handles = &mut project.terminals.local_handles;
+
+                    if let Some(index) = handles
+                        .iter()
+                        .position(|terminal| terminal.entity_id() == id)
+                    {
+                        handles.remove(index);
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                terminal_handle
             })
-            .detach();
-
-            terminal_handle
-        })
     }
 
     pub fn terminal_settings<'a>(
@@ -452,10 +461,12 @@ impl Project {
         let path = self.first_project_directory(cx);
         let remote_client = self.remote_client.as_ref();
         let settings = self.terminal_settings(&path, cx).clone();
-        let remote_shell = remote_client
+        let shell = remote_client
             .as_ref()
-            .and_then(|remote_client| remote_client.read(cx).shell());
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &settings.shell).non_interactive();
+            .and_then(|remote_client| remote_client.read(cx).shell())
+            .map(Shell::Program)
+            .unwrap_or_else(|| settings.shell.clone());
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self

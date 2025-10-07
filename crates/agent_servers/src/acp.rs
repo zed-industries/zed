@@ -9,6 +9,7 @@ use futures::io::BufReader;
 use project::Project;
 use project::agent_server_store::AgentServerCommand;
 use serde::Deserialize;
+use task::Shell;
 use util::ResultExt as _;
 
 use std::path::PathBuf;
@@ -81,7 +82,7 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let mut child = util::command::new_smol_command(command.path);
+        let mut child = util::command::new_smol_command(&command.path);
         child
             .args(command.args.iter().map(|arg| arg.as_str()))
             .envs(command.env.iter().flatten())
@@ -96,6 +97,11 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
+        log::info!(
+            "Spawning external agent server: {:?}, {:?}",
+            command.path,
+            command.args
+        );
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -712,23 +718,24 @@ impl acp::Client for ClientDelegate {
                     if let Some(id_str) = terminal_info.get("terminal_id").and_then(|v| v.as_str())
                     {
                         let terminal_id = acp::TerminalId(id_str.into());
+                        let cwd = terminal_info
+                            .get("cwd")
+                            .and_then(|v| v.as_str().map(PathBuf::from));
 
                         // Create a minimal display-only lower-level terminal and register it.
                         let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
                             let builder = TerminalBuilder::new_display_only(
-                                None,
                                 CursorShape::default(),
                                 AlternateScroll::On,
                                 None,
                                 0,
-                                cx,
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Created {
                                     terminal_id: terminal_id.clone(),
                                     label: tc.title.clone(),
-                                    cwd: None,
+                                    cwd,
                                     output_byte_limit: None,
                                     terminal: lower,
                                 },
@@ -820,15 +827,17 @@ impl acp::Client for ClientDelegate {
         }
 
         // Use remote shell or default system shell, as appropriate
-        let remote_shell = project.update(&mut self.cx.clone(), |project, cx| {
-            project
-                .remote_client()
-                .and_then(|r| r.read(cx).default_system_shell())
-        })?;
-        let (task_command, task_args) =
-            task::ShellBuilder::new(remote_shell.as_deref(), &task::Shell::System)
-                .redirect_stdin_to_dev_null()
-                .build(Some(args.command.clone()), &args.args);
+        let shell = project
+            .update(&mut self.cx.clone(), |project, cx| {
+                project
+                    .remote_client()
+                    .and_then(|r| r.read(cx).default_system_shell())
+                    .map(Shell::Program)
+            })?
+            .unwrap_or(task::Shell::System);
+        let (task_command, task_args) = task::ShellBuilder::new(&shell)
+            .redirect_stdin_to_dev_null()
+            .build(Some(args.command.clone()), &args.args);
 
         let terminal_entity = project
             .update(&mut self.cx.clone(), |project, cx| {

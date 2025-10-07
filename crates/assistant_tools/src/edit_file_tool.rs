@@ -1003,7 +1003,7 @@ impl ToolCard for EditFileToolCard {
                 font_size: Some(
                     TextSize::Small
                         .rems(cx)
-                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .to_pixels(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                         .into(),
                 ),
                 ..TextStyleRefinement::default()

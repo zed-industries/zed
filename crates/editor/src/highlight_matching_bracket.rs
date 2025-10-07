@@ -20,28 +20,28 @@ pub fn refresh_matching_bracket_highlights(
 
     let snapshot = editor.snapshot(window, cx);
     let head = newest_selection.head();
-    if head > snapshot.buffer_snapshot.len() {
+    if head > snapshot.buffer_snapshot().len() {
         log::error!("bug: cursor offset is out of range while refreshing bracket highlights");
         return;
     }
 
     let mut tail = head;
     if (editor.cursor_shape == CursorShape::Block || editor.cursor_shape == CursorShape::Hollow)
-        && head < snapshot.buffer_snapshot.len()
+        && head < snapshot.buffer_snapshot().len()
     {
-        if let Some(tail_ch) = snapshot.buffer_snapshot.chars_at(tail).next() {
+        if let Some(tail_ch) = snapshot.buffer_snapshot().chars_at(tail).next() {
             tail += tail_ch.len_utf8();
         }
     }
 
     if let Some((opening_range, closing_range)) = snapshot
-        .buffer_snapshot
+        .buffer_snapshot()
         .innermost_enclosing_bracket_ranges(head..tail, None)
     {
         editor.highlight_text::<MatchingBracketHighlight>(
             vec![
-                opening_range.to_anchors(&snapshot.buffer_snapshot),
-                closing_range.to_anchors(&snapshot.buffer_snapshot),
+                opening_range.to_anchors(&snapshot.buffer_snapshot()),
+                closing_range.to_anchors(&snapshot.buffer_snapshot()),
             ],
             HighlightStyle {
                 background_color: Some(
