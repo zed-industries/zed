@@ -378,7 +378,8 @@
     "context": "SettingsWindow",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-w": "workspace::CloseWindow"
+      "ctrl-w": "workspace::CloseWindow",
+      "escape": "workspace::CloseWindow"
     }
   },
   {
