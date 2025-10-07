@@ -152,6 +152,7 @@ impl RenderOnce for TreeViewItem {
                     .when_some(self.tab_index, |this, index| this.tab_index(index))
                     .map(|this| {
                         let label = self.label;
+
                         if self.root_item {
                             this.h(item_size)
                                 .px_1()
@@ -159,11 +160,11 @@ impl RenderOnce for TreeViewItem {
                                 .gap_2p5()
                                 .rounded_sm()
                                 .border_1()
-                                .focus(|s| s.border_color(focused_border))
                                 .border_color(transparent_border)
                                 .when(self.selected, |this| {
                                     this.border_color(selected_border).bg(selected_bg)
                                 })
+                                .focus(|s| s.border_color(focused_border))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
@@ -190,11 +191,11 @@ impl RenderOnce for TreeViewItem {
                                     .rounded_sm()
                                     .border_1()
                                     .focusable()
-                                    .in_focus(|s| s.border_color(focused_border))
                                     .border_color(transparent_border)
                                     .when(self.selected, |this| {
                                         this.border_color(selected_border).bg(selected_bg)
                                     })
+                                    .in_focus(|s| s.border_color(focused_border))
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(
                                         Label::new(label)
@@ -211,10 +212,12 @@ impl RenderOnce for TreeViewItem {
                                 && let Some(on_toggle) = self.on_toggle.clone()
                             {
                                 this.on_click(move |event, window, cx| {
-                                    if !event.is_keyboard() {
+                                    if event.is_keyboard() {
+                                        on_click(event, window, cx);
+                                        on_toggle(event, window, cx);
+                                    } else {
                                         on_click(event, window, cx);
                                     }
-                                    on_toggle(event, window, cx);
                                 })
                             } else {
                                 this.on_click(on_click)

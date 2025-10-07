@@ -29,8 +29,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape,
-    KeybindingPosition, PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding, KeybindingHint,
+    PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -46,6 +46,8 @@ const CONTENT_GROUP_TAB_INDEX: isize = 3;
 actions!(
     settings_editor,
     [
+        /// Minimizes the settings UI window.
+        Minimize,
         /// Toggles focus between the navbar and the main content.
         ToggleFocusNav,
         /// Focuses the next file in the file list.
@@ -430,6 +432,20 @@ fn init_renderers(cx: &mut App) {
 }
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
+    let existing_window = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>());
+
+    if let Some(existing_window) = existing_window {
+        existing_window
+            .update(cx, |_, window, _| {
+                window.activate_window();
+            })
+            .ok();
+        return Ok(existing_window);
+    }
+
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -479,6 +495,7 @@ pub struct SettingsWindow {
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
     scroll_handle: ScrollHandle,
+    focus_handle: FocusHandle,
     navbar_focus_handle: FocusHandle,
     content_focus_handle: FocusHandle,
     files_focus_handle: FocusHandle,
@@ -778,6 +795,7 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             navbar_focus_handle: cx
                 .focus_handle()
                 .tab_index(NAVBAR_CONTAINER_TAB_INDEX)
@@ -1089,23 +1107,42 @@ impl SettingsWindow {
         self.build_ui(cx);
     }
 
-    fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        h_flex().gap_1().children(self.files.iter().enumerate().map(
-            |(ix, (file, focus_handle))| {
-                Button::new(ix, file.name())
-                    .toggle_state(file == &self.current_file)
-                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .track_focus(focus_handle)
-                    .on_click(
-                        cx.listener(move |this, evt: &gpui::ClickEvent, window, cx| {
-                            this.change_file(ix, cx);
-                            if evt.is_keyboard() {
-                                this.focus_first_nav_item(window, cx);
-                            }
-                        }),
-                    )
-            },
-        ))
+    fn render_files(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .gap_1()
+            .justify_between()
+            .child(
+                h_flex()
+                    .id("file_buttons_container")
+                    .w_64() // Temporary fix until long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
+                    .gap_1()
+                    .overflow_x_scroll()
+                    .children(
+                        self.files
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, (file, focus_handle))| {
+                                Button::new(ix, file.name())
+                                    .toggle_state(file == &self.current_file)
+                                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                    .track_focus(focus_handle)
+                                    .on_click(cx.listener(
+                                        move |this, evt: &gpui::ClickEvent, window, cx| {
+                                            this.change_file(ix, cx);
+                                            if evt.is_keyboard() {
+                                                this.focus_first_nav_item(window, cx);
+                                            }
+                                        },
+                                    ))
+                            }),
+                    ),
+            )
+            .child(Button::new("temp", "Edit in settings.json").style(ButtonStyle::Outlined)) // This should be replaced by the actual, functioning button
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
@@ -1128,6 +1165,11 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
         let nav_background = cx.theme().colors().panel_background;
+        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+            "Focus Content"
+        } else {
+            "Focus Navbar"
+        };
 
         v_flex()
             .w_64()
@@ -1220,23 +1262,21 @@ impl SettingsWindow {
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
             .child(
-                h_flex().w_full().justify_center().bg(nav_background).child(
-                    Button::new(
-                        "nav-key-hint",
-                        if self.navbar_focus_handle.contains_focused(window, cx) {
-                            "Focus Content"
-                        } else {
-                            "Focus Navbar"
-                        },
-                    )
-                    .key_binding(ui::KeyBinding::for_action_in(
-                        &ToggleFocusNav,
-                        &self.navbar_focus_handle,
-                        window,
-                        cx,
-                    ))
-                    .key_binding_position(KeybindingPosition::Start),
-                ),
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .pb_0p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .children(
+                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                            KeybindingHint::new(
+                                this,
+                                cx.theme().colors().surface_background.opacity(0.5),
+                            )
+                            .suffix(focus_keybind_label)
+                        }),
+                    ),
             )
     }
 
@@ -1361,7 +1401,7 @@ impl SettingsWindow {
         let page_content;
 
         if sub_page_stack().len() == 0 {
-            page_header = self.render_files(window, cx);
+            page_header = self.render_files(window, cx).into_any_element();
             page_content = self
                 .render_page_items(self.page_items(), window, cx)
                 .into_any_element();
@@ -1377,7 +1417,8 @@ impl SettingsWindow {
                             this.pop_sub_page(cx);
                         })),
                 )
-                .child(self.render_sub_page_breadcrumbs());
+                .child(self.render_sub_page_breadcrumbs())
+                .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
             page_content = (active_page_render_fn)(self, window, cx);
@@ -1475,12 +1516,10 @@ impl Render for SettingsWindow {
         div()
             .id("settings-window")
             .key_context("SettingsWindow")
-            .flex()
-            .flex_row()
-            .size_full()
-            .font(ui_font)
-            .bg(cx.theme().colors().background)
-            .text_color(cx.theme().colors().text)
+            .track_focus(&self.focus_handle)
+            .on_action(|_: &Minimize, window, _cx| {
+                window.minimize_window();
+            })
             .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
                 this.search_bar.focus_handle(cx).focus(window);
             }))
@@ -1513,6 +1552,12 @@ impl Render for SettingsWindow {
             .on_action(|_: &menu::SelectPrevious, window, _| {
                 window.focus_prev();
             })
+            .flex()
+            .flex_row()
+            .size_full()
+            .font(ui_font)
+            .bg(cx.theme().colors().background)
+            .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx))
             .child(self.render_page(window, cx))
     }
@@ -1652,36 +1697,24 @@ fn render_font_picker(
         )
     });
 
-    div()
-        .child(
-            PopoverMenu::new("font-picker")
-                .menu(move |_window, _cx| Some(font_picker.clone()))
-                .trigger(
-                    ButtonLike::new("font-family-button")
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium)
-                        .full_width()
-                        .tab_index(0_isize)
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(Label::new(current_value))
-                                .child(
-                                    Icon::new(IconName::ChevronUpDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
-                        ),
-                )
-                .full_width(true)
-                .anchor(gpui::Corner::TopLeft)
-                .offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(4.0),
-                })
-                .with_handle(ui::PopoverMenuHandle::default()),
+    PopoverMenu::new("font-picker")
+        .menu(move |_window, _cx| Some(font_picker.clone()))
+        .trigger(
+            Button::new("font-family-button", current_value)
+                .tab_index(0_isize)
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .icon(IconName::ChevronUpDown)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::End),
         )
+        .anchor(gpui::Corner::TopLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .with_handle(ui::PopoverMenuHandle::default())
         .into_any_element()
 }
 
@@ -1932,6 +1965,7 @@ mod test {
             search_matches: vec![],
             search_task: None,
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             navbar_focus_handle: cx.focus_handle(),
             content_focus_handle: cx.focus_handle(),
             files_focus_handle: cx.focus_handle(),

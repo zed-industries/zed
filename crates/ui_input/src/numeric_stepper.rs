@@ -382,18 +382,7 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
             })
             .child(
                 h_flex()
-                    .gap_1()
-                    .rounded_sm()
-                    .map(|this| {
-                        if is_outlined {
-                            this.overflow_hidden()
-                                .bg(cx.theme().colors().surface_background)
-                                .border_1()
-                                .border_color(cx.theme().colors().border_variant)
-                        } else {
-                            this.px_1().bg(cx.theme().colors().editor_background)
-                        }
-                    })
+                    .when(!is_outlined, |this| this.gap_1())
                     .map(|decrement| {
                         let decrement_handler = {
                             let value = self.value;
@@ -412,20 +401,24 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             decrement.child(
                                 h_flex()
                                     .id("decrement_button")
+                                    .cursor(gpui::CursorStyle::PointingHand)
                                     .p_1p5()
                                     .size_full()
                                     .justify_center()
-                                    .hover(|s| {
-                                        s.bg(cx.theme().colors().element_hover)
-                                            .cursor(gpui::CursorStyle::PointingHand)
-                                    })
-                                    .border_r_1()
+                                    .overflow_hidden()
+                                    .rounded_tl_sm()
+                                    .rounded_bl_sm()
+                                    .border_1()
                                     .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().surface_background)
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(Icon::new(IconName::Dash).size(IconSize::Small))
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1).focus(|style| {
-                                            style.bg(cx.theme().colors().element_hover)
+                                            style
+                                                .border_color(cx.theme().colors().border_focused)
+                                                .bg(cx.theme().colors().element_hover)
                                         })
                                     })
                                     .on_click(decrement_handler),
@@ -446,9 +439,12 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                     .child(
                         h_flex()
                             .min_w_16()
-                            .w_full()
-                            .border_1()
-                            .border_color(cx.theme().colors().border_transparent)
+                            .size_full()
+                            .when(is_outlined, |this| {
+                                this.border_y_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().surface_background)
+                            })
                             .in_focus(|this| this.border_color(cx.theme().colors().border_focused))
                             .child(match *self.mode.read(cx) {
                                 NumericStepperMode::Read => h_flex()
@@ -460,7 +456,9 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1).focus(|style| {
-                                            style.bg(cx.theme().colors().element_hover)
+                                            style
+                                                .border_color(cx.theme().colors().border_focused)
+                                                .bg(cx.theme().colors().element_hover)
                                         })
                                     })
                                     .on_click({
@@ -543,20 +541,24 @@ impl<T: NumericStepperType> RenderOnce for NumericStepper<T> {
                             increment.child(
                                 h_flex()
                                     .id("increment_button")
+                                    .cursor(gpui::CursorStyle::PointingHand)
                                     .p_1p5()
                                     .size_full()
                                     .justify_center()
-                                    .hover(|s| {
-                                        s.bg(cx.theme().colors().element_hover)
-                                            .cursor(gpui::CursorStyle::PointingHand)
-                                    })
-                                    .border_l_1()
+                                    .overflow_hidden()
+                                    .rounded_tr_sm()
+                                    .rounded_br_sm()
+                                    .border_1()
                                     .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().surface_background)
+                                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .child(Icon::new(IconName::Plus).size(IconSize::Small))
                                     .when_some(tab_index.as_mut(), |this, tab_index| {
                                         *tab_index += 1;
                                         this.tab_index(*tab_index - 1).focus(|style| {
-                                            style.bg(cx.theme().colors().element_hover)
+                                            style
+                                                .border_color(cx.theme().colors().border_focused)
+                                                .bg(cx.theme().colors().element_hover)
                                         })
                                     })
                                     .on_click(increment_handler),
