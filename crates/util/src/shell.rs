@@ -177,7 +177,7 @@ impl ShellKind {
     pub fn new(program: impl AsRef<Path>) -> Self {
         let program = program.as_ref();
         let Some(program) = program.file_stem().and_then(|s| s.to_str()) else {
-            return if cfg!(windows) {
+            return if cfg!(windows) && program.to_string_lossy().contains("\\") {
                 ShellKind::PowerShell
             } else {
                 ShellKind::Posix
@@ -200,7 +200,7 @@ impl ShellKind {
         } else if program == "sh" || program == "bash" {
             ShellKind::Posix
         } else {
-            if cfg!(windows) {
+            if cfg!(windows) && program.contains("\\") {
                 ShellKind::PowerShell
             } else {
                 // Some other shell detected, the user might install and use a
