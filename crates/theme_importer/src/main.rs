@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::ColorChoice;
@@ -18,37 +18,6 @@ use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
 
 const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
-
-#[derive(Debug, Deserialize)]
-struct FamilyMetadata {
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    pub name: String,
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    pub author: String,
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    pub themes: Vec<ThemeMetadata>,
-
-    /// Overrides for specific syntax tokens.
-    ///
-    /// Use this to ensure certain Zed syntax tokens are matched
-    /// to an exact set of scopes when it is not otherwise possible
-    /// to rely on the default mappings in the theme importer.
-    #[serde(default)]
-    #[expect(
-        unused,
-        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
-    )]
-    pub syntax: IndexMap<String, Vec<String>>,
-}
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,7 +106,7 @@ fn main() -> Result<()> {
         file_name: "".to_string(),
     };
 
-    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
+    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::default());
 
     let theme = converter.convert()?;
     let mut theme = serde_json::to_value(theme).unwrap();

@@ -18,9 +18,8 @@ pub fn replace_subschema<T: JsonSchema>(
     let schema_name = T::schema_name();
     let definitions = generator.definitions_mut();
     assert!(!definitions.contains_key(&format!("{schema_name}2")));
-    if definitions.contains_key(schema_name.as_ref()) {
-        definitions.insert(schema_name.to_string(), schema().to_value());
-    }
+    assert!(definitions.contains_key(schema_name.as_ref()));
+    definitions.insert(schema_name.to_string(), schema().to_value());
     schemars::Schema::new_ref(format!("{DEFS_PATH}{schema_name}"))
 }
 

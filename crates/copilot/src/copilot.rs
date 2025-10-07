@@ -25,6 +25,7 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
 use project::DisableAiSettings;
 use request::StatusNotification;
+use semver::Version;
 use serde_json::json;
 use settings::Settings;
 use settings::SettingsStore;
@@ -40,6 +41,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
+use util::rel_path::RelPath;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -484,6 +486,8 @@ impl Copilot {
         let start_language_server = async {
             let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
+            ensure_node_version_for_copilot(&node_path).await?;
+
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
                 path: node_path,
@@ -963,8 +967,7 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
             .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+            .map_or(RelPath::empty().into(), |file| file.path().clone());
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
@@ -975,7 +978,7 @@ impl Copilot {
                         tab_size: tab_size.into(),
                         indent_size: 1,
                         insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
+                        relative_path: relative_path.to_proto(),
                         position: point_to_lsp(position),
                         version: version.try_into().unwrap(),
                     },
@@ -1161,6 +1164,44 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
+async fn ensure_node_version_for_copilot(node_path: &Path) -> anyhow::Result<()> {
+    const MIN_COPILOT_NODE_VERSION: Version = Version::new(20, 8, 0);
+
+    log::info!("Checking Node.js version for Copilot at: {:?}", node_path);
+
+    let output = util::command::new_smol_command(node_path)
+        .arg("--version")
+        .output()
+        .await
+        .with_context(|| format!("checking Node.js version at {:?}", node_path))?;
+
+    if !output.status.success() {
+        anyhow::bail!(
+            "failed to run node --version for Copilot. stdout: {}, stderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    let version_str = String::from_utf8_lossy(&output.stdout);
+    let version = Version::parse(version_str.trim().trim_start_matches('v'))
+        .with_context(|| format!("parsing Node.js version from '{}'", version_str.trim()))?;
+
+    if version < MIN_COPILOT_NODE_VERSION {
+        anyhow::bail!(
+            "GitHub Copilot language server requires Node.js {MIN_COPILOT_NODE_VERSION} or later, but found {version}. \
+            Please update your Node.js version or configure a different Node.js path in settings."
+        );
+    }
+
+    log::info!(
+        "Node.js version {} meets Copilot requirements (>= {})",
+        version,
+        MIN_COPILOT_NODE_VERSION
+    );
+    Ok(())
+}
+
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     const PACKAGE_NAME: &str = "@github/copilot-language-server";
     const SERVER_PATH: &str =
@@ -1194,7 +1235,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::path;
+    use util::{path, paths::PathStyle, rel_path::rel_path};
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1258,7 +1299,7 @@ mod tests {
             buffer.file_updated(
                 Arc::new(File {
                     abs_path: path!("/root/child/buffer-1").into(),
-                    path: Path::new("child/buffer-1").into(),
+                    path: rel_path("child/buffer-1").into(),
                 }),
                 cx,
             )
@@ -1355,7 +1396,7 @@ mod tests {
 
     struct File {
         abs_path: PathBuf,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
     }
 
     impl language::File for File {
@@ -1369,15 +1410,19 @@ mod tests {
             }
         }
 
-        fn path(&self) -> &Arc<Path> {
+        fn path(&self) -> &Arc<RelPath> {
             &self.path
+        }
+
+        fn path_style(&self, _: &App) -> PathStyle {
+            PathStyle::local()
         }
 
         fn full_path(&self, _: &App) -> PathBuf {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
             unimplemented!()
         }
 

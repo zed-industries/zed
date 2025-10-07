@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
+collections.workspace = true
 gpui.workspace = true
 indexmap.workspace = true
 log.workspace = true

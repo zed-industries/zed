@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
+use util::get_system_shell;
 
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
@@ -317,7 +318,7 @@ pub struct TaskContext {
 pub struct RunnableTag(pub SharedString);
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -334,6 +335,23 @@ pub enum Shell {
         /// An optional string to override the title of the terminal tab
         title_override: Option<SharedString>,
     },
+}
+
+impl Shell {
+    pub fn program(&self) -> String {
+        match self {
+            Shell::Program(program) => program.clone(),
+            Shell::WithArguments { program, .. } => program.clone(),
+            Shell::System => get_system_shell(),
+        }
+    }
+    pub fn program_and_args(&self) -> (String, &[String]) {
+        match self {
+            Shell::Program(program) => (program.clone(), &[]),
+            Shell::WithArguments { program, args, .. } => (program.clone(), args),
+            Shell::System => (get_system_shell(), &[]),
+        }
+    }
 }
 
 type VsCodeEnvVariable = String;

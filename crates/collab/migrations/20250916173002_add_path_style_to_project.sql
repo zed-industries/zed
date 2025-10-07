@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN windows_paths BOOLEAN DEFAULT FALSE;

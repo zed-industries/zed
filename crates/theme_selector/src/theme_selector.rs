@@ -203,12 +203,11 @@ impl ThemeSelectorDelegate {
     }
 
     fn set_theme(theme: Arc<Theme>, cx: &mut App) {
-        SettingsStore::update_global(cx, |store, cx| {
+        SettingsStore::update_global(cx, |store, _| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            theme_settings.active_theme = theme;
-            theme_settings.apply_theme_overrides();
+            let name = theme.as_ref().name.clone().into();
+            theme_settings.theme = theme::ThemeSelection::Static(theme::ThemeName(name));
             store.override_global(theme_settings);
-            cx.refresh_windows();
         });
     }
 }
@@ -238,8 +237,8 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector

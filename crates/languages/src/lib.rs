@@ -20,7 +20,6 @@ use crate::{
 mod bash;
 mod c;
 mod css;
-mod github_download;
 mod go;
 mod json;
 mod package_json;
@@ -88,13 +87,13 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(JsonTaskProvider);
-    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
+    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
-    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
+    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new(node.clone()));
     let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
     let rust_context_provider = Arc::new(rust::RustContextProvider);
@@ -312,7 +311,12 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
                 cx.update(|cx| {
                     SettingsStore::update_global(cx, |settings, cx| {
                         settings
-                            .set_extension_settings(language_settings.clone(), cx)
+                            .set_extension_settings(
+                                settings::ExtensionsSettingsContent {
+                                    all_languages: language_settings.clone(),
+                                },
+                                cx,
+                            )
                             .log_err();
                     });
                 })?;

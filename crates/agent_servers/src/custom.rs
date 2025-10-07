@@ -49,8 +49,14 @@ impl crate::AgentServer for CustomAgentServer {
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
-        update_settings_file::<AllAgentServersSettings>(fs, cx, move |settings, _| {
-            settings.custom.get_mut(&name).unwrap().default_mode = mode_id.map(|m| m.to_string())
+        update_settings_file(fs, cx, move |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .custom
+                .get_mut(&name)
+                .unwrap()
+                .default_mode = mode_id.map(|m| m.to_string())
         });
     }
 
@@ -61,7 +67,7 @@ impl crate::AgentServer for CustomAgentServer {
         cx: &mut App,
     ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
         let name = self.name();
-        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().into_owned());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let store = delegate.store.downgrade();

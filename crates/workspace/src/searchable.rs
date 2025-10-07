@@ -45,6 +45,16 @@ pub struct SearchOptions {
     pub find_in_results: bool,
 }
 
+// Whether to always select the current selection (even if empty)
+// or to use the default (restoring the previous search ranges if some,
+// otherwise using the whole file).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum FilteredSearchRange {
+    Selection,
+    #[default]
+    Default,
+}
+
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
     type Match: Any + Sync + Send + Clone;
 
@@ -73,7 +83,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
 
     fn toggle_filtered_search_ranges(
         &mut self,
-        _enabled: bool,
+        _enabled: Option<FilteredSearchRange>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
@@ -216,7 +226,12 @@ pub trait SearchableItemHandle: ItemHandle {
     ) -> Option<usize>;
     fn search_bar_visibility_changed(&self, visible: bool, window: &mut Window, cx: &mut App);
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut App);
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut App,
+    );
 }
 
 impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
@@ -362,7 +377,12 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         });
     }
 
-    fn toggle_filtered_search_ranges(&mut self, enabled: bool, window: &mut Window, cx: &mut App) {
+    fn toggle_filtered_search_ranges(
+        &mut self,
+        enabled: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.update(cx, |this, cx| {
             this.toggle_filtered_search_ranges(enabled, window, cx)
         });

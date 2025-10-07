@@ -15,9 +15,7 @@ use menu;
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent, stream_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{OpenAiAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
@@ -41,19 +39,9 @@ pub struct OpenAiSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    pub reasoning_effort: Option<ReasoningEffort>,
-}
-
 pub struct OpenAiLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -131,7 +119,7 @@ impl OpenAiLanguageModelProvider {
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -215,7 +203,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 pub struct OpenAiLanguageModel {
     id: LanguageModelId,
     model: open_ai::Model,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -688,12 +676,12 @@ pub fn count_open_ai_tokens(
 
 struct ConfigurationView {
     api_key_editor: Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             SingleLineInput::new(
                 window,

@@ -5,7 +5,6 @@ use language::{Buffer, OutlineItem, ParseStatus};
 use project::Project;
 use regex::Regex;
 use std::fmt::Write;
-use std::path::Path;
 use text::Point;
 
 /// For files over this size, instead of reading them (or including them in context),
@@ -143,7 +142,7 @@ pub struct BufferContent {
 /// For smaller files, returns the full content.
 pub async fn get_buffer_content_or_outline(
     buffer: Entity<Buffer>,
-    path: Option<&Path>,
+    path: Option<&str>,
     cx: &AsyncApp,
 ) -> Result<BufferContent> {
     let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
@@ -170,15 +169,10 @@ pub async fn get_buffer_content_or_outline(
 
         let text = if let Some(path) = path {
             format!(
-                "# File outline for {} (file too large to show full content)\n\n{}",
-                path.display(),
-                outline_text
+                "# File outline for {path} (file too large to show full content)\n\n{outline_text}",
             )
         } else {
-            format!(
-                "# File outline (file too large to show full content)\n\n{}",
-                outline_text
-            )
+            format!("# File outline (file too large to show full content)\n\n{outline_text}",)
         };
         Ok(BufferContent {
             text,

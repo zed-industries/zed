@@ -35,7 +35,6 @@ language.workspace = true
 log.workspace = true
 postage.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true

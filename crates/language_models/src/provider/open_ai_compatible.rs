@@ -11,8 +11,6 @@ use language_model::{
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
@@ -22,6 +20,8 @@ use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
+pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
@@ -29,41 +29,11 @@ pub struct OpenAiCompatibleSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    #[serde(default)]
-    pub capabilities: ModelCapabilities,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ModelCapabilities {
-    pub tools: bool,
-    pub images: bool,
-    pub parallel_tool_calls: bool,
-    pub prompt_cache_key: bool,
-}
-
-impl Default for ModelCapabilities {
-    fn default() -> Self {
-        Self {
-            tools: true,
-            images: false,
-            parallel_tool_calls: false,
-            prompt_cache_key: false,
-        }
-    }
-}
-
 pub struct OpenAiCompatibleLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -155,7 +125,7 @@ impl OpenAiCompatibleLanguageModelProvider {
 impl LanguageModelProviderState for OpenAiCompatibleLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -225,7 +195,7 @@ pub struct OpenAiCompatibleLanguageModel {
     provider_id: LanguageModelProviderId,
     provider_name: LanguageModelProviderName,
     model: AvailableModel,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -371,12 +341,12 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
 struct ConfigurationView {
     api_key_editor: Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             SingleLineInput::new(
                 window,

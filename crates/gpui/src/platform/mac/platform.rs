@@ -543,6 +543,10 @@ impl Platform for MacPlatform {
             open "$1"
         "#;
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = Command::new("/bin/bash")
             .arg("-c")
             .arg(script)
@@ -855,11 +859,14 @@ impl Platform for MacPlatform {
             .lock()
             .background_executor
             .spawn(async move {
-                let _ = std::process::Command::new("open")
+                if let Some(mut child) = smol::process::Command::new("open")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
-                    .log_err();
+                    .log_err()
+                {
+                    child.status().await.log_err();
+                }
             })
             .detach();
     }

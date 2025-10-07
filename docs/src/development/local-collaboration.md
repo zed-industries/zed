@@ -48,17 +48,17 @@ You can install these dependencies natively or run them under Docker.
 
 - Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
 
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose.
 
 ### Linux
 
 1. Install [Postgres](https://www.postgresql.org/download/linux/)
 
    ```sh
-   sudo apt-get install postgresql postgresql        # Ubuntu/Debian
-   sudo pacman -S postgresql                         # Arch Linux
-   sudo dnf install postgresql postgresql-server     # RHEL/Fedora
-   sudo zypper install postgresql postgresql-server  # OpenSUSE
+   sudo apt-get install postgresql                    # Ubuntu/Debian
+   sudo pacman -S postgresql                          # Arch Linux
+   sudo dnf install postgresql postgresql-server      # RHEL/Fedora
+   sudo zypper install postgresql postgresql-server   # OpenSUSE
    ```
 
 2. Install [Livekit](https://github.com/livekit/livekit-cli)

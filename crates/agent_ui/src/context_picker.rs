@@ -33,6 +33,8 @@ use thread_context_picker::{
 use ui::{
     ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor, prelude::*,
 };
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
 use agent::{
@@ -228,12 +230,19 @@ impl ContextPicker {
         let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
+            let Some(workspace) = self.workspace.upgrade() else {
+                return menu;
+            };
+            let path_style = workspace.read(cx).path_style(cx);
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
                 .into_iter()
                 .enumerate()
-                .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
+                .map(|(ix, entry)| {
+                    self.recent_menu_item(context_picker.clone(), ix, entry, path_style)
+                })
+                .collect::<Vec<_>>();
 
             let entries = self
                 .workspace
@@ -395,6 +404,7 @@ impl ContextPicker {
         context_picker: Entity<ContextPicker>,
         ix: usize,
         entry: RecentEntry,
+        path_style: PathStyle,
     ) -> ContextMenuItem {
         match entry {
             RecentEntry::File {
@@ -413,6 +423,7 @@ impl ContextPicker {
                             &path,
                             &path_prefix,
                             false,
+                            path_style,
                             context_store.clone(),
                             cx,
                         )
@@ -586,7 +597,7 @@ impl Render for ContextPicker {
 pub(crate) enum RecentEntry {
     File {
         project_path: ProjectPath,
-        path_prefix: Arc<str>,
+        path_prefix: Arc<RelPath>,
     },
     Thread(ThreadContextEntry),
 }
