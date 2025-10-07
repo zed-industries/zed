@@ -74,7 +74,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: LazyLock<[&RelPath; 9]> = LazyLock::new(|| {
+static RULES_FILE_NAMES: LazyLock<[&RelPath; 9]> = LazyLock::new(|| {
     [
         RelPath::unix(".rules").unwrap(),
         RelPath::unix(".cursorrules").unwrap(),
