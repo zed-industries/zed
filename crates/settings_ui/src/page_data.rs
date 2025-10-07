@@ -3,8 +3,8 @@ use std::sync::Arc;
 use ui::{IntoElement, SharedString};
 
 use crate::{
-    SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink,
-    sub_page_stack,
+    LOCAL, REMOTE, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage,
+    SettingsPageItem, SubPageLink, USER, sub_page_stack,
 };
 
 pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
@@ -21,6 +21,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
@@ -32,6 +33,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore File State",
@@ -43,6 +45,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Close on File Delete",
@@ -54,6 +57,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "When Closing With No Tabs",
@@ -67,6 +71,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "On Last Window Closed",
@@ -78,6 +83,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
@@ -91,6 +97,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
@@ -102,9 +109,11 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // SettingsPageItem::SectionHeader("Scoped Settings"),
                 // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Preview Channel",
                 //     description: "Which settings should be activated only in Preview build of Zed",
@@ -116,6 +125,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Settings Profiles",
                 //     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
@@ -147,6 +157,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Metrics",
@@ -164,6 +175,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -172,6 +184,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 // SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Theme Mode",
                 //     description: "How to select the theme",
@@ -181,6 +194,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Icon Theme",
                 //     // todo(settings_ui)
@@ -201,6 +215,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_family,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Size",
@@ -210,6 +225,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_size,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Weight",
@@ -219,8 +235,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.buffer_font_weight,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): This needs custom ui
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Buffer Line Height",
                 //     description: "Line height for editor text",
@@ -238,6 +256,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_family,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Size",
@@ -247,6 +266,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_size,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Weight",
@@ -256,6 +276,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Keymap"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -266,6 +287,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.base_keymap,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Vim/Helix Mode should be apart of one type because it's undefined
                 // behavior to have them both enabled at the same time
@@ -277,6 +299,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.vim_mode,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Helix Mode",
@@ -286,6 +309,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.helix_mode,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Multi Cursor Modifier",
@@ -297,6 +321,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Cursor"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -307,6 +332,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_blink,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Shape",
@@ -316,6 +342,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.cursor_shape,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Mouse",
@@ -325,6 +352,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.hide_mouse,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Highlighting"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -337,6 +365,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
@@ -348,6 +377,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selection Highlight",
@@ -359,6 +389,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Rounded Selection",
@@ -368,6 +399,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.rounded_selection,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -390,29 +422,26 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 // todo(settings_ui): This needs a custom component
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Wrap Guides",
-                //     description: "Character counts at which to show wrap guides",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             &settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project
-                //                 .all_languages
-                //                 .defaults
-                //                 .wrap_guides
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Wrap Guides",
+                    description: "Character counts at which to show wrap guides",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                &settings_content.project.all_languages.defaults.wrap_guides
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content.project.all_languages.defaults.wrap_guides
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER | LOCAL,
+                }),
                 SettingsPageItem::SectionHeader("Whitespace"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Whitespace",
@@ -434,6 +463,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -446,7 +476,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Left Padding",
                 //     description: "Left padding for centered layout",
@@ -472,6 +504,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Centered Layout Right Padding",
                 //     description: "Right padding for centered layout",
@@ -505,6 +538,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Window Tabs",
@@ -516,6 +550,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Window"),
                 // todo(settings_ui): Should we filter by platform?
@@ -529,6 +564,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -548,6 +584,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hard Tabs",
@@ -561,6 +598,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Indent",
@@ -574,6 +612,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Indent On Paste",
@@ -595,6 +634,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Wrapping"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -617,6 +657,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Soft Wrap",
@@ -630,6 +671,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Search"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -640,6 +682,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Seed Search Query From Cursor",
@@ -653,6 +696,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Smartcase Search",
@@ -664,6 +708,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Editor Behavior"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -676,6 +721,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Middle Click Paste",
@@ -687,6 +733,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Double Click In Multibuffer",
@@ -700,6 +747,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Go To Definition Fallback",
@@ -711,6 +759,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Expand Excerpt Lines",
@@ -722,6 +771,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Excerpt Context Lines",
@@ -733,6 +783,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Minimum Contrast For Highlights",
@@ -746,6 +797,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Scrolling"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -758,6 +810,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Vertical Scroll Margin",
@@ -769,6 +822,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Horizontal Scroll Margin",
@@ -780,6 +834,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scroll Sensitivity",
@@ -791,6 +846,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Fast Scroll Sensitivity",
@@ -802,6 +858,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Autoscroll On Clicks",
@@ -813,6 +870,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Auto Actions"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -835,6 +893,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Auto Surround",
@@ -856,6 +915,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use On Type Format",
@@ -877,6 +937,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Always Treat Brackets As Autoclosed",
@@ -898,6 +959,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Formatting"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -920,6 +982,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Ensure Final Newline On Save",
@@ -941,6 +1004,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Extend Comment On Newline",
@@ -962,6 +1026,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SectionHeader("Language Server Completions"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -984,6 +1049,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Completion Documentation",
@@ -1005,6 +1071,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER | LOCAL,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Signature Help",
@@ -1016,6 +1083,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Signature Help After Edits",
@@ -1029,6 +1097,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Snippet Sort Order",
@@ -1040,6 +1109,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Hover"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1052,6 +1122,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings ui): add units to this numeric stepper
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1064,6 +1135,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Code Actions"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1076,6 +1148,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Selection"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1100,6 +1173,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Drag And Drop Selection Delay",
@@ -1123,6 +1197,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Gutter"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1145,6 +1220,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Relative Line Numbers",
@@ -1156,6 +1232,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Runnables",
@@ -1177,6 +1254,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Breakpoints",
@@ -1198,6 +1276,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Folds",
@@ -1215,6 +1294,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Min Line Number Digits",
@@ -1236,6 +1316,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Scrollbar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1258,6 +1339,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursors",
@@ -1279,6 +1361,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Diff",
@@ -1300,6 +1383,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Search Results",
@@ -1321,6 +1405,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selected Text",
@@ -1342,6 +1427,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selected Symbol",
@@ -1363,6 +1449,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Diagnostics",
@@ -1384,6 +1471,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Horizontal Scrollbar",
@@ -1411,6 +1499,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Vertical Scrollbar",
@@ -1438,6 +1527,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Minimap"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1456,6 +1546,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Display In",
@@ -1477,6 +1568,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Thumb",
@@ -1498,6 +1590,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Thumb Border",
@@ -1519,6 +1612,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Current Line Highlight",
@@ -1542,6 +1636,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Width Columns",
@@ -1563,6 +1658,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1581,6 +1677,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Git Status In Tabs",
@@ -1598,6 +1695,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show File Icons In Tabs",
@@ -1615,6 +1713,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Close Position",
@@ -1632,7 +1731,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Maximum Tabs",
                 //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
@@ -1665,6 +1766,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Quick Actions",
@@ -1686,6 +1788,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selections Menu",
@@ -1707,6 +1810,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Review",
@@ -1728,6 +1832,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Code Actions",
@@ -1749,6 +1854,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -1823,6 +1929,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Position Button",
@@ -1843,6 +1950,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Button",
@@ -1860,6 +1968,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Diagnostics Button",
@@ -1877,6 +1986,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Search Button",
@@ -1898,6 +2008,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Tab Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1916,6 +2027,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Navigation History Buttons",
@@ -1936,6 +2048,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -1957,6 +2070,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Name",
@@ -1977,6 +2091,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Project Items",
@@ -1997,6 +2112,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Onboarding Banner",
@@ -2017,6 +2133,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show User Picture",
@@ -2037,6 +2154,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Sign In",
@@ -2057,6 +2175,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Menus",
@@ -2077,6 +2196,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2098,6 +2218,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Tab Show Diagnostics",
@@ -2118,6 +2239,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Close Button",
@@ -2138,6 +2260,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2159,6 +2282,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From File Finder",
@@ -2179,6 +2303,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Enable Preview From Code Navigation",
@@ -2199,6 +2324,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Search Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2221,6 +2347,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Case Sensitive",
@@ -2242,6 +2369,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored",
@@ -2263,6 +2391,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Regex",
@@ -2280,6 +2409,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("File Finder"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2301,6 +2431,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Modal Max Width",
@@ -2321,6 +2452,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Skip Focus For Active In Search",
@@ -2341,6 +2473,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -2361,8 +2494,10 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo: null by default
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Include Ignored",
                 //     description: "Whether to use gitignored files when searching",
@@ -2408,6 +2543,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Dock",
@@ -2425,6 +2561,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Default Width",
@@ -2445,6 +2582,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide .gitignore",
@@ -2465,6 +2603,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Entry Spacing",
@@ -2485,6 +2624,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
@@ -2505,6 +2645,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Folder Icons",
@@ -2525,6 +2666,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -2545,6 +2687,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Indent Size",
@@ -2565,6 +2708,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
@@ -2585,6 +2729,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Starts Open",
@@ -2605,6 +2750,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
@@ -2625,7 +2771,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Scrollbar Show",
                 //     description: "When to show the scrollbar in the project panel",
@@ -2669,6 +2817,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Sticky Scroll",
@@ -2689,7 +2838,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Indent Guides Show",
                 //     description: "When to show indent guides in the project panel",
@@ -2735,6 +2886,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hide Root",
@@ -2755,6 +2907,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Terminal Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2773,6 +2926,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2794,6 +2948,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Dock",
@@ -2811,6 +2966,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Default Width",
@@ -2831,6 +2987,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
@@ -2851,6 +3008,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Folder Icons",
@@ -2871,6 +3029,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
@@ -2891,6 +3050,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Indent Size",
@@ -2911,6 +3071,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
@@ -2931,6 +3092,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
@@ -2951,7 +3113,9 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Indent Guides Show",
                 //     description: "When to show indent guides in the outline panel",
@@ -2995,6 +3159,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Dock",
@@ -3012,6 +3177,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Default Width",
@@ -3032,6 +3198,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Notification Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3053,6 +3220,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Dock",
@@ -3073,6 +3241,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Default Width",
@@ -3093,6 +3262,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Collaboration Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3115,6 +3285,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Dock",
@@ -3136,6 +3307,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Default Width",
@@ -3157,6 +3329,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3180,6 +3353,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Figure out the right default for this value in default.json
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3198,6 +3372,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Git Blame",
@@ -3224,6 +3399,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Git Blame Delay",
@@ -3250,6 +3426,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Git Blame Padding",
@@ -3276,6 +3453,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Git Blame Min Column",
@@ -3302,6 +3480,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
@@ -3328,6 +3507,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Avatar",
@@ -3354,6 +3534,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Author Name In Branch Picker",
@@ -3380,6 +3561,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hunk Style",
@@ -3397,6 +3579,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3405,6 +3588,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
                 // todo(settings_ui): Proxy needs a default
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Proxy",
                 //     description: "The proxy to use for network requests",
@@ -3426,6 +3610,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("https://zed.dev"),
                     })),
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("System"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3436,6 +3621,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3453,6 +3639,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Warnings",
@@ -3473,6 +3660,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Inline"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3500,6 +3688,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Update Debounce",
@@ -3526,6 +3715,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Padding",
@@ -3552,6 +3742,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Inline Min Column",
@@ -3578,6 +3769,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Performance"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3605,6 +3797,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): Needs unit
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3632,6 +3825,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3658,6 +3852,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Save Breakpoints",
@@ -3678,6 +3873,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Timeout",
@@ -3695,6 +3891,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Dock",
@@ -3712,6 +3909,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Log DAP Communications",
@@ -3732,6 +3930,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Format DAP Log Messages",
@@ -3752,6 +3951,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Button",
@@ -3769,6 +3969,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3792,6 +3993,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Share On Join",
@@ -3809,6 +4011,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Experimental"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -3827,6 +4030,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Microphone Volume",
@@ -3847,6 +4051,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Speaker Volume",
@@ -3867,6 +4072,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Denoise",
@@ -3884,6 +4090,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Legacy Audio Compatible",
@@ -3904,6 +4111,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3919,6 +4127,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -3943,6 +4152,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                     metadata: Some(Box::new(SettingsFieldMetadata {
                         placeholder: Some("A new name"),
                     })),
+                    files: USER | LOCAL,
                 }),
             ],
         },
@@ -3970,8 +4180,10 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 // todo(settings_ui): This needs a custom component
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Wrap Guides",
                 //     description: "Character counts at which to show wrap guides",
@@ -4014,6 +4226,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -4022,6 +4235,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
                 // todo(settings_ui): Needs numeric stepper
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Tab Size",
                 //     description: "How many columns a tab should occupy",
@@ -4043,6 +4257,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Indent",
@@ -4056,6 +4271,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Indent On Paste",
@@ -4077,9 +4293,11 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Wrapping"),
                 // todo(settings_ui): Needs numeric stepper
+                // files: USER,
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Preferred Line Length",
                 //     description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
@@ -4101,6 +4319,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Auto Actions"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4123,6 +4342,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Auto Surround",
@@ -4144,6 +4364,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use On Type Format",
@@ -4165,6 +4386,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Always Treat Brackets As Autoclosed",
@@ -4186,6 +4408,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Formatting"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4208,6 +4431,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Ensure Final Newline On Save",
@@ -4229,6 +4453,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Extend Comment On Newline",
@@ -4250,6 +4475,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Completions"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -4272,6 +4498,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Completion Documentation",
@@ -4293,6 +4520,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
             ],
         },
@@ -4355,6 +4583,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Hard Tabs",
@@ -4370,6 +4599,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent",
@@ -4385,6 +4615,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Auto Indent On Paste",
@@ -4402,6 +4633,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Wrapping"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4418,6 +4650,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
@@ -4433,6 +4666,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Preferred Line Length",
@@ -4450,6 +4684,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Wrap Guides",
@@ -4468,6 +4703,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Allow Rewrap",
@@ -4483,6 +4719,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4505,6 +4742,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Line Width",
@@ -4526,6 +4764,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Active Line Width",
@@ -4550,6 +4789,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Coloring",
@@ -4571,6 +4811,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Background Coloring",
@@ -4595,6 +4836,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Formatting"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4616,6 +4858,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Remove Trailing Whitespace On Save",
@@ -4633,6 +4876,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Ensure Final Newline On Save",
@@ -4650,6 +4894,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Formatter",
@@ -4668,6 +4913,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use On Type Format",
@@ -4685,6 +4931,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Code Actions On Format",
@@ -4705,6 +4952,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Prettier"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4727,6 +4975,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Parser",
@@ -4748,6 +4997,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Plugins",
@@ -4772,6 +5022,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Options",
@@ -4796,6 +5047,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Autoclose"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4812,6 +5064,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Use Auto Surround",
@@ -4829,6 +5082,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
@@ -4846,6 +5100,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Jsx Tag Auto Close",
@@ -4867,6 +5122,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("LSP"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4885,6 +5141,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Language Servers",
@@ -4905,6 +5162,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
@@ -4920,6 +5178,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4938,6 +5197,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Predictions Disabled In",
@@ -4958,6 +5218,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Whitespace"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -4974,6 +5235,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Space Whitespace Indicator",
@@ -4998,6 +5260,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Tab Whitespace Indicator",
@@ -5022,6 +5285,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Completions"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5040,6 +5304,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Completion Documentation",
@@ -5057,6 +5322,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words",
@@ -5078,6 +5344,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Words Min Length",
@@ -5102,6 +5369,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp",
@@ -5123,6 +5391,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp Fetch Timeout Ms",
@@ -5147,6 +5416,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Lsp Insert Mode",
@@ -5168,6 +5438,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Inlay Hints"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5190,6 +5461,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Value Hints",
@@ -5214,6 +5486,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Type Hints",
@@ -5235,6 +5508,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Parameter Hints",
@@ -5259,6 +5533,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Other Hints",
@@ -5283,6 +5558,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
@@ -5304,6 +5580,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Edit Debounce Ms",
@@ -5328,6 +5605,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Scroll Debounce Ms",
@@ -5352,10 +5630,11 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
-            description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified",
+            description: "Toggles inlay hints (hides or shows) when the user | LOCAL presses the modifiers specified",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {
@@ -5379,6 +5658,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Tasks"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5401,6 +5681,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Variables",
@@ -5425,6 +5706,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prefer Lsp",
@@ -5446,6 +5728,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SectionHeader("Miscellaneous"),
         SettingsPageItem::SettingItem(SettingItem {
@@ -5465,6 +5748,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 .unimplemented(),
             ),
             metadata: None,
+            files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Extend Comment On Newline",
@@ -5482,6 +5766,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
                 },
             }),
             metadata: None,
+            files: USER | LOCAL,
         }),
     ]
 }

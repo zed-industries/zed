@@ -646,6 +646,39 @@ struct SettingItem {
     description: &'static str,
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
+    files: FileMask,
+}
+
+struct FileMask(u8);
+
+const USER: FileMask = FileMask(1 << 0);
+const LOCAL: FileMask = FileMask(1 << 2);
+const REMOTE: FileMask = FileMask(1 << 3);
+
+impl std::ops::BitAnd for FileMask {
+    type Output = Self;
+
+    fn bitand(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+}
+
+impl std::ops::BitOr for FileMask {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl FileMask {
+    fn contains(&self, other: FileMask) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    fn is_superset(&self, other: FileMask) -> bool {
+        self.0 & other.0 == self.0
+    }
 }
 
 impl PartialEq for SettingItem {
