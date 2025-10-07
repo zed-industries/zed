@@ -1004,10 +1004,9 @@ impl SettingsWindow {
             .border_color(cx.theme().colors().border)
             .bg(nav_background)
             .child(self.render_search(window, cx))
-            .relative()
             .child(
                 v_flex()
-                    .size_full()
+                    .flex_grow()
                     .child(
                         uniform_list(
                             "settings-ui-nav-bar",
@@ -1047,28 +1046,23 @@ impl SettingsWindow {
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
             .child(
-                h_flex()
-                    .items_center()
-                    .absolute()
-                    .bottom_2()
-                    .bg(nav_background)
-                    .child(
-                        Button::new(
-                            "nav-key-hint",
-                            if self.navbar_focus_handle.contains_focused(window, cx) {
-                                "Focus Content"
-                            } else {
-                                "Focus Navbar"
-                            },
-                        )
-                        .key_binding(ui::KeyBinding::for_action_in(
-                            &ToggleFocusNav,
-                            &self.navbar_focus_handle,
-                            window,
-                            cx,
-                        ))
-                        .key_binding_position(KeybindingPosition::Start),
-                    ),
+                h_flex().w_full().justify_center().bg(nav_background).child(
+                    Button::new(
+                        "nav-key-hint",
+                        if self.navbar_focus_handle.contains_focused(window, cx) {
+                            "Focus Content"
+                        } else {
+                            "Focus Navbar"
+                        },
+                    )
+                    .key_binding(ui::KeyBinding::for_action_in(
+                        &ToggleFocusNav,
+                        &self.navbar_focus_handle,
+                        window,
+                        cx,
+                    ))
+                    .key_binding_position(KeybindingPosition::Start),
+                ),
             )
     }
 
