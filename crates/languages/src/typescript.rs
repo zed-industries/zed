@@ -1030,7 +1030,7 @@ mod tests {
 
         let text = r#"
             function a() {
-              // local variables are omitted
+              // local variables are included
               let a1 = 1;
               // all functions are included
               async function a2() {}
@@ -1053,10 +1053,69 @@ mod tests {
                 .collect::<Vec<_>>(),
             &[
                 ("function a()", 0),
+                ("let a1", 1),
                 ("async function a2()", 1),
                 ("let b", 0),
                 ("function getB()", 0),
                 ("const d", 0),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_destructuring(cx: &mut TestAppContext) {
+        let language = crate::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+
+        let text = r#"
+            // Top-level destructuring
+            const { a1, a2 } = a;
+            const [b1, b2] = b;
+
+            function processData() {
+              // Nested object destructuring
+              const { c1, c2 } = c;
+              // Nested array destructuring
+              const [d1, d2, d3] = d;
+              // Destructuring with renaming
+              const { f1: g1 } = f;
+            }
+
+            class DataHandler {
+              method() {
+                // Destructuring in class method
+                const { a1, a2 } = a;
+              }
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("const a1", 0),
+                ("const a2", 0),
+                ("const b1", 0),
+                ("const b2", 0),
+                ("function processData()", 0),
+                ("const c1", 1),
+                ("const c2", 1),
+                ("const d1", 1),
+                ("const d2", 1),
+                ("const d3", 1),
+                ("const g1", 1),
+                ("class DataHandler", 0),
+                ("method()", 1),
+                ("const a1", 2),
+                ("const a2", 2),
             ]
         );
     }

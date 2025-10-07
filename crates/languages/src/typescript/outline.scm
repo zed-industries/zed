@@ -34,26 +34,26 @@
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
-        ; Multiple names may be exported - @item is on the declarator to keep
+        ; Multiple names may be exported - @item is on the identifier to keep
         ; ranges distinct.
         (variable_declarator
-            name: (identifier) @name) @item))
+            name: (identifier) @name @item)))
 
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (array_pattern
-                (identifier) @name)) @item))
+                (identifier) @name @item))))
 
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (object_pattern
-                [(shorthand_property_identifier_pattern) @name
+                [(shorthand_property_identifier_pattern) @name @item
                  (pair_pattern
-                     value: (identifier) @name)])) @item))
+                     value: (identifier) @name @item)]))))
 
 (program
     (lexical_declaration
@@ -61,23 +61,23 @@
         ; Multiple names may be defined - @item is on the declarator to keep
         ; ranges distinct.
         (variable_declarator
-            name: (identifier) @name) @item))
+            name: (identifier) @name @item)))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (array_pattern
-                (identifier) @name)) @item))
+                (identifier) @name @item))))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (object_pattern
-                [(shorthand_property_identifier_pattern) @name
+                [(shorthand_property_identifier_pattern) @name @item
                  (pair_pattern
-                     value: (identifier) @name)])) @item))
+                     value: (identifier) @name @item)]))))
 
 (class_declaration
     "class" @context
@@ -161,12 +161,21 @@
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: [
-                (identifier) @name
-                (array_pattern (identifier) @name)
-                (object_pattern
-                    [(shorthand_property_identifier_pattern) @name
-                     (pair_pattern value: (identifier) @name)])
-            ]) @item))
+            name: (identifier) @name @item)))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
+
+(statement_block
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                [(shorthand_property_identifier_pattern) @name @item
+                 (pair_pattern value: (identifier) @name @item)]))))
 
 (comment) @annotation
