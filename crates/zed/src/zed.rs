@@ -4546,6 +4546,7 @@ mod tests {
                 "rules_library",
                 "search",
                 "settings_profile_selector",
+                "settings_ui",
                 "snippets",
                 "stash_picker",
                 "supermaven",
