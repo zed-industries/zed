@@ -1,5 +1,5 @@
 use notify_debouncer_full::{
-    Debouncer, FileIdMap, new_debouncer,
+    Debouncer, RecommendedCache, new_debouncer,
     notify::{self, EventKind},
 };
 use parking_lot::Mutex;
@@ -80,7 +80,10 @@ impl Watcher for FsWatcher {
         let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
+        #[cfg(not(target_os = "linux"))]
         let mode = notify::RecursiveMode::Recursive;
+        #[cfg(target_os = "linux")]
+        let mode = notify::RecursiveMode::NonRecursive;
 
         let registration_id = global({
             let path = path.clone();
@@ -154,7 +157,7 @@ struct WatcherState {
 
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
-    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, FileIdMap>>,
+    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
 }
 
 impl GlobalWatcher {
@@ -251,7 +254,7 @@ fn handle_debounced_events(result: notify_debouncer_full::DebounceEventResult) {
 
 pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     let result = FS_WATCHER_INSTANCE.get_or_init(|| {
-        let debounce_duration = Duration::from_millis(200);
+        let debounce_duration = Duration::from_millis(500);
 
         new_debouncer(debounce_duration, None, handle_debounced_events)
             .map(|debouncer| GlobalWatcher {
