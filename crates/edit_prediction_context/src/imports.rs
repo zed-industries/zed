@@ -1,7 +1,7 @@
 use collections::HashMap;
 use language::BufferSnapshot;
 use language::ImportsConfig;
-use language::LanguageId;
+use language::Language;
 use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
@@ -78,6 +78,7 @@ impl Module {
         &mut self,
         range: &ModuleRange,
         snapshot: &BufferSnapshot,
+        language: &Language,
         parent_abs_path: Option<&Path>,
     ) -> usize {
         if range.is_empty() {
@@ -91,15 +92,15 @@ impl Module {
                 {
                     let path = snapshot.text_for_range(range.clone()).collect::<Cow<str>>();
 
-                    // Language specific: removes angle brackets from C/C++ #include
-                    let path = if let Some(without_lt) = path.strip_prefix("<")
-                        && let Some(without_angle_brackets) = without_lt.strip_suffix(">")
+                    let path = if let Some(strip_regex) =
+                        language.config().import_path_strip_regex.as_ref()
                     {
-                        Path::new(without_angle_brackets)
+                        strip_regex.replace_all(&path, "")
                     } else {
-                        Path::new(path.as_ref())
+                        path
                     };
 
+                    let path = Path::new(path.as_ref());
                     if (path.starts_with(".") || path.starts_with(".."))
                         && let Some(parent_abs_path) = parent_abs_path
                         && let Ok(abs_path) =
@@ -119,8 +120,13 @@ impl Module {
             }
             ModuleRange::Namespace(range) => {
                 if let Self::Namespace(namespace) = self {
-                    namespace.0.push(range_text(snapshot, range));
-                    return 1;
+                    let segment = range_text(snapshot, range);
+                    if language.config().ignored_import_segments.contains(&segment) {
+                        return 0;
+                    } else {
+                        namespace.0.push(segment);
+                        return 1;
+                    }
                 } else {
                     log::warn!(
                         "bug in imports query: encountered both @namespace and @source match"
@@ -173,7 +179,6 @@ impl Imports {
         let mut import_range = None;
 
         while let Some(query_match) = matches.peek() {
-            let language_id = query_match.language.id();
             let ImportsConfig {
                 query: _,
                 import_ix,
@@ -255,7 +260,7 @@ impl Imports {
                         content: content.clone(),
                         content_kind,
                         alias: alias_range.unwrap_or(0..0),
-                        language_id,
+                        language: query_match.language.clone(),
                     });
                 } else {
                     log::trace!(
@@ -360,7 +365,8 @@ impl Imports {
         let mut pop_count = 0;
 
         if tree.module_children.is_empty() {
-            pop_count += current_module.push_range(&tree.module, snapshot, parent_abs_path);
+            pop_count +=
+                current_module.push_range(&tree.module, snapshot, &tree.language, parent_abs_path);
         } else {
             for child in &tree.module_children {
                 pop_count += Self::extend_namespace_from_tree(
@@ -378,7 +384,7 @@ impl Imports {
                     if tree.alias.is_empty() {
                         identifier_to_imports
                             .entry(Identifier {
-                                language_id: tree.language_id,
+                                language_id: tree.language.id(),
                                 name: range_text(snapshot, &tree.content),
                             })
                             .or_default()
@@ -392,14 +398,14 @@ impl Imports {
                         if alias_name.as_ref() != "_" {
                             identifier_to_imports
                                 .entry(Identifier {
-                                    language_id: tree.language_id,
+                                    language_id: tree.language.id(),
                                     name: alias_name,
                                 })
                                 .or_default()
                                 .push(Import::Alias {
                                     module: current_module.clone(),
                                     external_identifier: Identifier {
-                                        language_id: tree.language_id,
+                                        language_id: tree.language.id(),
                                         name: external_name,
                                     },
                                 });
@@ -443,7 +449,7 @@ impl Imports {
     ) -> usize {
         let mut pop_count = 0;
         if tree.module_children.is_empty() {
-            pop_count += module.push_range(&tree.module, snapshot, parent_abs_path);
+            pop_count += module.push_range(&tree.module, snapshot, &tree.language, parent_abs_path);
         } else {
             for child in &tree.module_children {
                 pop_count +=
@@ -454,6 +460,7 @@ impl Imports {
             pop_count += module.push_range(
                 &ModuleRange::Namespace(tree.content.clone()),
                 snapshot,
+                &tree.language,
                 parent_abs_path,
             );
         } else {
@@ -479,7 +486,7 @@ struct DetachedNode {
     content: Range<usize>,
     content_kind: ContentKind,
     alias: Range<usize>,
-    language_id: LanguageId,
+    language: Arc<Language>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -509,7 +516,7 @@ struct ImportTree {
     content_children: Vec<ImportTree>,
     content_kind: ContentKind,
     alias: Range<usize>,
-    language_id: LanguageId,
+    language: Arc<Language>,
 }
 
 impl ImportTree {
@@ -525,7 +532,7 @@ impl ImportTree {
         }
     }
 
-    fn from_module_range(module: &ModuleRange, language_id: LanguageId) -> Self {
+    fn from_module_range(module: &ModuleRange, language: Arc<Language>) -> Self {
         ImportTree {
             module: module.clone(),
             module_children: Vec::new(),
@@ -533,7 +540,7 @@ impl ImportTree {
             content_children: Vec::new(),
             content_kind: ContentKind::Name,
             alias: 0..0,
-            language_id,
+            language,
         }
     }
 }
@@ -558,7 +565,7 @@ impl From<&DetachedNode> for ImportTree {
                 module_children = value
                     .modules
                     .iter()
-                    .map(|module| ImportTree::from_module_range(module, value.language_id))
+                    .map(|module| ImportTree::from_module_range(module, value.language.clone()))
                     .collect();
             }
         }
@@ -570,7 +577,7 @@ impl From<&DetachedNode> for ImportTree {
             content_children: Vec::new(),
             content_kind: value.content_kind,
             alias: value.alias.clone(),
-            language_id: value.language_id,
+            language: value.language.clone(),
         }
     }
 }
@@ -621,12 +628,14 @@ mod test {
     use std::sync::{Arc, LazyLock};
 
     use super::*;
+    use collections::HashSet;
     use gpui::{TestAppContext, prelude::*};
     use indoc::indoc;
     use language::{
         Buffer, Language, LanguageConfig, tree_sitter_python, tree_sitter_rust,
         tree_sitter_typescript,
     };
+    use regex::Regex;
 
     #[gpui::test]
     fn test_rust_simple(cx: &mut TestAppContext) {
@@ -754,6 +763,15 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_rust_crate_and_super(cx: &mut TestAppContext) {
+        check_imports(&RUST, "use crate::a::b::c;", &[&["a", "b", "c"]], cx);
+        check_imports(&RUST, "use super::a::b::c;", &[&["a", "b", "c"]], cx);
+        // TODO: Consider stripping leading "::". Not done for now because for the text similarity matching usecase this
+        // is fine.
+        check_imports(&RUST, "use ::a::b::c;", &[&["::a", "b", "c"]], cx);
+    }
+
+    #[gpui::test]
     fn test_typescript_imports(cx: &mut TestAppContext) {
         let parent_abs_path = PathBuf::from("/home/user/project");
 
@@ -761,7 +779,7 @@ mod test {
             Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import "./maths.js";"#,
-            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
+            &[&["SOURCE /home/user/project/maths", "WILDCARD"]],
             cx,
         );
 
@@ -769,7 +787,7 @@ mod test {
             Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import "../maths.js";"#,
-            &[&["SOURCE /home/user/maths.js", "WILDCARD"]],
+            &[&["SOURCE /home/user/maths", "WILDCARD"]],
             cx,
         );
 
@@ -778,11 +796,8 @@ mod test {
             &TYPESCRIPT,
             r#"import RandomNumberGenerator, { pi as π } from "./maths.js";"#,
             &[
-                &[
-                    "SOURCE /home/user/project/maths.js",
-                    "RandomNumberGenerator",
-                ],
-                &["SOURCE /home/user/project/maths.js", "pi AS π"],
+                &["SOURCE /home/user/project/maths", "RandomNumberGenerator"],
+                &["SOURCE /home/user/project/maths", "pi AS π"],
             ],
             cx,
         );
@@ -792,21 +807,22 @@ mod test {
             &TYPESCRIPT,
             r#"import { pi, phi, absolute } from "./maths.js";"#,
             &[
-                &["SOURCE /home/user/project/maths.js", "pi"],
-                &["SOURCE /home/user/project/maths.js", "phi"],
-                &["SOURCE /home/user/project/maths.js", "absolute"],
+                &["SOURCE /home/user/project/maths", "pi"],
+                &["SOURCE /home/user/project/maths", "phi"],
+                &["SOURCE /home/user/project/maths", "absolute"],
             ],
             cx,
         );
 
+        // index.js is removed by import_path_strip_regex
         check_imports_with_file_abs_path(
             Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import { pi, phi, absolute } from "./maths/index.js";"#,
             &[
-                &["SOURCE /home/user/project/maths/index.js", "pi"],
-                &["SOURCE /home/user/project/maths/index.js", "phi"],
-                &["SOURCE /home/user/project/maths/index.js", "absolute"],
+                &["SOURCE /home/user/project/maths", "pi"],
+                &["SOURCE /home/user/project/maths", "phi"],
+                &["SOURCE /home/user/project/maths", "absolute"],
             ],
             cx,
         );
@@ -815,7 +831,7 @@ mod test {
             Some(&parent_abs_path),
             &TYPESCRIPT,
             r#"import type { SomeThing } from "./some-module.js";"#,
-            &[&["SOURCE /home/user/project/some-module.js", "SomeThing"]],
+            &[&["SOURCE /home/user/project/some-module", "SomeThing"]],
             cx,
         );
 
@@ -824,8 +840,20 @@ mod test {
             &TYPESCRIPT,
             r#"import { type SomeThing, OtherThing } from "./some-module.js";"#,
             &[
-                &["SOURCE /home/user/project/some-module.js", "SomeThing"],
-                &["SOURCE /home/user/project/some-module.js", "OtherThing"],
+                &["SOURCE /home/user/project/some-module", "SomeThing"],
+                &["SOURCE /home/user/project/some-module", "OtherThing"],
+            ],
+            cx,
+        );
+
+        // index.js is removed by import_path_strip_regex
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import { type SomeThing, OtherThing } from "./some-module/index.js";"#,
+            &[
+                &["SOURCE /home/user/project/some-module", "SomeThing"],
+                &["SOURCE /home/user/project/some-module", "OtherThing"],
             ],
             cx,
         );
@@ -842,7 +870,7 @@ mod test {
             &TYPESCRIPT,
             r#"import * as math from "./maths.js";"#,
             // &[&["/home/user/project/maths.js", "WILDCARD AS math"]],
-            &[&["SOURCE /home/user/project/maths.js", "WILDCARD"]],
+            &[&["SOURCE /home/user/project/maths", "WILDCARD"]],
             cx,
         );
         check_imports_with_file_abs_path(
@@ -1148,6 +1176,8 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "Rust".into(),
+                    ignored_import_segments: HashSet::from_iter(["crate".into(), "super".into()]),
+                    import_path_strip_regex: Some(Regex::new("/(lib|mod)\\.rs$").unwrap()),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -1162,6 +1192,7 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "TypeScript".into(),
+                    import_path_strip_regex: Some(Regex::new("(?:/index)?\\.[jt]s$").unwrap()),
                     ..Default::default()
                 },
                 Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -1176,6 +1207,7 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "Python".into(),
+                    import_path_strip_regex: Some(Regex::new("/__init__\\.py$").unwrap()),
                     ..Default::default()
                 },
                 Some(tree_sitter_python::LANGUAGE.into()),
@@ -1185,11 +1217,13 @@ mod test {
         )
     });
 
+    // TODO: Ideally should use actual language configurations
     static C: LazyLock<Arc<Language>> = LazyLock::new(|| {
         Arc::new(
             Language::new(
                 LanguageConfig {
                     name: "C".into(),
+                    import_path_strip_regex: Some(Regex::new("^<|>$").unwrap()),
                     ..Default::default()
                 },
                 Some(tree_sitter_c::LANGUAGE.into()),
@@ -1204,6 +1238,7 @@ mod test {
             Language::new(
                 LanguageConfig {
                     name: "C++".into(),
+                    import_path_strip_regex: Some(Regex::new("^<|>$").unwrap()),
                     ..Default::default()
                 },
                 Some(tree_sitter_cpp::LANGUAGE.into()),

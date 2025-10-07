@@ -386,10 +386,11 @@ impl SyntaxIndex {
         let Some((project_entry_id, cached_path)) = project::File::from_dyn(buffer.file())
             .and_then(|f| {
                 let project_entry_id = f.project_entry_id(cx)?;
-                let cached_path = CachedDeclarationPath {
-                    worktree_abs_path: f.worktree.read(cx).abs_path(),
-                    rel_path: f.path.clone(),
-                };
+                let cached_path = CachedDeclarationPath::new(
+                    f.worktree.read(cx).abs_path(),
+                    &f.path,
+                    buffer.language(),
+                );
                 Some((project_entry_id, cached_path))
             })
         else {
@@ -523,13 +524,14 @@ impl SyntaxIndex {
 
         let snapshot_task = worktree.update(cx, |worktree, cx| {
             let load_task = worktree.load_file(&project_path.path, cx);
+            let worktree_abs_path = worktree.abs_path();
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
                 let language = language.await?;
 
                 let buffer = cx.new(|cx| {
                     let mut buffer = Buffer::local(loaded_file.text, cx);
-                    buffer.set_language(Some(language), cx);
+                    buffer.set_language(Some(language.clone()), cx);
                     buffer
                 })?;
 
@@ -538,19 +540,22 @@ impl SyntaxIndex {
                     parse_status.changed().await?;
                 }
 
-                buffer.read_with(cx, |buffer, _cx| buffer.snapshot())
+                let cached_path = CachedDeclarationPath::new(
+                    worktree_abs_path,
+                    &project_path.path,
+                    Some(&language),
+                );
+
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                anyhow::Ok((snapshot, cached_path))
             })
         });
-
-        let cached_path = CachedDeclarationPath {
-            worktree_abs_path: worktree.read(cx).abs_path(),
-            rel_path: project_path.path,
-        };
 
         let state = Arc::downgrade(&self.state);
         cx.background_spawn(async move {
             // TODO: How to handle errors?
-            let Ok(snapshot) = snapshot_task.await else {
+            let Ok((snapshot, cached_path)) = snapshot_task.await else {
                 return;
             };
             let rope = snapshot.as_rope();

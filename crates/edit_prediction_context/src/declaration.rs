@@ -1,5 +1,4 @@
-use gpui::App;
-use language::{BufferSnapshot, LanguageId};
+use language::{Language, LanguageId};
 use project::ProjectEntryId;
 use std::ops::Range;
 use std::sync::Arc;
@@ -252,23 +251,50 @@ impl BufferDeclaration {
 pub struct CachedDeclarationPath {
     pub worktree_abs_path: Arc<Path>,
     pub rel_path: Arc<RelPath>,
+    /// The relative path of the file, possibly stripped according to `import_path_strip_regex`.
+    pub rel_path_after_regex_stripping: Arc<RelPath>,
 }
 
 impl CachedDeclarationPath {
-    pub fn for_buffer(snapshot: &BufferSnapshot, cx: &App) -> Option<Self> {
-        let file = project::File::from_dyn(snapshot.file())?;
+    pub fn new(
+        worktree_abs_path: Arc<Path>,
+        path: &Arc<RelPath>,
+        language: Option<&Arc<Language>>,
+    ) -> Self {
+        let rel_path = path.clone();
+        let rel_path_after_regex_stripping = if let Some(language) = language
+            && let Some(strip_regex) = language.config().import_path_strip_regex.as_ref()
+            && let Ok(stripped) = RelPath::unix(&Path::new(
+                strip_regex.replace_all(rel_path.as_unix_str(), "").as_ref(),
+            )) {
+            Arc::from(stripped)
+        } else {
+            rel_path.clone()
+        };
+        CachedDeclarationPath {
+            worktree_abs_path,
+            rel_path,
+            rel_path_after_regex_stripping,
+        }
+    }
 
-        Some(Self {
-            worktree_abs_path: file.worktree.read(cx).abs_path(),
-            rel_path: file.path.clone(),
-        })
+    #[cfg(test)]
+    pub fn new_for_test(worktree_abs_path: &str, rel_path: &str) -> Self {
+        let rel_path: Arc<RelPath> = util::rel_path::rel_path(rel_path).into();
+        CachedDeclarationPath {
+            worktree_abs_path: std::path::PathBuf::from(worktree_abs_path).into(),
+            rel_path_after_regex_stripping: rel_path.clone(),
+            rel_path,
+        }
     }
 
     pub fn ends_with_posix_path(&self, path: &Path) -> bool {
-        if path.as_os_str().len() <= self.rel_path.as_unix_str().len() {
-            path_ends_with(self.rel_path.as_std_path(), path)
+        if path.as_os_str().len() <= self.rel_path_after_regex_stripping.as_unix_str().len() {
+            path_ends_with(self.rel_path_after_regex_stripping.as_std_path(), path)
         } else {
-            if let Some(remaining) = strip_path_suffix(path, self.rel_path.as_std_path()) {
+            if let Some(remaining) =
+                strip_path_suffix(path, self.rel_path_after_regex_stripping.as_std_path())
+            {
                 path_ends_with(&self.worktree_abs_path, remaining)
             } else {
                 false
@@ -277,7 +303,9 @@ impl CachedDeclarationPath {
     }
 
     pub fn equals_absolute_path(&self, path: &Path) -> bool {
-        if let Some(remaining) = strip_path_suffix(path, &self.rel_path.as_std_path()) {
+        if let Some(remaining) =
+            strip_path_suffix(path, &self.rel_path_after_regex_stripping.as_std_path())
+        {
             self.worktree_abs_path.as_ref() == remaining
         } else {
             false

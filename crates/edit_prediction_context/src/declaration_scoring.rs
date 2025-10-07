@@ -464,18 +464,12 @@ fn score_declaration(
 
 #[cfg(test)]
 mod test {
-    use std::path::PathBuf;
-
-    use util::rel_path::rel_path;
-
     use super::*;
 
     #[test]
     fn test_declaration_path_matches() {
-        let declaration_path = CachedDeclarationPath {
-            worktree_abs_path: PathBuf::from("/home/user/project").into(),
-            rel_path: rel_path("src/maths.ts").into(),
-        };
+        let declaration_path =
+            CachedDeclarationPath::new_for_test("/home/user/project", "src/maths.ts");
 
         assert!(declaration_path_matches_import(
             &declaration_path,
