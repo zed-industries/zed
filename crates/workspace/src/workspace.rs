@@ -4106,11 +4106,11 @@ impl Workspace {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
+                cx.notify();
                 Some(new_pane)
             } else {
                 None
             };
-        cx.notify();
         maybe_pane_handle
     }
 
