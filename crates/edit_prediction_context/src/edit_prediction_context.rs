@@ -17,10 +17,9 @@ use text::{Point, ToOffset as _};
 pub use declaration::*;
 pub use declaration_scoring::*;
 pub use excerpt::*;
+pub use imports::*;
 pub use reference::*;
 pub use syntax_index::*;
-
-use crate::imports::Imports;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionContextOptions {
@@ -81,10 +80,16 @@ impl EditPredictionContext {
         options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
+        let imports = if options.use_imports {
+            Imports::gather(&buffer, parent_abs_path)
+        } else {
+            Imports::default()
+        };
         Self::gather_context_with_references_fn(
             cursor_point,
             buffer,
             parent_abs_path,
+            &imports,
             options,
             index_state,
             references_in_excerpt,
@@ -95,6 +100,7 @@ impl EditPredictionContext {
         cursor_point: Point,
         buffer: &BufferSnapshot,
         parent_abs_path: Option<&Path>,
+        imports: &Imports,
         options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
         get_references: impl FnOnce(
@@ -119,12 +125,6 @@ impl EditPredictionContext {
                 .text_for_range(adjacent_start..adjacent_end)
                 .collect::<String>(),
         );
-
-        let imports = if options.use_imports {
-            Imports::gather(&buffer, parent_abs_path)
-        } else {
-            Imports::default()
-        };
 
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub

@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3::{self, DeclarationScoreComponents};
 use edit_prediction_context::{
     Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
-    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, Reference,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, Imports, Reference,
     ReferenceRegion, SyntaxIndex, SyntaxIndexState, references_in_range,
 };
 use futures::channel::mpsc;
@@ -33,7 +33,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, atomic};
 use std::time::Duration;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -503,20 +504,21 @@ pub async fn retrieval_stats(
         .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
     let filtered_files_len = filtered_files.len();
+    let done_count = Arc::new(AtomicUsize::new(0));
 
     let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
     let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
 
     let tasks = filtered_files
         .into_iter()
-        .enumerate()
-        .map(|(file_index, project_path)| {
+        .map(|project_path| {
             let index_state = index_state.clone();
             let lsp_definitions = lsp_definitions.clone();
             let options = options.clone();
             let project = project.clone();
             let worktree = worktree.clone();
             let output_tx = output_tx.clone();
+            let done_count = done_count.clone();
             cx.spawn(async move |cx| {
                 let buffer = open_buffer(&project, &worktree, &project_path.path, cx).await?;
 
@@ -542,12 +544,14 @@ pub async fn retrieval_stats(
                     &snapshot,
                 );
 
-                println!(
-                    "{:02}/{:02} references: {}",
-                    file_index + 1,
-                    filtered_files_len,
-                    references.len(),
-                );
+                println!("references: {}", references.len(),);
+
+                let imports = if options.context.use_imports {
+                    Imports::gather(&snapshot, Some(&parent_abs_path))
+                } else {
+                    Imports::default()
+                };
+                let imports = Arc::new(imports);
 
                 for reference in references {
                     let query_point = snapshot.offset_to_point(reference.range.start);
@@ -569,13 +573,14 @@ pub async fn retrieval_stats(
 
                     let retrieved_definitions = retrieve_definitions(
                         &reference,
+                        imports.clone(),
                         query_point,
-                        &snapshot,
-                        Some(parent_abs_path.as_path()),
-                        &index_state,
+                        snapshot.clone(),
+                        Some(parent_abs_path.clone()),
+                        index_state.clone(),
                         &project,
                         &worktree,
-                        &options.context,
+                        options.context.clone(),
                         cx,
                     )
                     .await?;
@@ -634,6 +639,12 @@ pub async fn retrieval_stats(
 
                     output_tx.unbounded_send(result).ok();
                 }
+
+                println!(
+                    "{:02}/{:02} done",
+                    done_count.fetch_add(1, atomic::Ordering::Relaxed) + 1,
+                    filtered_files_len,
+                );
 
                 Ok(())
             })
@@ -757,25 +768,31 @@ pub async fn retrieval_stats(
 
 async fn retrieve_definitions(
     reference: &Reference,
+    imports: Arc<Imports>,
     query_point: Point,
-    snapshot: &BufferSnapshot,
-    parent_abs_path: Option<&Path>,
-    index: &SyntaxIndexState,
+    snapshot: BufferSnapshot,
+    parent_abs_path: Option<PathBuf>,
+    index: Arc<SyntaxIndexState>,
     project: &Entity<Project>,
     worktree: &Entity<Worktree>,
-    options: &EditPredictionContextOptions,
+    options: EditPredictionContextOptions,
     cx: &mut AsyncApp,
 ) -> Result<Vec<RetrievedDefinition>> {
     let mut single_reference_map = HashMap::default();
     single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
-    let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
-        query_point,
-        &snapshot,
-        parent_abs_path.as_deref(),
-        &options,
-        Some(&index),
-        |_, _, _| single_reference_map,
-    );
+    let edit_prediction_context = cx
+        .background_spawn(async move {
+            EditPredictionContext::gather_context_with_references_fn(
+                query_point,
+                &snapshot,
+                parent_abs_path.as_deref(),
+                &imports,
+                &options,
+                Some(&index),
+                |_, _, _| single_reference_map,
+            )
+        })
+        .await;
 
     let Some(edit_prediction_context) = edit_prediction_context else {
         return Ok(Vec::new());
@@ -806,6 +823,8 @@ async fn retrieve_definitions(
                     .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                     .await?;
                 let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
+                // intentionally leak buffers so that they don't get continuously re-opened
+                std::mem::forget(buffer);
                 retrieved_definitions.push(RetrievedDefinition {
                     path,
                     range: rope.offset_to_point(declaration.item_range.start)
