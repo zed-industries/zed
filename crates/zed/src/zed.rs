@@ -4427,7 +4427,8 @@ mod tests {
                     | "agent::NewNativeAgentThreadFromSummary"
                     | "action::Sequence"
                     | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl" => {}
+                    | "zed::OpenZedUrl"
+                    | "settings_editor::FocusFile" => {}
                     _ => {
                         let result = cx.build_action(action, None);
                         match &result {
