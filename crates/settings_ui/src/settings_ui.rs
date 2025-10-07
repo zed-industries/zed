@@ -380,6 +380,9 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<settings::MinimapThumbBorder>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::SteppingGranularity>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
         });
 
     // todo(settings_ui): Figure out how we want to handle discriminant unions

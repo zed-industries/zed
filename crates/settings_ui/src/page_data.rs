@@ -3523,6 +3523,143 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Debugger",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Stepping Granularity",
+                    description: "Determines the stepping granularity for debug operations",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.stepping_granularity
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .stepping_granularity
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Save Breakpoints",
+                    description: "Whether breakpoints should be reused across Zed sessions",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.save_breakpoints
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .save_breakpoints
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Timeout",
+                    description: "Time in milliseconds until timeout error when connecting to a TCP debug adapter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.timeout
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().timeout
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Dock",
+                    description: "The dock position of the debug panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Log DAP Communications",
+                    description: "Whether to log messages between active debug adapters and Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.log_dap_communications
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .log_dap_communications
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Format DAP Log Messages",
+                    description: "Whether to format DAP messages when adding them to debug adapter logger",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.format_dap_log_messages
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .debugger
+                                .get_or_insert_default()
+                                .format_dap_log_messages
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Button",
+                    description: "Whether to show the debug button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().button
+                        },
+                    }),
+                    metadata: None,
+                }),
+            ],
+        },
+        SettingsPage {
             title: "Collaboration",
             items: vec![
                 SettingsPageItem::SectionHeader("Calls"),
