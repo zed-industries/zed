@@ -2963,6 +2963,11 @@ impl ScaledPixels {
         Self(self.0.floor())
     }
 
+    /// TEST
+    pub fn round(&self) -> Self {
+        Self(self.0.round())
+    }
+
     /// Rounds the `ScaledPixels` value to the nearest whole number.
     ///
     /// # Returns
