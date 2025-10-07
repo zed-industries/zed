@@ -211,10 +211,12 @@ impl RenderOnce for TreeViewItem {
                                 && let Some(on_toggle) = self.on_toggle.clone()
                             {
                                 this.on_click(move |event, window, cx| {
-                                    if !event.is_keyboard() {
+                                    if event.is_keyboard() {
+                                        on_click(event, window, cx);
+                                        on_toggle(event, window, cx);
+                                    } else {
                                         on_click(event, window, cx);
                                     }
-                                    on_toggle(event, window, cx);
                                 })
                             } else {
                                 this.on_click(on_click)
