@@ -2433,6 +2433,67 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 //     }),
                 //     metadata: None,
                 // }),
+                SettingsPageItem::SectionHeader("Notification Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Button",
+                    description: "Whether to show the notification panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Dock",
+                    description: "Where to dock the notification panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Notification Panel Default Width",
+                    description: "Default width of the notification panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(notification_panel) = &settings_content.notification_panel {
+                                &notification_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .notification_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
