@@ -2494,6 +2494,70 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SectionHeader("Collaboration Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Button",
+                    description: "Whether to show the collaboration panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Dock",
+                    description: "Where to dock the collaboration panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .dock
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Collaboration Panel Default Width",
+                    description: "Default width of the collaboration panel in pixels",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(collaboration_panel) = &settings_content.collaboration_panel
+                            {
+                                &collaboration_panel.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .collaboration_panel
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Tab Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Activate On Close",
@@ -3148,27 +3212,6 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                         },
                         pick_mut: |settings_content| {
                             &mut settings_content.calls.get_or_insert_default().share_on_join
-                        },
-                    }),
-                    metadata: None,
-                }),
-                SettingsPageItem::SectionHeader("Panel"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Collaboration Panel Button",
-                    description: "Whether to show the collaboration panel button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(collab) = &settings_content.collaboration_panel {
-                                &collab.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .collaboration_panel
-                                .get_or_insert_default()
-                                .button
                         },
                     }),
                     metadata: None,
