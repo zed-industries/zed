@@ -438,10 +438,22 @@ pub async fn retrieval_stats(
     index
         .read_with(cx, |index, cx| index.wait_for_initial_file_indexing(cx))?
         .await?;
-    let mut indexed_files = index
+    let indexed_files = index
         .read_with(cx, |index, cx| index.indexed_file_paths(cx))?
         .await;
-    indexed_files.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut filtered_files = indexed_files
+        .into_iter()
+        .filter(|project_path| {
+            let file_extension = project_path.path.extension();
+            if let Some(only_extension) = only_extension.as_ref() {
+                file_extension.is_some_and(|extension| extension == only_extension)
+            } else {
+                file_extension
+                    .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
+            }
+        })
+        .collect::<Vec<_>>();
+    filtered_files.sort_by(|a, b| a.path.cmp(&b.path));
 
     let index_state = index.read_with(cx, |index, _cx| index.state().clone())?;
     cx.update(|_| {
@@ -455,16 +467,16 @@ pub async fn retrieval_stats(
 
     let mut hasher = collections::FxHasher::default();
     worktree.read_with(cx, |worktree, _cx| {
-        for file in &indexed_files {
+        for file in &filtered_files {
             let content = std::fs::read(worktree.absolutize(&file.path))?;
             content.hash(&mut hasher);
         }
         anyhow::Ok(())
     })??;
-    let indexed_files_hash = hasher.finish();
+    let files_hash = hasher.finish();
     let lsp_definitions_path = std::env::current_dir()?.join(format!(
         "target/zeta2-lsp-definitions-{:x}.json",
-        indexed_files_hash
+        files_hash
     ));
 
     let lsp_definitions: Arc<_> = if std::fs::exists(&lsp_definitions_path)? {
@@ -479,23 +491,14 @@ pub async fn retrieval_stats(
             lsp_definitions_path.display()
         );
         let lsp_definitions =
-            gather_lsp_definitions(&indexed_files, &worktree, &project, cx).await?;
+            gather_lsp_definitions(&filtered_files, &worktree, &project, cx).await?;
         serde_json::to_writer_pretty(File::create(&lsp_definitions_path)?, &lsp_definitions)?;
         lsp_definitions
     }
     .into();
 
-    let filtered_files = indexed_files
+    let filtered_files = filtered_files
         .into_iter()
-        .filter(|project_path| {
-            let file_extension = project_path.path.extension();
-            if let Some(only_extension) = only_extension.as_ref() {
-                file_extension.is_some_and(|extension| extension == only_extension)
-            } else {
-                file_extension
-                    .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
-            }
-        })
         .skip(skip_files.unwrap_or(0))
         .take(file_limit.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
@@ -639,20 +642,19 @@ pub async fn retrieval_stats(
 
     drop(output_tx);
 
-    let results = cx
-        .background_spawn(async move {
-            let mut results = Vec::new();
-            while let Some(result) = output_rx.next().await {
-                output
-                    .write_all(format!("{:#?}\n", result).as_bytes())
-                    .log_err();
-                results.push(result)
-            }
-            results
-        })
-        .await;
+    let results_task = cx.background_spawn(async move {
+        let mut results = Vec::new();
+        while let Some(result) = output_rx.next().await {
+            output
+                .write_all(format!("{:#?}\n", result).as_bytes())
+                .log_err();
+            results.push(result)
+        }
+        results
+    });
 
-    drop(tasks);
+    futures::future::try_join_all(tasks).await?;
+    let results = results_task.await;
 
     let mut references_count = 0;
 
