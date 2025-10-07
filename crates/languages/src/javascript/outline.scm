@@ -31,10 +31,8 @@
     (export_statement
         (lexical_declaration
             ["let" "const"] @context
-            ; Multiple names may be exported - @item is on the identifier to keep
-            ; ranges distinct.
             (variable_declarator
-                name: (identifier) @name @item))))
+                name: (identifier) @name) @item)))
 
 (program
     (export_statement
@@ -42,7 +40,11 @@
             ["let" "const"] @context
             (variable_declarator
                 name: (array_pattern
-                    (identifier) @name @item)))))
+                    [
+                        (identifier) @name @item
+                        (assignment_pattern left: (identifier) @name @item)
+                        (rest_pattern (identifier) @name @item)
+                    ])))))
 
 (program
     (export_statement
@@ -52,22 +54,27 @@
                 name: (object_pattern
                     [(shorthand_property_identifier_pattern) @name @item
                      (pair_pattern
-                         value: (identifier) @name @item)])))))
+                         value: (identifier) @name @item)
+                     (pair_pattern
+                         value: (assignment_pattern left: (identifier) @name @item))
+                     (rest_pattern (identifier) @name @item)])))))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
-        ; Multiple names may be defined - @item is on the identifier to keep
-        ; ranges distinct.
         (variable_declarator
-            name: (identifier) @name @item)))
+            name: (identifier) @name) @item))
 
 (program
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (array_pattern
-                (identifier) @name @item))))
+                [
+                    (identifier) @name @item
+                    (assignment_pattern left: (identifier) @name @item)
+                    (rest_pattern (identifier) @name @item)
+                ]))))
 
 (program
     (lexical_declaration
@@ -76,27 +83,47 @@
             name: (object_pattern
                 [(shorthand_property_identifier_pattern) @name @item
                  (pair_pattern
-                     value: (identifier) @name @item)]))))
+                     value: (identifier) @name @item)
+                 (pair_pattern
+                     value: (assignment_pattern left: (identifier) @name @item))
+                 (rest_pattern (identifier) @name @item)]))))
 
 (class_declaration
     "class" @context
     name: (_) @name) @item
 
-(method_definition
-    [
-        "get"
-        "set"
-        "async"
-        "*"
-        "readonly"
-        "static"
-        (override_modifier)
-        (accessibility_modifier)
-    ]* @context
-    name: (_) @name
-    parameters: (formal_parameters
-      "(" @context
-      ")" @context)) @item
+; Method definitions in classes (not in object literals)
+(class_body
+    (method_definition
+        [
+            "get"
+            "set"
+            "async"
+            "*"
+            "readonly"
+            "static"
+            (override_modifier)
+            (accessibility_modifier)
+        ]* @context
+        name: (_) @name
+        parameters: (formal_parameters
+          "(" @context
+          ")" @context)) @item)
+
+; Method definitions in object literals (nested under variable)
+(variable_declarator
+    value: (object
+        (method_definition
+            [
+                "get"
+                "set"
+                "async"
+                "*"
+            ]* @context
+            name: (_) @name
+            parameters: (formal_parameters
+              "(" @context
+              ")" @context)) @item))
 
 (public_field_definition
     [
@@ -150,41 +177,51 @@
     )
 ) @item
 
-; Object methods (properties with function values)
-(pair
-    key: [
-        (property_identifier) @name
-        (string (string_fragment) @name)
-        (number) @name
-    ]
-    value: [
-        (function_expression)
-        (arrow_function)
-        (generator_function)
-    ]) @item
+; Object methods within variable declarations
+(variable_declarator
+    value: (object
+        (pair
+            key: [
+                (property_identifier) @name
+                (string (string_fragment) @name)
+                (number) @name
+            ]
+            value: [
+                (function_expression)
+                (arrow_function)
+                (generator_function)
+            ]) @item))
 
-; Object properties with object values (nested structures)
-(pair
-    key: [
-        (property_identifier) @name
-        (string (string_fragment) @name)
-        (number) @name
-    ]
-    value: (object)) @item
+
+
+; Object properties with object values within variable declarations
+(variable_declarator
+    value: (object
+        (pair
+            key: [
+                (property_identifier) @name
+                (string (string_fragment) @name)
+                (number) @name
+            ]
+            value: (object)) @item))
 
 ; Nested const/let declarations in function/method bodies
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
-            name: (identifier) @name @item)))
+            name: (identifier) @name) @item))
 
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (array_pattern
-                (identifier) @name @item))))
+                [
+                    (identifier) @name @item
+                    (assignment_pattern left: (identifier) @name @item)
+                    (rest_pattern (identifier) @name @item)
+                ]))))
 
 (statement_block
     (lexical_declaration
@@ -192,6 +229,8 @@
         (variable_declarator
             name: (object_pattern
                 [(shorthand_property_identifier_pattern) @name @item
-                 (pair_pattern value: (identifier) @name @item)]))))
+                 (pair_pattern value: (identifier) @name @item)
+                 (pair_pattern value: (assignment_pattern left: (identifier) @name @item))
+                 (rest_pattern (identifier) @name @item)]))))
 
 (comment) @annotation

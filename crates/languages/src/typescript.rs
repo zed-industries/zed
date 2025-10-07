@@ -1073,6 +1073,13 @@ mod tests {
             // Top-level destructuring
             const { a1, a2 } = a;
             const [b1, b2] = b;
+            
+            // Defaults and rest
+            const [c1 = 1, , c2, ...rest1] = c;
+            const { d1, d2: e1, f1 = 2, g1: h1 = 3, ...rest2 } = d;
+            
+            // Object with function properties
+            const o = { m() {}, async n() {}, g: function* () {}, h: () => {}, k: function () {} };
 
             function processData() {
               // Nested object destructuring
@@ -1081,12 +1088,16 @@ mod tests {
               const [d1, d2, d3] = d;
               // Destructuring with renaming
               const { f1: g1 } = f;
+              // With defaults
+              const [x = 10, y] = xy;
+              const { z = 20 } = obj;
             }
 
             class DataHandler {
               method() {
                 // Destructuring in class method
                 const { a1, a2 } = a;
+                const [b1, ...b2] = b;
               }
             }
         "#
@@ -1105,6 +1116,19 @@ mod tests {
                 ("const a2", 0),
                 ("const b1", 0),
                 ("const b2", 0),
+                ("const c1", 0),
+                ("const c2", 0),
+                ("const rest1", 0),
+                ("const d1", 0),
+                ("const e1", 0),
+                ("const h1", 0),
+                ("const rest2", 0),
+                ("const o", 0),
+                ("m()", 1),
+                ("async n()", 1),
+                ("g", 1),
+                ("h", 1),
+                ("k", 1),
                 ("function processData()", 0),
                 ("const c1", 1),
                 ("const c2", 1),
@@ -1112,10 +1136,14 @@ mod tests {
                 ("const d2", 1),
                 ("const d3", 1),
                 ("const g1", 1),
+                ("const x", 1),
+                ("const y", 1),
                 ("class DataHandler", 0),
                 ("method()", 1),
                 ("const a1", 2),
                 ("const a2", 2),
+                ("const b1", 2),
+                ("const b2", 2),
             ]
         );
     }
