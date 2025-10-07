@@ -29,6 +29,7 @@ pub struct DropdownMenu {
     handle: Option<PopoverMenuHandle<ContextMenu>>,
     attach: Option<Corner>,
     offset: Option<Point<Pixels>>,
+    tab_index: Option<isize>,
 }
 
 impl DropdownMenu {
@@ -48,6 +49,7 @@ impl DropdownMenu {
             handle: None,
             attach: None,
             offset: None,
+            tab_index: None,
         }
     }
 
@@ -67,6 +69,7 @@ impl DropdownMenu {
             handle: None,
             attach: None,
             offset: None,
+            tab_index: None,
         }
     }
 
@@ -99,6 +102,11 @@ impl DropdownMenu {
     /// Offsets the position of the menu by that many pixels.
     pub fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
+        self
+    }
+
+    pub fn tab_index(mut self, arg: isize) -> Self {
+        self.tab_index = Some(arg);
         self
     }
 }
@@ -140,7 +148,8 @@ impl RenderOnce for DropdownMenu {
                 .when(full_width, |this| this.full_width())
                 .size(trigger_size)
                 .disabled(self.disabled),
-        };
+        }
+        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index));
 
         PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
