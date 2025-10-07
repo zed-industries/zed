@@ -90,7 +90,7 @@ struct State {
     selection: Option<SelectedEntry>,
     edit_state: Option<EditState>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
-    expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
+    expanded_dir_ids: HashMap<WorktreeId, HashSet<ProjectEntryId>>,
 }
 
 impl State {
@@ -599,9 +599,7 @@ impl ProjectPanel {
 
                                     dirs_to_expand.push(child.id);
 
-                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                        expanded_dir_ids.insert(ix, child.id);
-                                    }
+                                    expanded_dir_ids.insert(child.id);
                                     this.state.unfolded_dir_ids.insert(child.id);
                                 }
                             }
@@ -1123,17 +1121,16 @@ impl ProjectPanel {
                     return;
                 };
 
-                match expanded_dir_ids.binary_search(&entry_id) {
-                    Ok(_) => self.select_next(&SelectNext, window, cx),
-                    Err(ix) => {
-                        self.project.update(cx, |project, cx| {
-                            project.expand_entry(worktree_id, entry_id, cx);
-                        });
+                if expanded_dir_ids.contains(&entry_id) {
+                    self.select_next(&SelectNext, window, cx)
+                } else {
+                    self.project.update(cx, |project, cx| {
+                        project.expand_entry(worktree_id, entry_id, cx);
+                    });
 
-                        expanded_dir_ids.insert(ix, entry_id);
-                        self.update_visible_entries(None, false, false, window, cx);
-                        cx.notify();
-                    }
+                    expanded_dir_ids.insert(entry_id);
+                    self.update_visible_entries(None, false, false, window, cx);
+                    cx.notify();
                 }
             }
         }
@@ -1177,27 +1174,24 @@ impl ProjectPanel {
         let mut entry = &entry;
         loop {
             let entry_id = entry.id;
-            match expanded_dir_ids.binary_search(&entry_id) {
-                Ok(ix) => {
-                    expanded_dir_ids.remove(ix);
-                    self.update_visible_entries(
-                        Some((worktree_id, entry_id)),
-                        false,
-                        false,
-                        window,
-                        cx,
-                    );
-                    cx.notify();
+            if expanded_dir_ids.contains(&entry_id) {
+                expanded_dir_ids.remove(&entry_id);
+                self.update_visible_entries(
+                    Some((worktree_id, entry_id)),
+                    false,
+                    false,
+                    window,
+                    cx,
+                );
+                cx.notify();
+                break;
+            } else {
+                if let Some(parent_entry) =
+                    entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                {
+                    entry = parent_entry;
+                } else {
                     break;
-                }
-                Err(_) => {
-                    if let Some(parent_entry) =
-                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
-                    {
-                        entry = parent_entry;
-                    } else {
-                        break;
-                    }
                 }
             }
         }
@@ -1252,14 +1246,11 @@ impl ProjectPanel {
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
         {
             self.project.update(cx, |project, cx| {
-                match expanded_dir_ids.binary_search(&entry_id) {
-                    Ok(ix) => {
-                        expanded_dir_ids.remove(ix);
-                    }
-                    Err(ix) => {
-                        project.expand_entry(worktree_id, entry_id, cx);
-                        expanded_dir_ids.insert(ix, entry_id);
-                    }
+                if expanded_dir_ids.contains(&entry_id) {
+                    expanded_dir_ids.remove(&entry_id);
+                } else {
+                    project.expand_entry(worktree_id, entry_id, cx);
+                    expanded_dir_ids.insert(entry_id);
                 }
             });
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
@@ -1277,13 +1268,10 @@ impl ProjectPanel {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx)
             && let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id)
         {
-            match expanded_dir_ids.binary_search(&entry_id) {
-                Ok(_ix) => {
-                    self.collapse_all_for_entry(worktree_id, entry_id, cx);
-                }
-                Err(_ix) => {
-                    self.expand_all_for_entry(worktree_id, entry_id, cx);
-                }
+            if expanded_dir_ids.contains(&entry_id) {
+                self.collapse_all_for_entry(worktree_id, entry_id, cx);
+            } else {
+                self.expand_all_for_entry(worktree_id, entry_id, cx);
             }
             self.update_visible_entries(Some((worktree_id, entry_id)), false, false, window, cx);
             window.focus(&self.focus_handle);
@@ -1310,9 +1298,7 @@ impl ProjectPanel {
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
                     loop {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                            expanded_dir_ids.insert(ix, entry.id);
-                        }
+                        expanded_dir_ids.insert(entry.id);
 
                         if let Some(parent_entry) =
                             entry.path.parent().and_then(|p| worktree.entry_for_path(p))
@@ -1345,9 +1331,7 @@ impl ProjectPanel {
                     let Some(current_entry) = worktree.entry_for_id(current_id) else {
                         continue;
                     };
-                    if let Ok(ix) = expanded_dir_ids.binary_search(&current_id) {
-                        expanded_dir_ids.remove(ix);
-                    }
+                    expanded_dir_ids.remove(&current_id);
                     if auto_fold_enabled {
                         self.state.unfolded_dir_ids.remove(&current_id);
                     }
@@ -1772,9 +1756,7 @@ impl ProjectPanel {
             if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
                 loop {
                     if entry.is_dir() {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                            expanded_dir_ids.insert(ix, entry.id);
-                        }
+                        expanded_dir_ids.insert(entry.id);
                         directory_id = entry.id;
                         break;
                     } else {
@@ -3140,10 +3122,8 @@ impl ProjectPanel {
             let Some(entry) = worktree.entry_for_path(path) else {
                 continue;
             };
-            if entry.is_dir()
-                && let Err(idx) = expanded_dir_ids.binary_search(&entry.id)
-            {
-                expanded_dir_ids.insert(idx, entry.id);
+            if entry.is_dir() {
+                expanded_dir_ids.insert(entry.id);
             }
         }
 
@@ -3217,9 +3197,9 @@ impl ProjectPanel {
                                 // The first time a worktree's root entry becomes available,
                                 // mark that root entry as expanded.
                                 if let Some(entry) = worktree_snapshot.root_entry() {
-                                    e.insert(vec![entry.id]).as_slice()
+                                    e.insert(HashSet::from([entry.id]))
                                 } else {
-                                    &[]
+                                    &HashSet::new()
                                 }
                             }
                         };
@@ -3388,7 +3368,7 @@ impl ProjectPanel {
                                 }
                             }
 
-                            if expanded_dir_ids.binary_search(&entry.id).is_err()
+                            if !expanded_dir_ids.contains(&entry.id)
                                 && entry_iter.advance_to_sibling()
                             {
                                 continue;
@@ -3478,9 +3458,7 @@ impl ProjectPanel {
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
                     loop {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                            expanded_dir_ids.insert(ix, entry.id);
-                        }
+                        expanded_dir_ids.insert(entry.id);
 
                         if let Some(parent_entry) =
                             entry.path.parent().and_then(|p| worktree.entry_for_path(p))
@@ -4486,7 +4464,7 @@ impl ProjectPanel {
                                 .state
                                 .expanded_dir_ids
                                 .get(&details.worktree_id)
-                                .is_some_and(|ids| ids.binary_search(&entry_id).is_ok())
+                                .is_some_and(|ids| ids.contains(&entry_id))
                         {
                             return;
                         }
@@ -4943,13 +4921,8 @@ impl ProjectPanel {
             (settings.file_icons, settings.folder_icons)
         };
 
-        let expanded_entry_ids = self
-            .state
-            .expanded_dir_ids
-            .get(&worktree_id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
-        let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+        let expanded_entry_ids = self.state.expanded_dir_ids.get(&worktree_id);
+        let is_expanded = expanded_entry_ids.is_some_and(|e| e.contains(&entry.id));
 
         let icon = match entry.kind {
             EntryKind::File => {
@@ -5104,7 +5077,7 @@ impl ProjectPanel {
                     .state
                     .expanded_dir_ids
                     .get(&worktree.id())
-                    .map(|ids| ids.binary_search(&entry.id).is_ok())
+                    .map(|ids| ids.contains(&entry.id))
                     .unwrap_or(false);
             if is_expanded_dir {
                 break;
