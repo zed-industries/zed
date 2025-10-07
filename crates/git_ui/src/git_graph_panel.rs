@@ -52,9 +52,9 @@ actions!(
     ]
 );
 
-const ROW_HEIGHT: Pixels = px(60.0);
+const ROW_HEIGHT: Pixels = px(30.0);
 const COLUMN_WIDTH: Pixels = px(12.0);
-const GRAPH_PADDING: Pixels = px(20.0);
+const GRAPH_PADDING: Pixels = px(16.0);
 const INITIAL_COMMITS: usize = 50;
 const COMMITS_PER_BATCH: usize = 50;
 const LOAD_MORE_THRESHOLD: usize = 10;
@@ -235,7 +235,7 @@ impl GitGraphPanel {
             loading_commits: false,
             load_commits_task: None,
             graph_scroll_x: px(0.0),
-            graph_width: px(200.0),
+            graph_width: px(120.0),
             is_resizing: false,
             resize_drag_start_x: None,
             resize_initial_width: None,
@@ -397,20 +397,10 @@ impl GitGraphPanel {
                             this.partial_paths = partial_paths;
                             this.graph_data = Some(graph_result);
 
-                            // Calculate required graph width - only increase, never decrease
                             // Clamp to 30% of panel width to prevent hiding commit list
-                            let max_x = this
-                                .positioned_commits
-                                .iter()
-                                .map(|c| c.position.x)
-                                .max_by(|a, b| {
-                                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                                })
-                                .unwrap_or(px(0.0));
-                            let new_width = (max_x + px(50.0)).max(px(200.0));
                             let panel_width = this.size.unwrap_or(px(800.0));
                             let max_graph_width = panel_width * 0.3;
-                            this.graph_width = this.graph_width.max(new_width).min(max_graph_width);
+                            this.graph_width = this.graph_width.min(max_graph_width);
 
                             // Load first commit details
                             if !this.positioned_commits.is_empty()
@@ -507,7 +497,7 @@ impl GitGraphPanel {
                             timestamp,
                             now,
                             time::UtcOffset::UTC,
-                            TimestampFormat::Absolute,
+                            TimestampFormat::EnhancedAbsolute,
                         )
                     })
                     .unwrap_or_else(|_| "Unknown".to_string()),
@@ -1408,158 +1398,152 @@ impl Render for GitGraphPanel {
                                                                 .flex()
                                                                 .items_center()
                                                                 .px_4()
+                                                                .gap_2()
                                                                 .min_w_0()
+                                                                .child({
+                                                                    // Author name and branch badges
+                                                                    let mut message_column = div()
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .flex_1()
+                                                                        .gap_2()
+                                                                        .min_w_0()
+                                                                        .overflow_hidden();
+
+                                                                    // Add HEAD badge if this is the HEAD commit
+                                                                    if positioned.is_head {
+                                                                        let head_bg = gpui::hsla(0.6, 0.9, 0.5, 0.2); // Cyan-ish
+                                                                        let head_border = gpui::hsla(0.6, 0.9, 0.5, 1.0);
+                                                                        let effective_bg = theme::blend_with_background(head_bg, panel_color);
+                                                                        let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
+                                                                        let head_text_color = theme::get_accessible_text_color(white, effective_bg);
+
+                                                                        message_column = message_column.child(
+                                                                            div()
+                                                                                .px_2()
+                                                                                .py(px(2.0))
+                                                                                .rounded(px(4.0))
+                                                                                .bg(head_bg)
+                                                                                .border_1()
+                                                                                .border_color(head_border)
+                                                                                .text_color(head_text_color)
+                                                                                .text_xs()
+                                                                                .font_weight(gpui::FontWeight::BOLD)
+                                                                                .child("HEAD")
+                                                                        );
+                                                                    }
+
+                                                                    // Add branch badges if present
+                                                                    for branch in &positioned.branches {
+                                                                        if !branch.is_empty() {
+                                                                            // Use WCAG-compliant text color for badge (5:1 contrast for small text)
+                                                                            let badge_bg = positioned.color.opacity(0.2);
+                                                                            // Blend the semi-transparent badge with the background
+                                                                            let effective_bg = theme::blend_with_background(badge_bg, panel_color);
+                                                                            // Get white or black text that meets 5:1 contrast
+                                                                            let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
+                                                                            let badge_text_color = theme::get_accessible_text_color(white, effective_bg);
+
+                                                                            message_column = message_column.child(
+                                                                                div()
+                                                                                    .flex()
+                                                                                    .items_center()
+                                                                                    .gap_1()
+                                                                                    .px_2()
+                                                                                    .py(px(2.0))
+                                                                                    .rounded(px(4.0))
+                                                                                    .bg(badge_bg)
+                                                                                    .border_1()
+                                                                                    .border_color(positioned.color)
+                                                                                    .text_color(badge_text_color)
+                                                                                    .text_xs()
+                                                                                    .child(
+                                                                                        Icon::new(IconName::GitBranch)
+                                                                                            .size(IconSize::XSmall)
+                                                                                            .color(Color::Custom(badge_text_color))
+                                                                                    )
+                                                                                    .child(branch.clone())
+                                                                            );
+                                                                        }
+                                                                    }
+
+                                                                    // Render tags with a different icon and style
+                                                                    for tag in &positioned.tags {
+                                                                        if !tag.is_empty() {
+                                                                            // Tags use a gold/yellow color scheme
+                                                                            let tag_color = gpui::hsla(45.0 / 360.0, 0.7, 0.5, 1.0); // Gold color
+                                                                            let tag_bg = tag_color.opacity(0.15);
+                                                                            let effective_bg = theme::blend_with_background(tag_bg, panel_color);
+                                                                            let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
+                                                                            let tag_text_color = theme::get_accessible_text_color(white, effective_bg);
+
+                                                                            message_column = message_column.child(
+                                                                                div()
+                                                                                    .flex()
+                                                                                    .items_center()
+                                                                                    .gap_1()
+                                                                                    .px_2()
+                                                                                    .py(px(2.0))
+                                                                                    .rounded(px(4.0))
+                                                                                    .bg(tag_bg)
+                                                                                    .border_1()
+                                                                                    .border_color(tag_color)
+                                                                                    .text_color(tag_text_color)
+                                                                                    .text_xs()
+                                                                                    .child(
+                                                                                        Icon::new(IconName::Tag)
+                                                                                            .size(IconSize::XSmall)
+                                                                                            .color(Color::Custom(tag_text_color))
+                                                                                    )
+                                                                                    .child(tag.clone())
+                                                                            );
+                                                                        }
+                                                                    }
+
+                                                                   message_column = message_column.child(
+                                                                        div()
+                                                                            .text_color(text)
+                                                                            .text_sm()
+                                                                            .child(positioned.message.clone())
+                                                                    );
+
+                                                                    message_column
+                                                                })
                                                                 .child(
                                                                     div()
-                                                                        .w_full()
                                                                         .flex()
-                                                                        .gap_4()
+                                                                        .items_center()
+                                                                        .gap_2()
+                                                                        .min_w_0()
+                                                                        .overflow_hidden()
+                                                                        .size_48()
                                                                         .child(
                                                                             div()
-                                                                                .flex_1()
-                                                                                .flex()
-                                                                                .flex_col()
-                                                                                .gap_1()
-                                                                                .min_w_0()
-                                                                                .child({
-                                                                                    // Author name and branch badges
-                                                                                    let mut author_row = div()
-                                                                                        .flex()
-                                                                                        .items_center()
-                                                                                        .gap_2()
-                                                                                        .min_w_0()
-                                                                                        .overflow_hidden()
-                                                                                        .child(
-                                                                                            div()
-                                                                                                .text_color(text_muted)
-                                                                                                .text_sm()
-                                                                                                .flex_shrink_0()
-                                                                                                .child(positioned.author.clone())
-                                                                                        );
-
-                                                                                    // Add HEAD badge if this is the HEAD commit
-                                                                                    if positioned.is_head {
-                                                                                        let head_bg = gpui::hsla(0.6, 0.9, 0.5, 0.2); // Cyan-ish
-                                                                                        let head_border = gpui::hsla(0.6, 0.9, 0.5, 1.0);
-                                                                                        let effective_bg = theme::blend_with_background(head_bg, panel_color);
-                                                                                        let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
-                                                                                        let head_text_color = theme::get_accessible_text_color(white, effective_bg);
-
-                                                                                        author_row = author_row.child(
-                                                                                            div()
-                                                                                                .px_2()
-                                                                                                .py(px(2.0))
-                                                                                                .rounded(px(4.0))
-                                                                                                .bg(head_bg)
-                                                                                                .border_1()
-                                                                                                .border_color(head_border)
-                                                                                                .text_color(head_text_color)
-                                                                                                .text_xs()
-                                                                                                .font_weight(gpui::FontWeight::BOLD)
-                                                                                                .child("HEAD")
-                                                                                        );
-                                                                                    }
-
-                                                                                    // Add branch badges if present
-                                                                                    for branch in &positioned.branches {
-                                                                                        if !branch.is_empty() {
-                                                                                            // Use WCAG-compliant text color for badge (5:1 contrast for small text)
-                                                                                            let badge_bg = positioned.color.opacity(0.2);
-                                                                                            // Blend the semi-transparent badge with the background
-                                                                                            let effective_bg = theme::blend_with_background(badge_bg, panel_color);
-                                                                                            // Get white or black text that meets 5:1 contrast
-                                                                                            let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
-                                                                                            let badge_text_color = theme::get_accessible_text_color(white, effective_bg);
-
-                                                                                            author_row = author_row.child(
-                                                                                                div()
-                                                                                                    .flex()
-                                                                                                    .items_center()
-                                                                                                    .gap_1()
-                                                                                                    .px_2()
-                                                                                                    .py(px(2.0))
-                                                                                                    .rounded(px(4.0))
-                                                                                                    .bg(badge_bg)
-                                                                                                    .border_1()
-                                                                                                    .border_color(positioned.color)
-                                                                                                    .text_color(badge_text_color)
-                                                                                                    .text_xs()
-                                                                                                    .child(
-                                                                                                        Icon::new(IconName::GitBranch)
-                                                                                                            .size(IconSize::XSmall)
-                                                                                                            .color(Color::Custom(badge_text_color))
-                                                                                                    )
-                                                                                                    .child(branch.clone())
-                                                                                            );
-                                                                                        }
-                                                                                    }
-
-                                                                                    // Render tags with a different icon and style
-                                                                                    for tag in &positioned.tags {
-                                                                                        if !tag.is_empty() {
-                                                                                            // Tags use a gold/yellow color scheme
-                                                                                            let tag_color = gpui::hsla(45.0 / 360.0, 0.7, 0.5, 1.0); // Gold color
-                                                                                            let tag_bg = tag_color.opacity(0.15);
-                                                                                            let effective_bg = theme::blend_with_background(tag_bg, panel_color);
-                                                                                            let white = gpui::hsla(0.0, 0.0, 1.0, 1.0);
-                                                                                            let tag_text_color = theme::get_accessible_text_color(white, effective_bg);
-
-                                                                                            author_row = author_row.child(
-                                                                                                div()
-                                                                                                    .flex()
-                                                                                                    .items_center()
-                                                                                                    .gap_1()
-                                                                                                    .px_2()
-                                                                                                    .py(px(2.0))
-                                                                                                    .rounded(px(4.0))
-                                                                                                    .bg(tag_bg)
-                                                                                                    .border_1()
-                                                                                                    .border_color(tag_color)
-                                                                                                    .text_color(tag_text_color)
-                                                                                                    .text_xs()
-                                                                                                    .child(
-                                                                                                        Icon::new(IconName::Tag)
-                                                                                                            .size(IconSize::XSmall)
-                                                                                                            .color(Color::Custom(tag_text_color))
-                                                                                                    )
-                                                                                                    .child(tag.clone())
-                                                                                            );
-                                                                                        }
-                                                                                    }
-
-                                                                                    author_row
-                                                                                })
-                                                                                .child(
-                                                                                    div()
-                                                                                        .text_color(text)
-                                                                                        .text_sm()
-                                                                                        .overflow_hidden()
-                                                                                        .whitespace_nowrap()
-                                                                                        .child(positioned.message.clone()),
-                                                                                ),
-                                                                        )
-                                                                        .child(
-                                                                            div()
-                                                                                .flex()
-                                                                                .flex_col()
-                                                                                .items_end()
-                                                                                .gap_1()
+                                                                                .text_color(text_muted)
+                                                                                .text_sm()
                                                                                 .flex_shrink_0()
-                                                                                .child(
-                                                                                    div()
-                                                                                        .text_color(text_muted)
-                                                                                        .text_xs()
-                                                                                        .child(positioned.date.clone()),
-                                                                                )
-                                                                                .child(
-                                                                                    div()
-                                                                                        .text_color(text_disabled)
-                                                                                        .text_xs()
-                                                                                        .font_family("monospace")
-                                                                                        .child(positioned.oid[..7.min(positioned.oid.len())].to_string()),
-                                                                                ),
-                                                                        ),
-                                                                ),
+                                                                                .child(positioned.author.clone())
+                                                                        )
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .text_color(text_muted)
+                                                                        .text_xs()
+                                                                        .size_40()
+                                                                        .child(positioned.date.clone()),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .text_color(text_disabled)
+                                                                        .text_xs()
+                                                                        .font_family("monospace")
+                                                                        .size_12()
+                                                                        .child(positioned.oid[..7.min(positioned.oid.len())].to_string()),
+                                                                )
                                                         )
                                                 })
                                                 .collect()
