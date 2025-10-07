@@ -1041,7 +1041,7 @@ impl IrohZedNode {
     }
 
     fn generate() -> Self {
-        let secret = SecretKey::generate(rand_core::OsRng);
+        let secret = SecretKey::generate(rand::rngs::OsRng);
         IrohZedNode(secret)
     }
 

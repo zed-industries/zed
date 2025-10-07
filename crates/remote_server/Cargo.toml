@@ -24,7 +24,7 @@ test-support = ["fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-base64 = "0.22.1"
+base64.workspace = true
 clap.workspace = true
 client.workspace = true
 dap_adapters.workspace = true
@@ -52,7 +52,7 @@ paths.workspace = true
 project.workspace = true
 proto.workspace = true
 postcard.workspace = true
-rand_core = "0.6.4"
+rand = "0.8" # iroh is not yet updated to rand@0.9
 release_channel.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
