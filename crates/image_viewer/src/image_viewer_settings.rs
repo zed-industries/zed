@@ -1,3 +1,4 @@
+use gpui::App;
 pub use settings::ImageFileSizeUnit;
 use settings::Settings;
 
@@ -11,7 +12,7 @@ pub struct ImageViewerSettings {
 }
 
 impl Settings for ImageViewerSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             unit: content.image_viewer.clone().unwrap().unit.unwrap(),
         }

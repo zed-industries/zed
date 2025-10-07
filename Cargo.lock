@@ -5921,6 +5921,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "serde",
+ "settings",
  "theme",
  "workspace-hack",
  "zed-util",
@@ -14375,6 +14376,8 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "project",
+ "schemars 1.0.1",
+ "search",
  "serde",
  "session",
  "settings",

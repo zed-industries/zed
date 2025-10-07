@@ -2,7 +2,8 @@ use std::sync::Arc;
 use std::{path::Path, str};
 
 use gpui::{App, SharedString};
-use theme::{GlobalTheme, IconTheme, ThemeRegistry};
+use settings::Settings;
+use theme::{IconTheme, ThemeRegistry, ThemeSettings};
 use util::paths::PathExt;
 
 #[derive(Debug)]
@@ -12,8 +13,10 @@ pub struct FileIcons {
 
 impl FileIcons {
     pub fn get(cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+
         Self {
-            icon_theme: GlobalTheme::icon_theme(cx).clone(),
+            icon_theme: theme_settings.active_icon_theme.clone(),
         }
     }
 
@@ -94,7 +97,7 @@ impl FileIcons {
                 .map(|icon_definition| icon_definition.path.clone())
         }
 
-        get_icon_for_type(GlobalTheme::icon_theme(cx), typ).or_else(|| {
+        get_icon_for_type(&ThemeSettings::get_global(cx).active_icon_theme, typ).or_else(|| {
             Self::default_icon_theme(cx).and_then(|icon_theme| get_icon_for_type(&icon_theme, typ))
         })
     }
@@ -119,16 +122,20 @@ impl FileIcons {
             }
         }
 
-        get_folder_icon(GlobalTheme::icon_theme(cx), path, expanded)
-            .or_else(|| {
-                Self::default_icon_theme(cx)
-                    .and_then(|icon_theme| get_folder_icon(&icon_theme, path, expanded))
-            })
-            .or_else(|| {
-                // If we can't find a specific folder icon for the folder at the given path, fall back to the generic folder
-                // icon.
-                Self::get_generic_folder_icon(expanded, cx)
-            })
+        get_folder_icon(
+            &ThemeSettings::get_global(cx).active_icon_theme,
+            path,
+            expanded,
+        )
+        .or_else(|| {
+            Self::default_icon_theme(cx)
+                .and_then(|icon_theme| get_folder_icon(&icon_theme, path, expanded))
+        })
+        .or_else(|| {
+            // If we can't find a specific folder icon for the folder at the given path, fall back to the generic folder
+            // icon.
+            Self::get_generic_folder_icon(expanded, cx)
+        })
     }
 
     fn get_generic_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
@@ -143,10 +150,12 @@ impl FileIcons {
             }
         }
 
-        get_generic_folder_icon(GlobalTheme::icon_theme(cx), expanded).or_else(|| {
-            Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, expanded))
-        })
+        get_generic_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(
+            || {
+                Self::default_icon_theme(cx)
+                    .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, expanded))
+            },
+        )
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
@@ -158,7 +167,7 @@ impl FileIcons {
             }
         }
 
-        get_chevron_icon(GlobalTheme::icon_theme(cx), expanded).or_else(|| {
+        get_chevron_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(|| {
             Self::default_icon_theme(cx)
                 .and_then(|icon_theme| get_chevron_icon(&icon_theme, expanded))
         })
