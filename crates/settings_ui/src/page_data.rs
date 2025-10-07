@@ -2774,6 +2774,163 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Width",
+                    description: "Default width when the terminal is docked to the left or right",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Height",
+                    description: "Default height when the terminal is docked to the bottom",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Blinking",
+                    description: "Sets the cursor blinking behavior in the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.blinking
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.terminal.get_or_insert_default().blinking
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Alternate Scroll",
+                    description: "Sets whether Alternate Scroll mode is active by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.alternate_scroll
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .alternate_scroll
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Option As Meta",
+                    description: "Sets whether the option key behaves as the meta key",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.option_as_meta
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .option_as_meta
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Copy On Select",
+                    description: "Whether selecting text in the terminal automatically copies to clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.copy_on_select
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .copy_on_select
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Keep Selection On Copy",
+                    description: "Whether to keep the text selection after copying it to the clipboard",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.keep_selection_on_copy
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .keep_selection_on_copy
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Scroll History Lines",
+                    description: "The maximum number of lines to keep in the scrollback history",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.max_scroll_history_lines
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .max_scroll_history_lines
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Button",
