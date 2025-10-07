@@ -15,7 +15,7 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 // It is not important for this to match the specification for valid file names on various operating
 // systems. It is used to identify something that might be a path--invalid paths will be filtered
 // out later.
-const WORD_REGEX: &str = r#"\S+"#;
+const WORD_REGEX: &str = r#"[^ ]+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
