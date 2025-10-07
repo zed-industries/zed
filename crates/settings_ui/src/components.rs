@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::div;
+use gpui::{Focusable, div};
 use ui::{
     ActiveTheme as _, App, FluentBuilder as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Styled as _, Window,
@@ -10,6 +10,7 @@ pub struct SettingsEditor {
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Box<dyn Fn(Option<String>, &mut App)>>,
+    tab_index: Option<isize>,
 }
 
 impl SettingsEditor {
@@ -18,6 +19,7 @@ impl SettingsEditor {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            tab_index: None,
         }
     }
 
@@ -33,6 +35,11 @@ impl SettingsEditor {
 
     pub fn on_confirm(mut self, confirm: impl Fn(Option<String>, &mut App) + 'static) -> Self {
         self.confirm = Some(Box::new(confirm));
+        self
+    }
+
+    pub(crate) fn tab_index(mut self, arg: isize) -> Self {
+        self.tab_index = Some(arg);
         self
     }
 }
@@ -55,7 +62,12 @@ impl RenderOnce for SettingsEditor {
             }
         });
 
+        if let Some(tab_index) = self.tab_index {
+            editor.focus_handle(cx).tab_index(tab_index);
+        }
+
         let weak_editor = editor.downgrade();
+
         let theme_colors = cx.theme().colors();
 
         div()

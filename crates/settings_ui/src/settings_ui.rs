@@ -1301,6 +1301,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     let initial_text = Some(initial_text.clone()).filter(|s| !s.as_ref().is_empty());
 
     SettingsEditor::new()
+        .tab_index(0)
         .when_some(initial_text, |editor, text| {
             editor.with_initial_text(text.into())
         })
@@ -1343,6 +1344,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .tab_index(0_isize)
         .color(SwitchColor::Accent)
         .into_any_element()
 }
@@ -1381,6 +1383,7 @@ fn render_font_picker(
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
                         .full_width()
+                        .tab_index(0_isize)
                         .child(
                             h_flex()
                                 .w_full()
@@ -1422,6 +1425,7 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .tab_index(0)
         .style(NumericStepperStyle::Outlined)
         .into_any_element()
 }
@@ -1475,6 +1479,7 @@ where
         x: px(0.0),
         y: px(2.0),
     })
+    .tab_index(0)
     .into_any_element()
 }
 
@@ -1648,6 +1653,7 @@ mod test {
             search_matches: vec![],
             search_task: None,
             scroll_handle: ScrollHandle::new(),
+            navbar_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_search_matches();
