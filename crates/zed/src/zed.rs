@@ -4461,7 +4461,8 @@ mod tests {
                     | "agent::NewNativeAgentThreadFromSummary"
                     | "action::Sequence"
                     | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl" => {}
+                    | "zed::OpenZedUrl"
+                    | "settings_editor::FocusFile" => {}
                     _ => {
                         let result = cx.build_action(action, None);
                         match &result {
@@ -4576,6 +4577,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "settings_editor",
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",
