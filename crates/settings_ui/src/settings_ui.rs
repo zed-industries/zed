@@ -37,6 +37,11 @@ use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
 
+const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
+const NAVBAR_GROUP_TAB_INDEX: isize = 1;
+const CONTENT_CONTAINER_TAB_INDEX: isize = 2;
+const CONTENT_GROUP_TAB_INDEX: isize = 3;
+
 actions!(
     settings_editor,
     [
@@ -715,8 +720,14 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
-            navbar_focus_handle: cx.focus_handle(),
-            content_focus_handle: cx.focus_handle(),
+            navbar_focus_handle: cx
+                .focus_handle()
+                .tab_index(NAVBAR_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
+            content_focus_handle: cx
+                .focus_handle()
+                .tab_index(CONTENT_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
         };
 
         this.fetch_files(cx);
@@ -987,7 +998,7 @@ impl SettingsWindow {
             .gap_3()
             .track_focus(&self.navbar_focus_handle)
             .tab_group()
-            .tab_index(0)
+            .tab_index(NAVBAR_GROUP_TAB_INDEX)
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
@@ -1207,7 +1218,7 @@ impl SettingsWindow {
                     .size_full()
                     .track_focus(&self.content_focus_handle)
                     .tab_group()
-                    .tab_index(1)
+                    .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
             );
     }
