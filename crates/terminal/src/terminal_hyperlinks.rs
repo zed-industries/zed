@@ -100,7 +100,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                              word_match: &mut Match,
                              file_path: &mut &str| {
                 let mut word_start = *word_match.start();
-                for _ in 0..file_path[..left_bytes].chars().count() {
+                let trim_left_chars = file_path[..left_bytes].chars().count();
+                for _ in 0..trim_left_chars {
                     word_start = term.expand_wide(word_start, AlacDirection::Right).add(
                         term,
                         Boundary::Grid,
@@ -108,8 +109,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                     );
                 }
                 let mut word_end = *word_match.end();
-                let trim_right = file_path[file_path.len() - right_bytes..].chars().count();
-                for _ in 0..trim_right {
+                let trim_right_chars = file_path[file_path.len() - right_bytes..].chars().count();
+                for _ in 0..trim_right_chars {
                     word_end = term.expand_wide(word_end, AlacDirection::Left).sub(
                         term,
                         Boundary::Grid,
