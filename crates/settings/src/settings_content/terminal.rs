@@ -199,7 +199,19 @@ impl TerminalLineHeight {
 /// When to show the scrollbar.
 ///
 /// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowScrollbar {
     /// Show the scrollbar if there's important information or
