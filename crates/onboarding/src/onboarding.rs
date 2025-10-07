@@ -374,11 +374,36 @@ impl Render for Onboarding {
                     .child(
                         v_flex()
                             .id("page-content")
+                            .gap_6()
                             .size_full()
                             .max_w_full()
                             .min_w_0()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
                             .overflow_y_scroll()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .items_start()
+                                    .child(div().w_full())
+                                    .child({
+                                        Button::new("start_building", "Start Building")
+                                            .style(ButtonStyle::Outlined)
+                                            .size(ButtonSize::Medium)
+                                            .key_binding(
+                                                KeyBinding::for_action_in(
+                                                    &Finish,
+                                                    &self.focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(|_, window, cx| {
+                                                telemetry::event!("Welcome Start Building Clicked");
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            })
+                                    }),
+                            )
                             .child(self.render_page(window, cx))
                             .track_scroll(&self.scroll_handle),
                     )
