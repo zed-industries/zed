@@ -684,11 +684,9 @@ pub(crate) fn execute_p2p(persist: bool, mut persist_at: Option<PathBuf>) -> Res
     init_logging_p2p();
 
     // Known bugs
-    // - process stops when a single project is closed
-    // - node id is regenerated everytime the process is started
-    // - logs are not captured
+    // - Server: process stops when a single project is closed
+    // - Server: logs are not captured
     // - UI: can't use arrows
-    // - UI: list is not refreshed after successfully adding an iroh connection
 
     let app = gpui::Application::headless();
     let id = std::process::id().to_string();
