@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    num::{NonZeroU32, NonZeroU64},
+    num::{NonZero, NonZeroU32, NonZeroU64},
     rc::Rc,
     str::FromStr,
 };
@@ -207,6 +207,7 @@ impl_numeric_stepper_int!(u64);
 
 impl_numeric_stepper_nonzero_int!(NonZeroU32, u32);
 impl_numeric_stepper_nonzero_int!(NonZeroU64, u64);
+impl_numeric_stepper_nonzero_int!(NonZero<usize>, usize);
 
 #[derive(RegisterComponent)]
 pub struct NumericStepper<T = usize> {

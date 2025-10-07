@@ -1181,6 +1181,27 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Min Line Number Digits",
+                    description: "Minimum number of characters to reserve space for in the gutter.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(gutter) = &settings_content.editor.gutter {
+                                &gutter.min_line_number_digits
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .gutter
+                                .get_or_insert_default()
+                                .min_line_number_digits
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Scrollbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show",
@@ -1580,6 +1601,8 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Maximum Tabs",
                 //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                //     // todo(settings_ui): The default for this value is null and it's use in code
+                //     // is complex, so I'm going to come back to this later
                 //     field: Box::new(SettingField {
                 //         pick: |settings_content| &settings_content.workspace.max_tabs,
                 //         pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,

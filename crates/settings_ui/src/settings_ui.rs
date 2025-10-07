@@ -20,7 +20,7 @@ use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
-    num::NonZeroU32,
+    num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
@@ -352,6 +352,12 @@ fn init_renderers(cx: &mut App) {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<u64>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<usize>(|settings_field, file, _, window, cx| {
+            render_numeric_stepper(*settings_field, file, window, cx)
+        })
+        .add_renderer::<NonZero<usize>>(|settings_field, file, _, window, cx| {
             render_numeric_stepper(*settings_field, file, window, cx)
         })
         .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
