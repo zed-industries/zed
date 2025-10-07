@@ -11,6 +11,7 @@ use gpui::{
     ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
     WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
+use heck::ToTitleCase as _;
 use project::WorktreeId;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -1639,12 +1640,12 @@ where
 
     DropdownMenu::new(
         "dropdown",
-        current_value_label,
+        current_value_label.to_title_case(),
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
                 let file = file.clone();
                 menu = menu.toggleable_entry(
-                    label,
+                    label.to_title_case(),
                     value == current_value,
                     IconPosition::Start,
                     None,
