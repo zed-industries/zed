@@ -7,9 +7,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div,
-    point, prelude::*, px, size, uniform_list,
+    App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle,
+    Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions,
+    div, point, prelude::*, px, size, uniform_list,
 };
 use project::WorktreeId;
 use settings::{
@@ -26,8 +26,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
-    Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu, Switch,
+    SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -434,6 +434,7 @@ pub struct SettingsWindow {
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
     scroll_handle: ScrollHandle,
+    focus_handle: FocusHandle,
 }
 
 struct SubPage {
@@ -719,6 +720,7 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
         };
 
         this.fetch_files(cx);
@@ -1221,6 +1223,7 @@ impl Render for SettingsWindow {
 
         div()
             .key_context("SettingsWindow")
+            .track_focus(&self.focus_handle)
             .on_action(|_: &Minimize, window, _cx| {
                 window.minimize_window();
             })
@@ -1366,35 +1369,23 @@ fn render_font_picker(
         )
     });
 
-    div()
-        .child(
-            PopoverMenu::new("font-picker")
-                .menu(move |_window, _cx| Some(font_picker.clone()))
-                .trigger(
-                    ButtonLike::new("font-family-button")
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium)
-                        .full_width()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(Label::new(current_value))
-                                .child(
-                                    Icon::new(IconName::ChevronUpDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
-                        ),
-                )
-                .full_width(true)
-                .anchor(gpui::Corner::TopLeft)
-                .offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(4.0),
-                })
-                .with_handle(ui::PopoverMenuHandle::default()),
+    PopoverMenu::new("font-picker")
+        .menu(move |_window, _cx| Some(font_picker.clone()))
+        .trigger(
+            Button::new("font-family-button", current_value)
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .icon(IconName::ChevronUpDown)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::End),
         )
+        .anchor(gpui::Corner::TopLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .with_handle(ui::PopoverMenuHandle::default())
         .into_any_element()
 }
 
@@ -1642,6 +1633,7 @@ mod test {
             search_matches: vec![],
             search_task: None,
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_search_matches();
