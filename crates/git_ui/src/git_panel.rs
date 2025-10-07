@@ -5325,4 +5325,348 @@ mod tests {
             assert_eq!(current_message, "");
         });
     }
+
+    #[gpui::test]
+    async fn test_git_panel_mode_vscode(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+
+        // Set VSCode mode
+        cx.update_global::<SettingsStore, ()>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git_panel.get_or_insert_default().panel_mode =
+                    Some(settings::GitPanelMode::Vscode);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                        "lib.rs": "pub fn hello() {}"
+                    },
+                    "new_file.txt": "new content",
+                    "conflict.txt": "conflicted content"
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("src/lib.rs", StatusCode::Modified.index()),
+                ("new_file.txt", FileStatus::Untracked),
+                (
+                    "conflict.txt",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // In VSCode mode, files should be grouped by staging status
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::StagedChanges }),
+                Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
+                Header(GitHeaderEntry { header: Section::Changes }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+
+        // Verify that headers have action buttons in VSCode mode
+        let header_staged = &entries[0];
+        if let Header(header_entry) = header_staged {
+            assert_eq!(header_entry.action_title(), Some("Unstage All"));
+            assert!(header_entry.action().is_some());
+        }
+
+        let header_changes = &entries[2];
+        if let Header(header_entry) = header_changes {
+            assert_eq!(header_entry.action_title(), Some("Stage All"));
+            assert!(header_entry.action().is_some());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_git_panel_mode_zed(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+
+        // Explicitly set Zed mode (though it's the default)
+        cx.update_global::<SettingsStore, ()>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git_panel.get_or_insert_default().panel_mode =
+                    Some(settings::GitPanelMode::Zed);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                        "lib.rs": "pub fn hello() {}"
+                    },
+                    "new_file.txt": "new content",
+                    "conflict.txt": "conflicted content"
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("src/lib.rs", StatusCode::Modified.index()),
+                ("new_file.txt", FileStatus::Untracked),
+                (
+                    "conflict.txt",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // In Zed mode, files should be grouped by type (Conflict, Tracked, New)
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Conflict }),
+                Status(GitStatusEntry { .. }),
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { .. }),
+                Status(GitStatusEntry { .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { .. }),
+            ],
+        );
+
+        // Verify that headers do NOT have action buttons in Zed mode
+        let header_conflict = &entries[0];
+        if let Header(header_entry) = header_conflict {
+            assert_eq!(header_entry.action_title(), None);
+            assert!(header_entry.action().is_none());
+        }
+
+        let header_tracked = &entries[2];
+        if let Header(header_entry) = header_tracked {
+            assert_eq!(header_entry.action_title(), None);
+            assert!(header_entry.action().is_none());
+        }
+    }
+
+    #[gpui::test]
+    async fn test_git_panel_mode_dynamic_switch(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+
+        // Start with Zed mode
+        cx.update_global::<SettingsStore, ()>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git_panel.get_or_insert_default().panel_mode =
+                    Some(settings::GitPanelMode::Zed);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                    "new_file.txt": "new content"
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("src/main.rs", StatusCode::Modified.worktree()),
+                ("new_file.txt", FileStatus::Untracked),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Verify Zed mode structure
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { .. }),
+            ],
+        );
+
+        // Switch to VSCode mode dynamically
+        cx.update_global::<SettingsStore, ()>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git_panel.get_or_insert_default().panel_mode =
+                    Some(settings::GitPanelMode::Vscode);
+            });
+        });
+
+        // Wait for the observer to trigger update
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Verify VSCode mode structure
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Changes }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+                Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
+            ],
+        );
+
+        // Switch back to Zed mode
+        cx.update_global::<SettingsStore, ()>(|settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.git_panel.get_or_insert_default().panel_mode =
+                    Some(settings::GitPanelMode::Zed);
+            });
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Verify we're back to Zed mode structure
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        #[rustfmt::skip]
+        pretty_assertions::assert_matches!(
+            entries.as_slice(),
+            &[
+                Header(GitHeaderEntry { header: Section::Tracked }),
+                Status(GitStatusEntry { .. }),
+                Header(GitHeaderEntry { header: Section::New }),
+                Status(GitStatusEntry { .. }),
+            ],
+        );
+    }
 }
