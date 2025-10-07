@@ -14,8 +14,8 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
-    StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
+    KeyBinding, ParentElement as _, StatefulInteractiveElement, WithScrollbar, prelude::*,
+    rems_from_px,
 };
 pub use ui_input::font_picker;
 use workspace::{
@@ -66,12 +66,6 @@ actions!(
 actions!(
     onboarding,
     [
-        /// Activates the Basics page.
-        ActivateBasicsPage,
-        /// Activates the Editing page.
-        ActivateEditingPage,
-        /// Activates the AI Setup page.
-        ActivateAISetupPage,
         /// Finish the onboarding process.
         Finish,
         /// Sign in while in the onboarding flow.
@@ -346,15 +340,6 @@ impl Render for Onboarding {
             .on_action(Self::on_finish)
             .on_action(Self::handle_sign_in)
             .on_action(Self::handle_open_account)
-            .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.set_page(SelectedPage::Basics, Some("action"), cx);
-            }))
-            .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.set_page(SelectedPage::Editing, Some("action"), cx);
-            }))
-            .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.set_page(SelectedPage::AiSetup, Some("action"), cx);
-            }))
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next();
                 cx.notify();
