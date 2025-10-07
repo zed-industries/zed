@@ -1,4 +1,4 @@
-use notify_debouncer_full::{new_debouncer, notify::{self, EventKind}, Debouncer, FileIdMap};
+use notify_debouncer_full::{new_debouncer, notify::{self, EventKind}, Debouncer, RecommendedCache};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -157,7 +157,7 @@ struct WatcherState {
 
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
-    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, FileIdMap>>,
+    debouncer: Mutex<Debouncer<notify::RecommendedWatcher, RecommendedCache>>,
 }
 
 impl GlobalWatcher {
