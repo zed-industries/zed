@@ -778,6 +778,9 @@ dependencies = [
  "serde",
  "serde_repr",
  "url",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols 0.32.6",
  "zbus",
 ]
 
@@ -808,7 +811,6 @@ dependencies = [
  "gpui",
  "log",
  "net",
- "proto",
  "smol",
  "tempfile",
  "windows 0.61.1",
@@ -7063,7 +7065,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
- "wayland-protocols",
+ "wayland-protocols 0.31.2",
  "wayland-protocols-plasma",
  "windows 0.61.1",
  "windows-core 0.61.0",
@@ -18169,6 +18171,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wayland-protocols"
+version = "0.32.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0781cf46869b37e36928f7b432273c0995aa8aed9552c556fb18754420541efc"
+dependencies = [
+ "bitflags 2.9.0",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
 name = "wayland-protocols-plasma"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18177,7 +18191,7 @@ dependencies = [
  "bitflags 2.9.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols",
+ "wayland-protocols 0.31.2",
  "wayland-scanner",
 ]
 
@@ -19426,6 +19440,7 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
+ "ashpd 0.11.0",
  "async-compression",
  "async-std",
  "async-tungstenite",
@@ -19598,6 +19613,8 @@ dependencies = [
  "wasmtime",
  "wasmtime-cranelift",
  "wasmtime-environ",
+ "wayland-backend",
+ "wayland-sys",
  "winapi",
  "windows-core 0.61.0",
  "windows-numerics",
@@ -19605,6 +19622,7 @@ dependencies = [
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
  "windows-sys 0.61.0",
+ "zbus_macros",
  "zeroize",
  "zvariant",
 ]

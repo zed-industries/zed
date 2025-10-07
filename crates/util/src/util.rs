@@ -605,13 +605,15 @@ where
     // so discard the prefix up to that segment to find the crate name
     let target = file
         .split_once("crates/")
-        .and_then(|(_, s)| s.split_once('/'))
-        .map(|(p, _)| p);
+        .and_then(|(_, s)| s.split_once("/src/"));
 
+    let module_path = target.map(|(krate, module)| {
+        krate.to_owned() + "::" + &module.trim_end_matches(".rs").replace('/', "::")
+    });
     log::logger().log(
         &log::Record::builder()
-            .target(target.unwrap_or(""))
-            .module_path(target)
+            .target(target.map_or("", |(krate, _)| krate))
+            .module_path(module_path.as_deref())
             .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
