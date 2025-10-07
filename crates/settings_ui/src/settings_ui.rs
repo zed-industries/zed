@@ -962,7 +962,7 @@ impl SettingsWindow {
             .child(
                 h_flex()
                     .id("file_buttons_container")
-                    .w_64() // Temporary fix until; long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
+                    .w_64() // Temporary fix until long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
                     .gap_1()
                     .overflow_x_scroll()
                     .children(self.files.iter().enumerate().map(|(ix, file)| {
@@ -974,7 +974,7 @@ impl SettingsWindow {
                             )
                     })),
             )
-            .child(Button::new("temp", "Edit in settings.json").style(ButtonStyle::Outlined))
+            .child(Button::new("temp", "Edit in settings.json").style(ButtonStyle::Outlined)) // This should be replaced by the actual, functioning button
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
