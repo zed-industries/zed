@@ -386,7 +386,7 @@ impl GitPanel {
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
-                    this.bulk_staging.take();
+                    this.entries.clear();
                     this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
