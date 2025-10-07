@@ -278,6 +278,9 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<settings::TerminalDockPosition>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
+        .add_renderer::<settings::DockPosition>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
         .add_renderer::<settings::GitGutterSetting>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
@@ -309,6 +312,11 @@ fn init_renderers(cx: &mut App) {
         .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
+        .add_renderer::<settings::ProjectPanelEntrySpacing>(
+            |settings_field, file, _, window, cx| {
+                render_dropdown(*settings_field, file, window, cx)
+            },
+        )
         .add_renderer::<settings::RewrapBehavior>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
@@ -323,6 +331,12 @@ fn init_renderers(cx: &mut App) {
                 render_dropdown(*settings_field, file, window, cx)
             },
         )
+        .add_renderer::<settings::FileFinderWidthContent>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowDiagnostics>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
         .add_renderer::<settings::WordsCompletionMode>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
