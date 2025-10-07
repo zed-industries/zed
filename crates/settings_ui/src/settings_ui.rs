@@ -28,7 +28,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeybindingPosition,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding, KeybindingHint,
     PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
@@ -1062,6 +1062,11 @@ impl SettingsWindow {
         let visible_count = visible_entries.len();
 
         let nav_background = cx.theme().colors().panel_background;
+        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+            "Focus Content"
+        } else {
+            "Focus Navbar"
+        };
 
         v_flex()
             .w_64()
@@ -1124,23 +1129,21 @@ impl SettingsWindow {
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
             .child(
-                h_flex().w_full().justify_center().bg(nav_background).child(
-                    Button::new(
-                        "nav-key-hint",
-                        if self.navbar_focus_handle.contains_focused(window, cx) {
-                            "Focus Content"
-                        } else {
-                            "Focus Navbar"
-                        },
-                    )
-                    .key_binding(ui::KeyBinding::for_action_in(
-                        &ToggleFocusNav,
-                        &self.navbar_focus_handle,
-                        window,
-                        cx,
-                    ))
-                    .key_binding_position(KeybindingPosition::Start),
-                ),
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .pb_0p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .children(
+                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                            KeybindingHint::new(
+                                this,
+                                cx.theme().colors().surface_background.opacity(0.5),
+                            )
+                            .suffix(focus_keybind_label)
+                        }),
+                    ),
             )
     }
 
