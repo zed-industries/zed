@@ -8,8 +8,9 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
+    ScrollHandle, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size,
+    uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -192,6 +193,38 @@ impl SettingFieldRenderer {
                 any_setting_field.type_name()
             )
         }
+    }
+}
+
+struct NonFocusableHandle {
+    handle: FocusHandle,
+    _subscription: Subscription,
+}
+
+impl NonFocusableHandle {
+    fn new(tab_index: isize, tab_stop: bool, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let handle = cx.focus_handle().tab_index(tab_index).tab_stop(tab_stop);
+        Self::from_handle(handle, window, cx)
+    }
+
+    fn from_handle(handle: FocusHandle, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
+            let _subscription = cx.on_focus(&handle, window, {
+                move |_, window, _| {
+                    window.focus_next();
+                }
+            });
+            Self {
+                handle,
+                _subscription,
+            }
+        })
+    }
+}
+
+impl Focusable for NonFocusableHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.handle.clone()
     }
 }
 
@@ -497,8 +530,8 @@ pub struct SettingsWindow {
     search_matches: Vec<Vec<bool>>,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
-    navbar_focus_handle: FocusHandle,
-    content_focus_handle: FocusHandle,
+    navbar_focus_handle: Entity<NonFocusableHandle>,
+    content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
 }
 
@@ -858,15 +891,18 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
-            focus_handle: cx.focus_handle(),
-            navbar_focus_handle: cx
-                .focus_handle()
-                .tab_index(NAVBAR_CONTAINER_TAB_INDEX)
-                .tab_stop(false),
-            content_focus_handle: cx
-                .focus_handle()
-                .tab_index(CONTENT_CONTAINER_TAB_INDEX)
-                .tab_stop(false),
+            navbar_focus_handle: NonFocusableHandle::new(
+                NAVBAR_CONTAINER_TAB_INDEX,
+                false,
+                window,
+                cx,
+            ),
+            content_focus_handle: NonFocusableHandle::new(
+                CONTENT_CONTAINER_TAB_INDEX,
+                false,
+                window,
+                cx,
+            ),
             files_focus_handle: cx
                 .focus_handle()
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
@@ -1360,8 +1396,8 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .size_full()
-                    .track_focus(&self.navbar_focus_handle)
+                    .flex_grow()
+                    .track_focus(&self.navbar_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
                     .child(
@@ -1453,13 +1489,13 @@ impl SettingsWindow {
     }
 
     fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.navbar_focus_handle.focus(window);
+        self.navbar_focus_handle.focus_handle(cx).focus(window);
         window.focus_next();
         cx.notify();
     }
 
     fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.content_focus_handle.focus(window);
+        self.content_focus_handle.focus_handle(cx).focus(window);
         window.focus_next();
         cx.notify();
     }
@@ -1603,14 +1639,14 @@ impl SettingsWindow {
             .pb_6()
             .px_6()
             .gap_4()
-            .track_focus(&self.content_focus_handle)
+            .track_focus(&self.content_focus_handle.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
             .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .child(page_header)
             .child(
                 div()
                     .size_full()
-                    .track_focus(&self.content_focus_handle)
+                    .track_focus(&self.content_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
@@ -1806,7 +1842,11 @@ impl Render for SettingsWindow {
                 this.search_bar.focus_handle(cx).focus(window);
             }))
             .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
-                if this.navbar_focus_handle.contains_focused(window, cx) {
+                if this
+                    .navbar_focus_handle
+                    .focus_handle(cx)
+                    .contains_focused(window, cx)
+                {
                     this.focus_first_content_item(window, cx);
                 } else {
                     this.focus_first_nav_item(window, cx);
