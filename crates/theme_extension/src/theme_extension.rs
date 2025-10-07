@@ -5,7 +5,7 @@ use anyhow::Result;
 use extension::{ExtensionHostProxy, ExtensionThemeProxy};
 use fs::Fs;
 use gpui::{App, BackgroundExecutor, SharedString, Task};
-use theme::{GlobalTheme, ThemeRegistry};
+use theme::{ThemeRegistry, ThemeSettings};
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -46,7 +46,7 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
     }
 
     fn reload_current_theme(&self, cx: &mut App) {
-        GlobalTheme::reload_theme(cx)
+        ThemeSettings::reload_current_theme(cx)
     }
 
     fn list_icon_theme_names(
@@ -83,6 +83,6 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
     }
 
     fn reload_current_icon_theme(&self, cx: &mut App) {
-        GlobalTheme::reload_icon_theme(cx)
+        ThemeSettings::reload_current_icon_theme(cx)
     }
 }

@@ -302,6 +302,7 @@ mod tests {
             cx.set_global(settings_store);
             settings::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
+            ThemeSettings::register(cx);
             client::init_settings(cx);
             language::init(cx);
             super::init(cx);

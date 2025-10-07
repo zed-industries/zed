@@ -432,13 +432,6 @@
     }
   },
   {
-    "context": "SettingsWindow",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-w": "workspace::CloseWindow"
-    }
-  },
-  {
     "context": "BufferSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -1354,6 +1347,29 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
+    }
+  },
+  {
+    "context": "SettingsWindow",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-w": "workspace::CloseWindow",
+      "cmd-m": "settings_editor::Minimize",
+      "cmd-f": "search::FocusSearch",
+      "cmd-shift-e": "settings_editor::ToggleFocusNav",
+      // todo(settings_ui): cut this down based on the max files and overflow UI
+      "ctrl-1": ["settings_editor::FocusFile", 0],
+      "ctrl-2": ["settings_editor::FocusFile", 1],
+      "ctrl-3": ["settings_editor::FocusFile", 2],
+      "ctrl-4": ["settings_editor::FocusFile", 3],
+      "ctrl-5": ["settings_editor::FocusFile", 4],
+      "ctrl-6": ["settings_editor::FocusFile", 5],
+      "ctrl-7": ["settings_editor::FocusFile", 6],
+      "ctrl-8": ["settings_editor::FocusFile", 7],
+      "ctrl-9": ["settings_editor::FocusFile", 8],
+      "ctrl-0": ["settings_editor::FocusFile", 9],
+      "cmd-{": "settings_editor::FocusPreviousFile",
+      "cmd-}": "settings_editor::FocusNextFile"
     }
   }
 ]

@@ -63,21 +63,25 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::submenu(Menu {
                     name: "Settings".into(),
                     items: vec![
-                        MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymapEditor),
+                        MenuItem::action("Open Settings", zed_actions::OpenSettingsEditor),
+                        MenuItem::action("Open Settings JSON", super::OpenSettings),
+                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                        MenuItem::separator(),
+                        MenuItem::action("Open Keymap Editor", zed_actions::OpenKeymapEditor),
+                        MenuItem::action("Open Keymap JSON", zed_actions::OpenKeymap),
                         MenuItem::action(
                             "Open Default Key Bindings",
                             zed_actions::OpenDefaultKeymap,
                         ),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action(
-                            "Select Settings Profile...",
-                            zed_actions::settings_profile_selector::Toggle,
-                        ),
+                        MenuItem::separator(),
                         MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
+                        ),
+                        MenuItem::action(
+                            "Select Icon Theme...",
+                            zed_actions::icon_theme_selector::Toggle::default(),
                         ),
                     ],
                 }),

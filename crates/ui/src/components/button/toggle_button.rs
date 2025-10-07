@@ -132,6 +132,11 @@ impl ButtonCommon for ToggleButton {
         self.base = self.base.layer(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.base = self.base.track_focus(focus_handle);
+        self
+    }
 }
 
 impl RenderOnce for ToggleButton {

@@ -1,4 +1,5 @@
 use dap_types::SteppingGranularity;
+use gpui::App;
 use settings::{Settings, SettingsContent};
 
 pub struct DebuggerSettings {
@@ -33,7 +34,7 @@ pub struct DebuggerSettings {
 }
 
 impl Settings for DebuggerSettings {
-    fn from_settings(content: &SettingsContent) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         let content = content.debugger.clone().unwrap();
         Self {
             stepping_granularity: dap_granularity_from_settings(
