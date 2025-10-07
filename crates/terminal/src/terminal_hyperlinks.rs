@@ -591,7 +591,7 @@ mod tests {
             test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
         }
 
-        // #[test]
+        #[test]
         fn simple_with_descriptions() {
             // path, line, column and description
             test_path!("‹«/👉test/cool.rs»:«4»:«2»›:例Desc例例例");
