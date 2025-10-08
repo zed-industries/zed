@@ -137,7 +137,7 @@ pub enum ButtonStyle {
 
     /// Transparent button that always has an outline.
     OutlinedTransparent,
-  
+
     /// A more de-emphasized version of the outlined button.
     OutlinedGhost,
 
@@ -690,7 +690,9 @@ impl RenderOnce for ButtonLike {
             .when(
                 matches!(
                     self.style,
-                    ButtonStyle::Outlined | ButtonStyle::OutlinedTransparent | ButtonStyle::OutlinedGhost
+                    ButtonStyle::Outlined
+                        | ButtonStyle::OutlinedTransparent
+                        | ButtonStyle::OutlinedGhost
                 ),
                 |this| this.border_1(),
             )
