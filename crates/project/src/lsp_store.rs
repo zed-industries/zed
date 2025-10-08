@@ -6491,14 +6491,15 @@ impl LspStore {
         };
         let invalidate_cache = invalidate.should_invalidate();
 
+        // TODO kb this should be the lsp_data accessor method
         let lsp_data = self
             .lsp_data
             .entry(buffer_id)
             .or_insert_with(|| BufferLspData::new(&buffer, cx));
-        let existing_inlay_hints = &mut lsp_data.inlay_hints;
         if buffer_version.changed_since(&lsp_data.buffer_version) {
-            *existing_inlay_hints = BufferInlayHints::new(&buffer, cx);
+            *lsp_data = BufferLspData::new(&buffer, cx);
         }
+        let existing_inlay_hints = &mut lsp_data.inlay_hints;
 
         let mut hint_fetch_tasks = Vec::new();
         let mut cached_inlay_hints = HashMap::default();
@@ -6506,6 +6507,10 @@ impl LspStore {
         let applicable_chunks = existing_inlay_hints
             .applicable_chunks(&range)
             .collect::<Vec<_>>();
+        debug_assert!(
+            !applicable_chunks.is_empty(),
+            "Found no chunks for buffer range {range:?}"
+        );
         for row_chunk in applicable_chunks {
             match (
                 existing_inlay_hints
@@ -6638,14 +6643,14 @@ impl LspStore {
                         .lsp_data
                         .entry(buffer_id)
                         .or_insert_with(|| BufferLspData::new(&buffer, cx));
-                    let buffer_hints = &mut lsp_data.inlay_hints;
-                    if invalidate_cache {
-                        buffer_hints.clear();
-                    }
                     // TODO kb check all version checks and rewrites in the new code
                     if !invalidate_cache && lsp_data.buffer_version != buffer_version {
                         combined_hints.clear();
                         return;
+                    }
+                    let buffer_hints = &mut lsp_data.inlay_hints;
+                    if invalidate_cache {
+                        buffer_hints.clear();
                     }
 
                     for (chunk, new_inlay_hints) in new_inlay_hints {
