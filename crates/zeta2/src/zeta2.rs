@@ -5,7 +5,7 @@ use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
+use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
     EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
@@ -93,6 +93,7 @@ pub struct PredictionDebugInfo {
     pub retrieval_time: TimeDelta,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
+    pub local_prompt: Result<String, String>,
     pub response_rx: oneshot::Receiver<Result<RequestDebugInfo, String>>,
 }
 
@@ -539,24 +540,6 @@ impl Zeta {
 
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
 
-                let debug_response_tx = if let Some(debug_tx) = debug_tx {
-                    let (response_tx, response_rx) = oneshot::channel();
-                    let context = context.clone();
-
-                    debug_tx
-                        .unbounded_send(PredictionDebugInfo {
-                            context,
-                            retrieval_time,
-                            buffer: buffer.downgrade(),
-                            position,
-                            response_rx,
-                        })
-                        .ok();
-                    Some(response_tx)
-                } else {
-                    None
-                };
-
                 let (diagnostic_groups, diagnostic_groups_truncated) =
                     Self::gather_nearby_diagnostics(
                         cursor_offset,
@@ -564,6 +547,8 @@ impl Zeta {
                         &snapshot,
                         options.max_diagnostic_bytes,
                     );
+
+                let debug_context = debug_tx.map(|tx| (tx, context.clone()));
 
                 let request = make_cloud_request(
                     excerpt_path,
@@ -574,12 +559,43 @@ impl Zeta {
                     diagnostic_groups,
                     diagnostic_groups_truncated,
                     None,
-                    debug_response_tx.is_some(),
+                    debug_context.is_some(),
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
                     options.prompt_format,
                 );
+
+                let debug_response_tx = if let Some((debug_tx, context)) = debug_context {
+                    let (response_tx, response_rx) = oneshot::channel();
+
+                    let local_prompt = PlannedPrompt::populate(&request)
+                        .and_then(|p| p.to_prompt_string().map(|p| p.0))
+                        .map_err(|err| err.to_string());
+
+                    debug_tx
+                        .unbounded_send(PredictionDebugInfo {
+                            context,
+                            retrieval_time,
+                            buffer: buffer.downgrade(),
+                            local_prompt,
+                            position,
+                            response_rx,
+                        })
+                        .ok();
+                    Some(response_tx)
+                } else {
+                    None
+                };
+
+                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                    if let Some(debug_response_tx) = debug_response_tx {
+                        debug_response_tx
+                            .send(Err("Request skipped".to_string()))
+                            .ok();
+                    }
+                    anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
+                }
 
                 let response = Self::perform_request(client, llm_token, app_version, request).await;
 
