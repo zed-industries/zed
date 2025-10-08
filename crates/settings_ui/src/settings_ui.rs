@@ -1427,8 +1427,10 @@ impl SettingsWindow {
                 let Some(focused_entry) = this.focused_nav_entry(window) else {
                     return;
                 };
-                if this.navbar_entries[focused_entry].expanded {
-                    this.toggle_navbar_entry(focused_entry);
+                let focused_entry_parent = this.root_entry_containing(focused_entry);
+                if this.navbar_entries[focused_entry_parent].expanded {
+                    this.toggle_navbar_entry(focused_entry_parent);
+                    window.focus(&this.navbar_entries[focused_entry_parent].focus_handle);
                 }
                 cx.notify();
             }))
@@ -1436,6 +1438,9 @@ impl SettingsWindow {
                 let Some(focused_entry) = this.focused_nav_entry(window) else {
                     return;
                 };
+                if !this.navbar_entries[focused_entry].is_root {
+                    return;
+                }
                 if !this.navbar_entries[focused_entry].expanded {
                     this.toggle_navbar_entry(focused_entry);
                 }
@@ -1916,6 +1921,16 @@ impl SettingsWindow {
             }
         }
         None
+    }
+
+    fn root_entry_containing(&self, focused_entry: usize) -> usize {
+        let mut index = Some(focused_entry);
+        while let Some(prev_index) = index
+            && !self.navbar_entries[prev_index].is_root
+        {
+            index = prev_index.checked_sub(1);
+        }
+        return index.expect("No root entry found");
     }
 }
 
