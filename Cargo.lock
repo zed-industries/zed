@@ -3317,6 +3317,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "codestral"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "edit_prediction",
+ "edit_prediction_context",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "language_models",
+ "log",
+ "mistral",
+ "serde",
+ "serde_json",
+ "smol",
+ "text",
+ "workspace-hack",
+ "zed-http-client",
+]
+
+[[package]]
 name = "collab"
 version = "0.44.0"
 dependencies = [
@@ -5115,6 +5136,7 @@ dependencies = [
  "anyhow",
  "client",
  "cloud_llm_client",
+ "codestral",
  "copilot",
  "edit_prediction",
  "editor",
@@ -20005,6 +20027,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "codestral",
  "collab_ui",
  "command_palette",
  "component",
