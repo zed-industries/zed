@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    git_store::{GitStore, GitStoreEvent},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -177,7 +177,7 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::RepositoryUpdated(_, _, true)
                 | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
@@ -1346,7 +1346,6 @@ fn merge_anchor_ranges<'a>(
     })
 }
 
-#[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use db::indoc;
@@ -1557,7 +1556,7 @@ mod tests {
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>();
@@ -1570,7 +1569,7 @@ mod tests {
         let new_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>()
@@ -1624,6 +1623,7 @@ mod tests {
         project_diff::{self, ProjectDiff},
     };
 
+    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1711,6 +1711,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1868,5 +1869,129 @@ mod tests {
         let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
         let contents = String::from_utf8(contents).unwrap();
         assert_eq!(contents, "ours\n");
+    }
+
+    #[gpui::test]
+    async fn test_new_hunk_in_modified_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                ".unindent()
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "foo.txt",
+                "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    eleven
+                    twelve
+                "
+                .unindent(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/foo.txt"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit_via_marked_text(
+                &"
+                    one
+                    «TWO»
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                "
+                .unindent(),
+                None,
+                cx,
+            );
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  one
+                - two
+                + TWO
+                  three
+                  four
+                  five
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
     }
 }

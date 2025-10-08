@@ -336,21 +336,18 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut server = util::command::new_smol_command(&binary.path)
+        let mut command = util::command::new_smol_command(&binary.path);
+        command
             .current_dir(working_dir)
             .args(&binary.arguments)
             .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        let mut server = command
             .spawn()
-            .with_context(|| {
-                format!(
-                    "failed to spawn command. path: {:?}, working directory: {:?}, args: {:?}",
-                    binary.path, working_dir, &binary.arguments
-                )
-            })?;
+            .with_context(|| format!("failed to spawn command {command:?}",))?;
 
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();

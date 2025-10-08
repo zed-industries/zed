@@ -22,7 +22,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Global, SemanticVersion, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -356,26 +356,43 @@ impl RemoteClient {
                     cx,
                 );
 
-                let multiplex_task = Self::monitor(this.downgrade(), io_task, cx);
-
-                let timeout = cx.background_executor().timer(HEARTBEAT_TIMEOUT).fuse();
-                futures::pin_mut!(timeout);
-
-                select_biased! {
-                    ready = client.wait_for_remote_started() => {
-                        if ready.is_none() {
-                            let error = anyhow::anyhow!("remote client exited before becoming ready");
-                            log::error!("failed to establish connection: {}", error);
-                            return Err(error);
+                let ready = client
+                    .wait_for_remote_started()
+                    .with_timeout(HEARTBEAT_TIMEOUT, cx.background_executor())
+                    .await;
+                match ready {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let mut error = "remote client exited before becoming ready".to_owned();
+                        if let Some(status) = io_task.now_or_never() {
+                            match status {
+                                Ok(exit_code) => {
+                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                }
+                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                            }
                         }
-                    },
-                    _ = timeout => {
-                        let error = anyhow::anyhow!("remote client did not become ready within the timeout");
+                        let error = anyhow::anyhow!("{error}");
+                        log::error!("failed to establish connection: {}", error);
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        let mut error =
+                            "remote client did not become ready within the timeout".to_owned();
+                        if let Some(status) = io_task.now_or_never() {
+                            match status {
+                                Ok(exit_code) => {
+                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                }
+                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                            }
+                        }
+                        let error = anyhow::anyhow!("{error}");
                         log::error!("failed to establish connection: {}", error);
                         return Err(error);
                     }
                 }
-
+                let multiplex_task = Self::monitor(this.downgrade(), io_task, cx);
                 if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                     log::error!("failed to establish connection: {}", error);
                     return Err(error);

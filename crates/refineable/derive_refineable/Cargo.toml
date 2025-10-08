@@ -1,9 +1,11 @@
 [package]
-name = "derive_refineable"
+name = "zed-derive-refineable"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "A derive macro for creating refinement types in Rust"
+
 
 [lints]
 workspace = true

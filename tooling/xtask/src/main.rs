@@ -18,6 +18,8 @@ enum CliCommand {
     Licenses(tasks::licenses::LicensesArgs),
     /// Checks that packages conform to a set of standards.
     PackageConformity(tasks::package_conformity::PackageConformityArgs),
+    /// Publishes GPUI and its dependencies to crates.io.
+    PublishGpui(tasks::publish_gpui::PublishGpuiArgs),
 }
 
 fn main() -> Result<()> {
@@ -29,5 +31,6 @@ fn main() -> Result<()> {
         CliCommand::PackageConformity(args) => {
             tasks::package_conformity::run_package_conformity(args)
         }
+        CliCommand::PublishGpui(args) => tasks::publish_gpui::run_publish_gpui(args),
     }
 }

@@ -1,10 +1,57 @@
 use collab_ui::collab_panel;
-use gpui::{Menu, MenuItem, OsAction};
+use gpui::{App, Menu, MenuItem, OsAction};
+use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::ToggleFocus as ToggleDebugPanel;
+use zed_actions::{ToggleFocus as ToggleDebugPanel, dev};
 
-pub fn app_menus() -> Vec<Menu> {
+pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
+
+    let mut view_items = vec![
+        MenuItem::action(
+            "Zoom In",
+            zed_actions::IncreaseBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Zoom Out",
+            zed_actions::DecreaseBufferFontSize { persist: false },
+        ),
+        MenuItem::action(
+            "Reset Zoom",
+            zed_actions::ResetBufferFontSize { persist: false },
+        ),
+        MenuItem::separator(),
+        MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
+        MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
+        MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
+        MenuItem::action("Close All Docks", workspace::CloseAllDocks),
+        MenuItem::submenu(Menu {
+            name: "Editor Layout".into(),
+            items: vec![
+                MenuItem::action("Split Up", workspace::SplitUp),
+                MenuItem::action("Split Down", workspace::SplitDown),
+                MenuItem::action("Split Left", workspace::SplitLeft),
+                MenuItem::action("Split Right", workspace::SplitRight),
+            ],
+        }),
+        MenuItem::separator(),
+        MenuItem::action("Project Panel", project_panel::ToggleFocus),
+        MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
+        MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
+        MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+        MenuItem::action("Debugger Panel", ToggleDebugPanel),
+        MenuItem::separator(),
+        MenuItem::action("Diagnostics", diagnostics::Deploy),
+        MenuItem::separator(),
+    ];
+
+    if ReleaseChannel::try_global(cx) == Some(ReleaseChannel::Dev) {
+        view_items.push(MenuItem::action(
+            "Toggle GPUI Inspector",
+            dev::ToggleInspector,
+        ));
+        view_items.push(MenuItem::separator());
+    }
 
     vec![
         Menu {
@@ -16,21 +63,25 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::submenu(Menu {
                     name: "Settings".into(),
                     items: vec![
-                        MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymapEditor),
+                        MenuItem::action("Open Settings", zed_actions::OpenSettingsEditor),
+                        MenuItem::action("Open Settings JSON", super::OpenSettings),
+                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
+                        MenuItem::separator(),
+                        MenuItem::action("Open Keymap Editor", zed_actions::OpenKeymapEditor),
+                        MenuItem::action("Open Keymap JSON", zed_actions::OpenKeymap),
                         MenuItem::action(
                             "Open Default Key Bindings",
                             zed_actions::OpenDefaultKeymap,
                         ),
-                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action(
-                            "Select Settings Profile...",
-                            zed_actions::settings_profile_selector::Toggle,
-                        ),
+                        MenuItem::separator(),
                         MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
+                        ),
+                        MenuItem::action(
+                            "Select Icon Theme...",
+                            zed_actions::icon_theme_selector::Toggle::default(),
                         ),
                     ],
                 }),
@@ -157,43 +208,7 @@ pub fn app_menus() -> Vec<Menu> {
         },
         Menu {
             name: "View".into(),
-            items: vec![
-                MenuItem::action(
-                    "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: false },
-                ),
-                MenuItem::action(
-                    "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: false },
-                ),
-                MenuItem::action(
-                    "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: false },
-                ),
-                MenuItem::separator(),
-                MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),
-                MenuItem::action("Toggle Right Dock", workspace::ToggleRightDock),
-                MenuItem::action("Toggle Bottom Dock", workspace::ToggleBottomDock),
-                MenuItem::action("Close All Docks", workspace::CloseAllDocks),
-                MenuItem::submenu(Menu {
-                    name: "Editor Layout".into(),
-                    items: vec![
-                        MenuItem::action("Split Up", workspace::SplitUp),
-                        MenuItem::action("Split Down", workspace::SplitDown),
-                        MenuItem::action("Split Left", workspace::SplitLeft),
-                        MenuItem::action("Split Right", workspace::SplitRight),
-                    ],
-                }),
-                MenuItem::separator(),
-                MenuItem::action("Project Panel", project_panel::ToggleFocus),
-                MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
-                MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
-                MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
-                MenuItem::action("Debugger Panel", ToggleDebugPanel),
-                MenuItem::separator(),
-                MenuItem::action("Diagnostics", diagnostics::Deploy),
-                MenuItem::separator(),
-            ],
+            items: view_items,
         },
         Menu {
             name: "Go".into(),
