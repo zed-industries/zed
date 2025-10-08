@@ -111,32 +111,38 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // SettingsPageItem::SectionHeader("Scoped Settings"),
-                // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Preview Channel",
-                //     description: "Which settings should be activated only in Preview build of Zed",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.use_system_prompts
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Settings Profiles",
-                //     description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.workspace.use_system_prompts,
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content.workspace.use_system_prompts
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SectionHeader("Scoped Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
+                    files: USER,
+                    title: "Preview Channel",
+                    description: "Which settings should be activated only in Preview build of Zed",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.workspace.use_system_prompts
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Settings Profiles",
+                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.use_system_prompts,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.workspace.use_system_prompts
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Privacy"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Telemetry Diagnostics",
@@ -182,30 +188,36 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
         SettingsPage {
             title: "Appearance & Behavior",
             items: vec![
-                // SettingsPageItem::SectionHeader("Theme"),
+                SettingsPageItem::SectionHeader("Theme"),
                 // todo(settings_ui): Figure out how we want to add these
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Theme Mode",
-                //     description: "How to select the theme",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.theme,
-                //         pick_mut: |settings_content| &mut settings_content.theme.theme,
-                //     }),
-                //     metadata: None,
-                // }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Icon Theme",
-                //     // todo(settings_ui)
-                //     // This description is misleading because the icon theme is used in more places than the file explorer)
-                //     description: "Choose the icon theme for file explorer",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.icon_theme,
-                //         pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Theme Mode",
+                    description: "How to select the theme",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.theme,
+                            pick_mut: |settings_content| &mut settings_content.theme.theme,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Icon Theme",
+                    // todo(settings_ui)
+                    // This description is misleading because the icon theme is used in more places than the file explorer)
+                    description: "Choose the icon theme for file explorer",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.icon_theme,
+                            pick_mut: |settings_content| &mut settings_content.theme.icon_theme,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Fonts"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Buffer Font Family",
@@ -238,16 +250,21 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 // todo(settings_ui): This needs custom ui
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Buffer Line Height",
-                //     description: "Line height for editor text",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.theme.buffer_line_height,
-                //         pick_mut: |settings_content| &mut settings_content.theme.buffer_line_height,
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Buffer Line Height",
+                    description: "Line height for editor text",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.theme.buffer_line_height,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.theme.buffer_line_height
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "UI Font Family",
                     description: "Font family for UI elements",
@@ -478,58 +495,54 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Centered Layout Left Padding",
-                //     description: "Left padding for centered layout",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(centered_layout) =
-                //                 &settings_content.workspace.centered_layout
-                //             {
-                //                 &centered_layout.left_padding
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             if let Some(mut centered_layout) =
-                //                 settings_content.workspace.centered_layout
-                //             {
-                //                 &mut centered_layout.left_padding
-                //             } else {
-                //                 &mut None
-                //             }
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Centered Layout Right Padding",
-                //     description: "Right padding for centered layout",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(centered_layout) =
-                //                 &settings_content.workspace.centered_layout
-                //             {
-                //                 &centered_layout.right_padding
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             if let Some(mut centered_layout) =
-                //                 settings_content.workspace.centered_layout
-                //             {
-                //                 &mut centered_layout.right_padding
-                //             } else {
-                //                 &mut None
-                //             }
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Centered Layout Left Padding",
+                    description: "Left padding for centered layout",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(centered_layout) =
+                                &settings_content.workspace.centered_layout
+                            {
+                                &centered_layout.left_padding
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .centered_layout
+                                .get_or_insert_default()
+                                .left_padding
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Centered Layout Right Padding",
+                    description: "Right padding for centered layout",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(centered_layout) =
+                                &settings_content.workspace.centered_layout
+                            {
+                                &centered_layout.right_padding
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .workspace
+                                .centered_layout
+                                .get_or_insert_default()
+                                .right_padding
+                        },
+                    }),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Zoomed Padding",
                     description: "Whether to show padding for zoomed panels",
@@ -1442,18 +1455,23 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    // files: USER,
-                    // SettingsPageItem::SettingItem(SettingItem {
-                    //     title: "Maximum Tabs",
-                    //     description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                    //     // todo(settings_ui): The default for this value is null and it's use in code
-                    //     // is complex, so I'm going to come back to this later
-                    //     field: Box::new(SettingField {
-                    //         pick: |settings_content| &settings_content.workspace.max_tabs,
-                    //         pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
-                    //     }),
-                    //     metadata: None,
-                    // }),
+                    SettingsPageItem::SettingItem(SettingItem {
+                        files: USER,
+                        title: "Maximum Tabs",
+                        description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                        // todo(settings_ui): The default for this value is null and it's use in code
+                        // is complex, so I'm going to come back to this later
+                        field: Box::new(
+                            SettingField {
+                                pick: |settings_content| &settings_content.workspace.max_tabs,
+                                pick_mut: |settings_content| {
+                                    &mut settings_content.workspace.max_tabs
+                                },
+                            }
+                            .unimplemented(),
+                        ),
+                        metadata: None,
+                    }),
                     SettingsPageItem::SectionHeader("Toolbar"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Breadcrumbs",
@@ -2207,27 +2225,30 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 // todo: null by default
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Include Ignored",
-                //     description: "Whether to use gitignored files when searching",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(file_finder) = &settings_content.file_finder {
-                //                 &file_finder.include_ignored
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .file_finder
-                //                 .get_or_insert_default()
-                //                 .include_ignored
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored",
+                    description: "Whether to use gitignored files when searching",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(file_finder) = &settings_content.file_finder {
+                                    &file_finder.include_ignored
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .file_finder
+                                    .get_or_insert_default()
+                                    .include_ignored
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
@@ -2483,31 +2504,34 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Scrollbar Show",
-                //     description: "When to show the scrollbar in the project panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(project_panel) = &settings_content.project_panel {
-                //                 if let Some(scrollbar) = &project_panel.scrollbar {
-                //                     &scrollbar.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project_panel
-                //                 .get_or_insert_default()
-                //                 .scrollbar
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Scrollbar Show",
+                    description: "When to show the scrollbar in the project panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel
+                                && let Some(scrollbar) = &project_panel.scrollbar
+                                && scrollbar.show.is_some()
+                            {
+                                &scrollbar.show
+                            } else if let Some(scrollbar) = &settings_content.editor.scrollbar {
+                                &scrollbar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .scrollbar
+                                .get_or_insert_default()
+                                .show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Diagnostics",
                     description: "Which files containing diagnostic errors/warnings to mark in the project panel",
@@ -2550,33 +2574,36 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Indent Guides Show",
-                //     description: "When to show indent guides in the project panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(project_panel) = &settings_content.project_panel {
-                //                 if let Some(indent_guides) = &project_panel.indent_guides {
-                //                     &indent_guides.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .project_panel
-                //                 .get_or_insert_default()
-                //                 .indent_guides
-                //                 .get_or_insert_default()
-                //                 .show
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Indent Guides Show",
+                    description: "When to show indent guides in the project panel",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(project_panel) = &settings_content.project_panel {
+                                    if let Some(indent_guides) = &project_panel.indent_guides {
+                                        &indent_guides.show
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .project_panel
+                                    .get_or_insert_default()
+                                    .indent_guides
+                                    .get_or_insert_default()
+                                    .show
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Drag and Drop",
                     description: "Whether to enable drag-and-drop operations in the project panel",
@@ -2825,33 +2852,36 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Indent Guides Show",
-                //     description: "When to show indent guides in the outline panel",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| {
-                //             if let Some(outline_panel) = &settings_content.outline_panel {
-                //                 if let Some(indent_guides) = &outline_panel.indent_guides {
-                //                     &indent_guides.show
-                //                 } else {
-                //                     &None
-                //                 }
-                //             } else {
-                //                 &None
-                //             }
-                //         },
-                //         pick_mut: |settings_content| {
-                //             &mut settings_content
-                //                 .outline_panel
-                //                 .get_or_insert_default()
-                //                 .indent_guides
-                //                 .get_or_insert_default()
-                //                 .show
-                //         },
-                //     }),
-                //     metadata: None,
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Indent Guides Show",
+                    description: "When to show indent guides in the outline panel",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(outline_panel) = &settings_content.outline_panel {
+                                    if let Some(indent_guides) = &outline_panel.indent_guides {
+                                        &indent_guides.show
+                                    } else {
+                                        &None
+                                    }
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .outline_panel
+                                    .get_or_insert_default()
+                                    .indent_guides
+                                    .get_or_insert_default()
+                                    .show
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                }),
                 SettingsPageItem::SectionHeader("Git Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Button",
@@ -3298,18 +3328,21 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Network"),
                 // todo(settings_ui): Proxy needs a default
-                // files: USER,
-                // SettingsPageItem::SettingItem(SettingItem {
-                //     title: "Proxy",
-                //     description: "The proxy to use for network requests",
-                //     field: Box::new(SettingField {
-                //         pick: |settings_content| &settings_content.proxy,
-                //         pick_mut: |settings_content| &mut settings_content.proxy,
-                //     }),
-                //     metadata: Some(Box::new(SettingsFieldMetadata {
-                //         placeholder: Some("socks5h://localhost:10808"),
-                //     })),
-                // }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Proxy",
+                    description: "The proxy to use for network requests",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.proxy,
+                            pick_mut: |settings_content| &mut settings_content.proxy,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("socks5h://localhost:10808"),
+                    })),
+                    files: USER,
+                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Server URL",
                     description: "The URL of the Zed server to connect to",
@@ -4953,7 +4986,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Toggle On Modifiers Press",
-            description: "Toggles inlay hints (hides or shows) when the user | LOCAL presses the modifiers specified",
+            description: "Toggles inlay hints (hides or shows) when the user presses the modifiers specified",
             field: Box::new(
                 SettingField {
                     pick: |settings_content| {

@@ -490,7 +490,8 @@ pub struct SettingsWindow {
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
-    navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
+    /// Index into navbar_entries
+    navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
@@ -1134,29 +1135,6 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn calculate_navbar_entry_from_scroll_position(&mut self) {
-        let top = self.scroll_handle.top_item();
-        let bottom = self.scroll_handle.bottom_item();
-
-        let scroll_index = (top + bottom) / 2;
-        let scroll_index = scroll_index.clamp(top, bottom);
-        let mut page_index = self.navbar_entry;
-
-        while !self.navbar_entries[page_index].is_root {
-            page_index -= 1;
-        }
-
-        if self.navbar_entries[page_index].expanded {
-            let section_index = self
-                .page_items()
-                .take(scroll_index + 1)
-                .filter(|item| matches!(item, SettingsPageItem::SectionHeader(_)))
-                .count();
-
-            self.navbar_entry = section_index + page_index;
-        }
-    }
-
     fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
@@ -1602,7 +1580,6 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
-        self.calculate_navbar_entry_from_scroll_position();
 
         div()
             .id("settings-window")
