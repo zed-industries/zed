@@ -297,7 +297,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Agent Panel UI Font Size",
-                    description: "Font size for agent response text in the agent panel",
+                    description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.agent_ui_font_size,
                         pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
