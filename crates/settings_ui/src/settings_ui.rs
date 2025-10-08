@@ -1603,12 +1603,6 @@ impl SettingsWindow {
         }
     }
 
-    fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.navbar_focus_handle.focus_handle(cx).focus(window);
-        window.focus_next();
-        cx.notify();
-    }
-
     fn focus_and_scroll_to_nav_entry(&self, nav_entry_index: usize, window: &mut Window) {
         let Some(position) = self
             .visible_navbar_entries()
@@ -1619,12 +1613,6 @@ impl SettingsWindow {
         self.list_handle
             .scroll_to_item(position, gpui::ScrollStrategy::Top);
         window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
-    }
-
-    fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.content_focus_handle.focus_handle(cx).focus(window);
-        window.focus_next();
-        cx.notify();
     }
 
     fn page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
