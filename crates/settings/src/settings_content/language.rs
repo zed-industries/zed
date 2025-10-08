@@ -82,6 +82,7 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    Codestral,
 }
 
 impl EditPredictionProvider {
@@ -90,7 +91,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            | EditPredictionProvider::Supermaven
+            | EditPredictionProvider::Codestral => false,
         }
     }
 }
@@ -108,6 +110,8 @@ pub struct EditPredictionSettingsContent {
     pub mode: Option<EditPredictionsMode>,
     /// Settings specific to GitHub Copilot.
     pub copilot: Option<CopilotSettingsContent>,
+    /// Settings specific to Codestral.
+    pub codestral: Option<CodestralSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -128,6 +132,20 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CodestralSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: "codestral-latest"
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 150
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// The mode in which edit predictions should be displayed.

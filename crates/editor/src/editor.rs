@@ -5343,7 +5343,7 @@ impl Editor {
                 let buffer_worktree = project.worktree_for_id(buffer_file.worktree_id(cx), cx)?;
                 let worktree_entry = buffer_worktree
                     .read(cx)
-                    .entry_for_id(buffer_file.project_entry_id(cx)?)?;
+                    .entry_for_id(buffer_file.project_entry_id()?)?;
                 if worktree_entry.is_ignored {
                     return None;
                 }
@@ -18168,6 +18168,87 @@ impl Editor {
         }
 
         self.fold_creases(to_fold, true, window, cx);
+    }
+
+    pub fn fold_at_level_1(
+        &mut self,
+        _: &actions::FoldAtLevel1,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(1), window, cx);
+    }
+
+    pub fn fold_at_level_2(
+        &mut self,
+        _: &actions::FoldAtLevel2,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(2), window, cx);
+    }
+
+    pub fn fold_at_level_3(
+        &mut self,
+        _: &actions::FoldAtLevel3,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(3), window, cx);
+    }
+
+    pub fn fold_at_level_4(
+        &mut self,
+        _: &actions::FoldAtLevel4,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(4), window, cx);
+    }
+
+    pub fn fold_at_level_5(
+        &mut self,
+        _: &actions::FoldAtLevel5,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(5), window, cx);
+    }
+
+    pub fn fold_at_level_6(
+        &mut self,
+        _: &actions::FoldAtLevel6,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(6), window, cx);
+    }
+
+    pub fn fold_at_level_7(
+        &mut self,
+        _: &actions::FoldAtLevel7,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(7), window, cx);
+    }
+
+    pub fn fold_at_level_8(
+        &mut self,
+        _: &actions::FoldAtLevel8,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(8), window, cx);
+    }
+
+    pub fn fold_at_level_9(
+        &mut self,
+        _: &actions::FoldAtLevel9,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.fold_at_level(&actions::FoldAtLevel(9), window, cx);
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, window: &mut Window, cx: &mut Context<Self>) {

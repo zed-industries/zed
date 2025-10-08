@@ -49,7 +49,7 @@ impl ShellBuilder {
                     format!("{} -C '{}'", self.program, command_to_use_in_label)
                 }
                 ShellKind::Cmd => {
-                    format!("{} /C '{}'", self.program, command_to_use_in_label)
+                    format!("{} /C \"{}\"", self.program, command_to_use_in_label)
                 }
                 ShellKind::Posix
                 | ShellKind::Nushell
