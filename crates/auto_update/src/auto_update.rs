@@ -649,7 +649,7 @@ impl AutoUpdater {
         #[cfg(not(target_os = "windows"))]
         anyhow::ensure!(
             which::which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
+            "Could not auto-update because the required rsync utility was not found."
         );
         Ok(())
     }
