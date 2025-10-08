@@ -25,7 +25,3 @@
 (use_wildcard
     (_)? @namespace
     "*" @wildcard)
-
-; todo! Consider making it possible to just write
-;
-; (use_wildcard (_)? @namespace) @wildcard
