@@ -208,23 +208,9 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SelectedPage {
-    Basics,
-}
-
-impl SelectedPage {
-    fn name(&self) -> &'static str {
-        match self {
-            SelectedPage::Basics => "Basics",
-        }
-    }
-}
-
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    selected_page: SelectedPage,
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
@@ -247,33 +233,11 @@ impl Onboarding {
                 workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
-                selected_page: SelectedPage::Basics,
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
             }
         })
-    }
-
-    fn set_page(
-        &mut self,
-        page: SelectedPage,
-        clicked: Option<&'static str>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(click) = clicked {
-            telemetry::event!(
-                "Welcome Tab Clicked",
-                from = self.selected_page.name(),
-                to = page.name(),
-                clicked = click,
-            );
-        }
-
-        self.selected_page = page;
-        self.scroll_handle.set_offset(Default::default());
-        cx.notify();
-        cx.emit(ItemEvent::UpdateTab);
     }
 
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
@@ -330,11 +294,13 @@ impl Render for Onboarding {
             .child(
                 div()
                     .max_w(Rems(48.0))
+                    .w_full()
                     .mx_auto()
                     .size_full()
                     .gap_6()
                     .child(
                         v_flex()
+                            .m_auto()
                             .id("page-content")
                             .gap_6()
                             .size_full()
@@ -425,7 +391,6 @@ impl Item for Onboarding {
         Some(cx.new(|cx| Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
-            selected_page: self.selected_page,
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
@@ -611,23 +576,10 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            if let Some(page_number) =
+            if let Some(_page_number) =
                 persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
             {
-                let page = match page_number {
-                    0 => Some(SelectedPage::Basics),
-                    _ => None,
-                };
-                workspace.update(cx, |workspace, cx| {
-                    let onboarding_page = Onboarding::new(workspace, cx);
-                    if let Some(page) = page {
-                        zlog::info!("Onboarding page {page:?} loaded");
-                        onboarding_page.update(cx, |onboarding_page, cx| {
-                            onboarding_page.set_page(page, None, cx);
-                        })
-                    }
-                    onboarding_page
-                })
+                workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
             } else {
                 Err(anyhow::anyhow!("No onboarding page to deserialize"))
             }
@@ -642,8 +594,13 @@ impl workspace::SerializableItem for Onboarding {
         _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
+        // This used to pick the currently active page number, but since we no
+        // longer have pages, just set to `0`, which was the basics page, while
+        // we work on completely removing the persistence layer for this
+        // functionality.
+        let page_number = 0;
         let workspace_id = workspace.database_id()?;
-        let page_number = self.selected_page as u16;
+
         Some(cx.background_spawn(async move {
             persistence::ONBOARDING_PAGES
                 .save_onboarding_page(item_id, workspace_id, page_number)
