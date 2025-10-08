@@ -54,7 +54,6 @@ impl EditPredictionContext {
                 syntax_index.read_with(cx, |index, _cx| Arc::downgrade(index.state()));
             cx.background_spawn(async move {
                 let parent_abs_path = parent_abs_path.as_deref();
-                // TODO: Use the fact that state is an RwLock to do context gathering concurrently
                 let index_state = index_state.upgrade()?;
                 let index_state = index_state.lock().await;
                 Self::gather_context(

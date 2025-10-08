@@ -13,20 +13,13 @@ use util::paths::PathStyle;
 use crate::Identifier;
 use crate::text_similarity::Occurrences;
 
-// TODO:
-//
-// * When comparing namespaces to paths, drop index.ts, lib.rs, __init__.py, etc
-//
-// * Defer path normalization
-//
-// * Write documentation for extension authors
-//
-//     - the @import capture must match before or in the same pattern as all all captures it contains
+// TODO: Write documentation for extension authors. The @import capture must match before or in the
+// same pattern as all all captures it contains
 
 // Future improvements to consider:
 //
-// * Distinguish different types of paths. `#include "maths.h"` is relative whereas `#include
-// <maths.h>` is not.
+// * Distinguish absolute vs relative paths in captures. `#include "maths.h"` is relative whereas
+// `#include <maths.h>` is not.
 //
 // * Provide the name used when importing whole modules (see tests with "named_module" in the name).
 // To be useful, will require parsing of identifier qualification.

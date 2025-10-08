@@ -561,7 +561,6 @@ pub async fn retrieval_stats(
         .into_iter()
         .skip(skip_files.unwrap_or(0))
         .take(file_limit.unwrap_or(usize::MAX))
-        .into_iter()
         .map(|project_file| {
             let index_state = index_state.clone();
             let lsp_definitions = lsp_definitions.clone();
@@ -1033,13 +1032,10 @@ async fn gather_lsp_definitions(
                         })?;
                     }
 
-                    let offset = reference.range.start;
-                    let point = snapshot.offset_to_point(offset).into();
-
                     definitions.insert(
                         SourceLocation {
                             path: project_path.path.clone(),
-                            point,
+                            point: snapshot.offset_to_point(reference.range.start),
                         },
                         targets,
                     );
@@ -1150,7 +1146,7 @@ pub fn open_buffer(
     cx.spawn(async move |cx| {
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: path.into(),
+            path,
         })?;
 
         let buffer = project

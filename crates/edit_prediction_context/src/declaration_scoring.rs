@@ -185,7 +185,8 @@ pub fn scored_declarations(
             }
 
             let identifier_to_lookup = found_external_identifier.unwrap_or(&identifier);
-            // todo! update this to be able to return many declarations
+            // TODO: update this to be able to return more declarations? Especially if there is the
+            // ability to quickly filter a large list (based on imports)
             let declarations = index
                 .declarations_for_identifier::<MAX_IDENTIFIER_DECLARATION_COUNT>(
                     &identifier_to_lookup,
@@ -408,36 +409,36 @@ fn score_declaration(
     let adjacent_vs_signature_weighted_overlap =
         weighted_overlap_coefficient(adjacent_occurrences, &item_signature_occurrences);
 
-    // TODO: Handle special cases like lib.rs as the last component
-    //
-    // TODO: Only compute when namespaces are used?
+    let mut import_similarity = 0f32;
+    let mut wildcard_import_similarity = 0f32;
+    if !import_occurrences.is_empty() || !wildcard_import_occurrences.is_empty() {
+        let cached_path = declaration.cached_path();
+        let path_occurrences = Occurrences::from_worktree_path(
+            cached_path
+                .worktree_abs_path
+                .file_name()
+                .map(|f| f.to_string_lossy()),
+            &cached_path.rel_path,
+        );
+        import_similarity = import_occurrences
+            .iter()
+            .map(|namespace_occurrences| {
+                OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
+            })
+            .max()
+            .map(|similarity| similarity.into_inner())
+            .unwrap_or_default();
 
-    let cached_path = declaration.cached_path();
-    let path_occurrences = Occurrences::from_worktree_path(
-        cached_path
-            .worktree_abs_path
-            .file_name()
-            .map(|f| f.to_string_lossy()),
-        &cached_path.rel_path,
-    );
-    let import_similarity = import_occurrences
-        .iter()
-        .map(|namespace_occurrences| {
-            OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
-        })
-        .max()
-        .map(|similarity| similarity.into_inner())
-        .unwrap_or_default();
-
-    // TODO: Consider something other than max
-    let wildcard_import_similarity = wildcard_import_occurrences
-        .iter()
-        .map(|namespace_occurrences| {
-            OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
-        })
-        .max()
-        .map(|similarity| similarity.into_inner())
-        .unwrap_or_default();
+        // TODO: Consider something other than max
+        wildcard_import_similarity = wildcard_import_occurrences
+            .iter()
+            .map(|namespace_occurrences| {
+                OrderedFloat(jaccard_similarity(namespace_occurrences, &path_occurrences))
+            })
+            .max()
+            .map(|similarity| similarity.into_inner())
+            .unwrap_or_default();
+    }
 
     // TODO: Consider adding declaration_file_count
     let score_components = DeclarationScoreComponents {
