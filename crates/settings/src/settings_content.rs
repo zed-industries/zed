@@ -383,7 +383,18 @@ pub struct DebuggerSettingsContent {
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
 #[derive(
-    PartialEq, Eq, Debug, Hash, Clone, Copy, Deserialize, Serialize, JsonSchema, MergeFrom,
+    PartialEq,
+    Eq,
+    Debug,
+    Hash,
+    Clone,
+    Copy,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SteppingGranularity {
@@ -776,7 +787,9 @@ pub enum ShowIndentGuides {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,

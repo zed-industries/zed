@@ -11,7 +11,7 @@ use ui::{
     ButtonLike, PopoverMenu, SwitchField, ToggleButtonGroup, ToggleButtonGroupStyle,
     ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
-use ui_input::{NumericStepper, font_picker};
+use ui_input::{NumberField, font_picker};
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
@@ -411,7 +411,7 @@ fn font_picker_stepper(
     write_font_size: fn(Pixels, &mut App),
     window: &mut Window,
     cx: &mut App,
-) -> NumericStepper<u32> {
+) -> NumberField<u32> {
     window.with_id(id, |window| {
         let optimistic_font_size: gpui::Entity<Option<u32>> = window.use_state(cx, |_, _| None);
         optimistic_font_size.update(cx, |optimistic_font_size, _| {
@@ -426,7 +426,7 @@ fn font_picker_stepper(
             .read(cx)
             .unwrap_or_else(|| font_size.into());
 
-        NumericStepper::new(
+        NumberField::new(
             SharedString::new(format!("{}-stepper", id)),
             stepper_font_size,
             window,
@@ -437,7 +437,6 @@ fn font_picker_stepper(
             write_font_size(Pixels::from(*new_value), cx);
         })
         .format(|value| format!("{value}px"))
-        .style(ui_input::NumericStepperStyle::Outlined)
         .tab_index({
             *tab_index += 2;
             *tab_index - 2

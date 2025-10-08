@@ -113,7 +113,7 @@ pub struct ThemeSettings {
     pub buffer_font: Font,
     /// The agent font size. Determines the size of text in the agent panel. Falls back to the UI font size if unset.
     agent_ui_font_size: Option<Pixels>,
-    /// The agent buffer font size. Determines the size of user messages in the agent panel. Falls back to the buffer font size if unset.
+    /// The agent buffer font size. Determines the size of user messages in the agent panel.
     agent_buffer_font_size: Option<Pixels>,
     /// The line height for buffers, and the terminal.
     ///
@@ -474,7 +474,7 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.ui_font_size(cx))
     }
 
-    /// Returns the agent panel buffer font size. Falls back to the buffer font size if unset.
+    /// Returns the agent panel buffer font size.
     pub fn agent_buffer_font_size(&self, cx: &App) -> Pixels {
         cx.try_global::<AgentFontSize>()
             .map(|size| size.0)

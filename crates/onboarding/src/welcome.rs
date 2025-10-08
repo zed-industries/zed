@@ -9,7 +9,7 @@ use workspace::{
     item::{Item, ItemEvent},
     with_active_or_new_workspace,
 };
-use zed_actions::{Extensions, OpenSettings, agent, command_palette};
+use zed_actions::{Extensions, OpenSettingsEditor, agent, command_palette};
 
 use crate::{Onboarding, OpenOnboarding};
 
@@ -53,7 +53,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::Settings,
                 title: "Open Settings",
-                action: &OpenSettings,
+                action: &OpenSettingsEditor,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
