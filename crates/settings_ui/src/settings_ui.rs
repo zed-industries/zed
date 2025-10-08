@@ -1644,7 +1644,7 @@ impl SettingsWindow {
     fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
         match &self.current_file {
             SettingsUiFile::User => {
-                let Some(original_window) = self.original_window.clone() else {
+                let Some(original_window) = self.original_window else {
                     return;
                 };
                 original_window
@@ -1701,7 +1701,7 @@ impl SettingsWindow {
                         })
                         .ok();
                     if Some(true) == contains_settings_file {
-                        corresponding_workspace = Some(workspace.clone());
+                        corresponding_workspace = Some(*workspace);
 
                         break;
                     }
