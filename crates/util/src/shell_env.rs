@@ -131,7 +131,7 @@ async fn capture_windows(
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
-    let shell_kind = ShellKind::new(shell_path);
+    let shell_kind = ShellKind::new(shell_path, true);
     let env_output = match shell_kind {
         ShellKind::Posix | ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish => {
             return Err(anyhow::anyhow!("unsupported shell kind"));
