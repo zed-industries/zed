@@ -42,8 +42,12 @@ use crate::components::SettingsEditor;
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
-const CONTENT_CONTAINER_TAB_INDEX: isize = 2;
-const CONTENT_GROUP_TAB_INDEX: isize = 3;
+
+const HEADER_CONTAINER_TAB_INDEX: isize = 2;
+const HEADER_GROUP_TAB_INDEX: isize = 3;
+
+const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
+const CONTENT_GROUP_TAB_INDEX: isize = 5;
 
 actions!(
     settings_editor,
@@ -887,7 +891,10 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(CONTENT_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
-            files_focus_handle: cx.focus_handle().tab_stop(false),
+            files_focus_handle: cx
+                .focus_handle()
+                .tab_index(HEADER_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
         };
 
         this.fetch_files(cx);
@@ -1207,7 +1214,7 @@ impl SettingsWindow {
                 .find_map(|(prev_file, handle)| {
                     (prev_file == &settings_ui_file).then(|| handle.clone())
                 })
-                .unwrap_or_else(|| cx.focus_handle());
+                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
             ui_files.push((settings_ui_file, focus_handle));
         }
         ui_files.reverse();
@@ -1224,14 +1231,22 @@ impl SettingsWindow {
     fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
+            self.build_ui(cx);
             return;
         }
         if self.files[ix].0 == self.current_file {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        // self.navbar_entry = 0;
+        self.navbar_entry = 0;
         self.build_ui(cx);
+
+        let first_navbar_entry_index = self
+            .visible_navbar_entries()
+            .next()
+            .map(|e| e.0)
+            .unwrap_or(0);
+        self.navbar_entry = first_navbar_entry_index;
     }
 
     fn render_files_header(
@@ -1243,6 +1258,9 @@ impl SettingsWindow {
             .w_full()
             .gap_1()
             .justify_between()
+            .tab_group()
+            .track_focus(&self.files_focus_handle)
+            .tab_index(HEADER_GROUP_TAB_INDEX)
             .child(
                 h_flex()
                     .id("file_buttons_container")
@@ -1262,19 +1280,19 @@ impl SettingsWindow {
                                 .toggle_state(file == &self.current_file)
                                 .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .track_focus(focus_handle)
-                                .on_click(cx.listener(
-                                    move |this, evt: &gpui::ClickEvent, window, cx| {
+                                .on_click(cx.listener({
+                                    let focus_handle = focus_handle.clone();
+                                    move |this, _: &gpui::ClickEvent, window, cx| {
                                         this.change_file(ix, cx);
-                                        if evt.is_keyboard() {
-                                            this.focus_first_nav_item(window, cx);
-                                        }
-                                    },
-                                ))
+                                        focus_handle.focus(window);
+                                    }
+                                }))
                             }),
                     ),
             )
             .child(
                 Button::new("edit-in-json", "Edit in settings.json")
+                    .tab_index(0 as isize)
                     .style(ButtonStyle::Outlined)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_current_settings_file(cx);
