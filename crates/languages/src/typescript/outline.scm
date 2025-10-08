@@ -37,6 +37,7 @@
         (variable_declarator
             name: (identifier) @name) @item))
 
+; Exported array destructuring
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
@@ -48,6 +49,7 @@
                     (rest_pattern (identifier) @name @item)
                 ]))))
 
+; Exported object destructuring
 (export_statement
     (lexical_declaration
         ["let" "const"] @context
@@ -66,6 +68,7 @@
         (variable_declarator
             name: (identifier) @name) @item))
 
+; Top-level array destructuring
 (program
     (lexical_declaration
         ["let" "const"] @context
@@ -77,6 +80,7 @@
                     (rest_pattern (identifier) @name @item)
                 ]))))
 
+; Top-level object destructuring
 (program
     (lexical_declaration
         ["let" "const"] @context
@@ -116,7 +120,7 @@
           "(" @context
           ")" @context)) @item)
 
-; Method definitions in object literals (nested under variable)
+; Object literal methods
 (variable_declarator
     value: (object
         (method_definition
@@ -183,28 +187,24 @@
     )
 ) @item
 
-; All object properties
+; Object properties
 (pair
     key: [
         (property_identifier) @name
         (string (string_fragment) @name)
         (number) @name
-    ]) @item
-
-; Computed object properties
-(pair
-    key: [
         (computed_property_name) @name
     ]) @item
 
-; Nested const/let declarations in function/method bodies
+
+; Nested variables in function bodies
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
         (variable_declarator
             name: (identifier) @name) @item))
 
-; Nested array destructuring in function/method bodies
+; Nested array destructuring in functions
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
@@ -216,7 +216,7 @@
                     (rest_pattern (identifier) @name @item)
                 ]))))
 
-; Nested object destructuring in function/method bodies
+; Nested object destructuring in functions
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
