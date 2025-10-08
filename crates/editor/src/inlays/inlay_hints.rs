@@ -2148,6 +2148,9 @@ pub mod tests {
                         "main hint #3".to_string(),
                         "main hint #4".to_string(),
                         "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
                     ],
                     visible_hint_labels(editor, cx),
                     "Editor should show only visible hints",
@@ -2186,7 +2189,6 @@ pub mod tests {
                     sorted_cached_hint_labels(editor, cx),
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched"
                 );
-                // TODO kb is this right?
                 assert_eq!(
                     vec![
                         "main hint #0".to_string(),
@@ -2195,6 +2197,12 @@ pub mod tests {
                         "main hint #3".to_string(),
                         "main hint #4".to_string(),
                         "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
                     ],
                     visible_hint_labels(editor, cx),
                     "Editor shows only hints for excerpts that were visible when scrolling"
@@ -2241,6 +2249,12 @@ pub mod tests {
                         "main hint #3".to_string(),
                         "main hint #4".to_string(),
                         "main hint #5".to_string(),
+                        "other hint #0".to_string(),
+                        "other hint #1".to_string(),
+                        "other hint #2".to_string(),
+                        "other hint #3".to_string(),
+                        "other hint #4".to_string(),
+                        "other hint #5".to_string(),
                     ],
                     visible_hint_labels(editor, cx),
                 );
@@ -2978,42 +2992,32 @@ pub mod tests {
 
     // Inlay hints in the cache are stored per excerpt as a key, and those keys are guaranteed to be ordered same as in the multi buffer.
     // Ensure a stable order for testing.
-    fn sorted_cached_hint_labels(editor: &Editor, cx: &App) -> Vec<String> {
+    fn sorted_cached_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
         let mut labels = cached_hint_labels(editor, cx);
         labels.sort();
         labels
     }
 
-    pub fn cached_hint_labels(editor: &Editor, cx: &App) -> Vec<String> {
-        let inlay_hint_cache = &editor
-            .project()
-            .unwrap()
-            .read(cx)
-            .lsp_store()
-            .read(cx)
-            .lsp_data;
+    pub fn cached_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
+        let lsp_store = editor.project().unwrap().read(cx).lsp_store();
 
         let mut all_cached_labels = Vec::new();
         let mut all_fetched_hints = Vec::new();
-        for lsp_data in editor
-            .buffer
-            .read(cx)
-            .all_buffer_ids()
-            .into_iter()
-            .filter_map(|buffer_id| inlay_hint_cache.get(&buffer_id))
-        {
-            let hints = &lsp_data.inlay_hints;
-            all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
-                let mut label = hint.text().to_string();
-                if hint.padding_left {
-                    label.insert(0, ' ');
-                }
-                if hint.padding_right {
-                    label.push_str(" ");
-                }
-                label
-            }));
-            all_fetched_hints.extend(hints.all_fetched_hints());
+        for buffer in editor.buffer.read(cx).all_buffers() {
+            lsp_store.update(cx, |lsp_store, cx| {
+                let hints = &lsp_store.latest_lsp_data(&buffer, cx).inlay_hints;
+                all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
+                    let mut label = hint.text().to_string();
+                    if hint.padding_left {
+                        label.insert(0, ' ');
+                    }
+                    if hint.padding_right {
+                        label.push_str(" ");
+                    }
+                    label
+                }));
+                all_fetched_hints.extend(hints.all_fetched_hints());
+            });
         }
 
         all_cached_labels
