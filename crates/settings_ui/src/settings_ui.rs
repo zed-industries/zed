@@ -4,7 +4,7 @@ mod page_data;
 
 use anyhow::Result;
 use editor::{Editor, EditorEvent};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
@@ -210,35 +210,12 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action_renderer(|div, _, _, cx| {
-            let settings_ui_actions = [
-                TypeId::of::<OpenSettingsEditor>(),
-                TypeId::of::<ToggleFocusNav>(),
-                TypeId::of::<FocusFile>(),
-                TypeId::of::<FocusNextFile>(),
-                TypeId::of::<FocusPreviousFile>(),
-            ];
-            let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
-            command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
-                if has_flag {
-                    filter.show_action_types(&settings_ui_actions);
-                } else {
-                    filter.hide_action_types(&settings_ui_actions);
-                }
-            });
-            if has_flag {
-                div.on_action(
-                    cx.listener(|workspace, _: &OpenSettingsEditor, window, cx| {
-                        let window_handle = window
-                            .window_handle()
-                            .downcast::<Workspace>()
-                            .expect("Workspaces are root Windows");
-                        open_settings_editor(workspace, window_handle, cx);
-                    }),
-                )
-            } else {
-                div
-            }
+        workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
+            let window_handle = window
+                .window_handle()
+                .downcast::<Workspace>()
+                .expect("Workspaces are root Windows");
+            open_settings_editor(workspace, window_handle, cx);
         });
     })
     .detach();
