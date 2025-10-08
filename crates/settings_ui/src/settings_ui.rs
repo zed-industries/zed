@@ -1005,7 +1005,7 @@ impl SettingsWindow {
             };
             let key = (root_entry, sub_entry_title);
             if Some(key) == prev_selected_entry {
-                self.open_nav_page(index);
+                self.open_navbar_entry_page(index);
                 found_nav_entry = true;
             }
             entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
@@ -1262,7 +1262,7 @@ impl SettingsWindow {
         }
     }
 
-    fn open_nav_page(&mut self, navbar_entry: usize) {
+    fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
         self.navbar_entry = navbar_entry;
         sub_page_stack_mut().clear();
     }
@@ -1273,7 +1273,7 @@ impl SettingsWindow {
             .next()
             .map(|e| e.0)
             .unwrap_or(0);
-        self.open_nav_page(first_navbar_entry_index);
+        self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
     fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
@@ -1286,7 +1286,7 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        self.open_nav_page(0);
+        self.open_navbar_entry_page(0);
         self.build_ui(window, cx);
 
         self.open_first_nav_page();
@@ -1484,44 +1484,9 @@ impl SettingsWindow {
                                         })
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
-                                                this.open_nav_page(ix);
-                                                cx.notify();
-
-                                                if this.navbar_entries[ix].is_root {
-                                                    let Some(first_item_index) = this
-                                                        .page_items()
-                                                        .next()
-                                                        .map(|(index, _)| index)
-                                                    else {
-                                                        return;
-                                                    };
-                                                    this.focus_content_element(
-                                                        first_item_index,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                    this.scroll_handle
-                                                        .set_offset(point(px(0.), px(0.)));
-                                                } else {
-                                                    let entry_item_index =
-                                                    this.navbar_entries[ix].item_index.expect(
-                                                        "Non-root items should have an item index",
-                                                    );
-                                                    let Some(selected_item_index) =
-                                                        this.page_items().position(|(index, _)| {
-                                                            index == entry_item_index
-                                                        })
-                                                    else {
-                                                        return;
-                                                    };
-                                                    this.scroll_handle
-                                                        .scroll_to_top_of_item(selected_item_index);
-                                                    this.focus_content_element(
-                                                        selected_item_index,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
+                                                this.open_and_scroll_to_navbar_entry(
+                                                    ix, window, cx,
+                                                );
                                             }),
                                         )
                                     })
@@ -1554,10 +1519,58 @@ impl SettingsWindow {
         // )
     }
 
+    fn open_and_scroll_to_navbar_entry(
+        &mut self,
+        navbar_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_navbar_entry_page(navbar_entry_index);
+        cx.notify();
+
+        if self.navbar_entries[navbar_entry_index].is_root {
+            let Some(first_item_index) = self.page_items().next().map(|(index, _)| index) else {
+                return;
+            };
+            self.focus_content_element(first_item_index, window, cx);
+            self.scroll_handle.set_offset(point(px(0.), px(0.)));
+        } else {
+            let entry_item_index = self.navbar_entries[navbar_entry_index]
+                .item_index
+                .expect("Non-root items should have an item index");
+            let Some(selected_item_index) = self
+                .page_items()
+                .position(|(index, _)| index == entry_item_index)
+            else {
+                return;
+            };
+            self.scroll_handle
+                .scroll_to_top_of_item(selected_item_index);
+            self.focus_content_element(selected_item_index, window, cx);
+        }
+    }
+
     fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.navbar_focus_handle.focus_handle(cx).focus(window);
         window.focus_next();
         cx.notify();
+    }
+
+    fn focus_and_scroll_to_nav_item(
+        &self,
+        nav_entry_index: usize,
+        window: &mut Window,
+        _: &mut Context<SettingsWindow>,
+    ) {
+        let Some(position) = self
+            .visible_navbar_entries()
+            .position(|(index, _)| index == nav_entry_index)
+        else {
+            return;
+        };
+        self.list_handle
+            .scroll_to_item(position, gpui::ScrollStrategy::Top);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
     }
 
     fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1956,9 +1969,9 @@ impl Render for SettingsWindow {
                     .focus_handle(cx)
                     .contains_focused(window, cx)
                 {
-                    this.focus_first_content_item(window, cx);
+                    this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
                 } else {
-                    this.focus_first_nav_item(window, cx);
+                    this.focus_and_scroll_to_nav_item(this.navbar_entry, window, cx);
                 }
             }))
             .on_action(
