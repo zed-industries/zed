@@ -1026,7 +1026,7 @@ fn build_command(
 ) -> Result<CommandTemplate> {
     use std::fmt::Write as _;
 
-    let mut exec = String::from("exec env -C ");
+    let mut exec = String::new();
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
@@ -1035,13 +1035,14 @@ fn build_command(
         const TILDE_PREFIX: &'static str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
             let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(exec, "\"$HOME/{working_dir}\" ",).unwrap();
+            write!(exec, "cd \"$HOME/{working_dir}\" && ",).unwrap();
         } else {
-            write!(exec, "\"{working_dir}\" ",).unwrap();
+            write!(exec, "cd \"{working_dir}\" && ",).unwrap();
         }
     } else {
-        write!(exec, "\"$HOME\" ").unwrap();
+        write!(exec, "cd && ").unwrap();
     };
+    write!(exec, "exec env ").unwrap();
 
     for (k, v) in input_env.iter() {
         if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
@@ -1106,7 +1107,7 @@ mod tests {
                 "-p",
                 "2222",
                 "-t",
-                "exec env -C \"$HOME/work\" INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1137,7 +1138,7 @@ mod tests {
                 "-L",
                 "1:foo:2",
                 "-t",
-                "exec env -C \"$HOME\" INPUT_VA=val /bin/fish -l"
+                "cd && exec env INPUT_VA=val /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);

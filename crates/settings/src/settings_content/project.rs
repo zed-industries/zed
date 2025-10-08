@@ -249,7 +249,7 @@ pub struct GitSettings {
     pub git_gutter: Option<GitGutterSetting>,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Default: null
+    /// Default: 0
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.

@@ -1250,6 +1250,7 @@
     "bindings": {
       "ctrl-w": "workspace::CloseWindow",
       "escape": "workspace::CloseWindow",
+      "ctrl-m": "settings_editor::Minimize",
       "ctrl-f": "search::FocusSearch",
       "ctrl-shift-e": "settings_editor::ToggleFocusNav",
       // todo(settings_ui): cut this down based on the max files and overflow UI

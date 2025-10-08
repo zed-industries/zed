@@ -643,9 +643,17 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            project_panel.state.edit_state = None;
-                            project_panel.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
+                            match project_panel.confirm_edit(window, cx) {
+                                Some(task) => {
+                                    task.detach_and_notify_err(window, cx);
+                                }
+                                None => {
+                                    project_panel.state.edit_state = None;
+                                    project_panel
+                                        .update_visible_entries(None, false, false, window, cx);
+                                    cx.notify();
+                                }
+                            }
                         }
                     }
                     _ => {}

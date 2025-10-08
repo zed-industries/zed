@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{AnyElement, App, Context, SharedString, Task, Window};
+use gpui::{AnyElement, App, Context, DismissEvent, SharedString, Task, Window};
 use picker::{Picker, PickerDelegate};
 use theme::FontFamilyCache;
 use ui::{ListItem, ListItemSpacing, prelude::*};
@@ -139,7 +139,12 @@ impl PickerDelegate for FontPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<FontPicker>) {}
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<FontPicker>) {
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
+        cx.emit(DismissEvent);
+    }
 
     fn render_match(
         &self,
@@ -172,5 +177,5 @@ pub fn font_picker(
     Picker::uniform_list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems_from_px(210.))
-        .max_height(Some(rems(20.).into()))
+        .max_height(Some(rems(18.).into()))
 }

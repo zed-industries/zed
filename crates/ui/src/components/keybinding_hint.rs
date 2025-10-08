@@ -1,5 +1,5 @@
 use crate::KeyBinding;
-use crate::{h_flex, prelude::*};
+use crate::prelude::*;
 use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window, point};
 use theme::Appearance;
 
@@ -206,20 +206,23 @@ impl KeybindingHint {
 
 impl RenderOnce for KeybindingHint {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let colors = cx.theme().colors().clone();
+        let colors = cx.theme().colors();
         let is_light = cx.theme().appearance() == Appearance::Light;
 
         let border_color =
             self.background_color
                 .blend(colors.text.alpha(if is_light { 0.08 } else { 0.16 }));
-        let bg_color =
-            self.background_color
-                .blend(colors.text.alpha(if is_light { 0.06 } else { 0.12 }));
+
+        let bg_color = self
+            .background_color
+            .blend(colors.text_accent.alpha(if is_light { 0.05 } else { 0.1 }));
+
         let shadow_color = colors.text.alpha(if is_light { 0.04 } else { 0.08 });
 
         let size = self
             .size
             .unwrap_or(TextSize::Small.rems(cx).to_pixels(window.rem_size()));
+
         let kb_size = size - px(2.0);
 
         let mut base = h_flex();
@@ -228,15 +231,13 @@ impl RenderOnce for KeybindingHint {
             .get_or_insert_with(Default::default)
             .font_style = Some(FontStyle::Italic);
 
-        base.items_center()
-            .gap_0p5()
+        base.gap_1()
             .font_buffer(cx)
             .text_size(size)
             .text_color(colors.text_disabled)
             .children(self.prefix)
             .child(
                 h_flex()
-                    .items_center()
                     .rounded_sm()
                     .px_0p5()
                     .mr_0p5()
