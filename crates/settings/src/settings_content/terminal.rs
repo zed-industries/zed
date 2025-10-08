@@ -53,7 +53,7 @@ pub struct TerminalSettingsContent {
     /// Default cursor shape for the terminal.
     /// Can be "bar", "block", "underline", or "hollow".
     ///
-    /// Default: None
+    /// Default: "block"
     pub cursor_shape: Option<CursorShapeContent>,
     /// Sets the cursor blinking behavior in the terminal.
     ///
@@ -226,7 +226,18 @@ pub enum ShowScrollbar {
 }
 
 #[derive(
-    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
 // todo() -> combine with CursorShape

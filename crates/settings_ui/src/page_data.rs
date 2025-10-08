@@ -2832,6 +2832,26 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Default cursor shape for the terminal",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.cursor_shape
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .cursor_shape
+                        },
+                    }),
+                    metadata: None,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Alternate Scroll",
                     description: "Sets whether Alternate Scroll mode is active by default",
                     field: Box::new(SettingField {
