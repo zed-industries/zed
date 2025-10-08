@@ -1172,18 +1172,25 @@ impl FileFinderDelegate {
         )
     }
 
+    /// Attempts to resolve an absolute file path and update the search matches if found.
+    ///
+    /// If the query path resolves to an absolute file that exists in the project,
+    /// this method will find the corresponding worktree and relative path, create a
+    /// match for it, and update the picker's search results.
+    ///
+    /// Returns `true` if the absolute path exists, otherwise returns `false`.
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
-    ) -> Task<()> {
+    ) -> Task<bool> {
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
                 .read_with(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
-                return;
+                return false;
             };
 
             let query_path = Path::new(query.path_query());
@@ -1216,7 +1223,7 @@ impl FileFinderDelegate {
                     })
                     .log_err();
                 if update_result.is_none() {
-                    return;
+                    return abs_file_exists;
                 }
             }
 
@@ -1229,6 +1236,7 @@ impl FileFinderDelegate {
                     anyhow::Ok(())
                 })
                 .log_err();
+            abs_file_exists
         })
     }
 
@@ -1377,13 +1385,14 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(raw_query);
             let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
-            let path = path_position.path.to_str();
-            let path_trimmed = path.unwrap_or(&raw_query).trim_end_matches(':');
+            let path = path_position.path.clone();
+            let path_str = path_position.path.to_str();
+            let path_trimmed = path_str.unwrap_or(&raw_query).trim_end_matches(':');
             let file_query_end = if path_trimmed == raw_query {
                 None
             } else {
                 // Safe to unwrap as we won't get here when the unwrap in if fails
-                Some(path.unwrap().len())
+                Some(path_str.unwrap().len())
             };
 
             let query = FileSearchQuery {
@@ -1392,11 +1401,29 @@ impl PickerDelegate for FileFinderDelegate {
                 path_position,
             };
 
-            if Path::new(query.path_query()).is_absolute() {
-                self.lookup_absolute_path(query, window, cx)
-            } else {
-                self.spawn_search(query, window, cx)
-            }
+            cx.spawn_in(window, async move |this, cx| {
+                let _ = maybe!(async move {
+                    let is_absolute_path = path.is_absolute();
+                    let did_resolve_abs_path = is_absolute_path
+                        && this
+                            .update_in(cx, |this, window, cx| {
+                                this.delegate
+                                    .lookup_absolute_path(query.clone(), window, cx)
+                            })?
+                            .await;
+
+                    // Only check for relative paths if no absolute paths were
+                    // found.
+                    if !did_resolve_abs_path {
+                        this.update_in(cx, |this, window, cx| {
+                            this.delegate.spawn_search(query, window, cx)
+                        })?
+                        .await;
+                    }
+                    anyhow::Ok(())
+                })
+                .await;
+            })
         }
     }
 

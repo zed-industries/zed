@@ -2,7 +2,7 @@ use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use collections::HashMap;
-use gpui::{App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -73,14 +73,11 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 impl settings::Settings for TerminalSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
-        dbg!(&content.terminal);
-        dbg!(&content.project.terminal);
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let user_content = content.terminal.clone().unwrap();
         // Note: we allow a subset of "terminal" settings in the project files.
         let mut project_content = user_content.project.clone();
         project_content.merge_from_option(content.project.terminal.as_ref());
-
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
