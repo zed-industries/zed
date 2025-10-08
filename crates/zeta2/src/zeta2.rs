@@ -7,8 +7,8 @@ use cloud_llm_client::{
 };
 use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use edit_prediction_context::{
-    DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
-    SyntaxIndexState,
+    DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
@@ -43,14 +43,20 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
-    max_bytes: 512,
-    min_bytes: 128,
-    target_before_cursor_over_total_bytes: 0.5,
+pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPredictionContextOptions {
+    use_imports: true,
+    excerpt: EditPredictionExcerptOptions {
+        max_bytes: 512,
+        min_bytes: 128,
+        target_before_cursor_over_total_bytes: 0.5,
+    },
+    score: EditPredictionScoreOptions {
+        omit_excerpt_overlaps: true,
+    },
 };
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
-    excerpt: DEFAULT_EXCERPT_OPTIONS,
+    context: DEFAULT_CONTEXT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
@@ -75,7 +81,7 @@ pub struct Zeta {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
-    pub excerpt: EditPredictionExcerptOptions,
+    pub context: EditPredictionContextOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
@@ -501,6 +507,11 @@ impl Zeta {
 
         let diagnostics = snapshot.diagnostic_sets().clone();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -519,7 +530,8 @@ impl Zeta {
                 let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
-                    &options.excerpt,
+                    parent_abs_path.as_deref(),
+                    &options.context,
                     index_state.as_deref(),
                 ) else {
                     return Ok(None);
@@ -785,6 +797,11 @@ impl Zeta {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect::<Vec<_>>();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         cx.background_spawn(async move {
             let index_state = if let Some(index_state) = index_state {
                 Some(index_state.lock_owned().await)
@@ -798,7 +815,8 @@ impl Zeta {
             EditPredictionContext::gather_context(
                 cursor_point,
                 &snapshot,
-                &options.excerpt,
+                parent_abs_path.as_deref(),
+                &options.context,
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")
@@ -893,9 +911,9 @@ fn make_cloud_request(
             text_is_truncated,
             signature_range: snippet.declaration.signature_range_in_item_text(),
             parent_index,
-            score_components: snippet.score_components,
-            signature_score: snippet.scores.signature,
-            declaration_score: snippet.scores.declaration,
+            signature_score: snippet.score(DeclarationStyle::Signature),
+            declaration_score: snippet.score(DeclarationStyle::Declaration),
+            score_components: snippet.components,
         });
     }
 

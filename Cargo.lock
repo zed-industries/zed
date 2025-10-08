@@ -5189,6 +5189,9 @@ dependencies = [
  "strum 0.27.1",
  "text",
  "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
  "workspace-hack",
  "zed-collections",
  "zed-util",
@@ -16964,8 +16967,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-typescript"
 version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+source = "git+https://github.com/zed-industries/tree-sitter-typescript?rev=e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899#e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -20785,6 +20787,7 @@ dependencies = [
  "terminal_view",
  "watch",
  "workspace-hack",
+ "zed-collections",
  "zed-util",
  "zeta",
  "zeta2",
