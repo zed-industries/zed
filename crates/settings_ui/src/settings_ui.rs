@@ -7,7 +7,7 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Bounds, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
+    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
     ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
@@ -472,7 +472,7 @@ pub fn open_settings_editor(
                 show: true,
                 kind: gpui::WindowKind::Normal,
                 window_background: cx.theme().window_background_appearance(),
-                window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
                 window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
                 ..Default::default()
             },
@@ -1274,14 +1274,11 @@ impl SettingsWindow {
                     ),
             )
             .child(
-                Button::new(
-                    "edit-in-json",
-                    format!("Edit in {}", self.file_location_str()),
-                )
-                .style(ButtonStyle::Outlined)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.open_current_settings_file(cx);
-                })),
+                Button::new("edit-in-json", "Edit in settings.json")
+                    .style(ButtonStyle::Outlined)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_current_settings_file(cx);
+                    })),
             )
     }
 
@@ -1308,26 +1305,27 @@ impl SettingsWindow {
         }
     }
 
-    fn file_location_str(&self) -> String {
-        match &self.current_file {
-            SettingsUiFile::User => "settings.json".to_string(),
-            SettingsUiFile::Project((worktree_id, path)) => self
-                .worktree_root_dirs
-                .get(&worktree_id)
-                .map(|directory_name| {
-                    let path_style = PathStyle::local();
-                    let file_path = path.join(paths::local_settings_file_relative_path());
-                    format!(
-                        "{}{}{}",
-                        directory_name,
-                        path_style.separator(),
-                        file_path.display(path_style)
-                    )
-                })
-                .expect("Current file should always be present in root dir map"),
-            SettingsUiFile::Server(file) => file.to_string(),
-        }
-    }
+    // TODO: Reconsider this after preview launch
+    // fn file_location_str(&self) -> String {
+    //     match &self.current_file {
+    //         SettingsUiFile::User => "settings.json".to_string(),
+    //         SettingsUiFile::Project((worktree_id, path)) => self
+    //             .worktree_root_dirs
+    //             .get(&worktree_id)
+    //             .map(|directory_name| {
+    //                 let path_style = PathStyle::local();
+    //                 let file_path = path.join(paths::local_settings_file_relative_path());
+    //                 format!(
+    //                     "{}{}{}",
+    //                     directory_name,
+    //                     path_style.separator(),
+    //                     file_path.display(path_style)
+    //                 )
+    //             })
+    //             .expect("Current file should always be present in root dir map"),
+    //         SettingsUiFile::Server(file) => file.to_string(),
+    //     }
+    // }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
