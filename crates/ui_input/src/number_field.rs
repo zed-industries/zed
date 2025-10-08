@@ -361,6 +361,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                 .border_color(border_color)
                 .bg(bg_color)
                 .hover(|s| s.bg(hover_bg_color))
+                .focus(|s| s.border_color(focus_border_color).bg(hover_bg_color))
                 .child(Icon::new(icon).size(IconSize::Small))
         };
 
@@ -400,12 +401,15 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 .id("decrement_button")
                                 .rounded_tl_sm()
                                 .rounded_bl_sm()
-                                .when_some(tab_index.as_mut(), |this, tab_index| {
-                                    *tab_index += 1;
-                                    this.tab_index(*tab_index - 1).focus(|style| {
-                                        style.border_color(focus_border_color).bg(hover_bg_color)
-                                    })
-                                })
+                                .tab_index(
+                                    tab_index
+                                        .as_mut()
+                                        .map(|tab_index| {
+                                            *tab_index += 1;
+                                            *tab_index - 1
+                                        })
+                                        .unwrap_or(0),
+                                )
                                 .on_click(decrement_handler),
                         )
                     })
@@ -419,29 +423,18 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                             .in_focus(|this| this.border_color(focus_border_color))
                             .child(match *self.mode.read(cx) {
                                 NumberFieldMode::Read => h_flex()
-                                    .id("numeric_stepper_label")
                                     .px_1()
                                     .flex_1()
                                     .justify_center()
                                     .child(Label::new((self.format)(&self.value)))
-                                    .when_some(tab_index.as_mut(), |this, tab_index| {
-                                        *tab_index += 1;
-                                        this.tab_index(*tab_index - 1).focus(|style| {
-                                            style
-                                                .border_color(cx.theme().colors().border_focused)
-                                                .bg(cx.theme().colors().element_hover)
-                                        })
-                                    })
-                                    .on_click({
-                                        let _mode = self.mode.clone();
-                                        move |click, _, _cx| {
-                                            if click.click_count() == 2 || click.is_keyboard() {
-                                                // Edit mode is disabled until we implement center text alignment for editor
-                                                // mode.write(cx, NumberFieldMode::Edit);
-                                            }
-                                        }
-                                    })
                                     .into_any_element(),
+                                // Edit mode is disabled until we implement center text alignment for editor
+                                // mode.write(cx, NumberFieldMode::Edit);
+                                //
+                                // When we get to making Edit mode work, we shouldn't even focus the decrement/increment buttons.
+                                // Focus should go instead straight to the editor, avoiding any double-step focus.
+                                // In this world, the buttons become a mouse-only interaction, given users should be able
+                                // to do everything they'd do with the buttons straight in the editor anyway.
                                 NumberFieldMode::Edit => h_flex()
                                     .flex_1()
                                     .child(window.use_state(cx, {
@@ -513,12 +506,15 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                 .id("increment_button")
                                 .rounded_tr_sm()
                                 .rounded_br_sm()
-                                .when_some(tab_index.as_mut(), |this, tab_index| {
-                                    *tab_index += 1;
-                                    this.tab_index(*tab_index - 1).focus(|style| {
-                                        style.border_color(focus_border_color).bg(hover_bg_color)
-                                    })
-                                })
+                                .tab_index(
+                                    tab_index
+                                        .as_mut()
+                                        .map(|tab_index| {
+                                            *tab_index += 1;
+                                            *tab_index - 1
+                                        })
+                                        .unwrap_or(0),
+                                )
                                 .on_click(increment_handler),
                         )
                     }),

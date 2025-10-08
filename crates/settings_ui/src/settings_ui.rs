@@ -1804,7 +1804,6 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
-        .tab_index(0)
         .into_any_element()
 }
 
