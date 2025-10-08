@@ -528,6 +528,7 @@ pub struct SettingsWindow {
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
+    content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
     scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     navbar_focus_handle: Entity<NonFocusableHandle>,
@@ -872,8 +873,8 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.observe_global_in::<SettingsStore>(window, move |this, _, cx| {
-            this.fetch_files(cx);
+        cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+            this.fetch_files(window, cx);
             cx.notify();
         })
         .detach();
@@ -890,7 +891,9 @@ impl SettingsWindow {
             search_bar,
             search_task: None,
             search_matches: vec![],
+            content_handles: vec![],
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
                 false,
@@ -909,8 +912,8 @@ impl SettingsWindow {
                 .tab_stop(false),
         };
 
-        this.fetch_files(cx);
-        this.build_ui(cx);
+        this.fetch_files(window, cx);
+        this.build_ui(window, cx);
 
         this.search_bar.update(cx, |editor, cx| {
             editor.focus_handle(cx).focus(window);
@@ -1174,10 +1177,23 @@ impl SettingsWindow {
             .collect::<Vec<_>>();
     }
 
-    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
+    fn build_content_handles(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        self.content_handles = self
+            .pages
+            .iter()
+            .map(|page| {
+                std::iter::repeat_with(|| NonFocusableHandle::new(0, false, window, cx))
+                    .take(page.items.len())
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+    }
+
+    fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if self.pages.is_empty() {
             self.pages = page_data::settings_data();
         }
+        self.build_content_handles(window, cx);
         self.build_search_matches();
         self.build_navbar();
 
@@ -1186,7 +1202,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
+    fn fetch_files(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.worktree_root_dirs.clear();
         let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
@@ -1236,29 +1252,28 @@ impl SettingsWindow {
             .iter()
             .any(|(file, _)| file == &self.current_file);
         if !current_file_still_exists {
-            self.change_file(0, cx);
+            self.change_file(0, window, cx);
         }
     }
 
-    fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
-        if ix >= self.files.len() {
-            self.current_file = SettingsUiFile::User;
-            self.build_ui(cx);
-            return;
-        }
-        if self.files[ix].0 == self.current_file {
-            return;
-        }
-        self.current_file = self.files[ix].0.clone();
-        self.navbar_entry = 0;
-        self.build_ui(cx);
 
         let first_navbar_entry_index = self
             .visible_navbar_entries()
             .next()
             .map(|e| e.0)
             .unwrap_or(0);
-        self.navbar_entry = first_navbar_entry_index;
+    fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        if ix >= self.files.len() {
+            self.current_file = SettingsUiFile::User;
+            self.build_ui(window, cx);
+            return;
+        }
+        if self.files[ix].0 == self.current_file {
+            return;
+        }
+        self.current_file = self.files[ix].0.clone();
+        self.build_ui(window, cx);
+
     }
 
     fn render_files_header(
@@ -1295,7 +1310,7 @@ impl SettingsWindow {
                                 .on_click(cx.listener({
                                     let focus_handle = focus_handle.clone();
                                     move |this, _: &gpui::ClickEvent, window, cx| {
-                                        this.change_file(ix, cx);
+                                        this.change_file(ix, window, cx);
                                         focus_handle.focus(window);
                                     }
                                 }))
@@ -1424,40 +1439,49 @@ impl SettingsWindow {
                                                 },
                                             ))
                                         })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
                                             this.navbar_entry = ix;
+                                        .on_click(
+                                            cx.listener(
+                                                move |this, evt: &gpui::ClickEvent, window, cx| {
+                                                    if !this.navbar_entries[ix].is_root {
+                                                        let mut selected_page_ix = ix;
 
-                                            if !this.navbar_entries[ix].is_root {
-                                                let mut selected_page_ix = ix;
+                                                        while !this.navbar_entries[selected_page_ix]
+                                                            .is_root
+                                                        {
+                                                            selected_page_ix -= 1;
+                                                        }
 
-                                                while !this.navbar_entries[selected_page_ix].is_root
-                                                {
-                                                    selected_page_ix -= 1;
-                                                }
+                                                        let section_header = ix - selected_page_ix;
 
-                                                let section_header = ix - selected_page_ix;
-
-                                                if let Some(section_index) = this
-                                                    .page_items()
-                                                    .enumerate()
-                                                    .filter(|item| {
-                                                        matches!(
-                                                            item.1,
-                                                            SettingsPageItem::SectionHeader(_)
-                                                        )
-                                                    })
-                                                    .take(section_header)
-                                                    .last()
-                                                    .map(|pair| pair.0)
-                                                {
-                                                    this.scroll_handle
-                                                        .scroll_to_top_of_item(section_index);
-                                                }
-                                            }
-
-                                            cx.notify();
-                                        }))
-                                        .into_any_element()
+                                                        if let Some(section_index) =
+                                                            this.page_items()
+                                                                .enumerate()
+                                                                .filter(|(_, (_, item))| {
+                                                                    matches!(
+                                                                 item,
+                                                                 SettingsPageItem::SectionHeader(_)
+                                                             )
+                                                                })
+                                                                .take(section_header)
+                                                                .last()
+                                                                .map(|(index, _)| index)
+                                                        {
+                                                            this.scroll_handle
+                                                                .scroll_to_top_of_item(
+                                                                    section_index,
+                                                                );
+                                                            this.focus_content_element(
+                                                                section_index,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        }
+                                                    }
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        )
                                     })
                                     .collect()
                             }),
@@ -1500,7 +1524,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn page_items(&self) -> impl Iterator<Item = &SettingsPageItem> {
+    fn page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
         let page_idx = self.current_page_index();
 
         self.current_page()
@@ -1508,7 +1532,7 @@ impl SettingsWindow {
             .iter()
             .enumerate()
             .filter_map(move |(item_index, item)| {
-                self.search_matches[page_idx][item_index].then_some(item)
+                self.search_matches[page_idx][item_index].then_some((item_index, item))
             })
     }
 
@@ -1533,9 +1557,10 @@ impl SettingsWindow {
             .child(Label::new(last))
     }
 
-    fn render_page_items<'a, Items: Iterator<Item = &'a SettingsPageItem>>(
+    fn render_page_items<'a, Items: Iterator<Item = (usize, &'a SettingsPageItem)>>(
         &self,
         items: Items,
+        page_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
@@ -1574,28 +1599,38 @@ impl SettingsWindow {
                 .iter()
                 .enumerate()
                 .rev()
-                .find(|(_, item)| !matches!(item, SettingsPageItem::SectionHeader(_)))
+                .find(|(_, (_, item))| !matches!(item, SettingsPageItem::SectionHeader(_)))
                 .map(|(index, _)| index);
 
-            page_content =
-                page_content.children(items.clone().into_iter().enumerate().map(|(index, item)| {
+            page_content = page_content.children(items.clone().into_iter().enumerate().map(
+                |(index, (actual_item_index, item))| {
                     let no_bottom_border = items
                         .get(index + 1)
-                        .map(|next_item| matches!(next_item, SettingsPageItem::SectionHeader(_)))
+                        .map(|(_, next_item)| {
+                            matches!(next_item, SettingsPageItem::SectionHeader(_))
+                        })
                         .unwrap_or(false);
                     let is_last = Some(index) == last_non_header_index;
 
                     if let SettingsPageItem::SectionHeader(header) = item {
                         section_header = Some(*header);
                     }
-                    item.render(
-                        self,
-                        section_header.expect("All items rendered after a section header"),
-                        no_bottom_border || is_last,
-                        window,
-                        cx,
-                    )
-                }))
+                    div()
+                        .when_some(page_index, |element, page_index| {
+                            element.track_focus(
+                                &self.content_handles[page_index][actual_item_index]
+                                    .focus_handle(cx),
+                            )
+                        })
+                        .child(item.render(
+                            self,
+                            section_header.expect("All items rendered after a section header"),
+                            no_bottom_border || is_last,
+                            window,
+                            cx,
+                        ))
+                },
+            ))
         }
         page_content
     }
@@ -1612,7 +1647,12 @@ impl SettingsWindow {
             page_header = self.render_files_header(window, cx).into_any_element();
 
             page_content = self
-                .render_page_items(self.page_items(), window, cx)
+                .render_page_items(
+                    self.page_items(),
+                    Some(self.current_page_index()),
+                    window,
+                    cx,
+                )
                 .into_any_element();
         } else {
             page_header = h_flex()
@@ -1821,6 +1861,14 @@ impl SettingsWindow {
             return current_file_index;
         }
         0
+    }
+
+    fn focus_content_element(&self, item_index: usize, window: &mut Window, cx: &mut App) {
+        if !sub_page_stack().is_empty() {
+            return;
+        }
+        let page_index = self.current_page_index();
+        window.focus(&self.content_handles[page_index][item_index].focus_handle(cx));
     }
 }
 
@@ -2183,7 +2231,7 @@ mod test {
             );
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
-                other.page_items().collect::<Vec<_>>()
+                other.page_items().map(|(_, item)| item).collect::<Vec<_>>()
             );
         }
     }
@@ -2285,11 +2333,22 @@ mod test {
             navbar_entries: Vec::default(),
             list_handle: UniformListScrollHandle::default(),
             search_matches: vec![],
+            content_handles: vec![],
             search_task: None,
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
-            navbar_focus_handle: cx.focus_handle(),
-            content_focus_handle: cx.focus_handle(),
+            navbar_focus_handle: NonFocusableHandle::new(
+                NAVBAR_CONTAINER_TAB_INDEX,
+                false,
+                window,
+                cx,
+            ),
+            content_focus_handle: NonFocusableHandle::new(
+                CONTENT_CONTAINER_TAB_INDEX,
+                false,
+                window,
+                cx,
+            ),
             files_focus_handle: cx.focus_handle(),
         };
 
