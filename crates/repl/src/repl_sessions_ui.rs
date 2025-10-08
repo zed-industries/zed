@@ -6,7 +6,6 @@ use gpui::{
 use project::ProjectItem as _;
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
-use workspace::WorkspaceId;
 use workspace::item::ItemEvent;
 use workspace::{Workspace, item::Item};
 
@@ -190,15 +189,6 @@ impl Item for ReplSessionsPage {
 
     fn show_toolbar(&self) -> bool {
         false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

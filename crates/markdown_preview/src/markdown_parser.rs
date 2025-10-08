@@ -880,6 +880,10 @@ impl<'a> MarkdownParser<'a> {
                             contents: paragraph,
                         }));
                     }
+                } else if local_name!("blockquote") == name.local {
+                    if let Some(blockquote) = self.extract_html_blockquote(node, source_range) {
+                        elements.push(ParsedMarkdownElement::BlockQuote(blockquote));
+                    }
                 } else if local_name!("table") == name.local {
                     if let Some(table) = self.extract_html_table(node, source_range) {
                         elements.push(ParsedMarkdownElement::Table(table));
@@ -1000,6 +1004,24 @@ impl<'a> MarkdownParser<'a> {
         }
 
         Some(image)
+    }
+
+    fn extract_html_blockquote(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownBlockQuote> {
+        let mut children = Vec::new();
+        self.consume_children(source_range.clone(), node, &mut children);
+
+        if children.is_empty() {
+            None
+        } else {
+            Some(ParsedMarkdownBlockQuote {
+                children,
+                source_range,
+            })
+        }
     }
 
     fn extract_html_table(
@@ -1407,6 +1429,61 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![ParsedMarkdownElement::Paragraph(text(
+                        "some description",
+                        0..76
+                    ))],
+                    0..76,
+                )]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+              <blockquote>
+                <p>second description</p>
+              </blockquote>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![
+                        ParsedMarkdownElement::Paragraph(text("some description", 0..173)),
+                        block_quote(
+                            vec![ParsedMarkdownElement::Paragraph(text(
+                                "second description",
+                                0..173
+                            ))],
+                            0..173,
+                        )
+                    ],
+                    0..173,
+                )]
+            },
+            parsed
         );
     }
 

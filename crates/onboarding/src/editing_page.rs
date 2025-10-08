@@ -2,20 +2,16 @@ use std::sync::Arc;
 
 use editor::{EditorSettings, ShowMinimap};
 use fs::Fs;
-use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{
-    Action, AnyElement, App, Context, FontFeatures, IntoElement, Pixels, SharedString, Task, Window,
-};
+use gpui::{Action, App, FontFeatures, IntoElement, Pixels, SharedString, Window};
 use language::language_settings::{AllLanguageSettings, FormatOnSave};
-use picker::{Picker, PickerDelegate};
 use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
-use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
+use theme::{FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, ListItem, ListItemSpacing, PopoverMenu, SwitchField, ToggleButtonGroup,
-    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
+    ButtonLike, PopoverMenu, SwitchField, ToggleButtonGroup, ToggleButtonGroupStyle,
+    ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
-use ui_input::NumericStepper;
+use ui_input::{NumberField, font_picker};
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
@@ -415,7 +411,7 @@ fn font_picker_stepper(
     write_font_size: fn(Pixels, &mut App),
     window: &mut Window,
     cx: &mut App,
-) -> NumericStepper<u32> {
+) -> NumberField<u32> {
     window.with_id(id, |window| {
         let optimistic_font_size: gpui::Entity<Option<u32>> = window.use_state(cx, |_, _| None);
         optimistic_font_size.update(cx, |optimistic_font_size, _| {
@@ -430,7 +426,7 @@ fn font_picker_stepper(
             .read(cx)
             .unwrap_or_else(|| font_size.into());
 
-        NumericStepper::new(
+        NumberField::new(
             SharedString::new(format!("{}-stepper", id)),
             stepper_font_size,
             window,
@@ -441,7 +437,6 @@ fn font_picker_stepper(
             write_font_size(Pixels::from(*new_value), cx);
         })
         .format(|value| format!("{value}px"))
-        .style(ui_input::NumericStepperStyle::Outlined)
         .tab_index({
             *tab_index += 2;
             *tab_index - 2
@@ -449,175 +444,6 @@ fn font_picker_stepper(
         .min(6)
         .max(32)
     })
-}
-
-type FontPicker = Picker<FontPickerDelegate>;
-
-pub struct FontPickerDelegate {
-    fonts: Vec<SharedString>,
-    filtered_fonts: Vec<StringMatch>,
-    selected_index: usize,
-    current_font: SharedString,
-    on_font_changed: Arc<dyn Fn(SharedString, &mut App) + 'static>,
-}
-
-impl FontPickerDelegate {
-    fn new(
-        current_font: SharedString,
-        on_font_changed: impl Fn(SharedString, &mut App) + 'static,
-        cx: &mut Context<FontPicker>,
-    ) -> Self {
-        let font_family_cache = FontFamilyCache::global(cx);
-
-        let fonts = font_family_cache
-            .try_list_font_families()
-            .unwrap_or_else(|| vec![current_font.clone()]);
-        let selected_index = fonts
-            .iter()
-            .position(|font| *font == current_font)
-            .unwrap_or(0);
-
-        let filtered_fonts = fonts
-            .iter()
-            .enumerate()
-            .map(|(index, font)| StringMatch {
-                candidate_id: index,
-                string: font.to_string(),
-                positions: Vec::new(),
-                score: 0.0,
-            })
-            .collect();
-
-        Self {
-            fonts,
-            filtered_fonts,
-            selected_index,
-            current_font,
-            on_font_changed: Arc::new(on_font_changed),
-        }
-    }
-}
-
-impl PickerDelegate for FontPickerDelegate {
-    type ListItem = AnyElement;
-
-    fn match_count(&self) -> usize {
-        self.filtered_fonts.len()
-    }
-
-    fn selected_index(&self) -> usize {
-        self.selected_index
-    }
-
-    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<FontPicker>) {
-        self.selected_index = ix.min(self.filtered_fonts.len().saturating_sub(1));
-        cx.notify();
-    }
-
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search fonts…".into()
-    }
-
-    fn update_matches(
-        &mut self,
-        query: String,
-        _window: &mut Window,
-        cx: &mut Context<FontPicker>,
-    ) -> Task<()> {
-        let fonts = self.fonts.clone();
-        let current_font = self.current_font.clone();
-
-        let matches: Vec<StringMatch> = if query.is_empty() {
-            fonts
-                .iter()
-                .enumerate()
-                .map(|(index, font)| StringMatch {
-                    candidate_id: index,
-                    string: font.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect()
-        } else {
-            let _candidates: Vec<StringMatchCandidate> = fonts
-                .iter()
-                .enumerate()
-                .map(|(id, font)| StringMatchCandidate::new(id, font.as_ref()))
-                .collect();
-
-            fonts
-                .iter()
-                .enumerate()
-                .filter(|(_, font)| font.to_lowercase().contains(&query.to_lowercase()))
-                .map(|(index, font)| StringMatch {
-                    candidate_id: index,
-                    string: font.to_string(),
-                    positions: Vec::new(),
-                    score: 0.0,
-                })
-                .collect()
-        };
-
-        let selected_index = if query.is_empty() {
-            fonts
-                .iter()
-                .position(|font| *font == current_font)
-                .unwrap_or(0)
-        } else {
-            matches
-                .iter()
-                .position(|m| fonts[m.candidate_id] == current_font)
-                .unwrap_or(0)
-        };
-
-        self.filtered_fonts = matches;
-        self.selected_index = selected_index;
-        cx.notify();
-
-        Task::ready(())
-    }
-
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<FontPicker>) {
-        if let Some(font_match) = self.filtered_fonts.get(self.selected_index) {
-            let font = font_match.string.clone();
-            (self.on_font_changed)(font.into(), cx);
-        }
-    }
-
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<FontPicker>) {}
-
-    fn render_match(
-        &self,
-        ix: usize,
-        selected: bool,
-        _window: &mut Window,
-        _cx: &mut Context<FontPicker>,
-    ) -> Option<Self::ListItem> {
-        let font_match = self.filtered_fonts.get(ix)?;
-
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(Label::new(font_match.string.clone()))
-                .into_any_element(),
-        )
-    }
-}
-
-fn font_picker(
-    current_font: SharedString,
-    on_font_changed: impl Fn(SharedString, &mut App) + 'static,
-    window: &mut Window,
-    cx: &mut Context<FontPicker>,
-) -> FontPicker {
-    let delegate = FontPickerDelegate::new(current_font, on_font_changed, cx);
-
-    Picker::uniform_list(delegate, window, cx)
-        .show_scrollbar(true)
-        .width(rems_from_px(210.))
-        .max_height(Some(rems(20.).into()))
 }
 
 fn render_popular_settings_section(

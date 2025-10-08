@@ -1625,12 +1625,13 @@ impl EditorElement {
                             .map(|text| {
                                 let len = text.len();
 
-                                let font = cursor_row_layout
+                                let mut font = cursor_row_layout
                                     .font_id_for_index(cursor_column)
                                     .and_then(|cursor_font_id| {
                                         window.text_system().get_font_for_id(cursor_font_id)
                                     })
                                     .unwrap_or(self.style.text.font());
+                                font.features = self.style.text.font_features.clone();
 
                                 // Invert the text color for the block cursor. Ensure that the text
                                 // color is opaque enough to be visible against the background color.

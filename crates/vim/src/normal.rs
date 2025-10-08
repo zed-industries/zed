@@ -2001,14 +2001,6 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_yank_to_end_of_line(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state("heˇllo\n").await;
-        cx.simulate_shared_keystrokes("Y p").await;
-        cx.shared_state().await.assert_eq("helllˇolo\n");
-    }
-
-    #[gpui::test]
     async fn test_yank_line_with_trailing_newline(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state("heˇllo\n").await;

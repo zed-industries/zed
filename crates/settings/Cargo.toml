@@ -18,6 +18,7 @@ test-support = ["gpui/test-support", "fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+derive_more.workspace = true
 ec4rs.workspace = true
 fs.workspace = true
 futures.workspace = true

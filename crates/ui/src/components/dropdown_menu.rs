@@ -1,4 +1,4 @@
-use gpui::{ClickEvent, Corner, CursorStyle, Entity, Hsla, MouseButton};
+use gpui::{Corner, Entity, Pixels, Point};
 
 use crate::{ContextMenu, PopoverMenu, prelude::*};
 
@@ -21,11 +21,15 @@ enum LabelKind {
 pub struct DropdownMenu {
     id: ElementId,
     label: LabelKind,
+    trigger_size: ButtonSize,
     style: DropdownStyle,
     menu: Entity<ContextMenu>,
     full_width: bool,
     disabled: bool,
     handle: Option<PopoverMenuHandle<ContextMenu>>,
+    attach: Option<Corner>,
+    offset: Option<Point<Pixels>>,
+    tab_index: Option<isize>,
 }
 
 impl DropdownMenu {
@@ -37,11 +41,15 @@ impl DropdownMenu {
         Self {
             id: id.into(),
             label: LabelKind::Text(label.into()),
+            trigger_size: ButtonSize::Default,
             style: DropdownStyle::default(),
             menu,
             full_width: false,
             disabled: false,
             handle: None,
+            attach: None,
+            offset: None,
+            tab_index: None,
         }
     }
 
@@ -53,12 +61,21 @@ impl DropdownMenu {
         Self {
             id: id.into(),
             label: LabelKind::Element(label),
+            trigger_size: ButtonSize::Default,
             style: DropdownStyle::default(),
             menu,
             full_width: false,
             disabled: false,
             handle: None,
+            attach: None,
+            offset: None,
+            tab_index: None,
         }
+    }
+
+    pub fn trigger_size(mut self, size: ButtonSize) -> Self {
+        self.trigger_size = size;
+        self
     }
 
     pub fn style(mut self, style: DropdownStyle) -> Self {
@@ -75,6 +92,23 @@ impl DropdownMenu {
         self.handle = Some(handle);
         self
     }
+
+    /// Defines which corner of the handle to attach the menu's anchor to.
+    pub fn attach(mut self, attach: Corner) -> Self {
+        self.attach = Some(attach);
+        self
+    }
+
+    /// Offsets the position of the menu by that many pixels.
+    pub fn offset(mut self, offset: Point<Pixels>) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    pub fn tab_index(mut self, arg: isize) -> Self {
+        self.tab_index = Some(arg);
+        self
+    }
 }
 
 impl Disableable for DropdownMenu {
@@ -86,17 +120,47 @@ impl Disableable for DropdownMenu {
 
 impl RenderOnce for DropdownMenu {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        PopoverMenu::new(self.id)
+        let button_style = match self.style {
+            DropdownStyle::Solid => ButtonStyle::Filled,
+            DropdownStyle::Outlined => ButtonStyle::Outlined,
+            DropdownStyle::Ghost => ButtonStyle::Transparent,
+        };
+
+        let full_width = self.full_width;
+        let trigger_size = self.trigger_size;
+
+        let button = match self.label {
+            LabelKind::Text(text) => Button::new(self.id.clone(), text)
+                .style(button_style)
+                .icon(IconName::ChevronUpDown)
+                .icon_position(IconPosition::End)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .when(full_width, |this| this.full_width())
+                .size(trigger_size)
+                .disabled(self.disabled),
+            LabelKind::Element(_element) => Button::new(self.id.clone(), "")
+                .style(button_style)
+                .icon(IconName::ChevronUpDown)
+                .icon_position(IconPosition::End)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .when(full_width, |this| this.full_width())
+                .size(trigger_size)
+                .disabled(self.disabled),
+        }
+        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index));
+
+        PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
-            .trigger(
-                DropdownMenuTrigger::new(self.label)
-                    .full_width(self.full_width)
-                    .disabled(self.disabled)
-                    .style(self.style),
-            )
-            .attach(Corner::BottomLeft)
-            .when_some(self.handle, |el, handle| el.with_handle(handle))
+            .trigger(button)
+            .attach(match self.attach {
+                Some(attach) => attach,
+                None => Corner::BottomRight,
+            })
+            .when_some(self.offset, |this, offset| this.offset(offset))
+            .when_some(self.handle, |this, handle| this.with_handle(handle))
     }
 }
 
@@ -177,151 +241,5 @@ impl Component for DropdownMenu {
                 ])
                 .into_any_element(),
         )
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct DropdownTriggerStyle {
-    pub bg: Hsla,
-}
-
-impl DropdownTriggerStyle {
-    pub fn for_style(style: DropdownStyle, cx: &App) -> Self {
-        let colors = cx.theme().colors();
-
-        let bg = match style {
-            DropdownStyle::Solid => colors.editor_background,
-            DropdownStyle::Outlined => colors.surface_background,
-            DropdownStyle::Ghost => colors.ghost_element_background,
-        };
-
-        Self { bg }
-    }
-}
-
-#[derive(IntoElement)]
-struct DropdownMenuTrigger {
-    label: LabelKind,
-    full_width: bool,
-    selected: bool,
-    disabled: bool,
-    style: DropdownStyle,
-    cursor_style: CursorStyle,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-}
-
-impl DropdownMenuTrigger {
-    pub fn new(label: LabelKind) -> Self {
-        Self {
-            label,
-            full_width: false,
-            selected: false,
-            disabled: false,
-            style: DropdownStyle::default(),
-            cursor_style: CursorStyle::default(),
-            on_click: None,
-        }
-    }
-
-    pub fn full_width(mut self, full_width: bool) -> Self {
-        self.full_width = full_width;
-        self
-    }
-
-    pub fn style(mut self, style: DropdownStyle) -> Self {
-        self.style = style;
-        self
-    }
-}
-
-impl Disableable for DropdownMenuTrigger {
-    fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-}
-
-impl Toggleable for DropdownMenuTrigger {
-    fn toggle_state(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-}
-
-impl Clickable for DropdownMenuTrigger {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_click = Some(Box::new(handler));
-        self
-    }
-
-    fn cursor_style(mut self, cursor_style: CursorStyle) -> Self {
-        self.cursor_style = cursor_style;
-        self
-    }
-}
-
-impl RenderOnce for DropdownMenuTrigger {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let disabled = self.disabled;
-
-        let style = DropdownTriggerStyle::for_style(self.style, cx);
-        let is_outlined = matches!(self.style, DropdownStyle::Outlined);
-
-        h_flex()
-            .id("dropdown-menu-trigger")
-            .min_w_20()
-            .pl_2()
-            .pr_1p5()
-            .py_0p5()
-            .gap_2()
-            .justify_between()
-            .rounded_sm()
-            .map(|this| {
-                if self.full_width {
-                    this.w_full()
-                } else {
-                    this.flex_none().w_auto()
-                }
-            })
-            .when(is_outlined, |this| {
-                this.border_1()
-                    .border_color(cx.theme().colors().border)
-                    .overflow_hidden()
-            })
-            .map(|this| {
-                if disabled {
-                    this.cursor_not_allowed()
-                        .bg(cx.theme().colors().element_disabled)
-                } else {
-                    this.bg(style.bg)
-                        .hover(|s| s.bg(cx.theme().colors().element_hover))
-                }
-            })
-            .child(match self.label {
-                LabelKind::Text(text) => Label::new(text)
-                    .color(if disabled {
-                        Color::Disabled
-                    } else {
-                        Color::Default
-                    })
-                    .into_any_element(),
-                LabelKind::Element(element) => element,
-            })
-            .child(
-                Icon::new(IconName::ChevronUpDown)
-                    .size(IconSize::XSmall)
-                    .color(if disabled {
-                        Color::Disabled
-                    } else {
-                        Color::Muted
-                    }),
-            )
-            .when_some(self.on_click.filter(|_| !disabled), |el, on_click| {
-                el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .on_click(move |event, window, cx| {
-                        cx.stop_propagation();
-                        (on_click)(event, window, cx)
-                    })
-            })
     }
 }

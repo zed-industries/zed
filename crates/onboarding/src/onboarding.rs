@@ -17,6 +17,7 @@ use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
     StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
 };
+pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,

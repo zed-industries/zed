@@ -30,7 +30,7 @@ use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
-    git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
 use project_panel_settings::ProjectPanelSettings;
@@ -500,7 +500,7 @@ impl ProjectPanel {
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, _, _)
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
                     | GitStoreEvent::RepositoryAdded(_)
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
@@ -643,9 +643,17 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            project_panel.state.edit_state = None;
-                            project_panel.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
+                            match project_panel.confirm_edit(window, cx) {
+                                Some(task) => {
+                                    task.detach_and_notify_err(window, cx);
+                                }
+                                None => {
+                                    project_panel.state.edit_state = None;
+                                    project_panel
+                                        .update_visible_entries(None, false, false, window, cx);
+                                    cx.notify();
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -5771,13 +5779,14 @@ impl Render for ProjectPanel {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .on_click(cx.listener(|this, event, _, cx| {
+                                .on_click(cx.listener(|this, event, window, cx| {
                                     if matches!(event, gpui::ClickEvent::Keyboard(_)) {
                                         return;
                                     }
                                     cx.stop_propagation();
                                     this.state.selection = None;
                                     this.marked_entries.clear();
+                                    this.focus_handle(cx).focus(window);
                                 }))
                                 .on_mouse_down(
                                     MouseButton::Right,
