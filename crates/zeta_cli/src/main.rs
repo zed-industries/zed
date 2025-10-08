@@ -328,7 +328,7 @@ async fn get_context(
                     zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
                 });
                 let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                    zeta.set_options((&zeta2_args).into());
+                    zeta.set_options(zeta2_args.to_options(true));
                     zeta.register_buffer(&buffer, &project, cx);
                     zeta.wait_for_initial_indexing(&project, cx)
                 });
@@ -376,8 +376,8 @@ async fn get_context(
     }
 }
 
-impl Into<zeta2::ZetaOptions> for &Zeta2Args {
-    fn into(self) -> zeta2::ZetaOptions {
+impl Zeta2Args {
+    fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
         zeta2::ZetaOptions {
             context: EditPredictionContextOptions {
                 use_imports: !self.disable_imports_gathering,
@@ -388,7 +388,7 @@ impl Into<zeta2::ZetaOptions> for &Zeta2Args {
                         .target_before_cursor_over_total_bytes,
                 },
                 score: EditPredictionScoreOptions {
-                    omit_excerpt_overlaps: true,
+                    omit_excerpt_overlaps,
                 },
             },
             max_diagnostic_bytes: self.max_diagnostic_bytes,
@@ -1353,7 +1353,7 @@ fn main() {
                         extension,
                         limit,
                         skip,
-                        (&zeta2_args).into(),
+                        (&zeta2_args).to_options(false),
                         cx,
                     )
                     .await
