@@ -26478,3 +26478,64 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .map(Rgba::from)
         .collect()
 }
+
+#[gpui::test]
+fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("line1\nline2", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
+            });
+
+            editor.duplicate_line_up(&DuplicateLineUp, window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "line1\nline2\nline2",
+                "Duplicating last line upward should create duplicate above, not on same line"
+            );
+
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
+                "Selection should remain on the original line"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line2\n".to_string()),
+        "Copying a line without trailing newline should include a newline"
+    );
+
+    cx.set_state("line1\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("line1\nline2\nˇ");
+}

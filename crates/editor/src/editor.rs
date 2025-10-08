@@ -11687,13 +11687,26 @@ impl Editor {
                     rows.end.previous_row().0,
                     buffer.line_len(rows.end.previous_row()),
                 );
-                let text = buffer
-                    .text_for_range(start..end)
-                    .chain(Some("\n"))
-                    .collect::<String>();
+
+                let mut text = buffer.text_for_range(start..end).collect::<String>();
+
                 let insert_location = if upwards {
-                    Point::new(rows.end.0, 0)
+                    // When duplicating upward, we need to insert before the current line.
+                    // If we're on the last line and it doesn't end with a newline,
+                    // we need to add a newline before the duplicated content.
+                    let needs_leading_newline = rows.end.0 >= buffer.max_point().row
+                        && buffer.max_point().column > 0
+                        && !text.ends_with('\n');
+
+                    if needs_leading_newline {
+                        text.insert(0, '\n');
+                        end
+                    } else {
+                        text.push('\n');
+                        Point::new(rows.end.0, 0)
+                    }
                 } else {
+                    text.push('\n');
                     start
                 };
                 edits.push((insert_location..insert_location, text));
@@ -12503,9 +12516,18 @@ impl Editor {
                 let mut start = selection.start;
                 let mut end = selection.end;
                 let is_entire_line = selection.is_empty() || self.selections.line_mode();
+                let mut add_trailing_newline = false;
                 if is_entire_line {
                     start = Point::new(start.row, 0);
-                    end = cmp::min(max_point, Point::new(end.row + 1, 0));
+                    let next_line_start = Point::new(end.row + 1, 0);
+                    if next_line_start <= max_point {
+                        end = next_line_start;
+                    } else {
+                        // We're on the last line without a trailing newline.
+                        // Copy to the end of the line and add a newline afterwards.
+                        end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
+                        add_trailing_newline = true;
+                    }
                 }
 
                 let mut trimmed_selections = Vec::new();
@@ -12555,6 +12577,10 @@ impl Editor {
                     for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
                         text.push_str(chunk);
                         len += chunk.len();
+                    }
+                    if add_trailing_newline {
+                        text.push('\n');
+                        len += 1;
                     }
                     clipboard_selections.push(ClipboardSelection {
                         len,
