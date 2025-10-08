@@ -1378,7 +1378,11 @@
     "use_key_equivalents": true,
     "bindings": {
       "right": "settings_editor::ExpandNavEntry",
-      "left": "settings_editor::CollapseNavEntry"
+      "left": "settings_editor::CollapseNavEntry",
+      "pageup": "settings_editor::FocusPreviousRootNavEntry",
+      "pagedown": "settings_editor::FocusNextRootNavEntry",
+      "home": "settings_editor::FocusFirstNavEntry",
+      "end": "settings_editor::FocusLastNavEntry"
     }
   }
 ]

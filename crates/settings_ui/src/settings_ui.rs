@@ -66,6 +66,14 @@ actions!(
         FocusPreviousFile,
         /// Opens an editor for the current file
         OpenCurrentFile,
+        /// Focuses the previous root navigation entry.
+        FocusPreviousRootNavEntry,
+        /// Focuses the next root navigation entry.
+        FocusNextRootNavEntry,
+        /// Focuses the first navigation entry.
+        FocusFirstNavEntry,
+        /// Focuses the last navigation entry.
+        FocusLastNavEntry
     ]
 );
 
@@ -1446,6 +1454,51 @@ impl SettingsWindow {
                 }
                 cx.notify();
             }))
+            .on_action(
+                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, _| {
+                    let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                    let mut root_index = None;
+                    for (index, entry) in this.visible_navbar_entries() {
+                        if index >= entry_index {
+                            break;
+                        }
+                        if entry.is_root {
+                            root_index = Some(index);
+                        }
+                    }
+                    let Some(previous_root_index) = root_index else {
+                        return;
+                    };
+                    this.focus_and_scroll_to_nav_entry(previous_root_index, window);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, _| {
+                let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                let mut root_index = None;
+                for (index, entry) in this.visible_navbar_entries() {
+                    if index <= entry_index {
+                        continue;
+                    }
+                    if entry.is_root {
+                        root_index = Some(index);
+                        break;
+                    }
+                }
+                let Some(next_root_index) = root_index else {
+                    return;
+                };
+                this.focus_and_scroll_to_nav_entry(next_root_index, window);
+            }))
+            .on_action(cx.listener(|this, _: &FocusFirstNavEntry, window, _| {
+                if let Some((first_entry_index, _)) = this.visible_navbar_entries().next() {
+                    this.focus_and_scroll_to_nav_entry(first_entry_index, window);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FocusLastNavEntry, window, _| {
+                if let Some((last_entry_index, _)) = this.visible_navbar_entries().last() {
+                    this.focus_and_scroll_to_nav_entry(last_entry_index, window);
+                }
+            }))
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
             .child(self.render_search(window, cx))
@@ -1556,12 +1609,7 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    fn focus_and_scroll_to_nav_item(
-        &self,
-        nav_entry_index: usize,
-        window: &mut Window,
-        _: &mut Context<SettingsWindow>,
-    ) {
+    fn focus_and_scroll_to_nav_entry(&self, nav_entry_index: usize, window: &mut Window) {
         let Some(position) = self
             .visible_navbar_entries()
             .position(|(index, _)| index == nav_entry_index)
@@ -1935,8 +1983,8 @@ impl SettingsWindow {
         None
     }
 
-    fn root_entry_containing(&self, focused_entry: usize) -> usize {
-        let mut index = Some(focused_entry);
+    fn root_entry_containing(&self, nav_entry_index: usize) -> usize {
+        let mut index = Some(nav_entry_index);
         while let Some(prev_index) = index
             && !self.navbar_entries[prev_index].is_root
         {
@@ -1971,7 +2019,7 @@ impl Render for SettingsWindow {
                 {
                     this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
                 } else {
-                    this.focus_and_scroll_to_nav_item(this.navbar_entry, window, cx);
+                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window);
                 }
             }))
             .on_action(
