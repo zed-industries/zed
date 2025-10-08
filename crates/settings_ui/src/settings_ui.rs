@@ -1428,9 +1428,9 @@ impl SettingsWindow {
                             "settings-ui-nav-bar",
                             visible_count,
                             cx.processor(move |this, range: Range<usize>, _, cx| {
-                                let entries: Vec<_> = this.visible_navbar_entries().collect();
-                                range
-                                    .filter_map(|ix| entries.get(ix).copied())
+                                this.visible_navbar_entries()
+                                    .skip(range.start.saturating_sub(1))
+                                    .take(range.len())
                                     .map(|(ix, entry)| {
                                         TreeViewItem::new(
                                             ("settings-ui-navbar-entry", ix),
@@ -1485,6 +1485,8 @@ impl SettingsWindow {
                                                                 cx,
                                                             );
                                                         }
+                                                    } else if !evt.is_keyboard() {
+                                                        this.open_nav_page(ix);
                                                     }
                                                     cx.notify();
                                                 },
