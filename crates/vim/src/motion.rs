@@ -2388,6 +2388,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot());
+    let snapshot = map.buffer_snapshot();
 
     // Ensure the range is contained by the current line.
     let mut line_end = map.next_line_boundary(point).0;
@@ -2395,10 +2396,19 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         line_end = map.max_point().to_point(map);
     }
 
-    if let Some((opening_range, closing_range)) = map
-        .buffer_snapshot()
-        .innermost_enclosing_bracket_ranges(offset..offset, None)
-    {
+    // Attempt to find the smallest enclosing bracket range that also contains
+    // the offset, which only happens if the cursor is currently in a bracket.
+    let range_filter = |_buffer: &language::BufferSnapshot,
+                        opening_range: Range<usize>,
+                        closing_range: Range<usize>| {
+        opening_range.contains(&offset) || closing_range.contains(&offset)
+    };
+
+    let bracket_ranges = snapshot
+        .innermost_enclosing_bracket_ranges(offset..offset, Some(&range_filter))
+        .or_else(|| snapshot.innermost_enclosing_bracket_ranges(offset..offset, None));
+
+    if let Some((opening_range, closing_range)) = bracket_ranges {
         if opening_range.contains(&offset) {
             return closing_range.start.to_display_point(map);
         } else if closing_range.contains(&offset) {
@@ -2440,7 +2450,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -2451,7 +2460,6 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;
-                    continue;
                 }
             }
 
@@ -3389,6 +3397,22 @@ mod test {
                 </div>
             );
         }"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_nested_brackets(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_tsx(cx).await;
+
+        cx.set_shared_state(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick={() => {}ˇ}></Button>"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
     }
 
     #[gpui::test]
