@@ -2150,7 +2150,7 @@ where
                 menu = menu.toggleable_entry(
                     label.to_title_case(),
                     value == current_value,
-                    IconPosition::Start,
+                    IconPosition::End,
                     None,
                     move |_, cx| {
                         if value == current_value {
