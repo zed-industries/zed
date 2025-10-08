@@ -317,6 +317,8 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        let is_focused = profile.navigation.focus_handle.contains_focused(window, cx);
+
         div()
             .id(SharedString::from(format!("profile-{}", profile.id)))
             .track_focus(&profile.navigation.focus_handle)
@@ -328,25 +330,27 @@ impl ManageProfilesModal {
             })
             .child(
                 ListItem::new(SharedString::from(format!("profile-{}", profile.id)))
-                    .toggle_state(profile.navigation.focus_handle.contains_focused(window, cx))
+                    .toggle_state(is_focused)
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .child(Label::new(profile.name.clone()))
-                    .end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Customize")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .children(KeyBinding::for_action_in(
-                                &menu::Confirm,
-                                &self.focus_handle,
-                                window,
-                                cx,
-                            )),
-                    )
+                    .when(is_focused, |this| {
+                        this.end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Label::new("Customize")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .children(KeyBinding::for_action_in(
+                                    &menu::Confirm,
+                                    &self.focus_handle,
+                                    window,
+                                    cx,
+                                )),
+                        )
+                    })
                     .on_click({
                         let profile_id = profile.id.clone();
                         cx.listener(move |this, _, window, cx| {

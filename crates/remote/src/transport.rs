@@ -107,7 +107,6 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-
         let status = ssh_proxy_process.status().await?.code().unwrap_or(1);
         match result {
             Ok(_) => Ok(status),

@@ -352,7 +352,7 @@ impl Element for Img {
                                     Length::Definite(DefiniteLength::Absolute(
                                         AbsoluteLength::Pixels(width),
                                     )) => Length::Definite(
-                                        px(image_size.height.0 * width.0 / image_size.width.0)
+                                        px(image_size.height * f32::from(width) / image_size.width)
                                             .into(),
                                     ),
                                     _ => Length::Definite(image_size.height.into()),

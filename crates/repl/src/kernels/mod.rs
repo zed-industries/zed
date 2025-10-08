@@ -48,8 +48,8 @@ impl KernelSpecification {
 
     pub fn path(&self) -> SharedString {
         SharedString::from(match self {
-            Self::Jupyter(spec) => spec.path.to_string_lossy().to_string(),
-            Self::PythonEnv(spec) => spec.path.to_string_lossy().to_string(),
+            Self::Jupyter(spec) => spec.path.to_string_lossy().into_owned(),
+            Self::PythonEnv(spec) => spec.path.to_string_lossy().into_owned(),
             Self::Remote(spec) => spec.url.to_string(),
         })
     }

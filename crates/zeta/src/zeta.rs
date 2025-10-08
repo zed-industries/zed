@@ -397,7 +397,7 @@ impl Zeta {
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
-        let full_path_str = full_path.to_string_lossy().to_string();
+        let full_path_str = full_path.to_string_lossy().into_owned();
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let prompt_for_events = {
@@ -1271,12 +1271,17 @@ pub struct ZetaEditPredictionProvider {
     next_pending_completion_id: usize,
     current_completion: Option<CurrentEditPrediction>,
     last_request_timestamp: Instant,
+    project: Entity<Project>,
 }
 
 impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(zeta: Entity<Zeta>, singleton_buffer: Option<Entity<Buffer>>) -> Self {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        project: Entity<Project>,
+        singleton_buffer: Option<Entity<Buffer>>,
+    ) -> Self {
         Self {
             zeta,
             singleton_buffer,
@@ -1284,6 +1289,7 @@ impl ZetaEditPredictionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             last_request_timestamp: Instant::now(),
+            project,
         }
     }
 }
@@ -1349,7 +1355,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
         _debounce: bool,
@@ -1358,9 +1363,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         if self.zeta.read(cx).update_required {
             return;
         }
-        let Some(project) = project else {
-            return;
-        };
 
         if self
             .zeta
@@ -1388,6 +1390,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
         self.next_pending_completion_id += 1;
         let last_request_timestamp = self.last_request_timestamp;
 
+        let project = self.project.clone();
         let task = cx.spawn(async move |this, cx| {
             if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
                 .checked_duration_since(Instant::now())
@@ -1559,7 +1562,7 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
             }
         }
 
-        Some(edit_prediction::EditPrediction {
+        Some(edit_prediction::EditPrediction::Local {
             id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),

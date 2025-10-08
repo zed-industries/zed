@@ -170,15 +170,16 @@ pub fn main() {
 
     let args = Args::parse();
 
-    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
-    if let Some(socket) = &args.crash_handler {
-        crashes::crash_server(socket.as_path());
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    #[cfg(not(target_os = "windows"))]
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
         return;
     }
 
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    if let Some(socket) = &args.askpass {
-        askpass::main(socket);
+    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
+    if let Some(socket) = &args.crash_handler {
+        crashes::crash_server(socket.as_path());
         return;
     }
 
@@ -215,6 +216,15 @@ pub fn main() {
 
         if args.foreground {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    match util::get_zed_cli_path() {
+        Ok(path) => askpass::set_askpass_program(path),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            process::exit(1);
         }
     }
 
@@ -259,6 +269,9 @@ pub fn main() {
             .unwrap_or("unknown"),
     );
 
+    #[cfg(windows)]
+    check_for_conpty_dll();
+
     let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
@@ -270,6 +283,7 @@ pub fn main() {
         .spawn(crashes::init(InitCrashHandler {
             session_id: session_id.clone(),
             zed_version: app_version.to_string(),
+            binary: "zed".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: app_commit_sha
                 .as_ref()
@@ -339,7 +353,7 @@ pub fn main() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
-                util::load_login_shell_environment().log_err();
+                util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
@@ -620,6 +634,7 @@ pub fn main() {
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
+        json_schema_store::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();
@@ -666,7 +681,8 @@ pub fn main() {
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
-        cx.set_menus(app_menus());
+        let menus = app_menus(cx);
+        cx.set_menus(menus);
         initialize_workspace(app_state.clone(), prompt_builder, cx);
 
         cx.activate(true);
@@ -779,6 +795,59 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::DockMenuAction { index } => {
                 cx.perform_dock_menu_action(index);
+            }
+            OpenRequestKind::BuiltinJsonSchema { schema_path } => {
+                workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
+                        let res = async move {
+                            let json = app_state.languages.language_for_name("JSONC").await.ok();
+                            let json_schema_content =
+                                json_schema_store::resolve_schema_request_inner(
+                                    &app_state.languages,
+                                    &schema_path,
+                                    cx,
+                                )?;
+                            let json_schema_content =
+                                serde_json::to_string_pretty(&json_schema_content)
+                                    .context("Failed to serialize JSON Schema as JSON")?;
+                            let buffer_task = workspace.update(cx, |workspace, cx| {
+                                workspace
+                                    .project()
+                                    .update(cx, |project, cx| project.create_buffer(false, cx))
+                            })?;
+
+                            let buffer = buffer_task.await?;
+
+                            workspace.update_in(cx, |workspace, window, cx| {
+                                buffer.update(cx, |buffer, cx| {
+                                    buffer.set_language(json, cx);
+                                    buffer.edit([(0..0, json_schema_content)], None, cx);
+                                    buffer.edit(
+                                        [(0..0, format!("// {} JSON Schema\n", schema_path))],
+                                        None,
+                                        cx,
+                                    );
+                                });
+
+                                workspace.add_item_to_active_pane(
+                                    Box::new(cx.new(|cx| {
+                                        let mut editor =
+                                            editor::Editor::for_buffer(buffer, None, window, cx);
+                                        editor.set_read_only(true);
+                                        editor
+                                    })),
+                                    None,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
+                        }
+                        .await;
+                        res.context("Failed to open builtin JSON Schema").log_err();
+                    })
+                    .detach();
+                });
             }
         }
 
@@ -1192,11 +1261,6 @@ struct Args {
     #[arg(long)]
     system_specs: bool,
 
-    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long, hide = true)]
-    askpass: Option<String>,
-
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
@@ -1218,6 +1282,13 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long)]
+    #[cfg(not(target_os = "windows"))]
+    #[arg(hide = true)]
+    askpass: Option<String>,
 
     #[arg(long, hide = true)]
     dump_all_actions: bool,
@@ -1459,4 +1530,22 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(target_os = "windows")]
+fn check_for_conpty_dll() {
+    use windows::{
+        Win32::{Foundation::FreeLibrary, System::LibraryLoader::LoadLibraryW},
+        core::w,
+    };
+
+    if let Ok(hmodule) = unsafe { LoadLibraryW(w!("conpty.dll")) } {
+        unsafe {
+            FreeLibrary(hmodule)
+                .context("Failed to free conpty.dll")
+                .log_err();
+        }
+    } else {
+        log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
+    }
 }

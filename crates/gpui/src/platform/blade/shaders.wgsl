@@ -180,6 +180,13 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+fn srgb_to_linear_component(a: f32) -> f32 {
+    let cutoff = a < 0.04045;
+    let higher = pow((a + 0.055) / 1.055, 2.4);
+    let lower = a / 12.92;
+    return select(higher, lower, cutoff);
+}
+
 fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
     let cutoff = linear < vec3<f32>(0.0031308);
     let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
@@ -229,12 +236,7 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
         color.b += x;
     }
 
-    // Input colors are assumed to be in sRGB space,
-    // but blending and rendering needs to happen in linear space.
-    // The output will be converted to sRGB by either the target
-    // texture format or the swapchain color space.
-    let linear = srgb_to_linear(color);
-    return vec4<f32>(linear, a);
+    return vec4<f32>(color, a);
 }
 
 /// Convert a linear sRGB to Oklab space.
@@ -1161,6 +1163,8 @@ fn fs_mono_sprite(input: MonoSpriteVarying) -> @location(0) vec4<f32> {
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
     }
+
+    // convert to srgb space as the rest of the code (output swapchain) expects that
     return blend_color(input.color, alpha_corrected);
 }
 

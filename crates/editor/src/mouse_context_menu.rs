@@ -54,7 +54,7 @@ impl MouseContextMenu {
         let content_origin = editor.last_bounds?.origin
             + Point {
                 x: editor.gutter_dimensions.width,
-                y: Pixels(0.0),
+                y: Pixels::ZERO,
             };
         let source_position = editor.to_pixel_point(source, &editor_snapshot, window)?;
         let menu_position = MenuPosition::PinnedToEditor {
@@ -170,7 +170,8 @@ pub fn deploy_context_menu(
         };
 
         let display_map = editor.selections.display_map(cx);
-        let buffer = &editor.snapshot(window, cx).buffer_snapshot;
+        let snapshot = editor.snapshot(window, cx);
+        let buffer = snapshot.buffer_snapshot();
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
             // Move the cursor to the clicked location so that dispatched actions make sense

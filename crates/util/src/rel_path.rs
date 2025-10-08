@@ -9,18 +9,40 @@ use std::{
     sync::Arc,
 };
 
+/// A file system path that is guaranteed to be relative and normalized.
+///
+/// This type can be used to represent paths in a uniform way, regardless of
+/// whether they refer to Windows or POSIX file systems, and regardless of
+/// the host platform.
+///
+/// Internally, paths are stored in POSIX ('/'-delimited) format, but they can
+/// be displayed in either POSIX or Windows format.
+///
+/// Relative paths are also guaranteed to be valid unicode.
 #[repr(transparent)]
 #[derive(PartialEq, Eq, Hash, Serialize)]
 pub struct RelPath(str);
 
+/// An owned representation of a file system path that is guaranteed to be
+/// relative and normalized.
+///
+/// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
+    /// Creates an empty [`RelPath`].
     pub fn empty() -> &'static Self {
-        unsafe { Self::new_unchecked("") }
+        Self::new_unchecked("")
     }
 
+    /// Converts a path with a given style into a [`RelPath`].
+    ///
+    /// Returns an error if the path is absolute, or is not valid unicode.
+    ///
+    /// This method will normalize the path by removing `.` components,
+    /// processing `..` components, and removing trailing separators. It does
+    /// not allocate unless it's necessary to reformat the path.
     #[track_caller]
     pub fn new<'a>(path: &'a Path, path_style: PathStyle) -> Result<Cow<'a, Self>> {
         let mut path = path.to_str().context("non utf-8 path")?;
@@ -49,7 +71,7 @@ impl RelPath {
         }
 
         let mut result = match string {
-            Cow::Borrowed(string) => Cow::Borrowed(unsafe { Self::new_unchecked(string) }),
+            Cow::Borrowed(string) => Cow::Borrowed(Self::new_unchecked(string)),
             Cow::Owned(string) => Cow::Owned(RelPathBuf(string)),
         };
 
@@ -67,7 +89,7 @@ impl RelPath {
                             return Err(anyhow!("path is not relative: {result:?}"));
                         }
                     }
-                    other => normalized.push(&RelPath::unix(other)?),
+                    other => normalized.push(RelPath::new_unchecked(other)),
                 }
             }
             result = Cow::Owned(normalized)
@@ -76,6 +98,10 @@ impl RelPath {
         Ok(result)
     }
 
+    /// Converts a path that is already normalized and uses '/' separators
+    /// into a [`RelPath`] .
+    ///
+    /// Returns an error if the path is not already in the correct format.
     #[track_caller]
     pub fn unix<S: AsRef<Path> + ?Sized>(path: &S) -> anyhow::Result<&Self> {
         let path = path.as_ref();
@@ -85,7 +111,8 @@ impl RelPath {
         }
     }
 
-    unsafe fn new_unchecked(s: &str) -> &Self {
+    fn new_unchecked(s: &str) -> &Self {
+        // Safety: `RelPath` is a transparent wrapper around `str`.
         unsafe { &*(s as *const str as *const Self) }
     }
 
@@ -140,7 +167,7 @@ impl RelPath {
         }
         if let Some(suffix) = self.0.strip_prefix(&other.0) {
             if let Some(suffix) = suffix.strip_prefix('/') {
-                return Ok(unsafe { Self::new_unchecked(suffix) });
+                return Ok(Self::new_unchecked(suffix));
             } else if suffix.is_empty() {
                 return Ok(Self::empty());
             }
@@ -173,29 +200,31 @@ impl RelPath {
         } else {
             Cow::Owned(format!("{}/{}", &self.0, &other.0))
         };
-        Arc::from(unsafe { Self::new_unchecked(result.as_ref()) })
-    }
-
-    pub fn to_proto(&self) -> String {
-        self.as_unix_str().to_owned()
+        Arc::from(Self::new_unchecked(result.as_ref()))
     }
 
     pub fn to_rel_path_buf(&self) -> RelPathBuf {
         RelPathBuf(self.0.to_string())
     }
 
-    pub fn from_proto(path: &str) -> Result<Arc<Self>> {
-        Ok(Arc::from(Self::unix(path)?))
-    }
-
-    pub fn as_unix_str(&self) -> &str {
-        &self.0
-    }
-
     pub fn into_arc(&self) -> Arc<Self> {
         Arc::from(self)
     }
 
+    /// Convert the path into the wire representation.
+    pub fn to_proto(&self) -> String {
+        self.as_unix_str().to_owned()
+    }
+
+    /// Load the path from its wire representation.
+    pub fn from_proto(path: &str) -> Result<Arc<Self>> {
+        Ok(Arc::from(Self::unix(path)?))
+    }
+
+    /// Convert the path into a string with the given path style.
+    ///
+    /// Whenever a path is presented to the user, it should be converted to
+    /// a string via this method.
     pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
         match style {
             PathStyle::Posix => Cow::Borrowed(&self.0),
@@ -203,6 +232,19 @@ impl RelPath {
         }
     }
 
+    /// Get the internal unix-style representation of the path.
+    ///
+    /// This should not be shown to the user.
+    pub fn as_unix_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Interprets the path as a [`std::path::Path`], suitable for file system calls.
+    ///
+    /// This is guaranteed to be a valid path regardless of the host platform, because
+    /// the `/` is accepted as a path separator on windows.
+    ///
+    /// This should not be shown to the user.
     pub fn as_std_path(&self) -> &Path {
         Path::new(&self.0)
     }
@@ -271,7 +313,7 @@ impl RelPathBuf {
     }
 
     pub fn as_rel_path(&self) -> &RelPath {
-        unsafe { RelPath::new_unchecked(self.0.as_str()) }
+        RelPath::new_unchecked(self.0.as_str())
     }
 
     pub fn set_extension(&mut self, extension: &str) -> bool {
@@ -340,7 +382,7 @@ const SEPARATOR: char = '/';
 
 impl<'a> RelPathComponents<'a> {
     pub fn rest(&self) -> &'a RelPath {
-        unsafe { RelPath::new_unchecked(self.0) }
+        RelPath::new_unchecked(self.0)
     }
 }
 
@@ -374,7 +416,7 @@ impl<'a> Iterator for RelPathAncestors<'a> {
         } else {
             self.0 = None;
         }
-        Some(unsafe { RelPath::new_unchecked(result) })
+        Some(RelPath::new_unchecked(result))
     }
 }
 

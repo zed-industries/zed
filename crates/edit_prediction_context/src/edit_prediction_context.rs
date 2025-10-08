@@ -4,8 +4,11 @@ mod excerpt;
 mod outline;
 mod reference;
 mod syntax_index;
-mod text_similarity;
+pub mod text_similarity;
 
+use std::sync::Arc;
+
+use collections::HashMap;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 use text::{Point, ToOffset as _};
@@ -21,7 +24,7 @@ pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
     pub cursor_offset_in_excerpt: usize,
-    pub snippets: Vec<ScoredSnippet>,
+    pub declarations: Vec<ScoredDeclaration>,
 }
 
 impl EditPredictionContext {
@@ -33,8 +36,10 @@ impl EditPredictionContext {
         cx: &mut App,
     ) -> Task<Option<Self>> {
         if let Some(syntax_index) = syntax_index {
-            let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+            let index_state =
+                syntax_index.read_with(cx, |index, _cx| Arc::downgrade(index.state()));
             cx.background_spawn(async move {
+                let index_state = index_state.upgrade()?;
                 let index_state = index_state.lock().await;
                 Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
             })
@@ -51,6 +56,26 @@ impl EditPredictionContext {
         excerpt_options: &EditPredictionExcerptOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
+        Self::gather_context_with_references_fn(
+            cursor_point,
+            buffer,
+            excerpt_options,
+            index_state,
+            references_in_excerpt,
+        )
+    }
+
+    pub fn gather_context_with_references_fn(
+        cursor_point: Point,
+        buffer: &BufferSnapshot,
+        excerpt_options: &EditPredictionExcerptOptions,
+        index_state: Option<&SyntaxIndexState>,
+        get_references: impl FnOnce(
+            &EditPredictionExcerpt,
+            &EditPredictionExcerptText,
+            &BufferSnapshot,
+        ) -> HashMap<Identifier, Vec<Reference>>,
+    ) -> Option<Self> {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
@@ -58,17 +83,28 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
+        let excerpt_occurrences = text_similarity::Occurrences::within_string(&excerpt_text.body);
+
+        let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
+        let adjacent_end = Point::new(cursor_point.row + 1, 0);
+        let adjacent_occurrences = text_similarity::Occurrences::within_string(
+            &buffer
+                .text_for_range(adjacent_start..adjacent_end)
+                .collect::<String>(),
+        );
+
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
         // TODO fix this to not need saturating_sub
         let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
-        let snippets = if let Some(index_state) = index_state {
-            let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
+        let declarations = if let Some(index_state) = index_state {
+            let references = get_references(&excerpt, &excerpt_text, buffer);
 
-            scored_snippets(
+            scored_declarations(
                 &index_state,
                 &excerpt,
-                &excerpt_text,
+                &excerpt_occurrences,
+                &adjacent_occurrences,
                 references,
                 cursor_offset_in_file,
                 buffer,
@@ -81,7 +117,7 @@ impl EditPredictionContext {
             excerpt,
             excerpt_text,
             cursor_offset_in_excerpt,
-            snippets,
+            declarations,
         })
     }
 }
@@ -137,7 +173,7 @@ mod tests {
             .unwrap();
 
         let mut snippet_identifiers = context
-            .snippets
+            .declarations
             .iter()
             .map(|snippet| snippet.identifier.name.as_ref())
             .collect::<Vec<_>>();
@@ -226,7 +262,8 @@ mod tests {
         let lang_id = lang.id();
         language_registry.add(Arc::new(lang));
 
-        let index = cx.new(|cx| SyntaxIndex::new(&project, cx));
+        let file_indexing_parallelism = 2;
+        let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx));
         cx.run_until_parked();
 
         (project, index, lang_id)

@@ -8,7 +8,7 @@ use multi_buffer::{
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::{ChunkBitmaps, Patch, Rope};
@@ -41,12 +41,17 @@ enum Transform {
 pub struct Inlay {
     pub id: InlayId,
     pub position: Anchor,
-    pub text: text::Rope,
-    color: Option<Hsla>,
+    pub content: InlayContent,
+}
+
+#[derive(Debug, Clone)]
+pub enum InlayContent {
+    Text(text::Rope),
+    Color(Hsla),
 }
 
 impl Inlay {
-    pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
+    pub fn hint(id: u32, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
         if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
             text.push(" ");
@@ -57,51 +62,57 @@ impl Inlay {
         Self {
             id: InlayId::Hint(id),
             position,
-            text,
-            color: None,
+            content: InlayContent::Text(text),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn mock_hint(id: usize, position: Anchor, text: impl Into<Rope>) -> Self {
+    pub fn mock_hint(id: u32, position: Anchor, text: impl Into<Rope>) -> Self {
         Self {
             id: InlayId::Hint(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
         }
     }
 
-    pub fn color(id: usize, position: Anchor, color: Rgba) -> Self {
+    pub fn color(id: u32, position: Anchor, color: Rgba) -> Self {
         Self {
             id: InlayId::Color(id),
             position,
-            text: Rope::from("◼"),
-            color: Some(Hsla::from(color)),
+            content: InlayContent::Color(color.into()),
         }
     }
 
-    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn edit_prediction<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::EditPrediction(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
         }
     }
 
-    pub fn debugger<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn debugger<T: Into<Rope>>(id: u32, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::DebuggerValue(id),
             position,
-            text: text.into(),
-            color: None,
+            content: InlayContent::Text(text.into()),
+        }
+    }
+
+    pub fn text(&self) -> &Rope {
+        static COLOR_TEXT: OnceLock<Rope> = OnceLock::new();
+        match &self.content {
+            InlayContent::Text(text) => text,
+            InlayContent::Color(_) => COLOR_TEXT.get_or_init(|| Rope::from("◼")),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn get_color(&self) -> Option<Hsla> {
-        self.color
+        match self.content {
+            InlayContent::Color(color) => Some(color),
+            _ => None,
+        }
     }
 }
 
@@ -116,7 +127,7 @@ impl sum_tree::Item for Transform {
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: TextSummary::default(),
-                output: inlay.text.summary(),
+                output: inlay.text().summary(),
             },
         }
     }
@@ -354,7 +365,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 let mut renderer = None;
                 let mut highlight_style = match inlay.id {
                     InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
-                        if inlay.text.chars().all(|c| c.is_whitespace()) {
+                        if inlay.text().chars().all(|c| c.is_whitespace()) {
                             s.whitespace
                         } else {
                             s.insertion
@@ -363,7 +374,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                     InlayId::Color(_) => {
-                        if let Some(color) = inlay.color {
+                        if let InlayContent::Color(color) = inlay.content {
                             renderer = Some(ChunkRenderer {
                                 id: ChunkRendererId::Inlay(inlay.id),
                                 render: Arc::new(move |cx| {
@@ -376,7 +387,13 @@ impl<'a> Iterator for InlayChunks<'a> {
                                                 .right_1()
                                                 .size_3()
                                                 .border_1()
-                                                .border_color(cx.theme().colors().border)
+                                                .border_color(
+                                                    if cx.theme().appearance().is_light() {
+                                                        gpui::black().opacity(0.5)
+                                                    } else {
+                                                        gpui::white().opacity(0.5)
+                                                    },
+                                                )
                                                 .bg(color),
                                         )
                                         .into_any_element()
@@ -410,7 +427,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end().0)
                         - self.transforms.start().0;
-                    let chunks = inlay.text.chunks_in_range(start.0..end.0);
+                    let chunks = inlay.text().chunks_in_range(start.0..end.0);
                     text::ChunkWithBitmaps(chunks)
                 });
                 let ChunkBitmaps {
@@ -706,7 +723,7 @@ impl InlayMap {
 
         for inlay_to_insert in to_insert {
             // Avoid inserting empty inlays.
-            if inlay_to_insert.text.is_empty() {
+            if inlay_to_insert.text().is_empty() {
                 continue;
             }
 
@@ -744,7 +761,7 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
-        next_inlay_id: &mut usize,
+        next_inlay_id: &mut u32,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         use rand::prelude::*;
@@ -822,7 +839,7 @@ impl InlaySnapshot {
                 InlayPoint(cursor.start().1.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.text.offset_to_point(overshoot);
+                let overshoot = inlay.text().offset_to_point(overshoot);
                 InlayPoint(cursor.start().1.0 + overshoot)
             }
             None => self.max_point(),
@@ -852,7 +869,7 @@ impl InlaySnapshot {
                 InlayOffset(cursor.start().1.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
-                let overshoot = inlay.text.point_to_offset(overshoot);
+                let overshoot = inlay.text().point_to_offset(overshoot);
                 InlayOffset(cursor.start().1.0 + overshoot)
             }
             None => self.len(),
@@ -1064,7 +1081,7 @@ impl InlaySnapshot {
             Some(Transform::Inlay(inlay)) => {
                 let suffix_start = overshoot;
                 let suffix_end = cmp::min(cursor.end().0, range.end).0 - cursor.start().0.0;
-                summary = inlay.text.cursor(suffix_start).summary(suffix_end);
+                summary = inlay.text().cursor(suffix_start).summary(suffix_end);
                 cursor.next();
             }
             None => {}
@@ -1086,7 +1103,7 @@ impl InlaySnapshot {
                 }
                 Some(Transform::Inlay(inlay)) => {
                     let prefix_end = overshoot;
-                    summary += inlay.text.cursor(0).summary::<TextSummary>(prefix_end);
+                    summary += inlay.text().cursor(0).summary::<TextSummary>(prefix_end);
                 }
                 None => {}
             }
@@ -1269,7 +1286,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             "a",
             "Should not pad label if not requested"
@@ -1289,7 +1306,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should pad label for every side requested"
@@ -1309,7 +1326,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should not change already padded label"
@@ -1329,7 +1346,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " a ",
             "Should not change already padded label"
@@ -1352,7 +1369,7 @@ mod tests {
                     resolve_state: ResolveState::Resolved,
                 },
             )
-            .text
+            .text()
             .to_string(),
             " 🎨 ",
             "Should pad single emoji correctly"
@@ -1750,7 +1767,7 @@ mod tests {
                 .collect::<Vec<_>>();
             let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
-                expected_text.replace(*offset..*offset, &inlay.text.to_string());
+                expected_text.replace(*offset..*offset, &inlay.text().to_string());
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
@@ -1803,7 +1820,7 @@ mod tests {
                         .into_iter()
                         .filter_map(|i| {
                             let (_, inlay) = &inlays[i];
-                            let inlay_text_len = inlay.text.len();
+                            let inlay_text_len = inlay.text().len();
                             match inlay_text_len {
                                 0 => None,
                                 1 => Some(InlayHighlight {
@@ -1812,7 +1829,7 @@ mod tests {
                                     range: 0..1,
                                 }),
                                 n => {
-                                    let inlay_text = inlay.text.to_string();
+                                    let inlay_text = inlay.text().to_string();
                                     let mut highlight_end = rng.random_range(1..n);
                                     let mut highlight_start = rng.random_range(0..highlight_end);
                                     while !inlay_text.is_char_boundary(highlight_end) {
@@ -2138,8 +2155,7 @@ mod tests {
         let inlay = Inlay {
             id: InlayId::Hint(0),
             position,
-            text: text::Rope::from(inlay_text),
-            color: None,
+            content: InlayContent::Text(text::Rope::from(inlay_text)),
         };
 
         let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);
@@ -2253,8 +2269,7 @@ mod tests {
             let inlay = Inlay {
                 id: InlayId::Hint(0),
                 position,
-                text: text::Rope::from(test_case.inlay_text),
-                color: None,
+                content: InlayContent::Text(text::Rope::from(test_case.inlay_text)),
             };
 
             let (inlay_snapshot, _) = inlay_map.splice(&[], vec![inlay]);

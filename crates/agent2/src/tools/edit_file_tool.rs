@@ -218,7 +218,7 @@ impl AgentTool for EditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(input.path.to_string_lossy().to_string())
+                .unwrap_or(input.path.to_string_lossy().into_owned())
                 .into(),
             Err(raw_input) => {
                 if let Some(input) =
@@ -476,7 +476,7 @@ impl AgentTool for EditFileTool {
     ) -> Result<()> {
         event_stream.update_diff(cx.new(|cx| {
             Diff::finalized(
-                output.input_path.to_string_lossy().to_string(),
+                output.input_path.to_string_lossy().into_owned(),
                 Some(output.old_text.to_string()),
                 output.new_text,
                 self.language_registry.clone(),

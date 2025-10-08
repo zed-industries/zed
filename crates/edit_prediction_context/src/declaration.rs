@@ -55,6 +55,13 @@ impl Declaration {
         }
     }
 
+    pub fn as_file(&self) -> Option<&FileDeclaration> {
+        match self {
+            Declaration::Buffer { .. } => None,
+            Declaration::File { declaration, .. } => Some(declaration),
+        }
+    }
+
     pub fn project_entry_id(&self) -> ProjectEntryId {
         match self {
             Declaration::File {

@@ -1340,7 +1340,7 @@ impl LocalLspStore {
 
         // Formatter for `code_actions_on_format` that runs before
         // the rest of the formatters
-        let mut code_actions_on_format_formatter = None;
+        let mut code_actions_on_format_formatters = None;
         let should_run_code_actions_on_format = !matches!(
             (trigger, &settings.format_on_save),
             (FormatTrigger::Save, &FormatOnSave::Off)
@@ -1352,15 +1352,20 @@ impl LocalLspStore {
                 .any(|enabled| *enabled);
             if have_code_actions_to_run_on_format {
                 zlog::trace!(logger => "going to run code actions on format");
-                code_actions_on_format_formatter = Some(Formatter::CodeActions(
-                    settings.code_actions_on_format.clone(),
-                ));
+                code_actions_on_format_formatters = Some(
+                    settings
+                        .code_actions_on_format
+                        .iter()
+                        .filter_map(|(action, enabled)| enabled.then_some(action))
+                        .cloned()
+                        .map(Formatter::CodeAction)
+                        .collect::<Vec<_>>(),
+                );
             }
         }
 
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
-            (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
             (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
                 match &settings.formatter {
                     SelectedFormatter::Auto => {
@@ -1377,7 +1382,10 @@ impl LocalLspStore {
             }
         };
 
-        let formatters = code_actions_on_format_formatter.iter().chain(formatters);
+        let formatters = code_actions_on_format_formatters
+            .iter()
+            .flatten()
+            .chain(formatters);
 
         for formatter in formatters {
             match formatter {
@@ -1512,7 +1520,7 @@ impl LocalLspStore {
                         },
                     )?;
                 }
-                Formatter::CodeActions(code_actions) => {
+                Formatter::CodeAction(code_action_name) => {
                     let logger = zlog::scoped!(logger => "code-actions");
                     zlog::trace!(logger => "formatting");
                     let _timer = zlog::time!(logger => "Formatting buffer using code actions");
@@ -1521,17 +1529,9 @@ impl LocalLspStore {
                         zlog::warn!(logger => "Cannot format buffer that is not backed by a file on disk using code actions. Skipping");
                         continue;
                     };
-                    let code_action_kinds = code_actions
-                        .iter()
-                        .filter_map(|(action_kind, enabled)| {
-                            enabled.then_some(action_kind.clone().into())
-                        })
-                        .collect::<Vec<_>>();
-                    if code_action_kinds.is_empty() {
-                        zlog::trace!(logger => "No code action kinds enabled, skipping");
-                        continue;
-                    }
-                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kinds);
+
+                    let code_action_kind: CodeActionKind = code_action_name.clone().into();
+                    zlog::trace!(logger => "Attempting to resolve code actions {:?}", &code_action_kind);
 
                     let mut actions_and_servers = Vec::new();
 
@@ -1539,23 +1539,25 @@ impl LocalLspStore {
                         let actions_result = Self::get_server_code_actions_from_action_kinds(
                             &lsp_store,
                             language_server.server_id(),
-                            code_action_kinds.clone(),
+                            vec![code_action_kind.clone()],
                             &buffer.handle,
                             cx,
                         )
                         .await
-                        .with_context(
-                            || format!("Failed to resolve code actions with kinds {:?} for language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
-                                language_server.name())
-                        );
+                        .with_context(|| {
+                            format!(
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
+                                language_server.name()
+                            )
+                        });
                         let Ok(actions) = actions_result else {
                             // note: it may be better to set result to the error and break formatters here
                             // but for now we try to execute the actions that we can resolve and skip the rest
                             zlog::error!(
                                 logger =>
-                                "Failed to resolve code actions with kinds {:?} with language server {}",
-                                code_action_kinds.iter().map(|kind| kind.as_str()).join(", "),
+                                "Failed to resolve code action {:?} with language server {}",
+                                code_action_kind,
                                 language_server.name()
                             );
                             continue;
@@ -1600,7 +1602,7 @@ impl LocalLspStore {
 
                         if let Some(edit) = action.lsp_action.edit().cloned() {
                             // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
-                            // but filters out and logs warnings for code actions that cause unreasonably
+                            // but filters out and logs warnings for code actions that require unreasonably
                             // difficult handling on our part, such as:
                             // - applying edits that call commands
                             //   which can result in arbitrary workspace edits being sent from the server that
@@ -1740,7 +1742,12 @@ impl LocalLspStore {
                                 formatting_transaction_id,
                                 cx,
                                 |buffer, cx| {
+                                    zlog::info!(
+                                        "Applying edits {edits:?}. Content: {:?}",
+                                        buffer.text()
+                                    );
                                     buffer.edit(edits, None, cx);
+                                    zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                                 },
                             )?;
                         }
@@ -2485,7 +2492,7 @@ impl LocalLspStore {
                     name: None,
                     message: proto::update_language_server::Variant::RegisteredForBuffer(
                         proto::RegisteredForBuffer {
-                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                            buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                             buffer_id: buffer_id.to_proto(),
                         },
                     ),
@@ -3188,7 +3195,7 @@ impl LocalLspStore {
                         let pattern = watcher_path
                             .as_path()
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
@@ -3196,7 +3203,7 @@ impl LocalLspStore {
                                     path.display(),
                                     e
                                 );
-                                watcher_path.as_path().to_string_lossy().to_string()
+                                watcher_path.as_path().to_string_lossy().into_owned()
                             });
                         (path, pattern)
                     }
@@ -3212,7 +3219,7 @@ impl LocalLspStore {
                         let path = glob_literal_prefix(Path::new(&rp.pattern));
                         let pattern = Path::new(&rp.pattern)
                             .strip_prefix(&path)
-                            .map(|p| p.to_string_lossy().to_string())
+                            .map(|p| p.to_string_lossy().into_owned())
                             .unwrap_or_else(|e| {
                                 debug_panic!(
                                     "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
@@ -3285,7 +3292,7 @@ impl LocalLspStore {
                     Some((
                         worktree.clone(),
                         RelPath::new(&literal_prefix, path_style).ok()?.into_arc(),
-                        relative.to_string_lossy().to_string(),
+                        relative.to_string_lossy().into_owned(),
                     ))
                 }
                 lsp::GlobPattern::Relative(rp) => {
@@ -3707,15 +3714,6 @@ impl LspStore {
             .detach();
         cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
             .detach();
-        if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
-            cx.subscribe(
-                extension_events,
-                Self::reload_zed_json_schemas_on_extensions_changed,
-            )
-            .detach();
-        } else {
-            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
-        }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
         subscribe_to_binary_statuses(&languages, cx).detach();
@@ -3989,100 +3987,6 @@ impl LspStore {
         }
 
         Ok(())
-    }
-
-    pub fn reload_zed_json_schemas_on_extensions_changed(
-        &mut self,
-        _: Entity<extension::ExtensionEvents>,
-        evt: &extension::Event,
-        cx: &mut Context<Self>,
-    ) {
-        match evt {
-            extension::Event::ExtensionInstalled(_)
-            | extension::Event::ExtensionUninstalled(_)
-            | extension::Event::ConfigureExtensionRequested(_) => return,
-            extension::Event::ExtensionsInstalledChanged => {}
-        }
-        if self.as_local().is_none() {
-            return;
-        }
-        cx.spawn(async move |this, cx| {
-            let weak_ref = this.clone();
-
-            let servers = this
-                .update(cx, |this, cx| {
-                    let local = this.as_local()?;
-
-                    let mut servers = Vec::new();
-                    for (seed, state) in &local.language_server_ids {
-
-                            let Some(states) = local.language_servers.get(&state.id) else {
-                                continue;
-                            };
-                            let (json_adapter, json_server) = match states {
-                                LanguageServerState::Running {
-                                    adapter, server, ..
-                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
-                                    (adapter.adapter.clone(), server.clone())
-                                }
-                                _ => continue,
-                            };
-
-                            let Some(worktree) = this
-                                .worktree_store
-                                .read(cx)
-                                .worktree_for_id(seed.worktree_id, cx)
-                            else {
-                                continue;
-                            };
-                            let json_delegate: Arc<dyn LspAdapterDelegate> =
-                                LocalLspAdapterDelegate::new(
-                                    local.languages.clone(),
-                                    &local.environment,
-                                    weak_ref.clone(),
-                                    &worktree,
-                                    local.http_client.clone(),
-                                    local.fs.clone(),
-                                    cx,
-                                );
-
-                            servers.push((json_adapter, json_server, json_delegate));
-
-                    }
-                    Some(servers)
-                })
-                .ok()
-                .flatten();
-
-            let Some(servers) = servers else {
-                return;
-            };
-
-            for (adapter, server, delegate) in servers {
-                adapter.clear_zed_json_schema_cache().await;
-
-                let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
-                        adapter,
-                        &delegate,
-                        None,
-                        cx,
-                    )
-                    .await
-                    .context("generate new workspace configuration for JSON language server while trying to refresh JSON Schemas")
-                    .ok()
-                else {
-                    continue;
-                };
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        &lsp::DidChangeConfigurationParams {
-                            settings: json_workspace_config,
-                        },
-                    )
-                    .ok();
-            }
-        })
-        .detach();
     }
 
     pub(crate) fn register_buffer_with_language_servers(
@@ -4725,7 +4629,9 @@ impl LspStore {
                                 message:
                                     proto::update_language_server::Variant::RegisteredForBuffer(
                                         proto::RegisteredForBuffer {
-                                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                                            buffer_abs_path: abs_path
+                                                .to_string_lossy()
+                                                .into_owned(),
                                             buffer_id: buffer_id.to_proto(),
                                         },
                                     ),
@@ -10685,7 +10591,7 @@ impl LspStore {
                 name: Some(adapter.name()),
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_abs_path: abs_path.to_string_lossy().into_owned(),
                         buffer_id: buffer_id.to_proto(),
                     },
                 ),
@@ -10946,7 +10852,7 @@ impl LspStore {
                 abs_path,
                 signature,
             } => {
-                result.path = abs_path.to_string_lossy().to_string();
+                result.path = abs_path.to_string_lossy().into_owned();
                 result.signature = signature.to_vec();
             }
         }
@@ -12851,7 +12757,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     #[cfg(not(target_os = "windows"))]
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        let worktree_abs_path = self.worktree.abs_path();
+        let mut worktree_abs_path = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&worktree_abs_path).await {
+            worktree_abs_path.pop();
+        }
         let shell_path = self.shell_env().await.get("PATH").cloned();
         which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
@@ -12865,7 +12774,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
-        let working_dir = self.worktree_root_path();
+        let mut working_dir = self.worktree_root_path().to_path_buf();
+        if self.fs.is_file(&working_dir).await {
+            working_dir.pop();
+        }
         let output = util::command::new_smol_command(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
@@ -12934,7 +12846,7 @@ async fn populate_labels_for_symbols(
             continue;
         };
         let language = language_registry
-            .language_for_file_path(Path::new(file_name))
+            .load_language_for_file_path(Path::new(file_name))
             .await
             .ok()
             .or_else(|| {

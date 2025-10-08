@@ -159,9 +159,11 @@ impl Vim {
                     let point_range = display_range.start.to_point(&display_map)
                         ..display_range.end.to_point(&display_map);
                     let anchor = if is_multiline || vim.mode == Mode::VisualLine {
-                        display_map.buffer_snapshot.anchor_before(point_range.start)
+                        display_map
+                            .buffer_snapshot()
+                            .anchor_before(point_range.start)
                     } else {
-                        display_map.buffer_snapshot.anchor_after(point_range.end)
+                        display_map.buffer_snapshot().anchor_after(point_range.end)
                     };
 
                     if *preserve {

@@ -18,7 +18,7 @@ use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{Zeta, ZetaOptions};
 
-use edit_prediction_context::{EditPredictionExcerptOptions, SnippetStyle};
+use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
 actions!(
     dev,
@@ -185,7 +185,7 @@ impl Zeta2Inspector {
                     cx.background_executor().timer(THROTTLE_TIME).await;
                     if let Some(task) = zeta
                         .update(cx, |zeta, cx| {
-                            zeta.request_prediction(&project, &buffer, position, cx)
+                            zeta.refresh_prediction(&project, &buffer, position, cx)
                         })
                         .ok()
                     {
@@ -252,6 +252,7 @@ impl Zeta2Inspector {
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
+                        file_indexing_parallelism: zeta_options.file_indexing_parallelism,
                     },
                     cx,
                 );
@@ -285,7 +286,7 @@ impl Zeta2Inspector {
                 let mut languages = HashMap::default();
                 for lang_id in prediction
                     .context
-                    .snippets
+                    .declarations
                     .iter()
                     .map(|snippet| snippet.declaration.identifier().language_id)
                     .chain(prediction.context.excerpt_text.language_id)
@@ -334,7 +335,7 @@ impl Zeta2Inspector {
                                 cx,
                             );
 
-                            for snippet in &prediction.context.snippets {
+                            for snippet in &prediction.context.declarations {
                                 let path = this
                                     .project
                                     .read(cx)
@@ -345,7 +346,7 @@ impl Zeta2Inspector {
                                         "{} (Score density: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
-                                        snippet.score_density(SnippetStyle::Declaration)
+                                        snippet.score_density(DeclarationStyle::Declaration)
                                     ))
                                     .unwrap()
                                     .into(),

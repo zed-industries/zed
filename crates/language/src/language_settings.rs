@@ -545,9 +545,9 @@ impl settings::Settings for AllLanguageSettings {
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
-                    parser: prettier.parser,
-                    plugins: prettier.plugins,
-                    options: prettier.options,
+                    parser: prettier.parser.filter(|parser| !parser.is_empty()),
+                    plugins: prettier.plugins.unwrap_or_default(),
+                    options: prettier.options.unwrap_or_default(),
                 },
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
@@ -583,7 +583,7 @@ impl settings::Settings for AllLanguageSettings {
                 code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
-                    variables: tasks.variables,
+                    variables: tasks.variables.unwrap_or_default(),
                     enabled: tasks.enabled.unwrap(),
                     prefer_lsp: tasks.prefer_lsp.unwrap(),
                 },
@@ -591,7 +591,7 @@ impl settings::Settings for AllLanguageSettings {
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
-                    words_min_length: completions.words_min_length.unwrap(),
+                    words_min_length: completions.words_min_length.unwrap() as usize,
                     lsp: completions.lsp.unwrap(),
                     lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),

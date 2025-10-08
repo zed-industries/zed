@@ -18,6 +18,7 @@ test-support = ["gpui/test-support", "fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+derive_more.workspace = true
 ec4rs.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -28,13 +29,13 @@ paths.workspace = true
 release_channel.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
-serde_json_lenient.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
 serde_path_to_error.workspace = true
 serde_repr.workspace = true
 serde_with.workspace = true
-serde.workspace = true
-settings_macros = { path = "../settings_macros" }
+settings_macros.workspace = true
 smallvec.workspace = true
 strum.workspace = true
 tree-sitter-json.workspace = true
