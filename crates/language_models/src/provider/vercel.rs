@@ -456,6 +456,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "vercel-console",
                             "Create one by visiting",
                             Some("Vercel v0's console"),
                             Some("https://v0.dev/chat/settings/keys"),

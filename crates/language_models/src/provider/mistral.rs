@@ -782,6 +782,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "mistral-console",
                             "Create one by visiting",
                             Some("Mistral's console"),
                             Some("https://console.mistral.ai/api-keys"),

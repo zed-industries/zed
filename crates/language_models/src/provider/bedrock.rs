@@ -1208,6 +1208,7 @@ impl Render for ConfigurationView {
                 List::new()
                     .child(
                         InstructionListItem::new(
+                            "bedrock-prerequisites",
                             "Grant permissions to the strategy you'll use according to the:",
                             Some("Prerequisites"),
                             Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
@@ -1215,6 +1216,7 @@ impl Render for ConfigurationView {
                     )
                     .child(
                         InstructionListItem::new(
+                            "bedrock-model-catalog",
                             "Select the models you would like access to:",
                             Some("Bedrock Model Catalog"),
                             Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
@@ -1260,11 +1262,13 @@ impl ConfigurationView {
             .child(
                 List::new()
                     .child(InstructionListItem::new(
+                        "bedrock-iam-console",
                         "Create an IAM user in the AWS console with programmatic access",
                         Some("IAM Console"),
                         Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"),
                     ))
                     .child(InstructionListItem::new(
+                        "bedrock-user",
                         "Attach the necessary Bedrock permissions to this ",
                         Some("user"),
                         Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),

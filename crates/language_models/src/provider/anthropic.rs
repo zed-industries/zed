@@ -924,6 +924,7 @@ impl Render for ConfigurationView {
                     List::new()
                         .child(
                             InstructionListItem::new(
+                                "anthropic-console-keys",
                                 "Create one by visiting",
                                 Some("Anthropic's settings"),
                                 Some("https://console.anthropic.com/settings/keys")

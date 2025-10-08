@@ -849,6 +849,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "google-ai-console",
                             "Create one by visiting",
                             Some("Google AI's console"),
                             Some("https://aistudio.google.com/app/apikey"),

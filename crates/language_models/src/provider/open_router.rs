@@ -788,6 +788,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "openrouter-console",
                             "Create an API key by visiting",
                             Some("OpenRouter's console"),
                             Some("https://openrouter.ai/keys"),

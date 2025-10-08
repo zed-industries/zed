@@ -768,6 +768,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "openai-console",
                             "Create one by visiting",
                             Some("OpenAI's console"),
                             Some("https://platform.openai.com/api-keys"),

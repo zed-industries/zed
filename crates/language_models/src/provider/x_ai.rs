@@ -453,6 +453,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "xai-console",
                             "Create one by visiting",
                             Some("xAI console"),
                             Some("https://console.x.ai/team/default/api-keys"),

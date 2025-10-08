@@ -612,6 +612,7 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            "deepseek-console",
                             "Get your API key from the",
                             Some("DeepSeek console"),
                             Some("https://platform.deepseek.com/api_keys"),

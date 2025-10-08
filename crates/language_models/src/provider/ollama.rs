@@ -733,6 +733,7 @@ impl ConfigurationView {
             .child(
                 List::new()
                     .child(InstructionListItem::new(
+                        "ollama-console",
                         "Download and install Ollama from",
                         Some("ollama.com"),
                         Some("https://ollama.com/download"),
