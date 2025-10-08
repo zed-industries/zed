@@ -14358,7 +14358,6 @@ dependencies = [
  "anyhow",
  "assets",
  "client",
- "command_palette_hooks",
  "editor",
  "feature_flags",
  "fs",

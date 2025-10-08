@@ -4,12 +4,12 @@ mod page_data;
 
 use anyhow::Result;
 use editor::{Editor, EditorEvent};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -29,9 +29,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
-    KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
+    Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -42,8 +41,12 @@ use crate::components::SettingsEditor;
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
-const CONTENT_CONTAINER_TAB_INDEX: isize = 2;
-const CONTENT_GROUP_TAB_INDEX: isize = 3;
+
+const HEADER_CONTAINER_TAB_INDEX: isize = 2;
+const HEADER_GROUP_TAB_INDEX: isize = 3;
+
+const CONTENT_CONTAINER_TAB_INDEX: isize = 4;
+const CONTENT_GROUP_TAB_INDEX: isize = 5;
 
 actions!(
     settings_editor,
@@ -206,35 +209,12 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action_renderer(|div, _, _, cx| {
-            let settings_ui_actions = [
-                TypeId::of::<OpenSettingsEditor>(),
-                TypeId::of::<ToggleFocusNav>(),
-                TypeId::of::<FocusFile>(),
-                TypeId::of::<FocusNextFile>(),
-                TypeId::of::<FocusPreviousFile>(),
-            ];
-            let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
-            command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
-                if has_flag {
-                    filter.show_action_types(&settings_ui_actions);
-                } else {
-                    filter.hide_action_types(&settings_ui_actions);
-                }
-            });
-            if has_flag {
-                div.on_action(
-                    cx.listener(|workspace, _: &OpenSettingsEditor, window, cx| {
-                        let window_handle = window
-                            .window_handle()
-                            .downcast::<Workspace>()
-                            .expect("Workspaces are root Windows");
-                        open_settings_editor(workspace, window_handle, cx);
-                    }),
-                )
-            } else {
-                div
-            }
+        workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
+            let window_handle = window
+                .window_handle()
+                .downcast::<Workspace>()
+                .expect("Workspaces are root Windows");
+            open_settings_editor(workspace, window_handle, cx);
         });
     })
     .detach();
@@ -472,7 +452,8 @@ pub fn open_settings_editor(
                 show: true,
                 kind: gpui::WindowKind::Normal,
                 window_background: cx.theme().window_background_appearance(),
-                window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
+                window_bounds: Some(WindowBounds::centered(size(px(900.), px(750.)), cx)),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
@@ -886,7 +867,10 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(CONTENT_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
-            files_focus_handle: cx.focus_handle().tab_stop(false),
+            files_focus_handle: cx
+                .focus_handle()
+                .tab_index(HEADER_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
         };
 
         this.fetch_files(cx);
@@ -1206,7 +1190,7 @@ impl SettingsWindow {
                 .find_map(|(prev_file, handle)| {
                     (prev_file == &settings_ui_file).then(|| handle.clone())
                 })
-                .unwrap_or_else(|| cx.focus_handle());
+                .unwrap_or_else(|| cx.focus_handle().tab_index(0).tab_stop(true));
             ui_files.push((settings_ui_file, focus_handle));
         }
         ui_files.reverse();
@@ -1223,14 +1207,22 @@ impl SettingsWindow {
     fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
+            self.build_ui(cx);
             return;
         }
         if self.files[ix].0 == self.current_file {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        // self.navbar_entry = 0;
+        self.navbar_entry = 0;
         self.build_ui(cx);
+
+        let first_navbar_entry_index = self
+            .visible_navbar_entries()
+            .next()
+            .map(|e| e.0)
+            .unwrap_or(0);
+        self.navbar_entry = first_navbar_entry_index;
     }
 
     fn render_files_header(
@@ -1242,6 +1234,9 @@ impl SettingsWindow {
             .w_full()
             .gap_1()
             .justify_between()
+            .tab_group()
+            .track_focus(&self.files_focus_handle)
+            .tab_index(HEADER_GROUP_TAB_INDEX)
             .child(
                 h_flex()
                     .id("file_buttons_container")
@@ -1261,26 +1256,23 @@ impl SettingsWindow {
                                 .toggle_state(file == &self.current_file)
                                 .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .track_focus(focus_handle)
-                                .on_click(cx.listener(
-                                    move |this, evt: &gpui::ClickEvent, window, cx| {
+                                .on_click(cx.listener({
+                                    let focus_handle = focus_handle.clone();
+                                    move |this, _: &gpui::ClickEvent, window, cx| {
                                         this.change_file(ix, cx);
-                                        if evt.is_keyboard() {
-                                            this.focus_first_nav_item(window, cx);
-                                        }
-                                    },
-                                ))
+                                        focus_handle.focus(window);
+                                    }
+                                }))
                             }),
                     ),
             )
             .child(
-                Button::new(
-                    "edit-in-json",
-                    format!("Edit in {}", self.file_location_str()),
-                )
-                .style(ButtonStyle::Outlined)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.open_current_settings_file(cx);
-                })),
+                Button::new("edit-in-json", "Edit in settings.json")
+                    .tab_index(0_isize)
+                    .style(ButtonStyle::Outlined)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_current_settings_file(cx);
+                    })),
             )
     }
 
@@ -1307,26 +1299,28 @@ impl SettingsWindow {
         }
     }
 
-    fn file_location_str(&self) -> String {
-        match &self.current_file {
-            SettingsUiFile::User => "settings.json".to_string(),
-            SettingsUiFile::Project((worktree_id, path)) => self
-                .worktree_root_dirs
-                .get(&worktree_id)
-                .map(|directory_name| {
-                    let path_style = PathStyle::local();
-                    let file_path = path.join(paths::local_settings_file_relative_path());
-                    format!(
-                        "{}{}{}",
-                        directory_name,
-                        path_style.separator(),
-                        file_path.display(path_style)
-                    )
-                })
-                .expect("Current file should always be present in root dir map"),
-            SettingsUiFile::Server(file) => file.to_string(),
-        }
-    }
+    // TODO:
+    //  Reconsider this after preview launch
+    // fn file_location_str(&self) -> String {
+    //     match &self.current_file {
+    //         SettingsUiFile::User => "settings.json".to_string(),
+    //         SettingsUiFile::Project((worktree_id, path)) => self
+    //             .worktree_root_dirs
+    //             .get(&worktree_id)
+    //             .map(|directory_name| {
+    //                 let path_style = PathStyle::local();
+    //                 let file_path = path.join(paths::local_settings_file_relative_path());
+    //                 format!(
+    //                     "{}{}{}",
+    //                     directory_name,
+    //                     path_style.separator(),
+    //                     file_path.display(path_style)
+    //                 )
+    //             })
+    //             .expect("Current file should always be present in root dir map"),
+    //         SettingsUiFile::Server(file) => file.to_string(),
+    //     }
+    // }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
@@ -1349,11 +1343,11 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
 
-        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
-            "Focus Content"
-        } else {
-            "Focus Navbar"
-        };
+        // let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+        //     "Focus Content"
+        // } else {
+        //     "Focus Navbar"
+        // };
 
         v_flex()
             .w_64()
@@ -1437,24 +1431,25 @@ impl SettingsWindow {
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .p_2()
-                    .pb_0p5()
-                    .flex_none()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .children(
-                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
-                            KeybindingHint::new(
-                                this,
-                                cx.theme().colors().surface_background.opacity(0.5),
-                            )
-                            .suffix(focus_keybind_label)
-                        }),
-                    ),
-            )
+        // TODO: Restore this once we've fixed the ToggleFocusNav action
+        // .child(
+        //     h_flex()
+        //         .w_full()
+        //         .p_2()
+        //         .pb_0p5()
+        //         .flex_none()
+        //         .border_t_1()
+        //         .border_color(cx.theme().colors().border_variant)
+        //         .children(
+        //             KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+        //                 KeybindingHint::new(
+        //                     this,
+        //                     cx.theme().colors().surface_background.opacity(0.5),
+        //                 )
+        //                 .suffix(focus_keybind_label)
+        //             }),
+        //         ),
+        // )
     }
 
     fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
