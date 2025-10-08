@@ -19,6 +19,7 @@ use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
+use futures::stream;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
@@ -1249,12 +1250,12 @@ impl Thread {
             );
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
-            let mut events = model
-                .stream_completion(request, cx)
-                .await
-                .map_err(|error| anyhow!(error))?;
+
+            let (mut events, mut error) = match model.stream_completion(request, cx).await {
+                Ok(events) => (events, None),
+                Err(err) => (stream::empty().boxed(), Some(err)),
+            };
             let mut tool_results = FuturesUnordered::new();
-            let mut error = None;
             while let Some(event) = events.next().await {
                 log::trace!("Received completion event: {:?}", event);
                 match event {
