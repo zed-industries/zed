@@ -89,7 +89,7 @@ pub struct TerminalSettingsContent {
     pub copy_on_select: Option<bool>,
     /// Whether to keep the text selection after copying it to the clipboard.
     ///
-    /// Default: false
+    /// Default: true
     pub keep_selection_on_copy: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
