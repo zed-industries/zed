@@ -1280,46 +1280,39 @@ impl SettingsWindow {
                                                 },
                                             ))
                                         })
-                                        .on_click(cx.listener(
-                                            move |this, evt: &gpui::ClickEvent, window, cx| {
-                                                this.navbar_entry = ix;
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.navbar_entry = ix;
 
-                                                if !this.navbar_entries[ix].is_root {
-                                                    let mut selected_page_ix = ix;
+                                            if !this.navbar_entries[ix].is_root {
+                                                let mut selected_page_ix = ix;
 
-                                                    while !this.navbar_entries[selected_page_ix]
-                                                        .is_root
-                                                    {
-                                                        selected_page_ix -= 1;
-                                                    }
-
-                                                    let section_header = ix - selected_page_ix;
-
-                                                    if let Some(section_index) = this
-                                                        .page_items()
-                                                        .enumerate()
-                                                        .filter(|item| {
-                                                            matches!(
-                                                                item.1,
-                                                                SettingsPageItem::SectionHeader(_)
-                                                            )
-                                                        })
-                                                        .take(section_header)
-                                                        .last()
-                                                        .map(|pair| pair.0)
-                                                    {
-                                                        this.scroll_handle
-                                                            .scroll_to_top_of_item(section_index);
-                                                    }
+                                                while !this.navbar_entries[selected_page_ix].is_root
+                                                {
+                                                    selected_page_ix -= 1;
                                                 }
 
-                                                if evt.is_keyboard() {
-                                                    // todo(settings_ui): Focus the actual item and scroll to it
-                                                    this.focus_first_content_item(window, cx);
+                                                let section_header = ix - selected_page_ix;
+
+                                                if let Some(section_index) = this
+                                                    .page_items()
+                                                    .enumerate()
+                                                    .filter(|item| {
+                                                        matches!(
+                                                            item.1,
+                                                            SettingsPageItem::SectionHeader(_)
+                                                        )
+                                                    })
+                                                    .take(section_header)
+                                                    .last()
+                                                    .map(|pair| pair.0)
+                                                {
+                                                    this.scroll_handle
+                                                        .scroll_to_top_of_item(section_index);
                                                 }
-                                                cx.notify();
-                                            },
-                                        ))
+                                            }
+
+                                            cx.notify();
+                                        }))
                                         .into_any_element()
                                     })
                                     .collect()
