@@ -2263,6 +2263,7 @@ mod test {
 
         let mut settings_window = SettingsWindow {
             original_window: None,
+            workspace_release_subscription: None,
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
