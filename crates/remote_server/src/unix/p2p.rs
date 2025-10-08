@@ -49,7 +49,6 @@ pub(crate) fn execute(persist: bool, mut persist_at: Option<PathBuf>) -> Result<
     init_logging_p2p();
 
     // Known bugs
-    // - Server: process stops when a single project is closed
     // - Server: logs are not captured
     // - UI: can't use arrows
 
@@ -141,7 +140,7 @@ pub(crate) fn execute(persist: bool, mut persist_at: Option<PathBuf>) -> Result<
                             cx.on_app_quit(move |_| {
                                 let mut app_quit_tx = app_quit_tx.clone();
                                 async move {
-                                    log::info!("app quitting. sending signal to server main loop");
+                                    log::info!("project quitting");
                                     app_quit_tx.send(()).await.ok();
                                 }
                             })
@@ -336,7 +335,7 @@ impl ProtocolHandler for IrohZedProtocolHandler {
                 let raw = match raw {
                     Ok(raw) => raw,
                     Err(error) => {
-                        log::error!("received in valid message: {error:?}");
+                        log::error!("received invalid message: {error:?}");
                         break;
                     }
                 };
