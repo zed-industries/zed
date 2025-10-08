@@ -16,7 +16,7 @@ use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{Zeta, ZetaOptions};
+use zeta2::{DEFAULT_CONTEXT_OPTIONS, Zeta, ZetaOptions};
 
 use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
@@ -146,16 +146,19 @@ impl Zeta2Inspector {
         cx: &mut Context<Self>,
     ) {
         self.max_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.excerpt.max_bytes.to_string(), window, cx);
+            input.set_text(options.context.excerpt.max_bytes.to_string(), window, cx);
         });
         self.min_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.excerpt.min_bytes.to_string(), window, cx);
+            input.set_text(options.context.excerpt.min_bytes.to_string(), window, cx);
         });
         self.cursor_context_ratio_input.update(cx, |input, cx| {
             input.set_text(
                 format!(
                     "{:.2}",
-                    options.excerpt.target_before_cursor_over_total_bytes
+                    options
+                        .context
+                        .excerpt
+                        .target_before_cursor_over_total_bytes
                 ),
                 window,
                 cx,
@@ -236,7 +239,8 @@ impl Zeta2Inspector {
                         .unwrap_or_default()
                 }
 
-                let excerpt_options = EditPredictionExcerptOptions {
+                let mut context_options = DEFAULT_CONTEXT_OPTIONS.clone();
+                context_options.excerpt = EditPredictionExcerptOptions {
                     max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
                     min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
                     target_before_cursor_over_total_bytes: number_input_value(
@@ -248,7 +252,7 @@ impl Zeta2Inspector {
                 let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
-                        excerpt: excerpt_options,
+                        context: context_options,
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
