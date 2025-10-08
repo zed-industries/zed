@@ -439,6 +439,10 @@ impl Worktree {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                     }
                 }
+                entry.is_hidden = abs_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map_or(false, |name| is_path_hidden(false, name));
                 snapshot.insert_entry(entry, fs.as_ref());
             }
 
@@ -4226,10 +4230,9 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
-            child_entry.is_hidden = job.is_hidden
-                || child_name
-                    .to_str()
-                    .map_or(false, |name| name.starts_with('.'));
+            child_entry.is_hidden = child_name
+                .to_str()
+                .map_or(false, |name| is_path_hidden(job.is_hidden, name));
 
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
@@ -4396,6 +4399,14 @@ impl BackgroundScanner {
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
                     fs_entry.is_always_included = self.settings.is_path_always_included(path);
+
+                    let parent_is_hidden = path
+                        .parent()
+                        .and_then(|parent| state.snapshot.entry_for_path(parent))
+                        .map_or(false, |parent_entry| parent_entry.is_hidden);
+                    fs_entry.is_hidden = path
+                        .file_name()
+                        .map_or(false, |name| is_path_hidden(parent_is_hidden, name));
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
@@ -4956,6 +4967,10 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &RelPath) -> CharBag {
     let mut result = root_char_bag;
     result.extend(path.as_unix_str().chars().map(|c| c.to_ascii_lowercase()));
     result
+}
+
+fn is_path_hidden(parent_is_hidden: bool, name: &str) -> bool {
+    parent_is_hidden || name.starts_with('.')
 }
 
 #[derive(Debug)]
