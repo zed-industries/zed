@@ -223,7 +223,7 @@ impl NonFocusableHandle {
 }
 
 impl Focusable for NonFocusableHandle {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.handle.clone()
     }
 }
@@ -259,6 +259,7 @@ fn init_renderers(cx: &mut App) {
             Button::new("open-in-settings-file", "Edit in settings.json")
                 .size(ButtonSize::Default)
                 .style(ButtonStyle::Outlined)
+                .tab_index(0_isize)
                 .on_click(|_, window, cx| {
                     window.dispatch_action(Box::new(OpenCurrentFile), cx);
                 })
@@ -937,6 +938,7 @@ impl SettingsWindow {
         // set the current page to the parent page
         if !*expanded && selected_page_index == toggle_page_index {
             self.navbar_entry = ix;
+            // note: not opening page. Toggling does not change content just selected page
         }
     }
 
@@ -1439,7 +1441,6 @@ impl SettingsWindow {
                                                 },
                                             ))
                                         })
-                                            this.navbar_entry = ix;
                                         .on_click(
                                             cx.listener(
                                                 move |this, evt: &gpui::ClickEvent, window, cx| {
