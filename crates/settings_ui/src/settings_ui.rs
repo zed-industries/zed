@@ -1044,7 +1044,11 @@ impl SettingsWindow {
     }
 
     fn calculate_navbar_entry_from_scroll_position(&mut self) {
-        let scroll_index = self.scroll_handle.top_item();
+        let top = self.scroll_handle.top_item();
+        let bottom = self.scroll_handle.bottom_item();
+
+        let scroll_index = (top + bottom) / 2;
+        let scroll_index = scroll_index.clamp(top, bottom);
         let mut page_index = self.navbar_entry;
 
         while !self.navbar_entries[page_index].is_root {
@@ -1252,7 +1256,6 @@ impl SettingsWindow {
                                     .collect()
                             }),
                         )
-                        .gap_0()
                         .track_scroll(self.list_handle.clone())
                         .flex_grow(),
                     )
