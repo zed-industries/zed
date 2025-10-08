@@ -35,10 +35,10 @@ impl ToggleButtonPosition {
 
     pub(crate) fn to_rounding(self) -> ButtonLikeRounding {
         ButtonLikeRounding {
-            tl: self.topmost && self.leftmost,
-            tr: self.topmost && self.rightmost,
-            br: self.bottommost && self.rightmost,
-            bl: self.bottommost && self.leftmost,
+            top_left: self.topmost && self.leftmost,
+            top_right: self.topmost && self.rightmost,
+            bottom_right: self.bottommost && self.rightmost,
+            bottom_left: self.bottommost && self.leftmost,
         }
     }
 }

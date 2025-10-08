@@ -153,33 +153,33 @@ pub enum ButtonStyle {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub(crate) struct ButtonLikeRounding {
     /// Top-left corner rounding
-    pub tl: bool,
+    pub top_left: bool,
     /// Top-right corner rounding
-    pub tr: bool,
+    pub top_right: bool,
     /// Bottom-right corner rounding
-    pub br: bool,
+    pub bottom_right: bool,
     /// Bottom-left corner rounding
-    pub bl: bool,
+    pub bottom_left: bool,
 }
 
 impl ButtonLikeRounding {
     pub const ALL: Self = Self {
-        tl: true,
-        tr: true,
-        br: true,
-        bl: true,
+        top_left: true,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: true,
     };
     pub const LEFT: Self = Self {
-        tl: true,
-        tr: false,
-        br: false,
-        bl: true,
+        top_left: true,
+        top_right: false,
+        bottom_right: false,
+        bottom_left: true,
     };
     pub const RIGHT: Self = Self {
-        tl: false,
-        tr: true,
-        br: true,
-        bl: false,
+        top_left: false,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: false,
     };
 }
 
@@ -662,10 +662,10 @@ impl RenderOnce for ButtonLike {
                 |this| this.border_1(),
             )
             .when_some(self.rounding, |this, rounding| {
-                this.when(rounding.tl, |this| this.rounded_tl_sm())
-                    .when(rounding.tr, |this| this.rounded_tr_sm())
-                    .when(rounding.br, |this| this.rounded_br_sm())
-                    .when(rounding.bl, |this| this.rounded_bl_sm())
+                this.when(rounding.top_left, |this| this.rounded_tl_sm())
+                    .when(rounding.top_right, |this| this.rounded_tr_sm())
+                    .when(rounding.bottom_right, |this| this.rounded_br_sm())
+                    .when(rounding.bottom_left, |this| this.rounded_bl_sm())
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {

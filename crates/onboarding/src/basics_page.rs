@@ -436,8 +436,7 @@ fn render_setting_import_button(
                     .when(imported, |this| {
                         this.child(Icon::new(IconName::Check).color(Color::Success))
                     })
-                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small)), // .border_1()
-                                                                                     // .border_color(cx.theme().colors().border_variant),
+                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small)),
             )
             .on_click(move |_, window, cx| {
                 telemetry::event!("Welcome Import Settings", import_source = label,);

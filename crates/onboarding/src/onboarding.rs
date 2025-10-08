@@ -576,7 +576,7 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            if let Some(_page_number) =
+            if let Some(_) =
                 persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
             {
                 workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
@@ -594,16 +594,11 @@ impl workspace::SerializableItem for Onboarding {
         _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
-        // This used to pick the currently active page number, but since we no
-        // longer have pages, just set to `0`, which was the basics page, while
-        // we work on completely removing the persistence layer for this
-        // functionality.
-        let page_number = 0;
         let workspace_id = workspace.database_id()?;
 
         Some(cx.background_spawn(async move {
             persistence::ONBOARDING_PAGES
-                .save_onboarding_page(item_id, workspace_id, page_number)
+                .save_onboarding_page(item_id, workspace_id)
                 .await
         }))
     }
@@ -626,17 +621,32 @@ mod persistence {
     impl Domain for OnboardingPagesDb {
         const NAME: &str = stringify!(OnboardingPagesDb);
 
-        const MIGRATIONS: &[&str] = &[sql!(
-                    CREATE TABLE onboarding_pages (
-                        workspace_id INTEGER,
-                        item_id INTEGER UNIQUE,
-                        page_number INTEGER,
+        const MIGRATIONS: &[&str] = &[
+            sql!(
+                        CREATE TABLE onboarding_pages (
+                            workspace_id INTEGER,
+                            item_id INTEGER UNIQUE,
+                            page_number INTEGER,
 
-                        PRIMARY KEY(workspace_id, item_id),
-                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                        ON DELETE CASCADE
-                    ) STRICT;
-        )];
+                            PRIMARY KEY(workspace_id, item_id),
+                            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;
+            ),
+            sql!(
+                        CREATE TABLE onboarding_pages_2 (
+                            workspace_id INTEGER,
+                            item_id INTEGER UNIQUE,
+
+                            PRIMARY KEY(workspace_id, item_id),
+                            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                            ON DELETE CASCADE
+                        ) STRICT;
+                        INSERT INTO onboarding_pages_2 SELECT workspace_id, item_id FROM onboarding_pages;
+                        DROP TABLE onboarding_pages;
+                        ALTER TABLE onboarding_pages_2 RENAME TO onboarding_pages;
+            ),
+        ];
     }
 
     db::static_connection!(ONBOARDING_PAGES, OnboardingPagesDb, [WorkspaceDb]);
@@ -645,11 +655,10 @@ mod persistence {
         query! {
             pub async fn save_onboarding_page(
                 item_id: workspace::ItemId,
-                workspace_id: workspace::WorkspaceId,
-                page_number: u16
+                workspace_id: workspace::WorkspaceId
             ) -> Result<()> {
-                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id, page_number)
-                VALUES (?, ?, ?)
+                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id)
+                VALUES (?, ?)
             }
         }
 
@@ -657,8 +666,8 @@ mod persistence {
             pub fn get_onboarding_page(
                 item_id: workspace::ItemId,
                 workspace_id: workspace::WorkspaceId
-            ) -> Result<Option<u16>> {
-                SELECT page_number
+            ) -> Result<Option<workspace::ItemId>> {
+                SELECT item_id
                 FROM onboarding_pages
                 WHERE item_id = ? AND workspace_id = ?
             }
