@@ -39,6 +39,7 @@ util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 assets.workspace = true
@@ -52,7 +53,3 @@ session.workspace = true
 settings.workspace = true
 zlog.workspace = true
 pretty_assertions.workspace = true
-
-[[example]]
-name = "ui"
-path = "examples/ui.rs"

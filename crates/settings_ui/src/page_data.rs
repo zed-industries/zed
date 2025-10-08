@@ -131,7 +131,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Settings Profiles",
-                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
+                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| &settings_content.workspace.use_system_prompts,
@@ -291,6 +291,28 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.theme.ui_font_weight,
                         pick_mut: |settings_content| &mut settings_content.theme.ui_font_weight,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel UI Font Size",
+                    description: "Font size for agent response text in the agent panel. Falls back to the regular UI font size.",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.agent_ui_font_size,
+                        pick_mut: |settings_content| &mut settings_content.theme.agent_ui_font_size,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Agent Panel Buffer Font Size",
+                    description: "Font size for user messages text in the agent panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.theme.agent_buffer_font_size,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.theme.agent_buffer_font_size
+                        },
                     }),
                     metadata: None,
                     files: USER,
@@ -1020,7 +1042,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Min Line Number Digits",
-                        description: "Minimum number of characters to reserve space for in the gutter.",
+                        description: "Minimum number of characters to reserve space for in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -1639,6 +1661,27 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Status Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Panel Button",
+                    description: "Whether to show the project panel button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(project_panel) = &settings_content.project_panel {
+                                &project_panel.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .project_panel
+                                .get_or_insert_default()
+                                .button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Language Button",
                     description: "Whether to show the active language button in the status bar",
                     field: Box::new(SettingField {
@@ -1733,6 +1776,24 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .search
                                 .get_or_insert_default()
                                 .button
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Debugger Button",
+                    description: "Whether to show the debugger button in the status bar",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.button
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().button
                         },
                     }),
                     metadata: None,
@@ -1844,7 +1905,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Onboarding Banner",
-                    description: "Whether to show onboarding banners in the titlebar",
+                    description: "Whether to show banners announcing new features in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2255,27 +2316,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             title: "Panels",
             items: vec![
                 SettingsPageItem::SectionHeader("Project Panel"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Panel Button",
-                    description: "Whether to show the project panel button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(project_panel) = &settings_content.project_panel {
-                                &project_panel.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project_panel
-                                .get_or_insert_default()
-                                .button
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Dock",
                     description: "Where to dock the project panel",
@@ -2884,8 +2924,8 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Git Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Button",
-                    description: "Whether to show the git panel button in the status bar",
+                    title: "Git Panel Button",
+                    description: "Whether to show the Git panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
@@ -2902,8 +2942,8 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Dock",
-                    description: "Where to dock the git panel",
+                    title: "Git Panel Dock",
+                    description: "Where to dock the Git panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
@@ -2920,8 +2960,8 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Default Width",
-                    description: "Default width of the git panel in pixels",
+                    title: "Git Panel Default Width",
+                    description: "Default width of the Git panel in pixels",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
@@ -2935,6 +2975,25 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .git_panel
                                 .get_or_insert_default()
                                 .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Debugger Panel"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Debugger Panel Dock",
+                    description: "The dock position of the debug panel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(debugger) = &settings_content.debugger {
+                                &debugger.dock
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.debugger.get_or_insert_default().dock
                         },
                     }),
                     metadata: None,
@@ -3637,24 +3696,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Dock",
-                    description: "The dock position of the debug panel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.dock
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.debugger.get_or_insert_default().dock
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
                     title: "Log DAP Communications",
                     description: "Whether to log messages between active debug adapters and Zed",
                     field: Box::new(SettingField {
@@ -3691,24 +3732,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .debugger
                                 .get_or_insert_default()
                                 .format_dap_log_messages
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Button",
-                    description: "Whether to show the debug button in the status bar",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(debugger) = &settings_content.debugger {
-                                &debugger.button
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.debugger.get_or_insert_default().button
                         },
                     }),
                     metadata: None,
@@ -4006,7 +4029,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if softwrap is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting",
+            description: "Whether to show wrap guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
@@ -4438,7 +4461,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
-            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
+            description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -4518,7 +4541,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.linked_edits)
