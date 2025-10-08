@@ -8,7 +8,7 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    ScrollHandle, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
     WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
 use heck::ToTitleCase as _;
@@ -430,8 +430,9 @@ pub fn open_settings_editor(
 
     if let Some(existing_window) = existing_window {
         existing_window
-            .update(cx, |settings_window, window, _| {
+            .update(cx, |settings_window, window, cx| {
                 settings_window.original_window = Some(workspace_handle);
+                settings_window.observe_workspace_release(window, cx);
                 window.activate_window();
             })
             .ok();
@@ -484,6 +485,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 
 pub struct SettingsWindow {
     original_window: Option<WindowHandle<Workspace>>,
+    workspace_release_subscription: Option<Subscription>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
@@ -847,6 +849,7 @@ impl SettingsWindow {
 
         let mut this = Self {
             original_window,
+            workspace_release_subscription: None,
             worktree_root_dirs: HashMap::default(),
             files: vec![],
             current_file: current_file,
@@ -873,6 +876,9 @@ impl SettingsWindow {
                 .tab_stop(false),
         };
 
+        // Observe when the original workspace window is closed and close this settings window
+        this.observe_workspace_release(window, cx);
+
         this.fetch_files(cx);
         this.build_ui(cx);
 
@@ -881,6 +887,27 @@ impl SettingsWindow {
         });
 
         this
+    }
+
+    fn observe_workspace_release(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Drop the old subscription if any
+        self.workspace_release_subscription = None;
+
+        // Set up new observation if we have a workspace window
+        if let Some(workspace_handle) = self.original_window {
+            // Get the workspace entity from the window handle
+            let workspace_entity_result = workspace_handle.update(cx, |_workspace, _window, cx| {
+                cx.entity()
+            });
+
+            if let Ok(workspace_entity) = workspace_entity_result {
+                self.workspace_release_subscription = Some(
+                    cx.observe_release_in(&workspace_entity, window, |_this, _workspace, window, _cx| {
+                        window.remove_window();
+                    })
+                );
+            }
+        }
     }
 
     fn toggle_navbar_entry(&mut self, ix: usize) {
