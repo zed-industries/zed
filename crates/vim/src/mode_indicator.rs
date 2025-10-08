@@ -93,13 +93,18 @@ impl Render for ModeIndicator {
         };
 
         let vim_readable = vim.read(cx);
-        let label = if let Some(label) = vim_readable.status_label.clone() {
+        let status_label = vim_readable.status_label.clone();
+        let temp_mode = vim_readable.temp_mode;
+        let mode = vim_readable.mode.clone();
+        // drop(vim_readable);
+
+        let label = if let Some(label) = status_label {
             label
         } else {
-            let mode = if vim_readable.temp_mode {
-                format!("(insert) {}", vim_readable.mode)
+            let mode_str = if temp_mode {
+                format!("(insert) {}", mode)
             } else {
-                vim_readable.mode.to_string()
+                mode.to_string()
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
@@ -107,13 +112,33 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
+            format!("{} -- {} --", pending, mode_str).into()
         };
 
-        Label::new(label)
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
-            .into_any_element()
+        // Map vim mode to a theme color for the background
+        let theme = cx.theme();
+        let bg_color = match mode {
+            crate::state::Mode::Normal => theme.colors().vim_normal_background,
+            crate::state::Mode::Insert => theme.colors().vim_insert_background,
+            crate::state::Mode::Replace => theme.colors().vim_replace_background,
+            crate::state::Mode::Visual => theme.colors().vim_visual_background,
+            crate::state::Mode::VisualLine => theme.colors().vim_visual_line_background,
+            crate::state::Mode::VisualBlock => theme.colors().vim_visual_block_background,
+            crate::state::Mode::HelixNormal => theme.colors().vim_helix_normal_background,
+            crate::state::Mode::HelixSelect => theme.colors().vim_helix_select_background,
+        };
+
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(bg_color)
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+            )
+            .into_any()
     }
 }
 
