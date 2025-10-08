@@ -1200,6 +1200,86 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_outline_with_computed_property_names(cx: &mut TestAppContext) {
+        let language = crate::language(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+
+        let text = r#"
+            // Symbols as object keys
+            const sym = Symbol("test");
+            const obj1 = {
+                [sym]: 1,
+                [Symbol("inline")]: 2,
+                normalKey: 3
+            };
+
+            // Enums as object keys
+            enum Color { Red, Blue, Green }
+
+            const obj2 = {
+                [Color.Red]: "red value",
+                [Color.Blue]: "blue value",
+                regularProp: "normal"
+            };
+
+            // Mixed computed properties
+            const key = "dynamic";
+            const obj3 = {
+                [key]: 1,
+                ["string" + "concat"]: 2,
+                [1 + 1]: 3,
+                static: 4
+            };
+
+            // Nested objects with computed properties
+            const obj4 = {
+                [sym]: {
+                    nested: 1
+                },
+                regular: {
+                    [key]: 2
+                }
+            };
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("const sym", 0),
+                ("const obj1", 0),
+                ("[sym]", 1),
+                ("[Symbol(\"inline\")]", 1),
+                ("normalKey", 1),
+                ("enum Color", 0),
+                ("const obj2", 0),
+                ("[Color.Red]", 1),
+                ("[Color.Blue]", 1),
+                ("regularProp", 1),
+                ("const key", 0),
+                ("const obj3", 0),
+                ("[key]", 1),
+                ("[\"string\" + \"concat\"]", 1),
+                ("[1 + 1]", 1),
+                ("static", 1),
+                ("const obj4", 0),
+                ("[sym]", 1),
+                ("nested", 2),
+                ("regular", 1),
+                ("[key]", 2),
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_generator_function_outline(cx: &mut TestAppContext) {
         let language = crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
 

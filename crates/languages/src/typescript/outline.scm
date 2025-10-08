@@ -191,6 +191,12 @@
         (number) @name
     ]) @item
 
+; Computed object properties
+(pair
+    key: [
+        (computed_property_name) @name
+    ]) @item
+
 ; Nested const/let declarations in function/method bodies
 (statement_block
     (lexical_declaration
@@ -198,6 +204,7 @@
         (variable_declarator
             name: (identifier) @name) @item))
 
+; Nested array destructuring in function/method bodies
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
@@ -209,6 +216,7 @@
                     (rest_pattern (identifier) @name @item)
                 ]))))
 
+; Nested object destructuring in function/method bodies
 (statement_block
     (lexical_declaration
         ["let" "const"] @context
