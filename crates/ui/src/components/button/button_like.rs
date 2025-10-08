@@ -642,9 +642,13 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(matches!(self.style, ButtonStyle::Outlined), |this| {
-                this.border_1()
-            })
+            .when(
+                matches!(
+                    self.style,
+                    ButtonStyle::Outlined | ButtonStyle::OutlinedTransparent
+                ),
+                |this| this.border_1(),
+            )
             .when_some(self.rounding, |this, rounding| {
                 this.when(rounding.tl, |this| this.rounded_tl_sm())
                     .when(rounding.tr, |this| this.rounded_tr_sm())
