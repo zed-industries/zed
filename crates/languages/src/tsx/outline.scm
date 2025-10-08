@@ -138,6 +138,14 @@
             (variable_declarator
                 name: (identifier) @name) @item)))
 
+(arrow_function
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
+
 ; Lexical declarations directly inside function expression bodies
 (function_expression
     body: (statement_block
@@ -145,6 +153,14 @@
             ["let" "const"] @context
             (variable_declarator
                 name: (identifier) @name) @item)))
+
+(function_expression
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
 
 ; Lexical declarations directly inside function declaration bodies
 (function_declaration
@@ -154,6 +170,14 @@
             (variable_declarator
                 name: (identifier) @name) @item)))
 
+(function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
+
 ; Lexical declarations directly inside generator function declaration bodies
 (generator_function_declaration
     body: (statement_block
@@ -162,6 +186,14 @@
             (variable_declarator
                 name: (identifier) @name) @item)))
 
+(generator_function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
+
 ; Lexical declarations directly inside method definition bodies
 (method_definition
     body: (statement_block
@@ -169,6 +201,14 @@
             ["let" "const"] @context
             (variable_declarator
                 name: (identifier) @name) @item)))
+
+(method_definition
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (array_pattern
+                    (identifier) @name @item)))))
 
 (class_declaration
     "class" @context
