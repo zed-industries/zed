@@ -1053,7 +1053,7 @@ pub(crate) fn user_settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                 }),
-                // todo(settings ui): add units to this numeric stepper
+                // todo(settings ui): add units to this Number Field
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Hover Popover Delay",
                     description: "Time to wait in milliseconds before showing the informational hover box",
@@ -4021,7 +4021,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
             title: "Editing",
             items: vec![
                 SettingsPageItem::SectionHeader("Indentation"),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Needs Number Field
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Tab Size",
                 //     description: "How many columns a tab should occupy",
@@ -4079,7 +4079,7 @@ pub(crate) fn project_settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                 }),
                 SettingsPageItem::SectionHeader("Wrapping"),
-                // todo(settings_ui): Needs numeric stepper
+                // todo(settings_ui): Needs Number Field
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Preferred Line Length",
                 //     description: "The column at which to soft-wrap lines, for buffers where soft-wrap is enabled",
