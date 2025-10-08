@@ -38,6 +38,14 @@ impl ThemeColors {
         let system = SystemColors::default();
 
         Self {
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
             border: neutral().light().step_6(),
             border_variant: neutral().light().step_5(),
             border_focused: blue().light().step_5(),
@@ -164,6 +172,14 @@ impl ThemeColors {
         let system = SystemColors::default();
 
         Self {
+            vim_normal_background: system.transparent,
+            vim_insert_background: system.transparent,
+            vim_replace_background: system.transparent,
+            vim_visual_background: system.transparent,
+            vim_visual_line_background: system.transparent,
+            vim_visual_block_background: system.transparent,
+            vim_helix_normal_background: system.transparent,
+            vim_helix_select_background: system.transparent,
             border: neutral().dark().step_6(),
             border_variant: neutral().dark().step_5(),
             border_focused: blue().dark().step_5(),
