@@ -350,6 +350,7 @@ pub fn init(cx: &mut App) {
 
     cx.set_global(GlobalBlameRenderer(Arc::new(())));
 
+    dbg!();
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
     workspace::register_serializable_item::<Editor>(cx);

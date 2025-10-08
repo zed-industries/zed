@@ -1445,6 +1445,10 @@ async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContex
 async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
+    cx.update(|cx| {
+        register_project_item::<TestProjectItemView>(cx);
+    });
+
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
@@ -1489,9 +1493,16 @@ async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppConte
     select_path(&panel, "root2/one.txt", cx);
     panel.update_in(cx, |panel, window, cx| {
         panel.select_next(&Default::default(), window, cx);
-        panel.paste(&Default::default(), window, cx);
+        dbg!();
     });
     cx.executor().run_until_parked();
+    dbg!(visible_entries_as_strings(&panel, 0..50, cx));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+        dbg!();
+    });
+    cx.executor().run_until_parked();
+    dbg!();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..50, cx),
         &[
@@ -3103,6 +3114,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
             let project = panel.project.read(cx);
             let worktree = project.visible_worktrees(cx).next().unwrap();
             let root_entry = worktree.read(cx).root_entry().unwrap();
+            dbg!();
             panel.state.selection = Some(SelectedEntry {
                 worktree_id: worktree.read(cx).id(),
                 entry_id: root_entry.id,
@@ -6683,7 +6695,7 @@ fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestCont
     panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+            if let Ok(relative_path) = path.strip_prefix(dbg!(worktree.root_name())) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 panel.update_visible_entries(
                     Some((worktree.id(), entry_id)),
@@ -6692,6 +6704,7 @@ fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestCont
                     window,
                     cx,
                 );
+                dbg!(path);
                 return;
             }
         }
@@ -6714,6 +6727,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
                 if !panel.marked_entries.contains(&entry) {
                     panel.marked_entries.push(entry);
                 }
+                dbg!();
                 panel.state.selection = Some(entry);
                 return;
             }

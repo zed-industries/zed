@@ -102,7 +102,7 @@ impl State {
             max_width_item_index: None,
             edit_state: old.edit_state.clone(),
             unfolded_dir_ids: old.unfolded_dir_ids.clone(),
-            selection: old.selection,
+            selection: dbg!(old.selection),
             expanded_dir_ids: old.expanded_dir_ids.clone(),
         }
     }
@@ -398,6 +398,7 @@ pub fn init(cx: &mut App) {
                     if let Some(first_marked) = panel.marked_entries.first() {
                         let first_marked = *first_marked;
                         panel.marked_entries.clear();
+                        dbg!();
                         panel.state.selection = Some(first_marked);
                     }
                     panel.rename(action, window, cx);
@@ -729,8 +730,10 @@ impl ProjectPanel {
                     focus_opened_item,
                     allow_preview,
                 } => {
+                    dbg!();
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx)
                         && let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                            dbg!();
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
@@ -767,12 +770,13 @@ impl ProjectPanel {
                                 });
 
                             if let Some(project_panel) = project_panel.upgrade() {
+                                dbg!();
                                 // Always select and mark the entry, regardless of whether it is opened or not.
                                 project_panel.update(cx, |project_panel, _| {
                                     let entry = SelectedEntry { worktree_id, entry_id };
                                     project_panel.marked_entries.clear();
                                     project_panel.marked_entries.push(entry);
-                                    project_panel.state.selection = Some(entry);
+                                    project_panel.state.selection = Some(dbg!(entry));
                                 });
                                 if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
@@ -957,6 +961,7 @@ impl ProjectPanel {
             return;
         };
 
+        dbg!();
         self.state.selection = Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -1398,6 +1403,7 @@ impl ProjectPanel {
                 worktree_id: *worktree_id,
                 entry_id: entries[entry_ix].id,
             };
+            dbg!();
             self.state.selection = Some(selection);
             if window.modifiers().shift {
                 self.marked_entries.push(selection);
@@ -1575,6 +1581,7 @@ impl ProjectPanel {
         let edit_task;
         let edited_entry_id;
         if is_new_entry {
+            dbg!();
             self.state.selection = Some(SelectedEntry {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
@@ -1629,6 +1636,7 @@ impl ProjectPanel {
                     project_panel.update_in( cx, |project_panel, window, cx| {
                         if let Some(selection) = &mut project_panel.state.selection
                             && selection.entry_id == edited_entry_id {
+                                dbg!();
                                 selection.worktree_id = worktree_id;
                                 selection.entry_id = new_entry.id;
                                 project_panel.marked_entries.clear();
@@ -1689,6 +1697,7 @@ impl ProjectPanel {
         if let Some(previously_focused) =
             previous_edit_state.and_then(|edit_state| edit_state.previously_focused)
         {
+            dbg!();
             self.state.selection = Some(previously_focused);
             self.autoscroll(cx);
         }
@@ -1749,6 +1758,7 @@ impl ProjectPanel {
                     .read(cx)
                     .id();
 
+                dbg!();
                 self.state.selection = Some(SelectedEntry {
                     worktree_id,
                     entry_id,
@@ -2253,6 +2263,7 @@ impl ProjectPanel {
                     worktree_id: *worktree_id,
                     entry_id: entry.id,
                 };
+                dbg!();
                 self.state.selection = Some(selection);
                 if window.modifiers().shift {
                     self.marked_entries.push(selection);
@@ -2292,6 +2303,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
@@ -2331,6 +2343,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
@@ -2369,6 +2382,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
@@ -2404,6 +2418,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.autoscroll(cx);
             cx.notify();
@@ -2432,6 +2447,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.autoscroll(cx);
             cx.notify();
@@ -2461,6 +2477,7 @@ impl ProjectPanel {
         );
 
         if let Some(selection) = selection {
+            dbg!();
             self.state.selection = Some(selection);
             self.expand_entry(selection.worktree_id, selection.entry_id, cx);
             self.update_visible_entries(
@@ -2479,6 +2496,7 @@ impl ProjectPanel {
             if let Some(parent) = entry.path.parent() {
                 let worktree = worktree.read(cx);
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
+                    dbg!();
                     self.state.selection = Some(SelectedEntry {
                         worktree_id: worktree.id(),
                         entry_id: parent_entry.id,
@@ -2504,6 +2522,7 @@ impl ProjectPanel {
                 worktree_id: *worktree_id,
                 entry_id: entry.id,
             };
+            dbg!();
             self.state.selection = Some(selection);
             if window.modifiers().shift {
                 self.marked_entries.push(selection);
@@ -2528,6 +2547,7 @@ impl ProjectPanel {
                         worktree_id: *worktree_id,
                         entry_id: entry.id,
                     };
+                    dbg!();
                     self.state.selection = Some(selection);
                     self.autoscroll(cx);
                     cx.notify();
@@ -2679,16 +2699,19 @@ impl ProjectPanel {
                 }
                 // update selection
                 if let Some(entry) = last_succeed {
+                    dbg!();
                     project_panel
                         .update_in(cx, |project_panel, window, cx| {
+                            dbg!();
                             project_panel.state.selection = Some(SelectedEntry {
                                 worktree_id,
-                                entry_id: entry.id,
+                                entry_id: dbg!(entry.id),
                             });
 
                             if item_count == 1 {
                                 // open entry if not dir, and only focus if rename is not pending
-                                if !entry.is_dir() {
+                                if !dbg!(entry.is_dir()) {
+                                    dbg!();
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
@@ -2699,6 +2722,7 @@ impl ProjectPanel {
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
                                 if disambiguation_range.is_some() {
+                                    dbg!();
                                     cx.defer_in(window, |this, window, cx| {
                                         this.rename_impl(disambiguation_range, window, cx);
                                     });
@@ -3192,6 +3216,7 @@ impl ProjectPanel {
 
         let old_ancestors = self.state.ancestors.clone();
         let mut new_state = State::derive(&self.state);
+        dbg!(&new_state.selection);
         new_state.last_worktree_root_id = project
             .visible_worktrees(cx)
             .next_back()
@@ -3419,15 +3444,17 @@ impl ProjectPanel {
                         }
                     }
                     if let Some((worktree_id, entry_id)) = new_selected_entry {
-                        new_state.selection = Some(SelectedEntry {
+                        dbg!();
+                        new_state.selection = Some(dbg!(SelectedEntry {
                             worktree_id,
                             entry_id,
-                        });
+                        }));
                     }
                     new_state
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
+                dbg!();
                 this.state = new_state;
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
@@ -3639,6 +3666,7 @@ impl ProjectPanel {
                     if let Some(entry_id) = last_succeed {
                         project_panel
                             .update_in(cx, |project_panel, window, cx| {
+                                dbg!();
                                 project_panel.state.selection = Some(SelectedEntry {
                                     worktree_id,
                                     entry_id,
@@ -4593,6 +4621,7 @@ impl ProjectPanel {
                                 }
                             }
 
+                            dbg!();
                             project_panel.state.selection = Some(clicked_entry);
                             if !project_panel.marked_entries.contains(&clicked_entry) {
                                 project_panel.marked_entries.push(clicked_entry);
@@ -4602,6 +4631,7 @@ impl ProjectPanel {
                         if event.click_count() > 1 {
                             project_panel.split_entry(entry_id, false, None, cx);
                         } else {
+                            dbg!();
                             project_panel.state.selection = Some(selection);
                             if let Some(position) = project_panel.marked_entries.iter().position(|e| *e == selection) {
                                 project_panel.marked_entries.remove(position);
@@ -4988,6 +5018,9 @@ impl ProjectPanel {
         };
         let is_marked = self.marked_entries.contains(&selection);
         let is_selected = self.state.selection == Some(selection);
+        if is_selected {
+            dbg!(&entry.path, &self.state.selection);
+        }
 
         let diagnostic_severity = self
             .diagnostics
@@ -5452,6 +5485,7 @@ impl Render for ProjectPanel {
                                     return;
                                 };
 
+                                dbg!();
                                 this.state.selection = Some(SelectedEntry {
                                     worktree_id,
                                     entry_id,

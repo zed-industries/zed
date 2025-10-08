@@ -624,12 +624,14 @@ impl ProjectItemRegistry {
                 let project_path = project_path.clone();
                 let is_file = project
                     .read(cx)
-                    .entry_for_path(&project_path, cx)
+                    .entry_for_path(dbg!(&project_path), cx)
                     .is_some_and(|entry| entry.is_file());
                 let entry_abs_path = project.read(cx).absolute_path(&project_path, cx);
+                dbg!(&entry_abs_path);
                 let is_local = project.read(cx).is_local();
                 let project_item =
                     <T::Item as project::ProjectItem>::try_open(project, &project_path, cx)?;
+                dbg!();
                 let project = project.clone();
                 Some(window.spawn(cx, async move |cx| {
                     match project_item.await.with_context(|| {
@@ -693,6 +695,7 @@ impl ProjectItemRegistry {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
+        dbg!(self.build_project_item_for_path_fns.len());
         let Some(open_project_item) = self
             .build_project_item_for_path_fns
             .iter()
