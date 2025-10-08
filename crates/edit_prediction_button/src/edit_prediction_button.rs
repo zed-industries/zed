@@ -238,61 +238,58 @@ impl Render for EditPredictionButton {
             EditPredictionProvider::Codestral => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = CodestralCompletionProvider::has_api_key(cx);
-
-                let icon = IconName::AiMistral;
-                let tooltip_text = if has_api_key {
-                    "Codestral API key is configured"
-                } else {
-                    "No Codestral API key configured"
-                };
-                let has_error = !has_api_key;
-                let is_ready = has_api_key;
-
                 let fs = self.fs.clone();
                 let this = cx.entity().clone();
 
                 div().child(
                     PopoverMenu::new("codestral")
                         .menu(move |window, cx| {
-                            if is_ready {
+                            if has_api_key {
                                 Some(this.update(cx, |this, cx| {
                                     this.build_codestral_context_menu(window, cx)
                                 }))
                             } else {
                                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
-                                    menu.entry("Use Zed AI", None, move |_, cx| {
+                                    menu.entry("Use Zed AI instead", None, move |_, cx| {
                                         set_completion_provider(
                                             fs.clone(),
                                             cx,
                                             EditPredictionProvider::Zed,
                                         )
                                     })
+                                    .separator()
+                                    .entry(
+                                        "Configure Codestral API Key",
+                                        None,
+                                        move |window, cx| {
+                                            window.dispatch_action(
+                                                zed_actions::agent::OpenSettings.boxed_clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )
                                 }))
                             }
                         })
                         .anchor(Corner::BottomRight)
                         .trigger_with_tooltip(
-                            IconButton::new("codestral-icon", icon)
+                            IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
-                                .when(has_error, |this| {
+                                .when(!has_api_key, |this| {
                                     this.indicator(Indicator::dot().color(Color::Error))
                                         .indicator_border_color(Some(
                                             cx.theme().colors().status_bar_background,
                                         ))
                                 })
-                                .when(enabled && !has_error && is_ready, |this| {
-                                    this.indicator(Indicator::dot().color(Color::Muted))
+                                .when(has_api_key && !enabled, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Ignored))
                                         .indicator_border_color(Some(
                                             cx.theme().colors().status_bar_background,
                                         ))
                                 }),
                             move |window, cx| {
-                                if is_ready {
-                                    Tooltip::for_action(tooltip_text, &ToggleMenu, window, cx)
-                                } else {
-                                    Tooltip::text(tooltip_text)(window, cx)
-                                }
+                                Tooltip::for_action("Codestral", &ToggleMenu, window, cx)
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
@@ -790,16 +787,17 @@ impl EditPredictionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
             self.build_language_settings_menu(menu, window, cx)
                 .separator()
-                // todo! remove
-                .entry("Configure API Key", None, |_window, cx| {
-                    cx.dispatch_action(&zed_actions::OpenSettings);
+                .entry("Use Zed AI instead", None, move |_, cx| {
+                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
                 })
-            // .entry("Sign Out", None, |_window, cx| {
-            //     cx.dispatch_action(&codestral::SignOut);
-            // })
+                .separator()
+                .entry("Configure Codestral API Key", None, move |window, cx| {
+                    window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
+                })
         })
     }
 
