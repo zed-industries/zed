@@ -8,7 +8,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use client::Client;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
@@ -16,7 +15,7 @@ use futures::StreamExt as _;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
-use http_client::github::AssetKind;
+use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -114,6 +113,7 @@ enum AgentServerStoreState {
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
+        http_client: Arc<dyn HttpClient>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
@@ -174,6 +174,7 @@ impl AgentServerStore {
             project_environment,
             downstream_client,
             settings: old_settings,
+            http_client,
             ..
         } = &mut self.state
         else {
@@ -227,6 +228,7 @@ impl AgentServerStore {
                         .codex
                         .clone()
                         .and_then(|settings| settings.custom_command()),
+                    http_client: http_client.clone(),
                 }),
             );
         }
@@ -265,6 +267,7 @@ impl AgentServerStore {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         project_environment: Entity<ProjectEnvironment>,
+        http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
@@ -282,6 +285,7 @@ impl AgentServerStore {
                 node_runtime,
                 fs,
                 project_environment,
+                http_client,
                 downstream_client: None,
                 settings: None,
                 _subscriptions: [subscription],
@@ -1016,6 +1020,7 @@ impl ExternalAgentServer for LocalClaudeCode {
 struct LocalCodex {
     fs: Arc<dyn Fs>,
     project_environment: Entity<ProjectEnvironment>,
+    http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
 }
 
@@ -1030,6 +1035,7 @@ impl ExternalAgentServer for LocalCodex {
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
         let project_environment = self.project_environment.downgrade();
+        let http = self.http_client.clone();
         let custom_command = self.custom_command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
@@ -1053,7 +1059,6 @@ impl ExternalAgentServer for LocalCodex {
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
-                let http = cx.update(|cx| Client::global(cx).http_client())?;
                 let release = ::http_client::github::latest_github_release(
                     CODEX_ACP_REPO,
                     true,
