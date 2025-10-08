@@ -29,8 +29,9 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding, KeybindingHint,
-    PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
+    KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
+    prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -242,6 +243,9 @@ fn init_renderers(cx: &mut App) {
                 .icon_color(Color::Error)
                 .icon_size(IconSize::Small)
                 .style(ButtonStyle::Outlined)
+                .tooltip(Tooltip::text(
+                    "This warning is only displayed in dev builds.",
+                ))
                 .into_any_element()
         })
         .add_renderer::<bool>(|settings_field, file, _, _, cx| {
@@ -561,7 +565,7 @@ impl SettingsPageItem {
                         .color(Color::Muted)
                         .buffer_font(cx),
                 )
-                .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
+                .child(Divider::horizontal().color(DividerColor::BorderFaded))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
@@ -571,8 +575,8 @@ impl SettingsPageItem {
                 h_flex()
                     .id(setting_item.title)
                     .w_full()
+                    .min_w_0()
                     .gap_2()
-                    .flex_wrap()
                     .justify_between()
                     .map(|this| {
                         if is_last {
@@ -585,8 +589,8 @@ impl SettingsPageItem {
                     })
                     .child(
                         v_flex()
+                            .w_full()
                             .max_w_1_2()
-                            .flex_shrink()
                             .child(
                                 h_flex()
                                     .w_full()
@@ -620,6 +624,9 @@ impl SettingsPageItem {
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(
+                                "This warning is only displayed in dev builds.",
+                            ))
                             .into_any_element()
                     } else {
                         renderer.render(
@@ -651,7 +658,6 @@ impl SettingsPageItem {
                 )
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
-                        .size(ButtonSize::Medium)
                         .icon(IconName::ChevronRight)
                         .icon_position(IconPosition::End)
                         .icon_color(Color::Muted)
@@ -1218,6 +1224,7 @@ impl SettingsWindow {
         h_flex()
             .py_1()
             .px_1p5()
+            .mb_3()
             .gap_1p5()
             .rounded_sm()
             .bg(cx.theme().colors().editor_background)
@@ -1233,7 +1240,6 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
-        let nav_background = cx.theme().colors().panel_background;
         let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
             "Focus Content"
         } else {
@@ -1244,11 +1250,10 @@ impl SettingsWindow {
             .w_64()
             .p_2p5()
             .pt_10()
-            .gap_3()
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
-            .bg(nav_background)
+            .bg(cx.theme().colors().panel_background)
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
