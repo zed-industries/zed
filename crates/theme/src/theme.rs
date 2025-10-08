@@ -27,6 +27,8 @@ use ::settings::SettingsStore;
 use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
+use gpui::BorrowAppContext;
+use gpui::Global;
 use gpui::{
     App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
     WindowBackgroundAppearance, px,
@@ -95,6 +97,7 @@ pub enum LoadThemes {
 
 /// Initialize the theme system.
 pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
+    SystemAppearance::init(cx);
     let (assets, load_user_themes) = match themes_to_load {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
@@ -108,28 +111,66 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
 
-    let mut prev_buffer_font_size_settings =
-        ThemeSettings::get_global(cx).buffer_font_size_settings();
-    let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
-    let mut prev_agent_font_size_settings =
-        ThemeSettings::get_global(cx).agent_font_size_settings();
+    let theme = GlobalTheme::configured_theme(cx);
+    let icon_theme = GlobalTheme::configured_icon_theme(cx);
+    cx.set_global(GlobalTheme { theme, icon_theme });
+
+    let settings = ThemeSettings::get_global(cx);
+
+    let mut prev_buffer_font_size_settings = settings.buffer_font_size_settings();
+    let mut prev_ui_font_size_settings = settings.ui_font_size_settings();
+    let mut prev_agent_ui_font_size_settings = settings.agent_ui_font_size_settings();
+    let mut prev_agent_buffer_font_size_settings = settings.agent_buffer_font_size_settings();
+    let mut prev_theme_name = settings.theme.name(SystemAppearance::global(cx).0);
+    let mut prev_icon_theme_name = settings.icon_theme.name(SystemAppearance::global(cx).0);
+    let mut prev_theme_overrides = (
+        settings.experimental_theme_overrides.clone(),
+        settings.theme_overrides.clone(),
+    );
+
     cx.observe_global::<SettingsStore>(move |cx| {
-        let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
+        let settings = ThemeSettings::get_global(cx);
+
+        let buffer_font_size_settings = settings.buffer_font_size_settings();
+        let ui_font_size_settings = settings.ui_font_size_settings();
+        let agent_ui_font_size_settings = settings.agent_ui_font_size_settings();
+        let agent_buffer_font_size_settings = settings.agent_buffer_font_size_settings();
+        let theme_name = settings.theme.name(SystemAppearance::global(cx).0);
+        let icon_theme_name = settings.icon_theme.name(SystemAppearance::global(cx).0);
+        let theme_overrides = (
+            settings.experimental_theme_overrides.clone(),
+            settings.theme_overrides.clone(),
+        );
+
         if buffer_font_size_settings != prev_buffer_font_size_settings {
             prev_buffer_font_size_settings = buffer_font_size_settings;
             reset_buffer_font_size(cx);
         }
 
-        let ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
         if ui_font_size_settings != prev_ui_font_size_settings {
             prev_ui_font_size_settings = ui_font_size_settings;
             reset_ui_font_size(cx);
         }
 
-        let agent_font_size_settings = ThemeSettings::get_global(cx).agent_font_size_settings();
-        if agent_font_size_settings != prev_agent_font_size_settings {
-            prev_agent_font_size_settings = agent_font_size_settings;
-            reset_agent_font_size(cx);
+        if agent_ui_font_size_settings != prev_agent_ui_font_size_settings {
+            prev_agent_ui_font_size_settings = agent_ui_font_size_settings;
+            reset_agent_ui_font_size(cx);
+        }
+
+        if agent_buffer_font_size_settings != prev_agent_buffer_font_size_settings {
+            prev_agent_buffer_font_size_settings = agent_buffer_font_size_settings;
+            reset_agent_buffer_font_size(cx);
+        }
+
+        if theme_name != prev_theme_name || theme_overrides != prev_theme_overrides {
+            prev_theme_name = theme_name;
+            prev_theme_overrides = theme_overrides;
+            GlobalTheme::reload_theme(cx);
+        }
+
+        if icon_theme_name != prev_icon_theme_name {
+            prev_icon_theme_name = icon_theme_name;
+            GlobalTheme::reload_icon_theme(cx);
         }
     })
     .detach();
@@ -143,7 +184,7 @@ pub trait ActiveTheme {
 
 impl ActiveTheme for App {
     fn theme(&self) -> &Arc<Theme> {
-        &ThemeSettings::get_global(self).active_theme
+        GlobalTheme::theme(self)
     }
 }
 
@@ -396,4 +437,83 @@ pub async fn read_icon_theme(
     let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
 
     Ok(icon_theme_family)
+}
+
+/// The active theme
+pub struct GlobalTheme {
+    theme: Arc<Theme>,
+    icon_theme: Arc<IconTheme>,
+}
+impl Global for GlobalTheme {}
+
+impl GlobalTheme {
+    fn configured_theme(cx: &mut App) -> Arc<Theme> {
+        let themes = ThemeRegistry::default_global(cx);
+        let theme_settings = ThemeSettings::get_global(cx);
+        let system_appearance = SystemAppearance::global(cx);
+
+        let theme_name = theme_settings.theme.name(*system_appearance);
+
+        let theme = match themes.get(&theme_name.0) {
+            Ok(theme) => theme,
+            Err(err) => {
+                if themes.extensions_loaded() {
+                    log::error!("{err}");
+                }
+                themes
+                    .get(default_theme(*system_appearance))
+                    // fallback for tests.
+                    .unwrap_or_else(|_| themes.get(DEFAULT_DARK_THEME).unwrap())
+            }
+        };
+        theme_settings.apply_theme_overrides(theme)
+    }
+
+    /// Reloads the current theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
+    pub fn reload_theme(cx: &mut App) {
+        let theme = Self::configured_theme(cx);
+        cx.update_global::<Self, _>(|this, _| this.theme = theme);
+        cx.refresh_windows();
+    }
+
+    fn configured_icon_theme(cx: &mut App) -> Arc<IconTheme> {
+        let themes = ThemeRegistry::default_global(cx);
+        let theme_settings = ThemeSettings::get_global(cx);
+        let system_appearance = SystemAppearance::global(cx);
+
+        let icon_theme_name = theme_settings.icon_theme.name(*system_appearance);
+
+        match themes.get_icon_theme(&icon_theme_name.0) {
+            Ok(theme) => theme,
+            Err(err) => {
+                if themes.extensions_loaded() {
+                    log::error!("{err}");
+                }
+                themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()
+            }
+        }
+    }
+
+    /// Reloads the current icon theme.
+    ///
+    /// Reads the [`ThemeSettings`] to know which icon theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
+    pub fn reload_icon_theme(cx: &mut App) {
+        let icon_theme = Self::configured_icon_theme(cx);
+        cx.update_global::<Self, _>(|this, _| this.icon_theme = icon_theme);
+        cx.refresh_windows();
+    }
+
+    /// the active theme
+    pub fn theme(cx: &App) -> &Arc<Theme> {
+        &cx.global::<Self>().theme
+    }
+
+    /// the active icon theme
+    pub fn icon_theme(cx: &App) -> &Arc<IconTheme> {
+        &cx.global::<Self>().icon_theme
+    }
 }

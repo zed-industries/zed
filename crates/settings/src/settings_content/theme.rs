@@ -1,11 +1,11 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight};
+use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight, SharedString};
 use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use settings_macros::MergeFrom;
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 
 use serde_with::skip_serializing_none;
 
@@ -31,7 +31,8 @@ pub struct ThemeSettingsContent {
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
-    pub ui_font_weight: Option<f32>,
+    #[schemars(default = "default_buffer_font_weight")]
+    pub ui_font_weight: Option<FontWeight>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_family: Option<FontFamilyName>,
@@ -44,7 +45,8 @@ pub struct ThemeSettingsContent {
     pub buffer_font_size: Option<f32>,
     /// The weight of the editor font in CSS units from 100 to 900.
     #[serde(default)]
-    pub buffer_font_weight: Option<f32>,
+    #[schemars(default = "default_buffer_font_weight")]
+    pub buffer_font_weight: Option<FontWeight>,
     /// The buffer's line height.
     #[serde(default)]
     pub buffer_line_height: Option<BufferLineHeight>,
@@ -52,9 +54,12 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
-    /// The font size for the agent panel. Falls back to the UI font size if unset.
+    /// The font size for agent responses in the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<f32>,
+    pub agent_ui_font_size: Option<f32>,
+    /// The font size for user messages in the agent panel.
+    #[serde(default)]
+    pub agent_buffer_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -70,7 +75,8 @@ pub struct ThemeSettingsContent {
 
     /// How much to fade out unused code.
     #[serde(default)]
-    pub unnecessary_code_fade: Option<f32>,
+    #[schemars(range(min = 0.0, max = 0.9))]
+    pub unnecessary_code_fade: Option<CodeFade>,
 
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
@@ -85,12 +91,37 @@ pub struct ThemeSettingsContent {
     pub theme_overrides: HashMap<String, ThemeStyleContent>,
 }
 
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+)]
+#[serde(transparent)]
+pub struct CodeFade(pub f32);
+
+impl Display for CodeFade {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2}", self.0)
+    }
+}
+
 fn default_font_features() -> Option<FontFeatures> {
     Some(FontFeatures::default())
 }
 
 fn default_font_fallbacks() -> Option<FontFallbacks> {
     Some(FontFallbacks::default())
+}
+
+fn default_buffer_font_weight() -> Option<FontWeight> {
+    Some(FontWeight::default())
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
@@ -206,6 +237,18 @@ impl AsRef<str> for FontFamilyName {
     }
 }
 
+impl From<SharedString> for FontFamilyName {
+    fn from(value: SharedString) -> Self {
+        Self(Arc::from(value))
+    }
+}
+
+impl From<FontFamilyName> for SharedString {
+    fn from(value: FontFamilyName) -> Self {
+        SharedString::new(value.0)
+    }
+}
+
 impl From<String> for FontFamilyName {
     fn from(value: String) -> Self {
         Self(Arc::from(value))
@@ -219,18 +262,7 @@ impl From<FontFamilyName> for String {
 }
 
 /// The buffer's line height.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    JsonSchema,
-    MergeFrom,
-    Default,
-    strum::VariantNames,
-)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -240,10 +272,6 @@ pub enum BufferLineHeight {
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
-}
-
-impl strum::VariantArray for BufferLineHeight {
-    const VARIANTS: &'static [Self] = &[Self::Comfortable, Self::Standard];
 }
 
 fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
@@ -1108,6 +1136,48 @@ mod tests {
                 .unwrap()
                 .to_string()
                 .contains("buffer_line_height.custom must be at least 1.0")
+        );
+    }
+
+    #[test]
+    fn test_buffer_font_weight_schema_has_default() {
+        use schemars::schema_for;
+
+        let schema = schema_for!(ThemeSettingsContent);
+        let schema_value = serde_json::to_value(&schema).unwrap();
+
+        let properties = &schema_value["properties"];
+        let buffer_font_weight = &properties["buffer_font_weight"];
+
+        assert!(
+            buffer_font_weight.get("default").is_some(),
+            "buffer_font_weight should have a default value in the schema"
+        );
+
+        let default_value = &buffer_font_weight["default"];
+        assert_eq!(
+            default_value.as_f64(),
+            Some(FontWeight::NORMAL.0 as f64),
+            "buffer_font_weight default should be 400.0 (FontWeight::NORMAL)"
+        );
+
+        let defs = &schema_value["$defs"];
+        let font_weight_def = &defs["FontWeight"];
+
+        assert_eq!(
+            font_weight_def["minimum"].as_f64(),
+            Some(FontWeight::THIN.0 as f64),
+            "FontWeight should have minimum of 100.0"
+        );
+        assert_eq!(
+            font_weight_def["maximum"].as_f64(),
+            Some(FontWeight::BLACK.0 as f64),
+            "FontWeight should have maximum of 900.0"
+        );
+        assert_eq!(
+            font_weight_def["default"].as_f64(),
+            Some(FontWeight::NORMAL.0 as f64),
+            "FontWeight should have default of 400.0"
         );
     }
 }

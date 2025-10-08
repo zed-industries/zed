@@ -3069,3 +3069,49 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "file1.txt": "",
+                    "b": {
+                        "file2.txt": "",
+                    },
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let matching_abs_path = "/file1.txt".to_string();
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches(matching_abs_path, window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            collect_search_matches(picker).search_paths_only(),
+            vec![rel_path("a/file1.txt").into()],
+            "Relative path starting with slash should match"
+        )
+    });
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm);
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "file1.txt");
+    });
+}

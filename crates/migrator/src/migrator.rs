@@ -65,7 +65,13 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
+/// Runs the provided migrations on the given text.
+/// Will automatically return `Ok(None)` if there's no content to migrate.
 fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
     for migration in migrations.iter() {
@@ -200,6 +206,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_10_01,
         ),
         MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
+        MigrationType::TreeSitter(
+            migrations::m_2025_10_03::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_10_03,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -318,6 +328,10 @@ define_query!(
     SETTINGS_QUERY_2025_10_01,
     migrations::m_2025_10_01::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2025_10_03,
+    migrations::m_2025_10_03::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -361,6 +375,11 @@ mod tests {
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
         assert_migrated_correctly(migrated, output);
+    }
+
+    #[test]
+    fn test_empty_content() {
+        assert_migrate_settings("", None)
     }
 
     #[test]

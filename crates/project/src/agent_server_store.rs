@@ -14,7 +14,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
 use http_client::github::AssetKind;
 use node_runtime::NodeRuntime;
@@ -22,7 +22,7 @@ use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsContent, SettingsStore};
+use settings::SettingsStore;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -146,10 +146,6 @@ impl AgentServerStore {
 
     fn agent_servers_settings_changed(&mut self, cx: &mut Context<Self>) {
         let AgentServerStoreState::Local {
-            node_runtime,
-            fs,
-            project_environment,
-            downstream_client,
             settings: old_settings,
             ..
         } = &mut self.state
@@ -167,6 +163,29 @@ impl AgentServerStore {
         if Some(&new_settings) == old_settings.as_ref() {
             return;
         }
+
+        self.reregister_agents(cx);
+    }
+
+    fn reregister_agents(&mut self, cx: &mut Context<Self>) {
+        let AgentServerStoreState::Local {
+            node_runtime,
+            fs,
+            project_environment,
+            downstream_client,
+            settings: old_settings,
+            ..
+        } = &mut self.state
+        else {
+            debug_panic!("Non-local projects should never attempt to reregister. This is a bug!");
+
+            return;
+        };
+
+        let new_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
 
         self.external_agents.clear();
         self.external_agents.insert(
@@ -256,7 +275,7 @@ impl AgentServerStore {
         let feature_flags_subscription =
             cx.observe_flag::<feature_flags::CodexAcpFeatureFlag, _>(move |_enabled, cx| {
                 let _ = this_handle.update(cx, |this, cx| {
-                    this.agent_servers_settings_changed(cx);
+                    this.reregister_agents(cx);
                 });
             });
         let mut this = Self {
@@ -1275,7 +1294,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),
@@ -1288,6 +1307,4 @@ impl settings::Settings for AllAgentServersSettings {
                 .collect(),
         }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

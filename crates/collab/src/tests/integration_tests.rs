@@ -4077,7 +4077,7 @@ async fn test_collaborating_with_diagnostics(
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -4097,7 +4097,7 @@ async fn test_collaborating_with_diagnostics(
         .await
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -4171,7 +4171,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![
@@ -4269,7 +4269,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        &lsp::PublishDiagnosticsParams {
+        lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: Vec::new(),
@@ -4365,7 +4365,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         .await
         .into_response()
         .unwrap();
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
             lsp::WorkDoneProgressBegin {
@@ -4376,7 +4376,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     });
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-            &lsp::PublishDiagnosticsParams {
+            lsp::PublishDiagnosticsParams {
                 uri: lsp::Uri::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -4389,7 +4389,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             },
         );
     }
-    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
             lsp::WorkDoneProgressEnd { message: None },

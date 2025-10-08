@@ -636,6 +636,22 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!(
+                    "go test {} -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-run".into(),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
+                ],
+                tags: vec!["go-example".to_owned()],
+                cwd: package_cwd.clone(),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
                 args: vec!["test".into()],
@@ -988,6 +1004,43 @@ mod tests {
         assert!(
             tag_strings.contains(&"go-subtest".to_string()),
             "Should find go-subtest tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_example_test_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let example_test = r#"
+        package main
+
+        import "fmt"
+
+        func Example() {
+            fmt.Println("Hello, world!")
+            // Output: Hello, world!
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(example_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..example_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-example".to_string()),
+            "Should find go-example tag, found: {:?}",
             tag_strings
         );
     }

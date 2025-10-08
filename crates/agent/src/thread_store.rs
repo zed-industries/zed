@@ -38,7 +38,7 @@ use std::{
     cell::{Ref, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
 };
 use util::{ResultExt as _, rel_path::RelPath};
 
@@ -74,17 +74,19 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&str; 9] = [
-    ".rules",
-    ".cursorrules",
-    ".windsurfrules",
-    ".clinerules",
-    ".github/copilot-instructions.md",
-    "CLAUDE.md",
-    "AGENT.md",
-    "AGENTS.md",
-    "GEMINI.md",
-];
+static RULES_FILE_NAMES: LazyLock<[&RelPath; 9]> = LazyLock::new(|| {
+    [
+        RelPath::unix(".rules").unwrap(),
+        RelPath::unix(".cursorrules").unwrap(),
+        RelPath::unix(".windsurfrules").unwrap(),
+        RelPath::unix(".clinerules").unwrap(),
+        RelPath::unix(".github/copilot-instructions.md").unwrap(),
+        RelPath::unix("CLAUDE.md").unwrap(),
+        RelPath::unix("AGENT.md").unwrap(),
+        RelPath::unix("AGENTS.md").unwrap(),
+        RelPath::unix("GEMINI.md").unwrap(),
+    ]
+});
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     ThreadsDatabase::init(fs, cx);
@@ -232,11 +234,10 @@ impl ThreadStore {
                 self.enqueue_system_prompt_reload();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                if items.iter().any(|(path, _, _)| {
-                    RULES_FILE_NAMES
-                        .iter()
-                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
-                }) {
+                if items
+                    .iter()
+                    .any(|(path, _, _)| RULES_FILE_NAMES.iter().any(|name| path.as_ref() == *name))
+                {
                     self.enqueue_system_prompt_reload();
                 }
             }
@@ -368,7 +369,7 @@ impl ThreadStore {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::unix(name).unwrap())
+                    .entry_for_path(name)
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })

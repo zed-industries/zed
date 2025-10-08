@@ -382,7 +382,7 @@ impl InlineAssistant {
         if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
-                let range = assist.range.to_point(&snapshot.buffer_snapshot);
+                let range = assist.range.to_point(&snapshot.buffer_snapshot());
                 if range.start.row <= newest_selection.start.row
                     && newest_selection.end.row <= range.end.row
                 {
@@ -402,16 +402,16 @@ impl InlineAssistant {
                     selection.end.row -= 1;
                 }
                 selection.end.column = snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .line_len(MultiBufferRow(selection.end.row));
             } else if let Some(fold) =
                 snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
             {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
-                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
+                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot().max_row() {
                     let chars = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .chars_at(Point::new(selection.end.row + 1, 0));
 
                     for c in chars {
@@ -427,7 +427,7 @@ impl InlineAssistant {
                         {
                             selection.end.row += 1;
                             selection.end.column = snapshot
-                                .buffer_snapshot
+                                .buffer_snapshot()
                                 .line_len(MultiBufferRow(selection.end.row));
                         }
                     }
@@ -447,7 +447,7 @@ impl InlineAssistant {
             }
             selections.push(selection);
         }
-        let snapshot = &snapshot.buffer_snapshot;
+        let snapshot = &snapshot.buffer_snapshot();
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();

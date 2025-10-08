@@ -1,4 +1,7 @@
-use crate::markdown_elements::*;
+use crate::{
+    markdown_elements::*,
+    markdown_minifier::{Minifier, MinifierOptions},
+};
 use async_recursion::async_recursion;
 use collections::FxHashMap;
 use gpui::{DefiniteLength, FontWeight, px, relative};
@@ -25,6 +28,24 @@ pub async fn parse_markdown(
     let renderer = parser.parse_document().await;
     ParsedMarkdown {
         children: renderer.parsed,
+    }
+}
+
+fn cleanup_html(source: &str) -> Vec<u8> {
+    let mut writer = std::io::Cursor::new(Vec::new());
+    let mut reader = std::io::Cursor::new(source);
+    let mut minify = Minifier::new(
+        &mut writer,
+        MinifierOptions {
+            omit_doctype: true,
+            collapse_whitespace: true,
+            ..Default::default()
+        },
+    );
+    if let Ok(()) = minify.minify(&mut reader) {
+        writer.into_inner()
+    } else {
+        source.bytes().collect()
     }
 }
 
@@ -764,6 +785,10 @@ impl<'a> MarkdownParser<'a> {
             return elements;
         };
 
+        let mut html_source_range_start = None;
+        let mut html_source_range_end = None;
+        let mut html_buffer = String::new();
+
         while !self.eof() {
             let Some((current, source_range)) = self.current() else {
                 break;
@@ -771,19 +796,10 @@ impl<'a> MarkdownParser<'a> {
             let source_range = source_range.clone();
             match current {
                 Event::Html(html) => {
-                    let mut cursor = std::io::Cursor::new(html.as_bytes());
-                    let Some(dom) = parse_document(RcDom::default(), ParseOpts::default())
-                        .from_utf8()
-                        .read_from(&mut cursor)
-                        .ok()
-                    else {
-                        self.cursor += 1;
-                        continue;
-                    };
-
+                    html_source_range_start.get_or_insert(source_range.start);
+                    html_source_range_end = Some(source_range.end);
+                    html_buffer.push_str(html);
                     self.cursor += 1;
-
-                    self.parse_html_node(source_range, &dom.document, &mut elements);
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
@@ -793,6 +809,17 @@ impl<'a> MarkdownParser<'a> {
                     break;
                 }
             }
+        }
+
+        let bytes = cleanup_html(&html_buffer);
+
+        let mut cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut cursor)
+            && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
+        {
+            self.parse_html_node(start..end, &dom.document, &mut elements);
         }
 
         elements
@@ -852,6 +879,14 @@ impl<'a> MarkdownParser<'a> {
                             },
                             contents: paragraph,
                         }));
+                    }
+                } else if local_name!("blockquote") == name.local {
+                    if let Some(blockquote) = self.extract_html_blockquote(node, source_range) {
+                        elements.push(ParsedMarkdownElement::BlockQuote(blockquote));
+                    }
+                } else if local_name!("table") == name.local {
+                    if let Some(table) = self.extract_html_table(node, source_range) {
+                        elements.push(ParsedMarkdownElement::Table(table));
                     }
                 } else {
                     self.consume_children(source_range, node, elements);
@@ -969,6 +1004,73 @@ impl<'a> MarkdownParser<'a> {
         }
 
         Some(image)
+    }
+
+    fn extract_html_blockquote(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownBlockQuote> {
+        let mut children = Vec::new();
+        self.consume_children(source_range.clone(), node, &mut children);
+
+        if children.is_empty() {
+            None
+        } else {
+            Some(ParsedMarkdownBlockQuote {
+                children,
+                source_range,
+            })
+        }
+    }
+
+    fn extract_html_table(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        source_range: Range<usize>,
+    ) -> Option<ParsedMarkdownTable> {
+        let mut header_columns = Vec::new();
+        let mut body_rows = Vec::new();
+
+        // node should be a thead or tbody element
+        for node in node.children.borrow().iter() {
+            match &node.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("thead") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut paragraph = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut paragraph);
+
+                            for paragraph in paragraph.into_iter() {
+                                header_columns.push(vec![paragraph]);
+                            }
+                        }
+                    } else if local_name!("tbody") == name.local {
+                        // node should be a tr element
+                        for node in node.children.borrow().iter() {
+                            let mut row = MarkdownParagraph::new();
+                            self.consume_paragraph(source_range.clone(), node, &mut row);
+                            body_rows.push(ParsedMarkdownTableRow::with_children(
+                                row.into_iter().map(|column| vec![column]).collect(),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !header_columns.is_empty() || !body_rows.is_empty() {
+            Some(ParsedMarkdownTable {
+                source_range,
+                body: body_rows,
+                column_alignments: Vec::default(),
+                header: ParsedMarkdownTableRow::with_children(header_columns),
+            })
+        } else {
+            None
+        }
     }
 
     /// Parses the width/height attribute value of an html element (e.g. img element)
@@ -1327,6 +1429,159 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![ParsedMarkdownElement::Paragraph(text(
+                        "some description",
+                        0..76
+                    ))],
+                    0..76,
+                )]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_block_quote() {
+        let parsed = parse(
+            "<blockquote>
+              <p>some description</p>
+              <blockquote>
+                <p>second description</p>
+              </blockquote>
+            </blockquote>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![block_quote(
+                    vec![
+                        ParsedMarkdownElement::Paragraph(text("some description", 0..173)),
+                        block_quote(
+                            vec![ParsedMarkdownElement::Paragraph(text(
+                                "second description",
+                                0..173
+                            ))],
+                            0..173,
+                        )
+                    ],
+                    0..173,
+                )]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..366,
+                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    vec![
+                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
+                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_without_headings() {
+        let parsed = parse(
+            "<table>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..240,
+                    row(vec![]),
+                    vec![
+                        row(vec![text("1", 0..240), text("Chris", 0..240)]),
+                        row(vec![text("2", 0..240), text("Dennis", 0..240)]),
+                    ],
+                ))],
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table_without_body() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..150,
+                    row(vec![text("Id", 0..150), text("Name", 0..150)]),
+                    vec![],
+                ))],
+            },
+            parsed
         );
     }
 
