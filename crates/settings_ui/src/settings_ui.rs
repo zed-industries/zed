@@ -454,7 +454,7 @@ pub fn open_settings_editor(
                 kind: gpui::WindowKind::Normal,
                 window_background: cx.theme().window_background_appearance(),
                 window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
-                window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
+                window_bounds: Some(WindowBounds::centered(size(px(900.), px(750.)), cx)),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
