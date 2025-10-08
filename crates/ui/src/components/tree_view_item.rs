@@ -126,11 +126,12 @@ impl Toggleable for TreeViewItem {
 impl RenderOnce for TreeViewItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected_bg = cx.theme().colors().element_active.opacity(0.5);
+
         let selected_border = cx.theme().colors().border.opacity(0.6);
         let focused_border = cx.theme().colors().border_focused;
         let transparent_border = cx.theme().colors().border_transparent;
-        let item_size = rems_from_px(28.);
 
+        let item_size = rems_from_px(28.);
         let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
             div()
                 .w_px()
@@ -156,7 +157,6 @@ impl RenderOnce for TreeViewItem {
                         if self.root_item {
                             this.h(item_size)
                                 .px_1()
-                                .mb_1()
                                 .gap_2p5()
                                 .rounded_sm()
                                 .border_1()

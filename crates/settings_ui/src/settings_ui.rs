@@ -1240,6 +1240,7 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
+
         let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
             "Focus Content"
         } else {
@@ -1257,7 +1258,7 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .flex_grow()
+                    .size_full()
                     .track_focus(&self.navbar_focus_handle)
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
@@ -1323,8 +1324,8 @@ impl SettingsWindow {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.list_handle.clone())
-                        .flex_grow(),
+                        .size_full()
+                        .track_scroll(self.list_handle.clone()),
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
@@ -1333,6 +1334,7 @@ impl SettingsWindow {
                     .w_full()
                     .p_2()
                     .pb_0p5()
+                    .flex_none()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .children(
