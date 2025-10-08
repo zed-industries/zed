@@ -133,12 +133,12 @@ impl BufferInlayHints {
         self.buffer_chunks
             .iter()
             .filter(move |chunk| {
-                let chunk_range = chunk.start..chunk.end;
+                let chunk_range = chunk.start..=chunk.end;
                 // TODO kb is this right?
                 chunk_range.contains(&row_range.start())
                     || chunk_range.contains(&row_range.end())
-                    || row_range.contains(&chunk_range.start)
-                    || row_range.contains(&chunk_range.end)
+                    || row_range.contains(&chunk_range.start())
+                    || row_range.contains(&chunk_range.end())
             })
             .copied()
     }
