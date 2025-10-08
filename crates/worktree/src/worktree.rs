@@ -2668,6 +2668,7 @@ impl BackgroundScannerState {
                     scan_queue: scan_job_tx.clone(),
                     ancestor_inodes,
                     is_external: entry.is_external,
+                    is_hidden: entry.is_hidden,
                 })
                 .unwrap();
         }
@@ -3177,6 +3178,11 @@ pub struct Entry {
     /// exclude them from searches.
     pub is_ignored: bool,
 
+    /// Whether this entry is hidden or inside hidden directory.
+    ///
+    /// We only scan hidden entries once the directory is expanded.
+    pub is_hidden: bool,
+
     /// Whether this entry is always included in searches.
     ///
     /// This is used for entries that are always included in searches, even
@@ -3351,6 +3357,7 @@ impl Entry {
             size: metadata.len,
             canonical_path,
             is_ignored: false,
+            is_hidden: false,
             is_always_included: false,
             is_external: false,
             is_private: false,
@@ -4219,6 +4226,11 @@ impl BackgroundScanner {
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
+            child_entry.is_hidden = job.is_hidden
+                || child_name
+                    .to_str()
+                    .map_or(false, |name| name.starts_with('.'));
+
             if child_entry.is_dir() {
                 child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_always_included = self.settings.is_path_always_included(&child_path);
@@ -4234,6 +4246,7 @@ impl BackgroundScanner {
                         abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
+                        is_hidden: child_entry.is_hidden,
                         ignore_stack: if child_entry.is_ignored {
                             IgnoreStack::all()
                         } else {
@@ -4953,6 +4966,7 @@ struct ScanJob {
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
+    is_hidden: bool,
 }
 
 struct UpdateIgnoreStatusJob {
@@ -5374,6 +5388,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
+            is_hidden: entry.is_hidden,
             is_external: entry.is_external,
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
@@ -5412,6 +5427,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
                 .canonical_path
                 .map(|path_string| Arc::from(PathBuf::from(path_string))),
             is_ignored: entry.is_ignored,
+            is_hidden: entry.is_hidden,
             is_always_included,
             is_external: entry.is_external,
             is_private: false,

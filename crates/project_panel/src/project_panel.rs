@@ -3175,6 +3175,7 @@ impl ProjectPanel {
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
                 is_ignored: parent_entry.is_ignored,
+                is_hidden: parent_entry.is_hidden,
                 is_external: false,
                 is_private: false,
                 is_always_included: parent_entry.is_always_included,
@@ -3255,15 +3256,6 @@ impl ProjectPanel {
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
-                            // if hide_hidden
-                            //     && entry
-                            //         .path
-                            //         .file_name()
-                            //         .is_some_and(|name| name.starts_with("."))
-                            // {
-                            //     entry_iter.advance();
-                            //     continue;
-                            // }
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
                                     visible_worktree_entries.push(Self::create_new_git_entry(
@@ -3316,7 +3308,9 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if !hide_gitignore || !entry.is_ignored || !entry.is_hidden {
+                            if (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id
@@ -3329,7 +3323,10 @@ impl ProjectPanel {
                             } else {
                                 false
                             };
-                            if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
+                            if precedes_new_entry
+                                && (!hide_gitignore || !entry.is_ignored)
+                                && (!hide_hidden || !entry.is_hidden)
+                            {
                                 visible_worktree_entries.push(Self::create_new_git_entry(
                                     entry.entry,
                                     entry.git_summary,
