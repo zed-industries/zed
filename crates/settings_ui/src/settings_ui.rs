@@ -1473,8 +1473,11 @@ impl SettingsWindow {
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
                                             item.expanded(entry.expanded).on_toggle(cx.listener(
-                                                move |this, _, _, cx| {
+                                                move |this, _, window, cx| {
                                                     this.toggle_navbar_entry(ix);
+                                                    window.focus(
+                                                        &this.navbar_entries[ix].focus_handle,
+                                                    );
                                                     cx.notify();
                                                 },
                                             ))
