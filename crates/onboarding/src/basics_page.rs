@@ -227,7 +227,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         .border_color(cx.theme().colors().border_variant.opacity(0.5))
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
-            None,
+            None::<&str>,
             Some("Anonymous usage data helps us build the right features and improve your experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
@@ -269,7 +269,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         }))
         .child(SwitchField::new(
             "onboarding-telemetry-crash-reports",
-            None,
+            None::<&str>,
             Some("Send crash reports so we can fix critical issues fast.".into()),
             if TelemetrySettings::get_global(cx).diagnostics {
                 ui::ToggleState::Selected

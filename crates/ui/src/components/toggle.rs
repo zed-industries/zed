@@ -694,9 +694,7 @@ impl RenderOnce for SwitchField {
                 (Some(description), None) => v_flex()
                     .gap_0p5()
                     .max_w_5_6()
-                    .when_some(self.label, |this, label| {
-                        this.child(Label::new(label.clone()))
-                    })
+                    .when_some(self.label, |this, label| this.child(Label::new(label)))
                     .child(Label::new(description.clone()).color(Color::Muted))
                     .into_any_element(),
                 (None, Some(tooltip)) => tooltip.into_any_element(),
