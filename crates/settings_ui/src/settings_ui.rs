@@ -1469,7 +1469,6 @@ impl SettingsWindow {
                                             entry.title,
                                         )
                                         .track_focus(&entry.focus_handle)
-                                        // .tab_index(0)
                                         .root_item(entry.is_root)
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
@@ -1481,49 +1480,46 @@ impl SettingsWindow {
                                             ))
                                         })
                                         .on_click(
-                                            cx.listener(
-                                                move |this, evt: &gpui::ClickEvent, window, cx| {
-                                                    if !this.navbar_entries[ix].is_root {
-                                                        this.open_nav_page(ix);
-                                                        let mut selected_page_ix = ix;
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.open_nav_page(ix);
+                                                cx.notify();
 
-                                                        while !this.navbar_entries[selected_page_ix]
-                                                            .is_root
-                                                        {
-                                                            selected_page_ix -= 1;
-                                                        }
-
-                                                        let section_header = ix - selected_page_ix;
-
-                                                        if let Some(section_index) =
-                                                            this.page_items()
-                                                                .enumerate()
-                                                                .filter(|(_, (_, item))| {
-                                                                    matches!(
-                                                                 item,
-                                                                 SettingsPageItem::SectionHeader(_)
-                                                             )
-                                                                })
-                                                                .take(section_header)
-                                                                .last()
-                                                                .map(|(index, _)| index)
-                                                        {
-                                                            this.scroll_handle
-                                                                .scroll_to_top_of_item(
-                                                                    section_index,
-                                                                );
-                                                            this.focus_content_element(
-                                                                section_index,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    } else if !evt.is_keyboard() {
-                                                        this.open_nav_page(ix);
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            ),
+                                                if this.navbar_entries[ix].is_root {
+                                                    let Some(first_item_index) = this
+                                                        .page_items()
+                                                        .next()
+                                                        .map(|(index, _)| index)
+                                                    else {
+                                                        return;
+                                                    };
+                                                    this.focus_content_element(
+                                                        first_item_index,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    this.scroll_handle
+                                                        .set_offset(point(px(0.), px(0.)));
+                                                } else {
+                                                    let entry_item_index =
+                                                    this.navbar_entries[ix].item_index.expect(
+                                                        "Non-root items should have an item index",
+                                                    );
+                                                    let Some(selected_item_index) =
+                                                        this.page_items().position(|(index, _)| {
+                                                            index == entry_item_index
+                                                        })
+                                                    else {
+                                                        return;
+                                                    };
+                                                    this.scroll_handle
+                                                        .scroll_to_top_of_item(selected_item_index);
+                                                    this.focus_content_element(
+                                                        selected_item_index,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
                                         )
                                     })
                                     .collect()

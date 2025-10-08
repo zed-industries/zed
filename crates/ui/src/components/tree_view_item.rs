@@ -192,22 +192,7 @@ impl RenderOnce for TreeViewItem {
                                 .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
                                 .when_some(
                                     self.on_click.filter(|_| !self.disabled),
-                                    |this, on_click| {
-                                        if self.root_item
-                                            && let Some(on_toggle) = self.on_toggle.clone()
-                                        {
-                                            this.on_click(move |event, window, cx| {
-                                                if event.is_keyboard() {
-                                                    on_click(event, window, cx);
-                                                    on_toggle(event, window, cx);
-                                                } else {
-                                                    on_click(event, window, cx);
-                                                }
-                                            })
-                                        } else {
-                                            this.on_click(on_click)
-                                        }
-                                    },
+                                    |this, on_click| this.on_click(on_click),
                                 )
                                 .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                                     this.on_mouse_down(
