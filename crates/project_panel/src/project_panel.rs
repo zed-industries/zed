@@ -676,6 +676,9 @@ impl ProjectPanel {
                     if project_panel_settings.hide_root != new_settings.hide_root {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.hide_hidden != new_settings.hide_hidden {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
@@ -3212,6 +3215,7 @@ impl ProjectPanel {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
         let hide_root = settings.hide_root && visible_worktrees.len() == 1;
+        let hide_hidden = settings.hide_hidden;
         self.update_visible_entries_task = cx.spawn_in(window, async move |this, cx| {
             let new_state = cx
                 .background_spawn(async move {
@@ -3251,6 +3255,15 @@ impl ProjectPanel {
                         let mut auto_folded_ancestors = vec![];
                         let worktree_abs_path = worktree_snapshot.abs_path();
                         while let Some(entry) = entry_iter.entry() {
+                            // if hide_hidden
+                            //     && entry
+                            //         .path
+                            //         .file_name()
+                            //         .is_some_and(|name| name.starts_with("."))
+                            // {
+                            //     entry_iter.advance();
+                            //     continue;
+                            // }
                             if hide_root && Some(entry.entry) == worktree_snapshot.root_entry() {
                                 if new_entry_parent_id == Some(entry.id) {
                                     visible_worktree_entries.push(Self::create_new_git_entry(
@@ -3303,7 +3316,7 @@ impl ProjectPanel {
                                 }
                             }
                             auto_folded_ancestors.clear();
-                            if !hide_gitignore || !entry.is_ignored {
+                            if !hide_gitignore || !entry.is_ignored || !entry.is_hidden {
                                 visible_worktree_entries.push(entry.to_owned());
                             }
                             let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id

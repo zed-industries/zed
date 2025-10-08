@@ -443,7 +443,9 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
       "show": "always"
     },
     // Whether to hide the root entry when only one folder is open in the window.
-    "hide_root": false
+    "hide_root": false,
+    // Whether to hide the hidden entries in the project panel.
+    "hide_hidden": false
   }
 ```
 

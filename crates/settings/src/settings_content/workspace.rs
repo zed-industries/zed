@@ -530,6 +530,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub hide_root: Option<bool>,
+    /// Whether to hide the hidden entries in the project panel.
+    ///
+    /// Default: false
+    pub hide_hidden: Option<bool>,
     /// Whether to stick parent directories at top of the project panel.
     ///
     /// Default: true
