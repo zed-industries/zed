@@ -624,10 +624,10 @@ impl FoldMap {
 
 #[derive(Clone)]
 pub struct FoldSnapshot {
+    pub inlay_snapshot: InlaySnapshot,
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
     fold_metadata_by_id: TreeMap<FoldId, FoldMetadata>,
-    pub inlay_snapshot: InlaySnapshot,
     pub version: usize,
 }
 

@@ -522,10 +522,6 @@ impl Item for ProjectSearchView {
         self.results_editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn can_save(&self, _: &App) -> bool {
         true
     }
@@ -4047,7 +4043,7 @@ pub mod tests {
 
                     // Scroll results all the way down
                     results_editor.scroll(
-                        Point::new(0., f32::MAX),
+                        Point::new(0., f64::MAX),
                         Some(Axis::Vertical),
                         window,
                         cx,

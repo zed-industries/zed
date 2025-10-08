@@ -46,7 +46,7 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, ProjectItem};
+use project::{DirectoryLister, DisableAiSettings, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
@@ -604,21 +604,55 @@ fn initialize_panels(
             workspace.add_panel(debug_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = !cfg!(test);
-        let agent_panel = if is_assistant2_enabled {
-            let agent_panel =
-                agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
-                    .await?;
+        fn setup_or_teardown_agent_panel(
+            workspace: &mut Workspace,
+            prompt_builder: Arc<PromptBuilder>,
+            window: &mut Window,
+            cx: &mut Context<Workspace>,
+        ) -> Task<anyhow::Result<()>> {
+            let disable_ai = SettingsStore::global(cx)
+                .get::<DisableAiSettings>(None)
+                .disable_ai
+                || cfg!(test);
+            let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
+            match (disable_ai, existing_panel) {
+                (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+                    let panel =
+                        agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
+                            .await?;
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let disable_ai = SettingsStore::global(cx)
+                            .get::<DisableAiSettings>(None)
+                            .disable_ai;
+                        let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
+                        if !disable_ai && !have_panel {
+                            workspace.add_panel(panel, window, cx);
+                        }
+                    })
+                }),
+                (true, Some(existing_panel)) => {
+                    workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
+                    Task::ready(Ok(()))
+                }
+                _ => Task::ready(Ok(())),
+            }
+        }
 
-            Some(agent_panel)
-        } else {
-            None
-        };
+        workspace_handle
+            .update_in(cx, |workspace, window, cx| {
+                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+            })?
+            .await?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(agent_panel) = agent_panel {
-                workspace.add_panel(agent_panel, window, cx);
-            }
+            cx.observe_global_in::<SettingsStore>(window, {
+                let prompt_builder = prompt_builder.clone();
+                move |workspace, window, cx| {
+                    setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .detach();
 
             // Register the actions that are shared between `assistant` and `assistant2`.
             //
@@ -626,7 +660,7 @@ fn initialize_panels(
             // functions so that we only register the actions once.
             //
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if is_assistant2_enabled {
+            if !cfg!(test) {
                 <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,
@@ -746,7 +780,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size + px(1.0));
@@ -762,7 +796,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .ui_font_size
-                            .insert(theme::clamp_font_size(ui_font_size).0);
+                            .insert(theme::clamp_font_size(ui_font_size).into());
                     });
                 } else {
                     theme::adjust_ui_font_size(cx, |size| size - px(1.0));
@@ -791,7 +825,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size + px(1.0));
@@ -808,7 +842,7 @@ fn register_actions(
                         let _ = settings
                             .theme
                             .buffer_font_size
-                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).into());
                     });
                 } else {
                     theme::adjust_buffer_font_size(cx, |size| size - px(1.0));
@@ -1233,13 +1267,39 @@ pub fn handle_settings_file_changes(
     // Helper function to process settings content
     let process_settings =
         move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
+            let id = NotificationId::Named("failed-to-migrate-settings".into());
             // Apply migrations to both user and global settings
-            let (processed_content, content_migrated) =
-                if let Ok(Some(migrated_content)) = migrate_settings(&content) {
-                    (migrated_content, true)
-                } else {
+            let (processed_content, content_migrated) = match migrate_settings(&content) {
+                Ok(result) => {
+                    dismiss_app_notification(&id, cx);
+                    if let Some(migrated_content) = result {
+                        (migrated_content, true)
+                    } else {
+                        (content, false)
+                    }
+                }
+                Err(err) => {
+                    show_app_notification(id, cx, move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(
+                                format!(
+                                    "Failed to migrate settings\n\
+                                    {err}"
+                                ),
+                                cx,
+                            )
+                            .primary_message("Open Settings File")
+                            .primary_icon(IconName::Settings)
+                            .primary_on_click(|window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                cx.emit(DismissEvent);
+                            })
+                        })
+                    });
+                    // notify user here
                     (content, false)
-                };
+                }
+            };
 
             let result = if is_user {
                 store.set_user_settings(&processed_content, cx)
@@ -1519,7 +1579,8 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     }
     cx.bind_keys(user_key_bindings);
 
-    cx.set_menus(app_menus());
+    let menus = app_menus(cx);
+    cx.set_menus(menus);
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
@@ -2743,6 +2804,7 @@ mod tests {
         })
         .await
         .unwrap();
+        cx.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
         let window = cx.update(|cx| cx.windows()[0].downcast::<Workspace>().unwrap());
         let workspace = window.root(cx).unwrap();
@@ -2794,6 +2856,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2832,6 +2895,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2881,6 +2945,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
@@ -2930,6 +2995,7 @@ mod tests {
             })
             .unwrap()
             .await;
+        cx.run_until_parked();
         cx.read(|cx| {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(workspace, Path::new(path!("/d.txt")), rel_path(""), cx);
@@ -3849,7 +3915,7 @@ mod tests {
         fn active_location(
             workspace: &WindowHandle<Workspace>,
             cx: &mut TestAppContext,
-        ) -> (ProjectPath, DisplayPoint, f32) {
+        ) -> (ProjectPath, DisplayPoint, f64) {
             workspace
                 .update(cx, |workspace, _, cx| {
                     let item = workspace.active_item(cx).unwrap();
@@ -4393,8 +4459,10 @@ mod tests {
                     | "workspace::OpenTerminal"
                     | "workspace::SendKeystrokes"
                     | "agent::NewNativeAgentThreadFromSummary"
+                    | "action::Sequence"
                     | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl" => {}
+                    | "zed::OpenZedUrl"
+                    | "settings_editor::FocusFile" => {}
                     _ => {
                         let result = cx.build_action(action, None);
                         match &result {
@@ -4454,6 +4522,7 @@ mod tests {
             assert_eq!(actions_without_namespace, Vec::<&str>::new());
 
             let expected_namespaces = vec![
+                "action",
                 "activity_indicator",
                 "agent",
                 #[cfg(not(target_os = "macos"))]
@@ -4508,6 +4577,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "settings_editor",
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",

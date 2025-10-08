@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::{AskPassDelegate, EncryptedPassword};
+use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -298,10 +298,11 @@ pub enum RepositoryState {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     Updated { full_scan: bool, new_instance: bool },
     MergeHeadsChanged,
+    PathsChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -438,6 +439,15 @@ impl GitStore {
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
+    }
+    pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
+        if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
+            let id = repo.read(cx).id;
+            if self.active_repo_id != Some(id) {
+                self.active_repo_id = Some(id);
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
+            }
+        }
     }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
@@ -1111,7 +1121,6 @@ impl GitStore {
             _ => {}
         }
     }
-
     fn on_repository_event(
         &mut self,
         repo: Entity<Repository>,
@@ -2102,13 +2111,19 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass.ask_password(envelope.payload.prompt).await?;
+        let response = askpass
+            .ask_password(envelope.payload.prompt)
+            .await
+            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
 
         delegates
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        response.try_into()
+        // In fact, we don't quite know what we're doing here, as we're sending askpass password unencrypted, but..
+        Ok(proto::AskPassResponse {
+            response: response.decrypt(IKnowWhatIAmDoingAndIHaveReadTheDocs)?,
+        })
     }
 
     async fn handle_check_for_pushed_commits(
@@ -4599,9 +4614,12 @@ impl Repository {
                     log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
                     HashMap::default()
                 });
+            let search_paths = environment.get("PATH").map(|val| val.to_owned());
             let backend = cx
                 .background_spawn(async move {
-                    fs.open_repo(&dot_git_abs_path)
+                    let system_git_binary_path = search_paths.and_then(|search_paths| which::which_in("git", Some(search_paths), &work_directory_abs_path).ok())
+                        .or_else(|| which::which("git").ok());
+                    fs.open_repo(&dot_git_abs_path, system_git_binary_path.as_deref())
                         .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
                 })
                 .await?;
@@ -4825,17 +4843,21 @@ impl Repository {
                         this.snapshot.scan_id += 1;
                     }
 
-                    if needs_update && let Some(updates_tx) = updates_tx {
+                    if needs_update {
+                        cx.emit(RepositoryEvent::Updated {
+                            full_scan: false,
+                            new_instance: false,
+                        });
+                    }
+
+                    if let Some(updates_tx) = updates_tx {
                         updates_tx
                             .unbounded_send(DownstreamUpdate::UpdateRepository(
                                 this.snapshot.clone(),
                             ))
                             .ok();
                     }
-                    cx.emit(RepositoryEvent::Updated {
-                        full_scan: false,
-                        new_instance: false,
-                    });
+                    cx.emit(RepositoryEvent::PathsChanged);
                 })
             },
         );

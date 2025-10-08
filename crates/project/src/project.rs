@@ -33,12 +33,14 @@ pub mod search_history;
 mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
+use task::Shell;
 
 use crate::{
-    agent_server_store::{AgentServerStore, AllAgentServersSettings},
+    agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
 };
+pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -1894,11 +1896,12 @@ impl Project {
 
     pub fn directory_environment(
         &self,
+        shell: &Shell,
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
-            environment.get_directory_environment(abs_path, cx)
+            environment.get_directory_environment_for_shell(shell, abs_path, cx)
         })
     }
 
@@ -3249,9 +3252,9 @@ impl Project {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
         let settings = ProjectSettings::get_global(cx);
-        let delay = if let Some(delay) = settings.git.gutter_debounce {
-            delay
-        } else {
+        let delay = settings.git.gutter_debounce;
+
+        if delay == 0 {
             if first_insertion {
                 let this = cx.weak_entity();
                 cx.defer(move |cx| {
@@ -3263,7 +3266,7 @@ impl Project {
                 });
             }
             return;
-        };
+        }
 
         const MIN_DELAY: u64 = 50;
         let delay = delay.max(MIN_DELAY);
@@ -5292,6 +5295,51 @@ impl Project {
     pub fn path_style(&self, cx: &App) -> PathStyle {
         self.worktree_store.read(cx).path_style()
     }
+
+    pub fn contains_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: &RelPath,
+        cx: &App,
+    ) -> bool {
+        self.worktree_for_id(worktree_id, cx)
+            .map_or(false, |worktree| {
+                worktree.read(cx).entry_for_path(rel_path).is_some()
+            })
+    }
+
+    pub fn update_local_settings_file(
+        &self,
+        worktree_id: WorktreeId,
+        rel_path: Arc<RelPath>,
+        cx: &mut App,
+        update: impl 'static + Send + FnOnce(&mut settings::SettingsContent, &App),
+    ) {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            // todo(settings_ui) error?
+            return;
+        };
+        cx.spawn(async move |cx| {
+            let file = worktree
+                .update(cx, |worktree, cx| worktree.load_file(&rel_path, cx))?
+                .await
+                .context("Failed to load settings file")?;
+
+            let new_text = cx.read_global::<SettingsStore, _>(|store, cx| {
+                store.new_text_for_update(file.text, move |settings| update(settings, cx))
+            })?;
+            worktree
+                .update(cx, |worktree, cx| {
+                    let line_ending = text::LineEnding::detect(&new_text);
+                    worktree.write_file(rel_path.clone(), new_text.into(), line_ending, cx)
+                })?
+                .await
+                .context("Failed to write settings file")?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 }
 
 pub struct PathMatchCandidateSet {
@@ -5535,17 +5583,6 @@ impl Completion {
         }
         None
     }
-}
-
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
-    entries.sort_by(|entry_a, entry_b| {
-        let entry_a = entry_a.as_ref();
-        let entry_b = entry_b.as_ref();
-        compare_paths(
-            (entry_a.path.as_std_path(), entry_a.is_file()),
-            (entry_b.path.as_std_path(), entry_b.is_file()),
-        )
-    });
 }
 
 fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {

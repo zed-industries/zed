@@ -164,7 +164,9 @@ pub enum WorkingDirectory {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
@@ -199,11 +201,25 @@ impl TerminalLineHeight {
 /// When to show the scrollbar.
 ///
 /// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowScrollbar {
     /// Show the scrollbar if there's important information or
     /// follow the system's configured behavior.
+    #[default]
     Auto,
     /// Match the system's configured behavior.
     System,
@@ -301,7 +317,19 @@ impl VenvSettings {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDockPosition {
     Left,

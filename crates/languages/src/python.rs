@@ -26,6 +26,7 @@ use std::env::consts;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
 
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -36,8 +37,6 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -272,7 +271,7 @@ impl LspInstaller for TyLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -1187,11 +1186,13 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
-                        ShellKind::Posix => "source",
+                        ShellKind::Tcsh => "source",
+                        ShellKind::Posix | ShellKind::Rc => "source",
                     };
                     let activate_script_name = match shell {
-                        ShellKind::Posix => "activate",
+                        ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
+                        ShellKind::Tcsh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
@@ -1220,7 +1221,9 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
+                    ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
+                    ShellKind::Rc => None,
                 })
             }
             _ => {}
@@ -2112,7 +2115,7 @@ impl LspInstaller for RuffLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,

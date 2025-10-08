@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings, MultiBufferSnapshot};
+use editor::{Editor, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
@@ -8,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -205,10 +205,7 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !EditorSettings::get_global(cx)
-            .status_bar
-            .cursor_position_button
-        {
+        if !StatusBarSettings::get_global(cx).cursor_position_button {
             return div();
         }
 

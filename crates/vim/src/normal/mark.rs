@@ -54,11 +54,11 @@ impl Vim {
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
                 ends.push(
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(end.to_offset(&map, Bias::Left)),
                 );
                 starts.push(
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(selection.start.to_offset(&map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
@@ -106,7 +106,7 @@ impl Vim {
                         point = motion::first_non_whitespace(&map.display_snapshot, false, point);
                         anchor = map
                             .display_snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
 
@@ -239,7 +239,7 @@ impl Vim {
                         point = motion::first_non_whitespace(&map.display_snapshot, false, point);
                         anchor = map
                             .display_snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
 
@@ -312,7 +312,7 @@ impl Vim {
                         ")" => motion::sentence_forwards(&map, selection.head(), 1),
                         _ => unreachable!(),
                     };
-                    map.buffer_snapshot
+                    map.buffer_snapshot()
                         .anchor_before(point.to_offset(&map, Bias::Left))
                 })
                 .collect::<Vec<Anchor>>();

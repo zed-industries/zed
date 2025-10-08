@@ -5,6 +5,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use http_client::github_download::download_server_binary;
 use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
@@ -25,7 +26,7 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, fs::remove_matching, maybe};
 use util::{merge_json_value_into, rel_path::RelPath};
 
-use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
+use crate::{PackageJson, PackageJsonData};
 
 pub(crate) struct TypeScriptContextProvider {
     fs: Arc<dyn Fs>,
@@ -853,7 +854,7 @@ impl LspInstaller for EsLintLspAdapter {
             remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
-                delegate,
+                &*delegate.http_client(),
                 &version.url,
                 None,
                 &destination_path,

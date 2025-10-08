@@ -53,6 +53,7 @@ pub struct RenderContext {
     border_color: Hsla,
     element_background_color: Hsla,
     text_color: Hsla,
+    link_color: Hsla,
     window_rem_size: Pixels,
     text_muted_color: Hsla,
     code_block_background_color: Hsla,
@@ -87,6 +88,7 @@ impl RenderContext {
             border_color: theme.colors().border,
             element_background_color: theme.colors().element_background,
             text_color: theme.colors().text,
+            link_color: theme.colors().text_accent,
             window_rem_size: window.rem_size(),
             text_muted_color: theme.colors().text_muted,
             code_block_background_color: theme.colors().surface_background,
@@ -473,6 +475,10 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         for (index, cell) in row.children.iter().enumerate() {
             let length = paragraph_len(cell);
 
+            if index >= max_lengths.len() {
+                max_lengths.resize(index + 1, length);
+            }
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -521,7 +527,7 @@ fn render_markdown_table_row(
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let mut items = vec![];
+    let mut items = Vec::with_capacity(parsed.children.len());
     let count = parsed.children.len();
 
     for (index, cell) in parsed.children.iter().enumerate() {
@@ -650,12 +656,13 @@ fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext)
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
-    let mut any_element = vec![];
+    let mut any_element = Vec::with_capacity(parsed_new.len());
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
     let code_span_bg_color = cx.code_span_background_color;
     let text_style = cx.text_style.clone();
+    let link_color = cx.link_color;
 
     for parsed_region in parsed_new {
         match parsed_region {
@@ -665,7 +672,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let highlights = gpui::combine_highlights(
                     parsed.highlights.iter().filter_map(|(range, highlight)| {
                         highlight
-                            .to_highlight_style(&syntax_theme)
+                            .to_highlight_style(&syntax_theme, link_color)
                             .map(|style| (range.clone(), style))
                     }),
                     parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
