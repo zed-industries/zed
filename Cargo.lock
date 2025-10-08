@@ -20735,6 +20735,8 @@ dependencies = [
  "indoc",
  "language",
  "log",
+ "multi_buffer",
+ "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
  "serde",

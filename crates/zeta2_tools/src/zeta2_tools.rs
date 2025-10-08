@@ -1,16 +1,20 @@
-use std::{collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    cmp::Reverse, collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
+};
 
 use chrono::TimeDelta;
 use client::{Client, UserStore};
-use cloud_llm_client::predict_edits_v3::PromptFormat;
+use cloud_llm_client::predict_edits_v3::{DeclarationScoreComponents, PromptFormat};
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
 use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
-    Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity, actions,
-    prelude::*,
+    CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    actions, prelude::*,
 };
 use language::{Buffer, DiskState};
+use ordered_float::OrderedFloat;
 use project::{Project, WorktreeId};
 use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
@@ -298,6 +302,8 @@ impl Zeta2Inspector {
 
                 this.update_in(cx, |this, window, cx| {
                     let context_editor = cx.new(|cx| {
+                        let mut excerpt_score_components = HashMap::default();
+
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
@@ -328,7 +334,14 @@ impl Zeta2Inspector {
                                 cx,
                             );
 
-                            for snippet in &prediction.context.declarations {
+                            let mut declarations = prediction.context.declarations.clone();
+                            declarations.sort_unstable_by_key(|declaration| {
+                                Reverse(OrderedFloat(
+                                    declaration.score(DeclarationStyle::Declaration),
+                                ))
+                            });
+
+                            for snippet in &declarations {
                                 let path = this
                                     .project
                                     .read(cx)
@@ -336,10 +349,10 @@ impl Zeta2Inspector {
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
                                     title: RelPath::unix(&format!(
-                                        "{} (Score density: {})",
+                                        "{} (Score: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
-                                        snippet.score_density(DeclarationStyle::Declaration)
+                                        snippet.score(DeclarationStyle::Declaration)
                                     ))
                                     .unwrap()
                                     .into(),
@@ -359,17 +372,26 @@ impl Zeta2Inspector {
                                     buffer
                                 });
 
-                                multibuffer.push_excerpts(
+                                let excerpt_ids = multibuffer.push_excerpts(
                                     excerpt_buffer,
                                     [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                                     cx,
                                 );
+                                let excerpt_id = excerpt_ids.first().unwrap();
+
+                                excerpt_score_components
+                                    .insert(*excerpt_id, snippet.components.clone());
                             }
 
                             multibuffer
                         });
 
-                        Editor::new(EditorMode::full(), multibuffer, None, window, cx)
+                        let mut editor =
+                            Editor::new(EditorMode::full(), multibuffer, None, window, cx);
+                        editor.register_addon(ZetaContextAddon {
+                            excerpt_score_components,
+                        });
+                        editor
                     });
 
                     let PredictionDebugInfo {
@@ -805,5 +827,60 @@ impl language::File for ExcerptMetadataFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+struct ZetaContextAddon {
+    excerpt_score_components: HashMap<editor::ExcerptId, DeclarationScoreComponents>,
+}
+
+impl editor::Addon for ZetaContextAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn render_buffer_header_controls(
+        &self,
+        excerpt_info: &multi_buffer::ExcerptInfo,
+        _window: &Window,
+        _cx: &App,
+    ) -> Option<AnyElement> {
+        let score_components = self.excerpt_score_components.get(&excerpt_info.id)?.clone();
+
+        Some(
+            div()
+                .id(excerpt_info.id.to_proto() as usize)
+                .child(ui::Icon::new(IconName::Info))
+                .cursor(CursorStyle::PointingHand)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| ScoreComponentsTooltip::new(&score_components))
+                        .into()
+                })
+                .into_any(),
+        )
+    }
+}
+
+struct ScoreComponentsTooltip {
+    text: SharedString,
+}
+
+impl ScoreComponentsTooltip {
+    fn new(components: &DeclarationScoreComponents) -> Self {
+        Self {
+            text: format!("{:#?}", components).into(),
+        }
+    }
+}
+
+impl Render for ScoreComponentsTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().pl_2().pt_2p5().child(
+            div()
+                .elevation_2(cx)
+                .py_1()
+                .px_2()
+                .child(ui::Label::new(self.text.clone()).buffer_font(cx)),
+        )
     }
 }
