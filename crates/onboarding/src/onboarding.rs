@@ -241,7 +241,7 @@ impl Onboarding {
     }
 
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
-        telemetry::event!("Welcome Skip Clicked");
+        telemetry::event!("Finish Setup");
         go_to_welcome_page(cx);
     }
 
@@ -343,7 +343,6 @@ impl Render for Onboarding {
                                                 .map(|kb| kb.size(rems_from_px(12.))),
                                             )
                                             .on_click(|_, window, cx| {
-                                                telemetry::event!("Welcome Start Building Clicked");
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
                                     })

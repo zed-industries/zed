@@ -225,10 +225,9 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         .gap_4()
         .border_t_1()
         .border_color(cx.theme().colors().border_variant.opacity(0.5))
-        .child(Label::new("Telemetry").size(LabelSize::Large))
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
-            "Help Improve Zed",
+            None,
             Some("Anonymous usage data helps us build the right features and improve your experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
@@ -270,7 +269,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         }))
         .child(SwitchField::new(
             "onboarding-telemetry-crash-reports",
-            "Help Fix Zed",
+            None,
             Some("Send crash reports so we can fix critical issues fast.".into()),
             if TelemetrySettings::get_global(cx).diagnostics {
                 ui::ToggleState::Selected
@@ -377,7 +376,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     };
     SwitchField::new(
         "onboarding-vim-mode",
-        "Vim Mode",
+        Some("Vim Mode"),
         Some("Coming from Neovim? Use our first-class implementation of Vim Mode.".into()),
         toggle_state,
         {
@@ -469,7 +468,7 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
                 ),
         )
         .child(div().w_full())
-        .child(h_flex().gap_2().child(vscode).child(cursor))
+        .child(h_flex().gap_1().child(vscode).child(cursor))
 }
 
 pub(crate) fn render_basics_page(cx: &mut App) -> impl IntoElement {

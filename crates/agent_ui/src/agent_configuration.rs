@@ -450,7 +450,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "sound-notification",
-            "Play sound when finished generating",
+            Some("Play sound when finished generating".into()),
             Some(
                 "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
             ),
@@ -470,7 +470,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "modifier-send",
-            "Use modifier to submit a message",
+            Some("Use modifier to submit a message".into()),
             Some(
                 "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
