@@ -490,6 +490,7 @@ impl LanguageServer {
                         return;
                     };
                 }
+                outbound_tx.close();
             }
         })
         .detach();
@@ -976,7 +977,7 @@ impl LanguageServer {
 
                 response_handlers.lock().take();
                 Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
-                outbound_tx.close();
+                notification_serializers.close();
                 output_done.recv().await;
                 server.lock().take().map(|mut child| child.kill());
                 drop(tasks);
@@ -1377,6 +1378,7 @@ impl LanguageServer {
             })
             .unwrap()
         }));
+
         outbound_tx.send_blocking(serializer)?;
         Ok(())
     }
@@ -1931,6 +1933,7 @@ mod tests {
         fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
+        cx.run_until_parked();
         fake.receive_notification::<notification::Exit>().await;
     }
 

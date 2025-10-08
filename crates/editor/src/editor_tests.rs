@@ -12420,7 +12420,7 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
     let format = cx
         .update_editor(|editor, window, cx| editor.format(&Format, window, cx))
         .unwrap();
-
+    cx.run_until_parked();
     // Record which buffer changes have been sent to the language server
     let buffer_changes = Arc::new(Mutex::new(Vec::new()));
     cx.lsp
