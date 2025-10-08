@@ -136,11 +136,6 @@ pub struct CopilotSettingsContent {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CodestralSettingsContent {
-    /// API key for Codestral.
-    ///
-    /// Default: none
-    #[serde(default)]
-    pub api_key: Option<String>,
     /// Model to use for completions.
     ///
     /// Default: "codestral-latest"

@@ -416,8 +416,6 @@ pub struct CopilotSettings {
 
 #[derive(Clone, Debug, Default)]
 pub struct CodestralSettings {
-    /// API key for Codestral.
-    pub api_key: Option<String>,
     /// Model to use for completions.
     pub model: Option<String>,
     /// Maximum tokens to generate.
@@ -636,7 +634,6 @@ impl settings::Settings for AllLanguageSettings {
 
         let codestral = edit_predictions.codestral.unwrap();
         let codestral_settings = CodestralSettings {
-            api_key: codestral.api_key,
             model: codestral.model,
             max_tokens: codestral.max_tokens,
         };
