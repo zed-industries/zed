@@ -2377,8 +2377,8 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) =
-            ShellBuilder::new(&Shell::System).build(Some("echo".to_owned()), &["hello".to_owned()]);
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
                 None,
@@ -2496,7 +2496,7 @@ mod tests {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
-        let (program, args) = ShellBuilder::new(&Shell::System)
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
