@@ -131,85 +131,216 @@
             name: (identifier) @name
             !value) @item))
 
-; Object destructuring patterns
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (object_pattern
-                (shorthand_property_identifier_pattern) @name @item))))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (object_pattern
-                (pair_pattern
-                    key: (_) @name) @item))))
-
-; Array destructuring patterns
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (array_pattern
-                (identifier) @name @item))))
-
-; Anonymous functions assigned to variables in statement blocks
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: [(function_expression) (arrow_function)]) @item))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            value: [
-                (string)
-                (number)
-                (true)
-                (false)
-                (null)
-                (undefined)
-                (identifier)
-                (call_expression)
-                (new_expression)
-                (await_expression)
-                (binary_expression)
-                (unary_expression)
-                (template_string)
-                (array)
-                (object)
-                (member_expression)
-            ]) @item))
-
-(statement_block
-    (lexical_declaration
-        ["let" "const"] @context
-        (variable_declarator
-            name: (identifier) @name
-            !value) @item))
-
 ; Lexical declarations directly inside arrow function bodies
-; This captures variables at the immediate level of the arrow function
+; Match direct children at any position in the statement block
 (arrow_function
     body: (statement_block
-        . (lexical_declaration
+        (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name) @item)))
+                name: (identifier) @name
+                value: [(function_expression) (arrow_function)]) @item)))
+
+(arrow_function
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [
+                    (string)
+                    (number)
+                    (true)
+                    (false)
+                    (null)
+                    (undefined)
+                    (identifier)
+                    (call_expression)
+                    (new_expression)
+                    (await_expression)
+                    (binary_expression)
+                    (unary_expression)
+                    (template_string)
+                    (array)
+                    (object)
+                    (member_expression)
+                ]) @item)))
+
+(arrow_function
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                !value) @item)))
 
 ; Lexical declarations directly inside function expression bodies
 (function_expression
     body: (statement_block
-        . (lexical_declaration
+        (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name) @item)))
+                name: (identifier) @name
+                value: [(function_expression) (arrow_function)]) @item)))
+
+(function_expression
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [
+                    (string)
+                    (number)
+                    (true)
+                    (false)
+                    (null)
+                    (undefined)
+                    (identifier)
+                    (call_expression)
+                    (new_expression)
+                    (await_expression)
+                    (binary_expression)
+                    (unary_expression)
+                    (template_string)
+                    (array)
+                    (object)
+                    (member_expression)
+                ]) @item)))
+
+(function_expression
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                !value) @item)))
+
+; Lexical declarations directly inside function declaration bodies
+(function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [(function_expression) (arrow_function)]) @item)))
+
+(function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [
+                    (string)
+                    (number)
+                    (true)
+                    (false)
+                    (null)
+                    (undefined)
+                    (identifier)
+                    (call_expression)
+                    (new_expression)
+                    (await_expression)
+                    (binary_expression)
+                    (unary_expression)
+                    (template_string)
+                    (array)
+                    (object)
+                    (member_expression)
+                ]) @item)))
+
+(function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                !value) @item)))
+
+; Lexical declarations directly inside generator function declaration bodies
+(generator_function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [(function_expression) (arrow_function)]) @item)))
+
+(generator_function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [
+                    (string)
+                    (number)
+                    (true)
+                    (false)
+                    (null)
+                    (undefined)
+                    (identifier)
+                    (call_expression)
+                    (new_expression)
+                    (await_expression)
+                    (binary_expression)
+                    (unary_expression)
+                    (template_string)
+                    (array)
+                    (object)
+                    (member_expression)
+                ]) @item)))
+
+(generator_function_declaration
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                !value) @item)))
+
+; Lexical declarations directly inside method definition bodies
+(method_definition
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [(function_expression) (arrow_function)]) @item)))
+
+(method_definition
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                value: [
+                    (string)
+                    (number)
+                    (true)
+                    (false)
+                    (null)
+                    (undefined)
+                    (identifier)
+                    (call_expression)
+                    (new_expression)
+                    (await_expression)
+                    (binary_expression)
+                    (unary_expression)
+                    (template_string)
+                    (array)
+                    (object)
+                    (member_expression)
+                ]) @item)))
+
+(method_definition
+    body: (statement_block
+        (lexical_declaration
+            ["let" "const"] @context
+            (variable_declarator
+                name: (identifier) @name
+                !value) @item)))
 
 (class_declaration
     "class" @context
