@@ -339,35 +339,6 @@ pub struct IconThemeName(pub Arc<str>);
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
-    /// Background color for Vim Normal mode indicator.
-    #[serde(rename = "vim.normal.background")]
-    pub vim_normal_background: Option<String>,
-    /// Background color for Vim Insert mode indicator.
-    #[serde(rename = "vim.insert.background")]
-    pub vim_insert_background: Option<String>,
-    /// Background color for Vim Replace mode indicator.
-    #[serde(rename = "vim.replace.background")]
-    pub vim_replace_background: Option<String>,
-    /// Background color for Vim Visual mode indicator.
-    #[serde(rename = "vim.visual.background")]
-    pub vim_visual_background: Option<String>,
-    /// Background color for Vim Visual Line mode indicator.
-    #[serde(rename = "vim.visual_line.background")]
-    pub vim_visual_line_background: Option<String>,
-    /// Background color for Vim Visual Block mode indicator.
-    #[serde(rename = "vim.visual_block.background")]
-    pub vim_visual_block_background: Option<String>,
-    /// Background color for Vim Helix Normal mode indicator.
-    #[serde(rename = "vim.helix_normal.background")]
-    pub vim_helix_normal_background: Option<String>,
-    /// Background color for Vim Helix Select mode indicator.
-    #[serde(rename = "vim.helix_select.background")]
-    pub vim_helix_select_background: Option<String>,
-
-    /// Text color for Vim mode indicator label.
-    #[serde(rename = "vim.mode.text")]
-    pub vim_mode_text: Option<String>,
-
     /// Border color. Used for most borders, is usually a high contrast color.
     #[serde(rename = "border")]
     pub border: Option<String>,
@@ -867,6 +838,36 @@ pub struct ThemeColorsContent {
     /// Deprecated in favor of `version_control_conflict_marker_theirs`.
     #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
+
+    /// Background color for Vim Normal mode indicator.
+    #[serde(rename = "vim.normal.background")]
+    pub vim_normal_background: Option<String>,
+    /// Background color for Vim Insert mode indicator.
+    #[serde(rename = "vim.insert.background")]
+    pub vim_insert_background: Option<String>,
+    /// Background color for Vim Replace mode indicator.
+    #[serde(rename = "vim.replace.background")]
+    pub vim_replace_background: Option<String>,
+    /// Background color for Vim Visual mode indicator.
+    #[serde(rename = "vim.visual.background")]
+    pub vim_visual_background: Option<String>,
+    /// Background color for Vim Visual Line mode indicator.
+    #[serde(rename = "vim.visual_line.background")]
+    pub vim_visual_line_background: Option<String>,
+    /// Background color for Vim Visual Block mode indicator.
+    #[serde(rename = "vim.visual_block.background")]
+    pub vim_visual_block_background: Option<String>,
+    /// Background color for Vim Helix Normal mode indicator.
+    #[serde(rename = "vim.helix_normal.background")]
+    pub vim_helix_normal_background: Option<String>,
+    /// Background color for Vim Helix Select mode indicator.
+    #[serde(rename = "vim.helix_select.background")]
+    pub vim_helix_select_background: Option<String>,
+
+    /// Text color for Vim mode indicator label.
+    #[serde(rename = "vim.mode.text")]
+    pub vim_mode_text: Option<String>,
+
 }
 
 #[skip_serializing_none]
