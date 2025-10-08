@@ -65,7 +65,8 @@ pub enum Import {
 
 #[derive(Debug, Clone)]
 pub enum Module {
-    Source(Arc<Path>),
+    SourceExact(Arc<Path>),
+    SourceFuzzy(Arc<Path>),
     Namespace(Namespace),
 }
 
@@ -106,11 +107,13 @@ impl Module {
                         && let Ok(abs_path) =
                             util::paths::normalize_lexically(&parent_abs_path.join(path))
                     {
-                        *self = Self::Source(abs_path.into());
+                        *self = Self::SourceExact(abs_path.into());
                     } else {
-                        *self = Self::Source(path.into());
+                        *self = Self::SourceFuzzy(path.into());
                     };
-                } else if let Self::Source(_) = self {
+                } else if matches!(self, Self::SourceExact(_))
+                    || matches!(self, Self::SourceFuzzy(_))
+                {
                     log::warn!("bug in imports query: encountered multiple @source matches");
                 } else {
                     log::warn!(
@@ -429,7 +432,7 @@ impl Imports {
 
         if pop_count > 0 {
             match current_module {
-                Module::Source(_path) => {
+                Module::SourceExact(_) | Module::SourceFuzzy(_) => {
                     log::warn!(
                         "bug in imports query: encountered both @namespace and @source match"
                     );
@@ -857,6 +860,18 @@ mod test {
             ],
             cx,
         );
+
+        // fuzzy paths
+        check_imports_with_file_abs_path(
+            Some(&parent_abs_path),
+            &TYPESCRIPT,
+            r#"import { type SomeThing, OtherThing } from "@my-app/some-module.js";"#,
+            &[
+                &["SOURCE FUZZY @my-app/some-module", "SomeThing"],
+                &["SOURCE FUZZY @my-app/some-module", "OtherThing"],
+            ],
+            cx,
+        );
     }
 
     #[gpui::test]
@@ -1003,7 +1018,7 @@ mod test {
             Some(&parent_abs_path),
             &C,
             r#"#include <math.h>"#,
-            &[&["SOURCE math.h", "WILDCARD"]],
+            &[&["SOURCE FUZZY math.h", "WILDCARD"]],
             cx,
         );
 
@@ -1012,7 +1027,7 @@ mod test {
             Some(&parent_abs_path),
             &C,
             r#"#include "math.h""#,
-            &[&["SOURCE math.h", "WILDCARD"]],
+            &[&["SOURCE FUZZY math.h", "WILDCARD"]],
             cx,
         );
     }
@@ -1026,7 +1041,7 @@ mod test {
             Some(&parent_abs_path),
             &CPP,
             r#"#include <math.h>"#,
-            &[&["SOURCE math.h", "WILDCARD"]],
+            &[&["SOURCE FUZZY math.h", "WILDCARD"]],
             cx,
         );
 
@@ -1035,7 +1050,7 @@ mod test {
             Some(&parent_abs_path),
             &CPP,
             r#"#include "math.h""#,
-            &[&["SOURCE math.h", "WILDCARD"]],
+            &[&["SOURCE FUZZY math.h", "WILDCARD"]],
             cx,
         );
     }
@@ -1280,8 +1295,14 @@ mod test {
         fn to_identifier_parts(&self, identifier: &str) -> Vec<String> {
             match self {
                 Self::Namespace(namespace) => namespace.to_identifier_parts(identifier),
-                Self::Source(path) => {
+                Self::SourceExact(path) => {
                     vec![format!("SOURCE {}", path.display()), identifier.to_string()]
+                }
+                Self::SourceFuzzy(path) => {
+                    vec![
+                        format!("SOURCE FUZZY {}", path.display()),
+                        identifier.to_string(),
+                    ]
                 }
             }
         }

@@ -127,7 +127,10 @@ pub fn scored_declarations(
             Module::Namespace(namespace) => {
                 wildcard_import_occurrences.push(namespace.occurrences())
             }
-            Module::Source(path) => wildcard_import_paths.push(path),
+            Module::SourceExact(path) => wildcard_import_paths.push(path),
+            Module::SourceFuzzy(path) => {
+                wildcard_import_occurrences.push(Occurrences::from_path(&path))
+            }
         }
     }
 
@@ -144,6 +147,9 @@ pub fn scored_declarations(
                 //
                 // TODO: when an aliased declaration is included in the prompt, should include the
                 // aliasing in the prompt.
+                //
+                // TODO: For SourceFuzzy consider having componentwise comparison that pays
+                // attention to ordering.
                 if let [
                     Import::Alias {
                         module,
@@ -155,7 +161,10 @@ pub fn scored_declarations(
                         Module::Namespace(namespace) => {
                             import_occurrences.push(namespace.occurrences())
                         }
-                        Module::Source(path) => import_paths.push(path),
+                        Module::SourceExact(path) => import_paths.push(path),
+                        Module::SourceFuzzy(path) => {
+                            import_occurrences.push(Occurrences::from_path(&path))
+                        }
                     }
                     found_external_identifier = Some(&external_identifier);
                 } else {
@@ -165,7 +174,10 @@ pub fn scored_declarations(
                                 Module::Namespace(namespace) => {
                                     import_occurrences.push(namespace.occurrences())
                                 }
-                                Module::Source(path) => import_paths.push(path),
+                                Module::SourceExact(path) => import_paths.push(path),
+                                Module::SourceFuzzy(path) => {
+                                    import_occurrences.push(Occurrences::from_path(&path))
+                                }
                             },
                             Import::Alias { .. } => {}
                         }
