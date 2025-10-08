@@ -27,41 +27,40 @@
     "interface" @context
     name: (_) @name) @item
 
-; Object destructuring patterns
-(program
-    (export_statement
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (object_pattern
-                    (shorthand_property_identifier_pattern) @name @item)))))
+(property_signature
+    name: (_) @name) @item
 
-(program
-    (export_statement
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (object_pattern
-                    (pair_pattern
-                        key: (_) @name) @item)))))
+; Object destructuring patterns
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (shorthand_property_identifier_pattern) @name @item))))
+
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (object_pattern
+                (pair_pattern
+                    key: (_) @name) @item))))
 
 ; Array destructuring patterns
-(program
-    (export_statement
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (array_pattern
-                    (identifier) @name @item)))))
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        (variable_declarator
+            name: (array_pattern
+                (identifier) @name @item))))
 
-(program
-    (export_statement
-        (lexical_declaration
-            ["let" "const"] @context
-            ; Multiple names may be exported - @item is on the declarator to keep
-            ; ranges distinct.
-            (variable_declarator
-                name: (identifier) @name) @item)))
+(export_statement
+    (lexical_declaration
+        ["let" "const"] @context
+        ; Multiple names may be exported - @item is on the declarator to keep
+        ; ranges distinct.
+        (variable_declarator
+            name: (identifier) @name) @item))
 
 ; Object destructuring patterns
 (program
@@ -129,47 +128,12 @@
             !value) @item))
 
 ; Lexical declarations directly inside arrow function bodies
-; Split into three patterns to avoid duplicates while matching all positions
 (arrow_function
     body: (statement_block
         (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name
-                value: [(function_expression) (arrow_function)]) @item)))
-
-(arrow_function
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                value: [
-                    (string)
-                    (number)
-                    (true)
-                    (false)
-                    (null)
-                    (undefined)
-                    (identifier)
-                    (call_expression)
-                    (new_expression)
-                    (await_expression)
-                    (binary_expression)
-                    (unary_expression)
-                    (template_string)
-                    (array)
-                    (object)
-                    (member_expression)
-                ]) @item)))
-
-(arrow_function
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                !value) @item)))
+                name: (identifier) @name) @item)))
 
 ; Lexical declarations directly inside function expression bodies
 (function_expression
@@ -177,41 +141,7 @@
         (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name
-                value: [(function_expression) (arrow_function)]) @item)))
-
-(function_expression
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                value: [
-                    (string)
-                    (number)
-                    (true)
-                    (false)
-                    (null)
-                    (undefined)
-                    (identifier)
-                    (call_expression)
-                    (new_expression)
-                    (await_expression)
-                    (binary_expression)
-                    (unary_expression)
-                    (template_string)
-                    (array)
-                    (object)
-                    (member_expression)
-                ]) @item)))
-
-(function_expression
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                !value) @item)))
+                name: (identifier) @name) @item)))
 
 ; Lexical declarations directly inside function declaration bodies
 (function_declaration
@@ -219,41 +149,7 @@
         (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name
-                value: [(function_expression) (arrow_function)]) @item)))
-
-(function_declaration
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                value: [
-                    (string)
-                    (number)
-                    (true)
-                    (false)
-                    (null)
-                    (undefined)
-                    (identifier)
-                    (call_expression)
-                    (new_expression)
-                    (await_expression)
-                    (binary_expression)
-                    (unary_expression)
-                    (template_string)
-                    (array)
-                    (object)
-                    (member_expression)
-                ]) @item)))
-
-(function_declaration
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                !value) @item)))
+                name: (identifier) @name) @item)))
 
 ; Lexical declarations directly inside generator function declaration bodies
 (generator_function_declaration
@@ -261,41 +157,7 @@
         (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name
-                value: [(function_expression) (arrow_function)]) @item)))
-
-(generator_function_declaration
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                value: [
-                    (string)
-                    (number)
-                    (true)
-                    (false)
-                    (null)
-                    (undefined)
-                    (identifier)
-                    (call_expression)
-                    (new_expression)
-                    (await_expression)
-                    (binary_expression)
-                    (unary_expression)
-                    (template_string)
-                    (array)
-                    (object)
-                    (member_expression)
-                ]) @item)))
-
-(generator_function_declaration
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                !value) @item)))
+                name: (identifier) @name) @item)))
 
 ; Lexical declarations directly inside method definition bodies
 (method_definition
@@ -303,41 +165,7 @@
         (lexical_declaration
             ["let" "const"] @context
             (variable_declarator
-                name: (identifier) @name
-                value: [(function_expression) (arrow_function)]) @item)))
-
-(method_definition
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                value: [
-                    (string)
-                    (number)
-                    (true)
-                    (false)
-                    (null)
-                    (undefined)
-                    (identifier)
-                    (call_expression)
-                    (new_expression)
-                    (await_expression)
-                    (binary_expression)
-                    (unary_expression)
-                    (template_string)
-                    (array)
-                    (object)
-                    (member_expression)
-                ]) @item)))
-
-(method_definition
-    body: (statement_block
-        (lexical_declaration
-            ["let" "const"] @context
-            (variable_declarator
-                name: (identifier) @name
-                !value) @item)))
+                name: (identifier) @name) @item)))
 
 (class_declaration
     "class" @context
@@ -374,10 +202,28 @@
     key: (_) @name
     value: (arrow_function)) @item
 
+; Variables inside arrow functions assigned to object properties
+(pair
+    value: (arrow_function
+        body: (statement_block
+            (lexical_declaration
+                ["let" "const"] @context
+                (variable_declarator
+                    name: (identifier) @name) @item))))
+
 ; Object pairs with function expressions
 (pair
     key: (_) @name
     value: (function_expression)) @item
+
+; Variables inside function expressions assigned to object properties
+(pair
+    value: (function_expression
+        body: (statement_block
+            (lexical_declaration
+                ["let" "const"] @context
+                (variable_declarator
+                    name: (identifier) @name) @item))))
 
 ; Object property pairs for non-function values
 (pair
@@ -441,7 +287,7 @@
                 property: (property_identifier) @_property
             )
             (#any-of? @_name "it" "test" "describe" "context" "suite")
-            (#eq? @_property "each")
+            (#any-of? @_property "each")
         )
         arguments: (
             arguments . [
