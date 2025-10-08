@@ -1424,8 +1424,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
