@@ -32,7 +32,7 @@ use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding, KeybindingHint,
     PopoverMenu, Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
 };
-use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
+use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use zed_actions::OpenSettingsEditor;
 
@@ -377,31 +377,31 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<u32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<u64>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<usize>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<NonZero<usize>>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<CodeFade>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::MinimumContrast>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::ShowScrollbar>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
@@ -1718,7 +1718,7 @@ fn render_font_picker(
         .into_any_element()
 }
 
-fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
+fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
     window: &mut Window,
@@ -1726,7 +1726,7 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
     let value = value.copied().unwrap_or_else(T::min_value);
-    NumericStepper::new("numeric_stepper", value, window, cx)
+    NumberField::new("numeric_stepper", value, window, cx)
         .on_change({
             move |value, _window, cx| {
                 let value = *value;
@@ -1737,7 +1737,6 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
             }
         })
         .tab_index(0)
-        .style(NumericStepperStyle::Outlined)
         .into_any_element()
 }
 
