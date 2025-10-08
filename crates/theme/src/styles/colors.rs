@@ -13,6 +13,23 @@ use crate::{
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
+    /// Background color for Vim Normal mode indicator.
+    pub vim_normal_background: Hsla,
+    /// Background color for Vim Insert mode indicator.
+    pub vim_insert_background: Hsla,
+    /// Background color for Vim Replace mode indicator.
+    pub vim_replace_background: Hsla,
+    /// Background color for Vim Visual mode indicator.
+    pub vim_visual_background: Hsla,
+    /// Background color for Vim Visual Line mode indicator.
+    pub vim_visual_line_background: Hsla,
+    /// Background color for Vim Visual Block mode indicator.
+    pub vim_visual_block_background: Hsla,
+    /// Background color for Vim Helix Normal mode indicator.
+    pub vim_helix_normal_background: Hsla,
+    /// Background color for Vim Helix Select mode indicator.
+    pub vim_helix_select_background: Hsla,
+
     /// Border color. Used for most borders, is usually a high contrast color.
     pub border: Hsla,
     /// Border color. Used for deemphasized borders, like a visual divider between two sections
