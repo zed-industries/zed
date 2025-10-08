@@ -78,7 +78,6 @@ impl ScoredDeclaration {
         } else if self.components.path_import_match_count > 0 {
             3.0
         } else if self.components.wildcard_path_import_match_count > 0 {
-            // TODO:could be cool to
             1.0
         } else if self.components.normalized_import_similarity > 0.0 {
             self.components.normalized_import_similarity

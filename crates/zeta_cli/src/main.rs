@@ -608,7 +608,7 @@ pub async fn retrieval_stats(
                             Vec::new()
                         });
 
-                    let retrieved_definitions = retrieve_definitions(
+                    let retrieve_result = retrieve_definitions(
                         &reference,
                         &imports,
                         query_point,
@@ -621,18 +621,21 @@ pub async fn retrieval_stats(
 
                     // TODO: LSP returns things like locals, this filters out some of those, but potentially
                     // hides some retrieval issues.
-                    if retrieved_definitions.is_empty() {
+                    if retrieve_result.definitions.is_empty() {
                         continue;
                     }
 
                     let mut best_match = None;
                     let mut has_external_definition = false;
-                    for (index, retrieved_definition) in retrieved_definitions.iter().enumerate() {
+                    let mut in_excerpt = false;
+                    for (index, retrieved_definition) in
+                        retrieve_result.definitions.iter().enumerate()
+                    {
                         for lsp_definition in &lsp_definitions {
                             let SourceRange {
                                 path,
                                 point_range,
-                                offset_range: _,
+                                offset_range,
                             } = lsp_definition;
                             let lsp_point_range =
                                 SerializablePoint::into_language_point_range(point_range.clone());
@@ -651,6 +654,10 @@ pub async fn retrieval_stats(
                                     best_match = Some(index);
                                 }
                             }
+                            in_excerpt = in_excerpt
+                                || retrieve_result.excerpt_range.as_ref().is_some_and(
+                                    |excerpt_range| excerpt_range.contains_inclusive(&offset_range),
+                                );
                         }
                     }
 
@@ -658,6 +665,8 @@ pub async fn retrieval_stats(
                         RetrievalOutcome::Match { best_match }
                     } else if has_external_definition {
                         RetrievalOutcome::NoMatchDueToExternalLspDefinitions
+                    } else if in_excerpt {
+                        RetrievalOutcome::ProbablyLocal
                     } else {
                         RetrievalOutcome::NoMatch
                     };
@@ -668,7 +677,7 @@ pub async fn retrieval_stats(
                         identifier: reference.identifier,
                         point: query_point,
                         lsp_definitions,
-                        retrieved_definitions,
+                        retrieved_definitions: retrieve_result.definitions,
                     };
 
                     output_tx.unbounded_send(result).ok();
@@ -705,8 +714,10 @@ pub async fn retrieval_stats(
 
     let mut references_count = 0;
 
-    let mut match_count = 0;
+    let mut included_count = 0;
     let mut both_absent_count = 0;
+
+    let mut retrieved_count = 0;
     let mut top_match_count = 0;
     let mut non_top_match_count = 0;
     let mut ranking_involved_top_match_count = 0;
@@ -716,12 +727,15 @@ pub async fn retrieval_stats(
     let mut no_match_wrong_retrieval = 0;
 
     let mut expected_no_match_count = 0;
+    let mut in_excerpt_count = 0;
+    let mut external_definition_count = 0;
 
     for result in results {
         references_count += 1;
         match &result.outcome {
             RetrievalOutcome::Match { best_match } => {
-                match_count += 1;
+                included_count += 1;
+                retrieved_count += 1;
                 let multiple = result.retrieved_definitions.len() > 1;
                 if *best_match == 0 {
                     top_match_count += 1;
@@ -734,7 +748,7 @@ pub async fn retrieval_stats(
             }
             RetrievalOutcome::NoMatch => {
                 if result.lsp_definitions.is_empty() {
-                    match_count += 1;
+                    included_count += 1;
                     both_absent_count += 1;
                 } else {
                     no_match_count += 1;
@@ -747,6 +761,11 @@ pub async fn retrieval_stats(
             }
             RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
                 expected_no_match_count += 1;
+                external_definition_count += 1;
+            }
+            RetrievalOutcome::ProbablyLocal => {
+                included_count += 1;
+                in_excerpt_count += 1;
             }
         }
     }
@@ -758,24 +777,32 @@ pub async fn retrieval_stats(
     println!("");
     println!("╮ references: {}", references_count);
     println!(
-        "├─╮ match: {}",
-        count_and_percentage(match_count, references_count)
+        "├─╮ included: {}",
+        count_and_percentage(included_count, references_count),
     );
     println!(
-        "│ ├─╴ both absent: {}",
-        count_and_percentage(both_absent_count, match_count)
+        "│ ├─╮ retrieved: {}",
+        count_and_percentage(retrieved_count, references_count)
     );
     println!(
-        "│ ├─╮ top match: {}",
-        count_and_percentage(top_match_count, match_count)
+        "│ │ ├─╮ top match : {}",
+        count_and_percentage(top_match_count, retrieved_count)
     );
     println!(
-        "│ │ ╰─╴ involving ranking: {}",
+        "│ │ │ ╰─╴ involving ranking: {}",
         count_and_percentage(ranking_involved_top_match_count, top_match_count)
     );
     println!(
-        "│ ╰─╴ non-top match: {}",
-        count_and_percentage(non_top_match_count, match_count)
+        "│ │ ╰─╴ non-top match: {}",
+        count_and_percentage(non_top_match_count, retrieved_count)
+    );
+    println!(
+        "│ ├─╴ both absent: {}",
+        count_and_percentage(both_absent_count, included_count)
+    );
+    println!(
+        "│ ╰─╴ in excerpt: {}",
+        count_and_percentage(in_excerpt_count, included_count)
     );
     println!(
         "├─╮ no match: {}",
@@ -790,14 +817,23 @@ pub async fn retrieval_stats(
         count_and_percentage(no_match_wrong_retrieval, no_match_count)
     );
     println!(
-        "╰─╴ expected no match: {}",
+        "╰─╮ expected no match: {}",
         count_and_percentage(expected_no_match_count, references_count)
+    );
+    println!(
+        "  ╰─╴ external definition: {}",
+        count_and_percentage(external_definition_count, expected_no_match_count)
     );
 
     println!("");
     println!("LSP definition cache at {}", lsp_definitions_path.display());
 
     Ok("".to_string())
+}
+
+struct RetrieveResult {
+    definitions: Vec<RetrievedDefinition>,
+    excerpt_range: Option<Range<usize>>,
 }
 
 async fn retrieve_definitions(
@@ -808,7 +844,7 @@ async fn retrieve_definitions(
     index: &Arc<SyntaxIndexState>,
     file_snapshots: &Arc<HashMap<ProjectEntryId, BufferSnapshot>>,
     options: &Arc<zeta2::ZetaOptions>,
-) -> Result<Vec<RetrievedDefinition>> {
+) -> Result<RetrieveResult> {
     let mut single_reference_map = HashMap::default();
     single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
     let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
@@ -821,7 +857,10 @@ async fn retrieve_definitions(
     );
 
     let Some(edit_prediction_context) = edit_prediction_context else {
-        return Ok(Vec::new());
+        return Ok(RetrieveResult {
+            definitions: Vec::new(),
+            excerpt_range: None,
+        });
     };
 
     let mut retrieved_definitions = Vec::new();
@@ -871,7 +910,10 @@ async fn retrieve_definitions(
     }
     retrieved_definitions.sort_by_key(|definition| Reverse(OrderedFloat(definition.score)));
 
-    Ok(retrieved_definitions)
+    Ok(RetrieveResult {
+        definitions: retrieved_definitions,
+        excerpt_range: Some(edit_prediction_context.excerpt.range),
+    })
 }
 
 async fn gather_lsp_definitions(
@@ -1083,6 +1125,7 @@ enum RetrievalOutcome {
         /// Lowest index within retrieved_definitions that matches an LSP definition.
         best_match: usize,
     },
+    ProbablyLocal,
     NoMatch,
     NoMatchDueToExternalLspDefinitions,
 }
