@@ -1410,6 +1410,7 @@ dependencies = [
  "libwebrtc",
  "log",
  "parking_lot",
+ "rand 0.9.1",
  "rodio",
  "rubato",
  "serde",

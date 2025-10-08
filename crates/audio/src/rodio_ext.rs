@@ -2,7 +2,7 @@ use std::{num::NonZero, time::Duration};
 
 use denoise::{Denoiser, DenoiserError};
 use log::warn;
-use rodio::{ChannelCount, Sample, SampleRate, Source, conversions::ChannelCountConverter, nz};
+use rodio::{ChannelCount, Sample, SampleRate, Source, buffer::SamplesBuffer, conversions::ChannelCountConverter, nz};
 
 use crate::rodio_ext::resample::FixedResampler;
 pub use replayable::{Replay, ReplayDurationTooShort, Replayable};
@@ -35,6 +35,7 @@ pub trait RodioExt: Source + Sized {
     ) -> ConstantChannelCount<FixedResampler<Self>>;
     fn constant_samplerate(self, sample_rate: SampleRate) -> FixedResampler<Self>;
     fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self>;
+    fn into_samples_buffer(self) -> SamplesBuffer;
 }
 
 impl<S: Source> RodioExt for S {
@@ -96,6 +97,10 @@ impl<S: Source> RodioExt for S {
     }
     fn possibly_disconnected_channels_to_mono(self) -> ToMono<Self> {
         ToMono::new(self)
+    }
+    fn into_samples_buffer(mut self) -> SamplesBuffer {
+        let samples: Vec<_> = self.by_ref().collect();
+        SamplesBuffer::new(self.channels(), self.sample_rate(), samples)
     }
 }
 
@@ -241,6 +246,7 @@ impl<S: Source> Iterator for TakeSamples<S> {
     type Item = Sample;
 
     fn next(&mut self) -> Option<Self::Item> {
+        self.left_to_take;
         if self.left_to_take == 0 {
             None
         } else {
