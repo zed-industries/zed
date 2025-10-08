@@ -29,6 +29,8 @@ pub struct ThemeColors {
     pub vim_helix_normal_background: Hsla,
     /// Background color for Vim Helix Select mode indicator.
     pub vim_helix_select_background: Hsla,
+    /// Text color for Vim mode indicator label.
+    pub vim_mode_text: Hsla,
 
     /// Border color. Used for most borders, is usually a high contrast color.
     pub border: Hsla,
