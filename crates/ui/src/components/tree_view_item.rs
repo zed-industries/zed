@@ -150,7 +150,6 @@ impl RenderOnce for TreeViewItem {
                     .cursor_pointer()
                     .size_full()
                     .relative()
-                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                     .map(|this| {
                         let label = self.label;
 
@@ -166,6 +165,7 @@ impl RenderOnce for TreeViewItem {
                                 })
                                 .focus(|s| s.border_color(focused_border))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when_some(self.tab_index, |this, index| this.tab_index(index))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
                                         .when_some(
@@ -190,13 +190,13 @@ impl RenderOnce for TreeViewItem {
                                     .px_1()
                                     .rounded_sm()
                                     .border_1()
-                                    .focusable()
                                     .border_color(transparent_border)
                                     .when(self.selected, |this| {
                                         this.border_color(selected_border).bg(selected_bg)
                                     })
-                                    .in_focus(|s| s.border_color(focused_border))
+                                    .focus(|s| s.border_color(focused_border))
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
