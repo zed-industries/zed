@@ -3333,6 +3333,7 @@ dependencies = [
  "serde_json",
  "smol",
  "text",
+ "workspace-hack",
  "zed-http-client",
 ]
 
