@@ -870,6 +870,77 @@ impl GitPanel {
         });
     }
 
+    fn add_to_gitignore(
+        &mut self,
+        _: &git::AddToGitignore,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let list_entry = self.entries.get(self.selected_entry?)?.clone();
+            let entry = list_entry.status_entry()?.to_owned();
+
+            if !entry.status.is_created() {
+                return Some(());
+            }
+
+            let project = self.project.downgrade();
+            let repo_path = entry.repo_path;
+            let active_repository = self.active_repository.as_ref()?.downgrade();
+
+            cx.spawn(async move |_, cx| {
+                let file_path_str = repo_path.0.display(PathStyle::Posix);
+
+                let repo_root = active_repository.read_with(cx, |repository, _| {
+                    repository.snapshot().work_directory_abs_path
+                })?;
+
+                let gitignore_abs_path = repo_root.join(".gitignore");
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_local_buffer(gitignore_abs_path, cx)
+                    })?
+                    .await?;
+
+                let mut should_save = false;
+                buffer.update(cx, |buffer, cx| {
+                    let existing_content = buffer.text();
+
+                    if existing_content
+                        .lines()
+                        .any(|line| line.trim() == file_path_str)
+                    {
+                        return;
+                    }
+
+                    let insert_position = existing_content.len();
+                    let new_entry = if existing_content.is_empty() {
+                        format!("{}\n", file_path_str)
+                    } else if existing_content.ends_with('\n') {
+                        format!("{}\n", file_path_str)
+                    } else {
+                        format!("\n{}\n", file_path_str)
+                    };
+
+                    buffer.edit([(insert_position..insert_position, new_entry)], None, cx);
+                    should_save = true;
+                })?;
+
+                if should_save {
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                        .await?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
     fn revert_entry(
         &mut self,
         entry: &GitStatusEntry,
@@ -3817,10 +3888,17 @@ impl GitPanel {
             "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
+            let mut context_menu = context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action(restore_title, git::RestoreFile::default().boxed_clone());
+
+            if entry.status.is_created() {
+                context_menu =
+                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
+            }
+
+            context_menu
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -4243,6 +4321,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::unstage_selected))
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
+                    .on_action(cx.listener(Self::add_to_gitignore))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
