@@ -6,7 +6,7 @@ use std::{
 };
 
 use editor::{Editor, EditorStyle};
-use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
+use gpui::{ClickEvent, CursorStyle, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
 use settings::{CodeFade, MinimumContrast};
 use ui::prelude::*;
@@ -344,6 +344,26 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             }
         };
 
+        let bg_color = cx.theme().colors().surface_background;
+        let hover_bg_color = cx.theme().colors().element_hover;
+
+        let border_color = cx.theme().colors().border_variant;
+        let focus_border_color = cx.theme().colors().border_focused;
+
+        let base_button = |icon: IconName| {
+            h_flex()
+                .cursor(CursorStyle::PointingHand)
+                .p_1p5()
+                .size_full()
+                .justify_center()
+                .overflow_hidden()
+                .border_1()
+                .border_color(border_color)
+                .bg(bg_color)
+                .hover(|s| s.bg(hover_bg_color))
+                .child(Icon::new(icon).size(IconSize::Small))
+        };
+
         h_flex()
             .id(self.id.clone())
             .track_focus(&self.focus_handle)
@@ -376,26 +396,14 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                         };
 
                         decrement.child(
-                            h_flex()
+                            base_button(IconName::Dash)
                                 .id("decrement_button")
-                                .cursor(gpui::CursorStyle::PointingHand)
-                                .p_1p5()
-                                .size_full()
-                                .justify_center()
-                                .overflow_hidden()
                                 .rounded_tl_sm()
                                 .rounded_bl_sm()
-                                .border_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .bg(cx.theme().colors().surface_background)
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .child(Icon::new(IconName::Dash).size(IconSize::Small))
                                 .when_some(tab_index.as_mut(), |this, tab_index| {
                                     *tab_index += 1;
                                     this.tab_index(*tab_index - 1).focus(|style| {
-                                        style
-                                            .border_color(cx.theme().colors().border_focused)
-                                            .bg(cx.theme().colors().element_hover)
+                                        style.border_color(focus_border_color).bg(hover_bg_color)
                                     })
                                 })
                                 .on_click(decrement_handler),
@@ -406,9 +414,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                             .min_w_16()
                             .size_full()
                             .border_y_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .bg(cx.theme().colors().surface_background)
-                            .in_focus(|this| this.border_color(cx.theme().colors().border_focused))
+                            .border_color(border_color)
+                            .bg(bg_color)
+                            .in_focus(|this| this.border_color(focus_border_color))
                             .child(match *self.mode.read(cx) {
                                 NumberFieldMode::Read => h_flex()
                                     .id("numeric_stepper_label")
@@ -501,26 +509,14 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                         };
 
                         increment.child(
-                            h_flex()
+                            base_button(IconName::Plus)
                                 .id("increment_button")
-                                .cursor(gpui::CursorStyle::PointingHand)
-                                .p_1p5()
-                                .size_full()
-                                .justify_center()
-                                .overflow_hidden()
                                 .rounded_tr_sm()
                                 .rounded_br_sm()
-                                .border_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .bg(cx.theme().colors().surface_background)
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .child(Icon::new(IconName::Plus).size(IconSize::Small))
                                 .when_some(tab_index.as_mut(), |this, tab_index| {
                                     *tab_index += 1;
                                     this.tab_index(*tab_index - 1).focus(|style| {
-                                        style
-                                            .border_color(cx.theme().colors().border_focused)
-                                            .bg(cx.theme().colors().element_hover)
+                                        style.border_color(focus_border_color).bg(hover_bg_color)
                                     })
                                 })
                                 .on_click(increment_handler),
