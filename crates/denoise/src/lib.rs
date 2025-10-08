@@ -16,6 +16,7 @@ pub struct Denoiser<S: Source> {
     input_tx: mpsc::Sender<[Sample; BLOCK_SHIFT]>,
     denoised_rx: mpsc::Receiver<[Sample; BLOCK_SHIFT]>,
     ready: [Sample; BLOCK_SHIFT],
+    exhausted: bool,
     next: usize,
     state: IterState,
     // When disabled instead of reading denoised sub-blocks from the engine through
@@ -94,6 +95,7 @@ impl<S: Source> Denoiser<S> {
             state: IterState::Startup { enabled: true },
             next: BLOCK_SHIFT,
             queued: Queue::new(),
+            exhausted: false,
         })
     }
 
@@ -178,11 +180,18 @@ struct DenoiseEngineCrashed;
 impl<S: Source> Denoiser<S> {
     #[cold]
     fn prepare_next_ready(&mut self) -> Result<Option<f32>, DenoiseEngineCrashed> {
+        // Iterator next allows calling next multiple times after receiving none
+        // We would hang waiting for denoised audio if we did not return here.
+        if self.exhausted {
+            return Ok(None);
+        }
+
         self.state = match self.state {
             IterState::Startup { enabled } => {
                 // guaranteed to be coming from silence
                 for _ in 0..3 {
                     let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                        self.exhausted = true;
                         return Ok(None);
                     };
                     self.queued.push(sub_block);
@@ -191,6 +200,7 @@ impl<S: Source> Denoiser<S> {
                         .map_err(|_| DenoiseEngineCrashed)?;
                 }
                 let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    self.exhausted = true;
                     return Ok(None);
                 };
                 self.queued.push(sub_block);
@@ -202,6 +212,7 @@ impl<S: Source> Denoiser<S> {
                 self.ready = self.denoised_rx.recv().map_err(|_| DenoiseEngineCrashed)?;
 
                 let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    self.exhausted = true;
                     return Ok(None);
                 };
                 self.queued.push(sub_block);
@@ -216,6 +227,7 @@ impl<S: Source> Denoiser<S> {
             IterState::Enabled => {
                 self.ready = self.denoised_rx.recv().map_err(|_| DenoiseEngineCrashed)?;
                 let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    self.exhausted = true;
                     return Ok(None);
                 };
                 self.queued.push(sub_block);
@@ -229,6 +241,7 @@ impl<S: Source> Denoiser<S> {
                 // we can re-enable at any point.
                 self.ready = self.queued.pop();
                 let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    self.exhausted = true;
                     return Ok(None);
                 };
                 self.queued.push(sub_block);
@@ -239,6 +252,7 @@ impl<S: Source> Denoiser<S> {
             } => {
                 self.ready = self.queued.pop();
                 let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    self.exhausted = true;
                     return Ok(None);
                 };
                 self.queued.push(sub_block);
