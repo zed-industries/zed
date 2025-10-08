@@ -8,8 +8,9 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
-    WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
+    ScrollHandle, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size,
+    uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -876,7 +877,6 @@ impl SettingsWindow {
                 .tab_stop(false),
         };
 
-        // Observe when the original workspace window is closed and close this settings window
         this.observe_workspace_release(window, cx);
 
         this.fetch_files(cx);
@@ -893,19 +893,18 @@ impl SettingsWindow {
         // Drop the old subscription if any
         self.workspace_release_subscription = None;
 
-        // Set up new observation if we have a workspace window
         if let Some(workspace_handle) = self.original_window {
-            // Get the workspace entity from the window handle
-            let workspace_entity_result = workspace_handle.update(cx, |_workspace, _window, cx| {
-                cx.entity()
-            });
+            let workspace_entity_result =
+                workspace_handle.update(cx, |_workspace, _window, cx| cx.entity());
 
             if let Ok(workspace_entity) = workspace_entity_result {
-                self.workspace_release_subscription = Some(
-                    cx.observe_release_in(&workspace_entity, window, |_this, _workspace, window, _cx| {
+                self.workspace_release_subscription = Some(cx.observe_release_in(
+                    &workspace_entity,
+                    window,
+                    |_this, _workspace, window, _cx| {
                         window.remove_window();
-                    })
-                );
+                    },
+                ));
             }
         }
     }
