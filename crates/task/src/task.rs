@@ -345,11 +345,20 @@ impl Shell {
             Shell::System => get_system_shell(),
         }
     }
+
     pub fn program_and_args(&self) -> (String, &[String]) {
         match self {
             Shell::Program(program) => (program.clone(), &[]),
             Shell::WithArguments { program, args, .. } => (program.clone(), args),
             Shell::System => (get_system_shell(), &[]),
+        }
+    }
+
+    pub fn shell_kind(&self) -> ShellKind {
+        match self {
+            Shell::Program(program) => ShellKind::new(program),
+            Shell::WithArguments { program, .. } => ShellKind::new(program),
+            Shell::System => ShellKind::system(),
         }
     }
 }

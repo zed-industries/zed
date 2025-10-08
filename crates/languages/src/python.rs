@@ -1180,15 +1180,7 @@ impl ToolchainLister for PythonToolchainProvider {
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(prefix) = &toolchain.prefix {
-                    let activate_keyword = match shell {
-                        ShellKind::Cmd => ".",
-                        ShellKind::Nushell => "overlay use",
-                        ShellKind::PowerShell => ".",
-                        ShellKind::Fish => "source",
-                        ShellKind::Csh => "source",
-                        ShellKind::Tcsh => "source",
-                        ShellKind::Posix | ShellKind::Rc => "source",
-                    };
+                    let activate_keyword = shell.activate_keyword();
                     let activate_script_name = match shell {
                         ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
@@ -1200,8 +1192,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
 
-                    if let Ok(quoted) =
-                        shlex::try_quote(&path.to_string_lossy()).map(Cow::into_owned)
+                    if let Some(quoted) = shell.try_quote(&path.to_string_lossy())
                         && fs.is_file(&path).await
                     {
                         activation_script.push(format!("{activate_keyword} {quoted}"));
