@@ -26485,27 +26485,29 @@ fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) 
         build_editor(buffer, window, cx)
     });
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
-            ])
-        });
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
+            });
 
-        editor.duplicate_line_up(&DuplicateLineUp, window, cx);
+            editor.duplicate_line_up(&DuplicateLineUp, window, cx);
 
-        assert_eq!(
-            editor.display_text(cx),
-            "line1\nline2\nline2",
-            "Duplicating last line upward should create duplicate above, not on same line"
-        );
+            assert_eq!(
+                editor.display_text(cx),
+                "line1\nline2\nline2",
+                "Duplicating last line upward should create duplicate above, not on same line"
+            );
 
-        assert_eq!(
-            editor.selections.display_ranges(cx),
-            vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
-            "Selection should remain on the original line"
-        );
-    });
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
+                "Selection should remain on the original line"
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
