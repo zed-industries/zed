@@ -129,7 +129,6 @@ impl RenderOnce for TreeViewItem {
 
         let selected_border = cx.theme().colors().border.opacity(0.6);
         let focused_border = cx.theme().colors().border_focused;
-        let transparent_border = cx.theme().colors().border_transparent;
 
         let item_size = rems_from_px(28.);
         let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
@@ -150,6 +149,13 @@ impl RenderOnce for TreeViewItem {
                     .cursor_pointer()
                     .size_full()
                     .relative()
+                    .border_1()
+                    .focus(|s| s.border_color(focused_border))
+                    .when_some(self.tab_index, |this, index| this.tab_index(index))
+                    .when(self.selected, |this| {
+                        this.border_color(selected_border).bg(selected_bg)
+                    })
+                    .hover(|s| s.bg(cx.theme().colors().element_hover))
                     .map(|this| {
                         let label = self.label;
 
@@ -158,14 +164,6 @@ impl RenderOnce for TreeViewItem {
                                 .px_1()
                                 .gap_2p5()
                                 .rounded_sm()
-                                .border_1()
-                                .border_color(transparent_border)
-                                .when(self.selected, |this| {
-                                    this.border_color(selected_border).bg(selected_bg)
-                                })
-                                .focus(|s| s.border_color(focused_border))
-                                .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                .when_some(self.tab_index, |this, index| this.tab_index(index))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
                                         .when_some(
@@ -189,14 +187,7 @@ impl RenderOnce for TreeViewItem {
                                     .flex_grow()
                                     .px_1()
                                     .rounded_sm()
-                                    .border_1()
-                                    .border_color(transparent_border)
-                                    .when(self.selected, |this| {
-                                        this.border_color(selected_border).bg(selected_bg)
-                                    })
-                                    .focus(|s| s.border_color(focused_border))
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
-                                    .when_some(self.tab_index, |this, index| this.tab_index(index))
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
