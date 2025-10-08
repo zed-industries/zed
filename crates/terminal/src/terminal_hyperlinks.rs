@@ -10,10 +10,13 @@ use std::{ops::Index, sync::LazyLock};
 use util::paths::PathWithPosition;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-// It is not important for this to match the specification for valid file names on various operating
-// systems or line and column suffixes for various toolsets. It is used to identify something that
-// might be a path--invalid paths will be filtered out later.
-const WORD_REGEX: &str = r#"[^ ]+"#;
+// Words are separated by only ascii space or tab characters. We technically could use
+// "\P{Zs}+" or, when supported, the shorter equivalent "\H+" instead, but it seems like we should
+// treat, for example, non-breaking space (&nbsp; 0xA0u32) as part of a word (see test_word_regex
+// below). It is not important for words to match the specification for valid file names on various
+// operating systems or line and column suffixes for various tools. It is used to identify something
+// that might be a path--invalid paths and suffixes will be filtered out later.
+const WORD_REGEX: &str = r#"[^ \t]+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
 
@@ -171,7 +174,7 @@ fn sanitize_url_punctuation<T: EventListener>(
 
 fn sanitize_file_path<T: EventListener>(
     file_path: String,
-    path_match: Match,
+    mut word_match: Match,
     term: &Term<T>,
     point: AlacPoint,
 ) -> Option<(String, bool, Match)> {
@@ -179,34 +182,32 @@ fn sanitize_file_path<T: EventListener>(
                      right_byte_count: usize,
                      word_match: &mut Match,
                      file_path: &mut &str| {
-        let trim_side = |word_match: &mut Match, chars: usize, dir: AlacDirection| -> AlacPoint {
-            let mut side = match dir {
-                AlacDirection::Right => *word_match.start(),
-                AlacDirection::Left => *word_match.end(),
-            };
-            for _ in 0..chars {
-                side = term.expand_wide(side, dir);
-                side = match dir {
-                    AlacDirection::Right => side.add(term, Boundary::Grid, 1),
-                    AlacDirection::Left => side.sub(term, Boundary::Grid, 1),
+        let trim_side =
+            |word_match: &mut Match, char_count: usize, dir: AlacDirection| -> AlacPoint {
+                let mut side = match dir {
+                    AlacDirection::Right => *word_match.start(),
+                    AlacDirection::Left => *word_match.end(),
                 };
-            }
-            term.expand_wide(side, dir)
-        };
+                for _ in 0..char_count {
+                    side = term.expand_wide(side, dir);
+                    side = match dir {
+                        AlacDirection::Right => side.add(term, Boundary::Grid, 1),
+                        AlacDirection::Left => side.sub(term, Boundary::Grid, 1),
+                    };
+                }
+                term.expand_wide(side, dir)
+            };
 
-        let left_char_count = file_path[..left_byte_count].chars().count();
-        let right_char_count = file_path[file_path.len() - right_byte_count..]
-            .chars()
-            .count();
+        let left_chars = file_path[..left_byte_count].chars();
+        let right_chars = file_path[file_path.len() - right_byte_count..].chars();
 
         *word_match = Match::new(
-            trim_side(word_match, left_char_count, AlacDirection::Right),
-            trim_side(word_match, right_char_count, AlacDirection::Left),
+            trim_side(word_match, left_chars.count(), AlacDirection::Right),
+            trim_side(word_match, right_chars.count(), AlacDirection::Left),
         );
         *file_path = &file_path[left_byte_count..file_path.len() - right_byte_count];
     };
 
-    let mut word_match = path_match;
     let mut file_path = file_path.as_str();
 
     while file_path.ends_with(':') {
@@ -461,10 +462,17 @@ mod tests {
 
     #[test]
     fn test_word_regex() {
+        const NBSP: char = char::from_u32(0xA0u32).unwrap();
         re_test(
             WORD_REGEX,
-            "hello, world! \"What\" is this?",
-            vec!["hello,", "world!", "\"What\"", "is", "this?"],
+            &format!("hello, wor{NBSP}ld! \"Wh\r\nat\" is\tthis?"),
+            vec![
+                "hello,",
+                &format!("wor{NBSP}ld!"),
+                "\"Wh\r\nat\"",
+                "is",
+                "this?",
+            ],
         );
     }
 
