@@ -10536,20 +10536,15 @@ dependencies = [
 name = "onboarding"
 version = "0.1.0"
 dependencies = [
- "ai_onboarding",
  "anyhow",
  "client",
  "component",
  "db",
  "documented",
- "editor",
  "fs",
  "fuzzy",
  "git",
  "gpui",
- "itertools 0.14.0",
- "language",
- "language_model",
  "menu",
  "notifications",
  "picker",
