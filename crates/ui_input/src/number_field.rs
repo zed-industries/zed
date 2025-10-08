@@ -6,7 +6,7 @@ use std::{
 };
 
 use editor::{Editor, EditorStyle};
-use gpui::{ClickEvent, CursorStyle, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
+use gpui::{ClickEvent, Entity, FocusHandle, Focusable, FontWeight, Modifiers};
 
 use settings::{CodeFade, MinimumContrast};
 use ui::prelude::*;
@@ -352,7 +352,7 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
 
         let base_button = |icon: IconName| {
             h_flex()
-                .cursor(CursorStyle::PointingHand)
+                .cursor_pointer()
                 .p_1p5()
                 .size_full()
                 .justify_center()
