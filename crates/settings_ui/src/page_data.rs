@@ -4006,7 +4006,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if softwrap is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting",
+            description: "Whether to show wrap guides in the editor.",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
@@ -4438,7 +4438,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Always Treat Brackets As Autoclosed",
-            description: "Controls how the editor handles the autoclosed characters. When set to `false`(default), skipping over and auto-removing of the closing characters happen only for auto-inserted characters. Otherwise(when `true`), the closing characters are always skipped over and auto-removed no matter how they were inserted",
+            description: "Controls whether the closing characters are always skipped over and auto-removed no matter how they were inserted",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -4518,7 +4518,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Linked Edits",
-            description: "Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
+            description: "Whether to perform linked edits of associated ranges, if the LS supports it. For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.linked_edits)
