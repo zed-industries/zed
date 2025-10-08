@@ -10,11 +10,9 @@ use std::{ops::Index, sync::LazyLock};
 use util::paths::PathWithPosition;
 
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
-// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathWithPosition
-// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 // It is not important for this to match the specification for valid file names on various operating
-// systems. It is used to identify something that might be a path--invalid paths will be filtered
-// out later.
+// systems or line and column suffixes for various toolsets. It is used to identify something that
+// might be a path--invalid paths will be filtered out later.
 const WORD_REGEX: &str = r#"[^ ]+"#;
 
 const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
@@ -93,77 +91,7 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
         let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
-
-        let found_word = 'sanitize: {
-            let shrink_by = |left_bytes: usize,
-                             right_bytes: usize,
-                             word_match: &mut Match,
-                             file_path: &mut &str| {
-                let mut word_start = *word_match.start();
-                let trim_left_chars = file_path[..left_bytes].chars().count();
-                for _ in 0..trim_left_chars {
-                    word_start = term.expand_wide(word_start, AlacDirection::Right).add(
-                        term,
-                        Boundary::Grid,
-                        1,
-                    );
-                }
-                let mut word_end = *word_match.end();
-                let trim_right_chars = file_path[file_path.len() - right_bytes..].chars().count();
-                for _ in 0..trim_right_chars {
-                    word_end = term.expand_wide(word_end, AlacDirection::Left).sub(
-                        term,
-                        Boundary::Grid,
-                        1,
-                    );
-                }
-
-                *word_match = Match::new(word_start, word_end);
-                *file_path = &file_path[left_bytes..file_path.len() - right_bytes];
-            };
-
-            let mut word_match = word_match;
-            let mut file_path = file_path.as_str();
-
-            if let Some((left_bytes, right_bytes)) = path_surrounded_by_common_symbols(file_path) {
-                shrink_by(left_bytes, right_bytes, &mut word_match, &mut file_path);
-                if is_path_surrounded_by_quotes(file_path) {
-                    shrink_by(1, 1, &mut word_match, &mut file_path);
-                }
-            } else if is_path_surrounded_by_quotes(file_path) {
-                shrink_by(1, 1, &mut word_match, &mut file_path);
-            }
-
-            while file_path.ends_with(':') {
-                shrink_by(0, 1, &mut word_match, &mut file_path);
-            }
-            let row_col_delim_count = file_path.chars().filter(|&c| ":()".contains(c)).count();
-
-            // strip trailing comment after colon in case of
-            //   file/at/path.rs:row:column:description or error message
-            //   so that the file path is `file/at/path.rs:row:column`
-            // or
-            //   file/at/path.rs(row,column):description or error message
-            //   so that the file path is `file/at/path.rs(row,column)`
-            if row_col_delim_count > 2
-                && let Some(last_colon_index) = file_path.rfind(':')
-                && let PathWithPosition {
-                    row: Some(_),
-                    column: Some(_),
-                    ..
-                } = PathWithPosition::parse_str(&file_path[..last_colon_index])
-            {
-                let desc_len = file_path.len() - last_colon_index;
-                shrink_by(0, desc_len, &mut word_match, &mut file_path);
-                if !word_match.contains(&point) {
-                    break 'sanitize None;
-                }
-            }
-
-            break 'sanitize Some((file_path.to_owned(), false, word_match));
-        };
-
-        found_word
+        sanitize_file_path(file_path, word_match, term, point)
     } else {
         None
     };
@@ -239,6 +167,91 @@ fn sanitize_url_punctuation<T: EventListener>(
     } else {
         (sanitized_url, url_match)
     }
+}
+
+fn sanitize_file_path<T: EventListener>(
+    file_path: String,
+    path_match: Match,
+    term: &Term<T>,
+    point: AlacPoint,
+) -> Option<(String, bool, Match)> {
+    let shrink_by = |left_byte_count: usize,
+                     right_byte_count: usize,
+                     word_match: &mut Match,
+                     file_path: &mut &str| {
+        let trim_side = |word_match: &mut Match, chars: usize, dir: AlacDirection| -> AlacPoint {
+            let mut side = match dir {
+                AlacDirection::Right => *word_match.start(),
+                AlacDirection::Left => *word_match.end(),
+            };
+            for _ in 0..chars {
+                side = term.expand_wide(side, dir);
+                side = match dir {
+                    AlacDirection::Right => side.add(term, Boundary::Grid, 1),
+                    AlacDirection::Left => side.sub(term, Boundary::Grid, 1),
+                };
+            }
+            term.expand_wide(side, dir)
+        };
+
+        let left_char_count = file_path[..left_byte_count].chars().count();
+        let right_char_count = file_path[file_path.len() - right_byte_count..]
+            .chars()
+            .count();
+
+        *word_match = Match::new(
+            trim_side(word_match, left_char_count, AlacDirection::Right),
+            trim_side(word_match, right_char_count, AlacDirection::Left),
+        );
+        *file_path = &file_path[left_byte_count..file_path.len() - right_byte_count];
+    };
+
+    let mut word_match = path_match;
+    let mut file_path = file_path.as_str();
+
+    while file_path.ends_with(':') {
+        shrink_by(0, 1, &mut word_match, &mut file_path);
+    }
+
+    if let Some((left_byte_count, right_byte_count)) = path_surrounded_by_common_symbols(file_path)
+    {
+        shrink_by(
+            left_byte_count,
+            right_byte_count,
+            &mut word_match,
+            &mut file_path,
+        );
+        if is_path_surrounded_by_quotes(file_path) {
+            shrink_by(1, 1, &mut word_match, &mut file_path);
+        }
+    } else if is_path_surrounded_by_quotes(file_path) {
+        shrink_by(1, 1, &mut word_match, &mut file_path);
+    }
+
+    let row_col_delim_count = file_path.chars().filter(|&c| ":()".contains(c)).count();
+
+    // strip trailing comment after colon in case of
+    //   file/at/path.rs:row:column:description or error message
+    //   so that the file path is `file/at/path.rs:row:column`
+    // or
+    //   file/at/path.rs(row,column):description or error message
+    //   so that the file path is `file/at/path.rs(row,column)`
+    if row_col_delim_count > 2
+        && let Some(last_colon_index) = file_path.rfind(':')
+        && let PathWithPosition {
+            row: Some(_),
+            column: Some(_),
+            ..
+        } = PathWithPosition::parse_str(&file_path[..last_colon_index])
+    {
+        let desc_len = file_path.len() - last_colon_index;
+        shrink_by(0, desc_len, &mut word_match, &mut file_path);
+        if !word_match.contains(&point) {
+            return None;
+        }
+    }
+
+    Some((file_path.to_owned(), false, word_match))
 }
 
 /// Check if path is surrounded by quotes: `""` or `''` or ````
@@ -666,6 +679,12 @@ mod tests {
             // Imbalanced
             test_path!("([‹«/test/co👉ol.rs»:«4»›] was here...)");
             test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]");
+
+            // Trailing colons
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:");
+            test_path!("'‹«(/test/co👉ol.rs:4)»›':");
+            test_path!("([‹«/test/co👉ol.rs»:«4»›]::: was here...)");
+            test_path!("[Here's <‹«/test/co👉ol.rs»:«4»›>]::: ");
         }
 
         #[test]
