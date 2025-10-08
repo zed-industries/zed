@@ -1720,7 +1720,7 @@ impl LanguageServer {
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.server.notify::<T>(params).detach();
+        self.server.notify::<T>(params).ok();
     }
 
     /// See [`LanguageServer::request`].
