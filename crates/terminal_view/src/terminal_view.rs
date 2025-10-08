@@ -25,7 +25,7 @@ use terminal::{
         index::Point,
         term::{TermMode, point_to_viewport, search::RegexSearch},
     },
-    terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
@@ -50,7 +50,7 @@ use workspace::{
 };
 
 use serde::Deserialize;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
 use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
@@ -476,7 +476,7 @@ impl TerminalView {
             .terminal
             .read(cx)
             .task()
-            .map(|task| terminal_rerun_override(&task.id))
+            .map(|task| terminal_rerun_override(&task.spawned_task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -831,11 +831,11 @@ impl TerminalView {
     }
 
     fn rerun_button(task: &TaskState) -> Option<IconButton> {
-        if !task.show_rerun {
+        if !task.spawned_task.show_rerun {
             return None;
         }
 
-        let task_id = task.id.clone();
+        let task_id = task.spawned_task.id.clone();
         Some(
             IconButton::new("rerun-icon", IconName::Rerun)
                 .icon_size(IconSize::Small)
@@ -997,12 +997,7 @@ impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show
-            .map(|value| match value {
-                terminal_settings::ShowScrollbar::Auto => scrollbars::ShowScrollbar::Auto,
-                terminal_settings::ShowScrollbar::System => scrollbars::ShowScrollbar::System,
-                terminal_settings::ShowScrollbar::Always => scrollbars::ShowScrollbar::Always,
-                terminal_settings::ShowScrollbar::Never => scrollbars::ShowScrollbar::Never,
-            })
+            .map(Into::into)
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 }
@@ -1119,7 +1114,10 @@ impl Render for TerminalView {
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
-                                .with_track_along(ScrollAxes::Vertical)
+                                .with_track_along(
+                                    ScrollAxes::Vertical,
+                                    cx.theme().colors().editor_background,
+                                )
                                 .tracked_scroll_handle(self.scroll_handle.clone()),
                             window,
                             cx,
@@ -1144,7 +1142,7 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-        let pid = terminal.pty_info.pid_getter().fallback_pid();
+        let pid = terminal.pid_getter()?.fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
             cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
@@ -1227,7 +1225,7 @@ impl Item for TerminalView {
                 let cwd = project
                     .active_project_directory(cx)
                     .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+                project.clone_terminal(self.terminal(), cx, cwd)
             })
             .ok()?
             .log_err()?;
@@ -1257,10 +1255,6 @@ impl Item for TerminalView {
 
     fn can_save_as(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -1576,6 +1570,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
+    use util::rel_path::RelPath;
     use workspace::AppState;
 
     // Working directory calculation tests
@@ -1737,7 +1732,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(Path::new(""), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
                 })
             })
             .await

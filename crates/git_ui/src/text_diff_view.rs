@@ -193,7 +193,7 @@ impl TextDiffView {
             .and_then(|b| {
                 b.read(cx)
                     .file()
-                    .map(|f| f.full_path(cx).compact().to_string_lossy().to_string())
+                    .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
             .unwrap_or("untitled".into());
 
@@ -324,10 +324,6 @@ impl Item for TextDiffView {
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
@@ -416,7 +412,7 @@ impl Item for TextDiffView {
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
     let buffer = editor.buffer().read(cx);
     let buffer_snapshot = buffer.snapshot(cx);
-    let first_selection = editor.selections.disjoint.first()?;
+    let first_selection = editor.selections.disjoint_anchors().first()?;
 
     let selection_start = first_selection.start.to_point(&buffer_snapshot);
     let selection_end = first_selection.end.to_point(&buffer_snapshot);

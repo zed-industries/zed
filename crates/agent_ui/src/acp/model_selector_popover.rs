@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use acp_thread::AgentModelSelector;
-use agent_client_protocol as acp;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{
@@ -20,7 +19,6 @@ pub struct AcpModelSelectorPopover {
 
 impl AcpModelSelectorPopover {
     pub(crate) fn new(
-        session_id: acp::SessionId,
         selector: Rc<dyn AgentModelSelector>,
         menu_handle: PopoverMenuHandle<AcpModelSelector>,
         focus_handle: FocusHandle,
@@ -28,7 +26,7 @@ impl AcpModelSelectorPopover {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            selector: cx.new(move |cx| acp_model_selector(session_id, selector, window, cx)),
+            selector: cx.new(move |cx| acp_model_selector(selector, window, cx)),
             menu_handle,
             focus_handle,
         }

@@ -40,7 +40,8 @@ impl ModalContainerProperties {
         let font_size = style.font_size.to_pixels(window.rem_size());
 
         if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
-            modal_width = preferred_char_width as f32 * em_width.0 + (container_padding * 2.0);
+            modal_width =
+                f32::from(preferred_char_width as f32 * em_width + px(container_padding * 2.0));
         }
 
         Self {
@@ -368,10 +369,6 @@ impl CommitModal {
             .icon_color(Color::Placeholder)
             .color(Color::Muted)
             .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
@@ -459,7 +456,11 @@ impl CommitModal {
                                 if can_commit {
                                     Tooltip::with_meta_in(
                                         tooltip,
-                                        Some(&git::Commit),
+                                        Some(if is_amend_pending {
+                                            &git::Amend
+                                        } else {
+                                            &git::Commit
+                                        }),
                                         format!(
                                             "git commit{}{}",
                                             if is_amend_pending { " --amend" } else { "" },

@@ -238,8 +238,8 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector

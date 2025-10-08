@@ -12,7 +12,8 @@ use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
 use ui::{
     ButtonCommon, ButtonLike, Clickable, Color, ContextMenu, FluentBuilder as _, IconButton,
-    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, h_flex, v_flex,
+    IconName, Label, LabelCommon, LabelSize, PopoverMenu, StyledExt, Tooltip, WithScrollbar,
+    h_flex, v_flex,
 };
 use workspace::{
     Event as WorkspaceEvent, SplitDirection, ToolbarItemEvent, ToolbarItemLocation,
@@ -254,7 +255,7 @@ impl SyntaxTreeView {
             let selection_range = editor.selections.last::<usize>(cx).range();
             let multi_buffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
@@ -487,7 +488,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex_1()
             .bg(cx.theme().colors().editor_background)
@@ -512,6 +513,8 @@ impl Render for SyntaxTreeView {
                         .text_bg(cx.theme().colors().background)
                         .into_any_element(),
                     )
+                    .vertical_scrollbar_for(self.list_scroll_handle.clone(), window, cx)
+                    .into_any_element()
                 } else {
                     let inner_content = v_flex()
                         .items_center()
@@ -540,6 +543,7 @@ impl Render for SyntaxTreeView {
                         .size_full()
                         .justify_center()
                         .child(inner_content)
+                        .into_any_element()
                 }
             })
     }

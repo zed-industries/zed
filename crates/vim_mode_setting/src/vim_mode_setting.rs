@@ -4,10 +4,8 @@
 //! disable Vim/Helix modes without having to depend on the `vim` crate in its
 //! entirety.
 
-use anyhow::Result;
 use gpui::App;
-use schemars::JsonSchema;
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsContent};
 
 /// Initializes the `vim_mode_setting` crate.
 pub fn init(cx: &mut App) {
@@ -17,97 +15,22 @@ pub fn init(cx: &mut App) {
 
 pub struct VimModeSetting(pub bool);
 
-#[derive(
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Debug,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    SettingsUi,
-    SettingsKey,
-    JsonSchema,
-)]
-#[settings_key(None)]
-pub struct VimModeSettingContent {
-    /// Whether or not to enable Vim mode.
-    ///
-    /// Default: false
-    pub vim_mode: Option<bool>,
-}
-
 impl Settings for VimModeSetting {
-    type FileContent = VimModeSettingContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self(
-            [
-                sources.profile,
-                sources.release_channel,
-                sources.user,
-                sources.server,
-                Some(sources.default),
-            ]
-            .into_iter()
-            .flatten()
-            .filter_map(|mode| mode.vim_mode)
-            .next()
-            .ok_or_else(Self::missing_default)?,
-        ))
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
+        Self(content.vim_mode.unwrap())
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _content: &mut SettingsContent) {
         // TODO: could possibly check if any of the `vim.<foo>` keys are set?
     }
 }
 
-#[derive(Debug)]
 pub struct HelixModeSetting(pub bool);
 
-#[derive(
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Debug,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    SettingsUi,
-    SettingsKey,
-    JsonSchema,
-)]
-#[settings_key(None)]
-pub struct HelixModeSettingContent {
-    /// Whether or not to enable Helix mode.
-    ///
-    /// Default: false
-    pub helix_mode: Option<bool>,
-}
-
 impl Settings for HelixModeSetting {
-    type FileContent = HelixModeSettingContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self(
-            [
-                sources.profile,
-                sources.release_channel,
-                sources.user,
-                sources.server,
-                Some(sources.default),
-            ]
-            .into_iter()
-            .flatten()
-            .filter_map(|mode| mode.helix_mode)
-            .next()
-            .ok_or_else(Self::missing_default)?,
-        ))
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
+        Self(content.helix_mode.unwrap())
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
-        // TODO: could possibly check if any of the `helix.<foo>` keys are set?
-    }
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

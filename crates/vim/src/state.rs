@@ -34,6 +34,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -58,8 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-            Mode::HelixSelect => write!(f, "HELIX SELECT"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
@@ -343,9 +344,10 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative.into(),
+                        path: path.into_arc(),
                     })
                 })
                 .next();
@@ -805,11 +807,10 @@ impl VimGlobals {
                 self.last_yank.replace(content.text.clone());
                 cx.write_to_clipboard(content.clone().into());
             } else {
-                self.last_yank = cx
-                    .read_from_clipboard()
-                    .and_then(|item| item.text().map(|string| string.into()));
+                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
+                    self.last_yank.replace(text.into());
+                }
             }
-
             self.registers.insert('"', content.clone());
             if is_yank {
                 self.registers.insert('0', content);
@@ -872,7 +873,7 @@ impl VimGlobals {
                     buffer
                         .read(cx)
                         .file()
-                        .map(|file| file.path().to_string_lossy().to_string().into())
+                        .map(|file| file.path().display(file.path_style(cx)).into_owned().into())
                 } else {
                     None
                 }
@@ -883,10 +884,10 @@ impl VimGlobals {
 
     fn system_clipboard_is_newer(&self, cx: &App) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
-            if let Some(last_state) = &self.last_yank {
-                Some(last_state.as_ref()) != item.text().as_deref()
-            } else {
-                true
+            match (item.text().as_deref(), &self.last_yank) {
+                (Some(new), Some(last)) => last.as_ref() != new,
+                (Some(_), None) => true,
+                (None, _) => false,
             }
         })
     }
@@ -988,6 +989,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+    pub helix_select: bool,
 }
 
 impl Operator {
@@ -1607,7 +1609,7 @@ impl PickerDelegate for MarksViewDelegate {
 
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
-                let s = path.to_string_lossy().to_string();
+                let s = path.to_string_lossy().into_owned();
                 (
                     s.clone(),
                     vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],

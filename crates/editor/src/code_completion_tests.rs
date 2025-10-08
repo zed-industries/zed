@@ -1,9 +1,10 @@
-use crate::{code_context_menus::CompletionsMenu, editor_settings::SnippetSortOrder};
+use crate::code_context_menus::CompletionsMenu;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::TestAppContext;
 use language::CodeLabel;
 use lsp::{CompletionItem, CompletionItemKind, LanguageServerId};
 use project::{Completion, CompletionSource};
+use settings::SnippetSortOrder;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use text::Anchor;

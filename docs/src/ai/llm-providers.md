@@ -6,7 +6,7 @@ You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-If you already have an API key for an existing LLM provider—say Anthropic or OpenAI, for example—you can insert them into Zed and use the full power of the Agent Panel **_for free_**.
+If you already have an API key for an existing LLM provider, like Anthropic or OpenAI, you can add them to Zed and use the full power of the Agent Panel **_for free_**.
 
 To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
 
@@ -14,7 +14,7 @@ To add an existing API key to a given provider, go to the Agent Panel settings (
 
 ## Supported Providers
 
-Here's all the supported LLM providers for which you can use your own API keys:
+Zed offers an extensive list of "use your own key" LLM providers
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
@@ -375,6 +375,20 @@ If the model is tagged with `thinking` in the Ollama catalog, set this option an
 
 The `supports_images` option enables the model's vision capabilities, allowing it to process images included in the conversation context.
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in Zed.
+
+#### Ollama Authentication
+
+In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to remote Ollama instances. API keys are required for authentication.
+
+One such service is [Ollama Turbo])(https://ollama.com/turbo). To configure Zed to use Ollama turbo:
+
+1. Sign in to your Ollama account and subscribe to Ollama Turbo
+2. Visit [ollama.com/settings/keys](https://ollama.com/settings/keys) and create an API key
+3. Open the settings view (`agent: open settings`) and go to the Ollama section
+4. Paste your API key and press enter.
+5. For the API URL enter `https://ollama.com`
+
+Zed will also use the `OLLAMA_API_KEY` environment variables if defined.
 
 ### OpenAI {#openai}
 

@@ -31,6 +31,7 @@ use theme::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 
 use crate::outputs::OutputContent;
+use crate::repl_settings::ReplSettings;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -52,9 +53,6 @@ pub struct TerminalOutput {
     /// Alacritty terminal instance that manages the terminal state and content.
     handler: alacritty_terminal::Term<VoidListener>,
 }
-
-const DEFAULT_NUM_LINES: usize = 32;
-const DEFAULT_NUM_COLUMNS: usize = 128;
 
 /// Returns the default text style for the terminal output.
 pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
@@ -99,8 +97,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap()
         .width;
 
-    let num_lines = DEFAULT_NUM_LINES;
-    let columns = DEFAULT_NUM_COLUMNS;
+    let num_lines = ReplSettings::get_global(cx).max_lines;
+    let columns = ReplSettings::get_global(cx).max_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
@@ -233,8 +231,7 @@ impl TerminalOutput {
             }
         }
 
-        // Trim any trailing newlines
-        full_text.trim_end().to_string()
+        full_text
     }
 }
 
@@ -276,7 +273,7 @@ impl Render for TerminalOutput {
         let cell_width = text_system
             .advance(font_id, font_pixels, 'w')
             .map(|advance| advance.width)
-            .unwrap_or(Pixels(0.0));
+            .unwrap_or(Pixels::ZERO);
 
         canvas(
             // prepaint

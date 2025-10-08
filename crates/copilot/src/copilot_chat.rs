@@ -10,6 +10,7 @@ use fs::Fs;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use gpui::WeakEntity;
 use gpui::{App, AsyncApp, Global, prelude::*};
+use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
@@ -741,7 +742,7 @@ async fn stream_completion(
 
     let request_initiator = if is_user_initiated { "user" } else { "agent" };
 
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(completion_url.as_ref())
         .header(
@@ -754,12 +755,10 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("X-Initiator", request_initiator);
-
-    if is_vision_request {
-        request_builder =
-            request_builder.header("Copilot-Vision-Request", is_vision_request.to_string());
-    }
+        .header("X-Initiator", request_initiator)
+        .when(is_vision_request, |builder| {
+            builder.header("Copilot-Vision-Request", is_vision_request.to_string())
+        });
 
     let is_streaming = request.stream;
 

@@ -107,7 +107,6 @@ fn handle_rpc_messages_over_child_process_stdio(
                 result.context("stderr")
             }
         };
-
         let status = ssh_proxy_process.status().await?.code().unwrap_or(1);
         match result {
             Ok(_) => Ok(status),
@@ -194,7 +193,6 @@ async fn build_remote_server_from_source(
         )
         .await?;
     } else if build_remote_server.contains("cross") {
-        #[cfg(target_os = "windows")]
         use util::paths::SanitizedPath;
 
         delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
@@ -216,11 +214,7 @@ async fn build_remote_server_from_source(
         );
         log::info!("building remote server binary from source for {}", &triple);
 
-        // On Windows, the binding needs to be set to the canonical path
-        #[cfg(target_os = "windows")]
-        let src = SanitizedPath::new(&smol::fs::canonicalize("./target").await?).to_glob_string();
-        #[cfg(not(target_os = "windows"))]
-        let src = "./target";
+        let src = SanitizedPath::new(&smol::fs::canonicalize("target").await?).to_string();
 
         run_cmd(
             Command::new("cross")

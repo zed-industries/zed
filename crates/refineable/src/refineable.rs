@@ -17,47 +17,6 @@ pub use derive_refineable::Refineable;
 /// - **Optional fields** (`Option<T>`): Remain as `Option<T>`
 /// - **Regular fields**: Become `Option<T>`
 ///
-/// ## Example
-///
-/// ```
-/// use derive_refineable::Refineable as _;
-/// use refineable::Refineable;
-///
-/// #[derive(Refineable, Clone, Default)]
-/// struct Example {
-///     color: String,
-///     font_size: Option<u32>,
-///     #[refineable]
-///     margin: Margin,
-/// }
-///
-/// #[derive(Refineable, Clone, Default)]
-/// struct Margin {
-///     top: u32,
-///     left: u32,
-/// }
-///
-///
-/// fn example() {
-///     let mut base_style = Example::default();
-///     let refinement = ExampleRefinement {
-///         color: Some("red".to_string()),
-///         font_size: None,
-///         margin: MarginRefinement {
-///             top: Some(10),
-///             left: None,
-///         },
-///     };
-///
-///     base_style.refine(&refinement);
-/// }
-/// ```
-///
-/// This generates `ExampleRefinement` with:
-/// - `color: Option<String>`
-/// - `font_size: Option<u32>` (unchanged)
-/// - `margin: MarginRefinement`
-///
 /// ## Attributes
 ///
 /// The derive macro supports these attributes on the struct:

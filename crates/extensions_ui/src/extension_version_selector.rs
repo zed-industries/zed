@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
-use extension_host::{ExtensionSettings, ExtensionStore};
+use extension_host::ExtensionStore;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
@@ -183,10 +183,13 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             let extension_id = extension_version.id.clone();
             let version = extension_version.manifest.version.clone();
 
-            update_settings_file::<ExtensionSettings>(self.fs.clone(), cx, {
+            update_settings_file(self.fs.clone(), cx, {
                 let extension_id = extension_id.clone();
                 move |settings, _| {
-                    settings.auto_update_extensions.insert(extension_id, false);
+                    settings
+                        .extension
+                        .auto_update_extensions
+                        .insert(extension_id, false);
                 }
             });
 

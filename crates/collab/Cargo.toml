@@ -46,13 +46,11 @@ rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
 reqwest_client.workspace = true
 rpc.workspace = true
-rustc-demangle.workspace = true
 scrypt = "0.11"
 sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "json", "time", "uuid", "any"] }

@@ -12,9 +12,6 @@ workspace = true
 path = "src/vim_mode_setting.rs"
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true
-schemars.workspace = true
-serde.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true

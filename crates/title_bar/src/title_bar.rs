@@ -30,17 +30,20 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings};
+use project::{
+    Project, WorktreeSettings,
+    git_store::{GitStoreEvent, RepositoryEvent},
+};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -197,9 +200,7 @@ impl Render for TitleBar {
                     user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(user.is_some(), |parent| {
-                    parent.child(self.render_user_menu_button(cx))
-                })
+                .child(self.render_app_menu_button(cx))
                 .into_any_element(),
         );
 
@@ -247,6 +248,7 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
+        let git_store = project.read(cx).git_store().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -274,6 +276,17 @@ impl TitleBar {
         subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
+        subscriptions.push(
+            cx.subscribe(&git_store, move |_, _, event, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
+                    cx.notify();
+                }
+                _ => {}
+            }),
+        );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         let banner = cx.new(|cx| {
@@ -308,10 +321,11 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
-            options.nickname.map(|nick| nick.into())
-        } else {
-            None
+        let (nickname, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => {
+                (options.nickname.map(|nick| nick.into()), IconName::Server)
+            }
+            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
@@ -349,9 +363,7 @@ impl TitleBar {
                         .max_w_32()
                         .child(
                             IconWithIndicator::new(
-                                Icon::new(IconName::Server)
-                                    .size(IconSize::Small)
-                                    .color(icon_color),
+                                Icon::new(icon).size(IconSize::Small).color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
@@ -440,13 +452,13 @@ impl TitleBar {
                 let worktree = worktree.read(cx);
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
 
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.root_name(),
+                    None => worktree.root_name_str(),
                 }
             })
             .next();
@@ -483,24 +495,24 @@ impl TitleBar {
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let settings = TitleBarSettings::get_global(cx);
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = {
-            let repo = repository.read(cx);
-            repo.branch
-                .as_ref()
-                .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
-                .or_else(|| {
-                    repo.head_commit.as_ref().map(|commit| {
-                        commit
-                            .sha
-                            .chars()
-                            .take(MAX_SHORT_SHA_LENGTH)
-                            .collect::<String>()
-                    })
+        let repo = repository.read(cx);
+        let branch_name = repo
+            .branch
+            .as_ref()
+            .map(|branch| branch.name())
+            .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
+            .or_else(|| {
+                repo.head_commit.as_ref().map(|commit| {
+                    commit
+                        .sha
+                        .chars()
+                        .take(MAX_SHORT_SHA_LENGTH)
+                        .collect::<String>()
                 })
-        }?;
+            })?;
 
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -522,16 +534,29 @@ impl TitleBar {
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 })
-                .when(
-                    TitleBarSettings::get_global(cx).show_branch_icon,
-                    |branch_button| {
-                        branch_button
-                            .icon(IconName::GitBranch)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Indicator)
-                    },
-                ),
+                .when(settings.show_branch_icon, |branch_button| {
+                    let (icon, icon_color) = {
+                        let status = repo.status_summary();
+                        let tracked = status.index + status.worktree;
+                        if status.conflict > 0 {
+                            (IconName::Warning, Color::VersionControlConflict)
+                        } else if tracked.modified > 0 {
+                            (IconName::SquareDot, Color::VersionControlModified)
+                        } else if tracked.added > 0 || status.untracked > 0 {
+                            (IconName::SquarePlus, Color::VersionControlAdded)
+                        } else if tracked.deleted > 0 {
+                            (IconName::SquareMinus, Color::VersionControlDeleted)
+                        } else {
+                            (IconName::GitBranch, Color::Muted)
+                        }
+                    };
+
+                    branch_button
+                        .icon(icon)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(icon_color)
+                        .icon_size(IconSize::Indicator)
+                }),
         )
     }
 
@@ -596,9 +621,9 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
+                    Some(AutoUpdateStatus::Idle)
+                    | Some(AutoUpdateStatus::Errored { .. })
+                    | None => "Please update Zed to Collaborate",
                 };
 
                 Some(
@@ -637,7 +662,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_app_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let has_subscription_period = user_store.subscription_period().is_some();
@@ -699,11 +724,7 @@ impl TitleBar {
                             },
                         )
                         .separator()
-                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                        .action(
-                            "Settings Profiles",
-                            zed_actions::settings_profile_selector::Toggle.boxed_clone(),
-                        )
+                        .action("Settings", zed_actions::OpenSettingsEditor.boxed_clone())
                         .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",
