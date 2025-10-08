@@ -558,10 +558,10 @@ impl SettingsPageItem {
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
-                .gap_1()
+                .gap_1p5()
                 .child(
                     Label::new(SharedString::new_static(header))
-                        .size(LabelSize::XSmall)
+                        .size(LabelSize::Small)
                         .color(Color::Muted)
                         .buffer_font(cx),
                 )
