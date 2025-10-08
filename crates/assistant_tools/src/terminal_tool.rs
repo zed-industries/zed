@@ -704,7 +704,6 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use terminal::terminal_settings::TerminalSettings;
-    use theme::ThemeSettings;
     use util::{ResultExt as _, test::TempTree};
 
     use super::*;
@@ -719,7 +718,7 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             TerminalSettings::register(cx);
             EditorSettings::register(cx);
         });

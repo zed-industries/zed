@@ -136,6 +136,7 @@ pub fn open_rules_library(
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
                     window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                    kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
                 |window, cx| {

@@ -20,7 +20,9 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
+use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
+use fs::Fs;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
@@ -68,7 +70,10 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{
+    ActiveTheme, GlobalTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
+    ThemeRegistry, ThemeSettings,
+};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -2012,6 +2017,55 @@ fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Cont
     );
 }
 
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = SystemAppearance::global(cx).0;
+
+    let theme_name = theme_settings.theme.name(appearance);
+    if matches!(
+        theme_registry.get(&theme_name.0),
+        Err(ThemeNotFoundError(_))
+    ) && let Some(theme_path) = extension_store
+        .read(cx)
+        .path_to_extension_theme(&theme_name.0)
+    {
+        if cx
+            .background_executor()
+            .block(theme_registry.load_user_theme(&theme_path, fs.clone()))
+            .log_err()
+            .is_some()
+        {
+            GlobalTheme::reload_theme(cx);
+        }
+    }
+
+    let theme_settings = ThemeSettings::get_global(cx);
+    let icon_theme_name = theme_settings.icon_theme.name(appearance);
+    if matches!(
+        theme_registry.get_icon_theme(&icon_theme_name.0),
+        Err(IconThemeNotFoundError(_))
+    ) && let Some((icon_theme_path, icons_root_path)) = extension_store
+        .read(cx)
+        .path_to_extension_icon_theme(&icon_theme_name.0)
+    {
+        if cx
+            .background_executor()
+            .block(theme_registry.load_icon_theme(&icon_theme_path, &icons_root_path, fs))
+            .log_err()
+            .is_some()
+        {
+            GlobalTheme::reload_icon_theme(cx);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2031,8 +2085,11 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::rel_path};
+    use theme::ThemeRegistry;
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -4632,7 +4689,7 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+            if theme.name.as_ref() == "One Dark" {
                 has_default_theme = true;
             }
         }
