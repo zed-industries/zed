@@ -490,7 +490,8 @@ pub struct SettingsWindow {
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
-    navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
+    /// Index into navbar_entries
+    navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
