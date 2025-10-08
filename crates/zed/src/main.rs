@@ -224,7 +224,9 @@ pub fn main() {
         Ok(path) => askpass::set_askpass_program(path),
         Err(err) => {
             eprintln!("Error: {}", err);
-            process::exit(1);
+            if std::option_env!("ZED_BUNDLE").is_some() {
+                process::exit(1);
+            }
         }
     }
 
