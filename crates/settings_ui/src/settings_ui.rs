@@ -997,13 +997,13 @@ impl SettingsWindow {
             };
             let key = (root_entry, sub_entry_title);
             if Some(key) == prev_selected_entry {
-                self.navbar_entry = index;
+                self.open_nav_page(index);
                 found_nav_entry = true;
             }
             entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
         }
         if !found_nav_entry {
-            self.navbar_entry = 0;
+            self.open_first_nav_page();
         }
         self.navbar_entries = navbar_entries;
     }
@@ -1159,12 +1159,7 @@ impl SettingsWindow {
                     page[item_index] = true;
                 }
                 this.filter_matches_to_file();
-                let first_navbar_entry_index = this
-                    .visible_navbar_entries()
-                    .next()
-                    .map(|e| e.0)
-                    .unwrap_or(0);
-                this.navbar_entry = first_navbar_entry_index;
+                this.open_first_nav_page();
                 cx.notify();
             })
             .ok();
@@ -1195,6 +1190,7 @@ impl SettingsWindow {
         if self.pages.is_empty() {
             self.pages = page_data::settings_data();
         }
+        sub_page_stack_mut().clear();
         self.build_content_handles(window, cx);
         self.build_search_matches();
         self.build_navbar();
@@ -1258,12 +1254,20 @@ impl SettingsWindow {
         }
     }
 
+    fn open_nav_page(&mut self, navbar_entry: usize) {
+        self.navbar_entry = navbar_entry;
+        sub_page_stack_mut().clear();
+    }
 
+    fn open_first_nav_page(&mut self) {
         let first_navbar_entry_index = self
             .visible_navbar_entries()
             .next()
             .map(|e| e.0)
             .unwrap_or(0);
+        self.open_nav_page(first_navbar_entry_index);
+    }
+
     fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if ix >= self.files.len() {
             self.current_file = SettingsUiFile::User;
@@ -1274,8 +1278,10 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
+        self.open_nav_page(0);
         self.build_ui(window, cx);
 
+        self.open_first_nav_page();
     }
 
     fn render_files_header(
@@ -1445,6 +1451,7 @@ impl SettingsWindow {
                                             cx.listener(
                                                 move |this, evt: &gpui::ClickEvent, window, cx| {
                                                     if !this.navbar_entries[ix].is_root {
+                                                        this.open_nav_page(ix);
                                                         let mut selected_page_ix = ix;
 
                                                         while !this.navbar_entries[selected_page_ix]
