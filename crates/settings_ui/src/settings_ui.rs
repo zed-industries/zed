@@ -257,8 +257,8 @@ fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
         .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
             Button::new("open-in-settings-file", "Edit in settings.json")
-                .size(ButtonSize::Default)
                 .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
                 .tab_index(0_isize)
                 .on_click(|_, window, cx| {
                     window.dispatch_action(Box::new(OpenCurrentFile), cx);
@@ -606,13 +606,13 @@ impl SettingsPageItem {
 
                 h_flex()
                     .id(setting_item.title)
-                    .w_full()
                     .min_w_0()
                     .gap_2()
                     .justify_between()
+                    .pt_4()
                     .map(|this| {
                         if is_last {
-                            this.pb_6()
+                            this.pb_10()
                         } else {
                             this.pb_4()
                                 .border_b_1()
@@ -676,9 +676,10 @@ impl SettingsPageItem {
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
                 .id(sub_page_link.title)
                 .w_full()
+                .min_w_0()
                 .gap_2()
-                .flex_wrap()
                 .justify_between()
+                .pt_4()
                 .when(!is_last, |this| {
                     this.pb_4()
                         .border_b_1()
@@ -686,8 +687,8 @@ impl SettingsPageItem {
                 })
                 .child(
                     v_flex()
+                        .w_full()
                         .max_w_1_2()
-                        .flex_shrink()
                         .child(Label::new(SharedString::new_static(sub_page_link.title))),
                 )
                 .child(
@@ -696,7 +697,8 @@ impl SettingsPageItem {
                         .icon_position(IconPosition::End)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Outlined),
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium),
                 )
                 .on_click({
                     let sub_page_link = sub_page_link.clone();
@@ -1291,6 +1293,7 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         h_flex()
             .w_full()
+            .pb_4()
             .gap_1()
             .justify_between()
             .tab_group()
@@ -1328,7 +1331,7 @@ impl SettingsWindow {
             .child(
                 Button::new("edit-in-json", "Edit in settings.json")
                     .tab_index(0_isize)
-                    .style(ButtonStyle::Outlined)
+                    .style(ButtonStyle::OutlinedGhost)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_current_settings_file(cx);
                     })),
@@ -1419,7 +1422,7 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .flex_grow()
+                    .size_full()
                     .track_focus(&self.navbar_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
@@ -1577,7 +1580,6 @@ impl SettingsWindow {
         let mut page_content = v_flex()
             .id("settings-ui-page")
             .size_full()
-            .gap_4()
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle);
 
@@ -1625,7 +1627,9 @@ impl SettingsWindow {
                     if let SettingsPageItem::SectionHeader(header) = item {
                         section_header = Some(*header);
                     }
-                    div()
+                    v_flex()
+                        .w_full()
+                        .min_w_0()
                         .when_some(page_index, |element, page_index| {
                             element.track_focus(
                                 &self.content_handles[page_index][actual_item_index]
@@ -1667,6 +1671,7 @@ impl SettingsWindow {
         } else {
             page_header = h_flex()
                 .ml_neg_1p5()
+                .pb_4()
                 .gap_1()
                 .child(
                     IconButton::new("back-btn", IconName::ArrowLeft)
@@ -1684,11 +1689,10 @@ impl SettingsWindow {
         }
 
         return v_flex()
-            .w_full()
-            .pt_4()
-            .pb_6()
-            .px_6()
-            .gap_4()
+            .size_full()
+            .pt_6()
+            .pb_8()
+            .px_8()
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
             .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
@@ -2146,7 +2150,7 @@ where
                 menu = menu.toggleable_entry(
                     label.to_title_case(),
                     value == current_value,
-                    IconPosition::Start,
+                    IconPosition::End,
                     None,
                     move |_, cx| {
                         if value == current_value {
