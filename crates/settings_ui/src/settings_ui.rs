@@ -993,11 +993,14 @@ impl SettingsWindow {
         let current_file = self.current_file.mask();
         for (page, page_filter) in std::iter::zip(&self.pages, &mut self.search_matches) {
             let mut header_index = 0;
-            let mut any_found_since_last_header = false;
+            let mut any_found_since_last_header = true;
+
             for (index, item) in page.items.iter().enumerate() {
                 match item {
                     SettingsPageItem::SectionHeader(_) => {
-                        page_filter[header_index] = any_found_since_last_header;
+                        if !any_found_since_last_header {
+                            page_filter[header_index] = false;
+                        }
                         header_index = index;
                         any_found_since_last_header = false;
                     }
@@ -1017,8 +1020,10 @@ impl SettingsWindow {
                     }
                 }
             }
-            if let Some(last_header) = page_filter.get_mut(header_index) {
-                *last_header = any_found_since_last_header;
+            if let Some(last_header) = page_filter.get_mut(header_index)
+                && !any_found_since_last_header
+            {
+                *last_header = false;
             }
         }
     }
