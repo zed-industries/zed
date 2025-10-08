@@ -1213,6 +1213,11 @@ impl WindowBounds {
             WindowBounds::Fullscreen(bounds) => *bounds,
         }
     }
+
+    /// Creates a new window bounds that centers the window on the screen.
+    pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
+        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+    }
 }
 
 impl Default for WindowOptions {

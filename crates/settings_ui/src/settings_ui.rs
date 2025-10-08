@@ -7,9 +7,9 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
-    WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
+    Action, App, Bounds, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowBounds,
+    WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -473,6 +473,7 @@ pub fn open_settings_editor(
                 kind: gpui::WindowKind::Normal,
                 window_background: cx.theme().window_background_appearance(),
                 window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                window_bounds: Some(WindowBounds::centered(size(px(800.), px(600.)), cx)),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
