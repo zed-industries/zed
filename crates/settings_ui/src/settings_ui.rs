@@ -1269,7 +1269,7 @@ impl SettingsWindow {
             )
             .child(
                 Button::new("edit-in-json", "Edit in settings.json")
-                    .tab_index(0 as isize)
+                    .tab_index(0_isize)
                     .style(ButtonStyle::Outlined)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_current_settings_file(cx);
