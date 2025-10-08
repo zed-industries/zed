@@ -353,11 +353,18 @@ impl ShellKind {
         }
     }
 
-    pub fn command_prefix(&self) -> Option<char> {
+    pub const fn command_prefix(&self) -> Option<char> {
         match self {
             ShellKind::PowerShell => Some('&'),
             ShellKind::Nushell => Some('^'),
             _ => None,
+        }
+    }
+
+    pub const fn sequential_commands_separator(&self) -> char {
+        match self {
+            ShellKind::Cmd => '&',
+            _ => ';',
         }
     }
 
@@ -369,5 +376,17 @@ impl ShellKind {
             ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
             _ => arg,
         })
+    }
+
+    pub const fn activate_keyword(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "",
+            ShellKind::Nushell => "overlay use",
+            ShellKind::PowerShell => ".",
+            ShellKind::Fish => "source",
+            ShellKind::Csh => "source",
+            ShellKind::Tcsh => "source",
+            ShellKind::Posix | ShellKind::Rc => "source",
+        }
     }
 }
