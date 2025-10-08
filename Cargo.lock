@@ -8051,6 +8051,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "theme",
+ "title_bar",
  "ui",
  "workspace",
  "workspace-hack",
