@@ -1,10 +1,11 @@
 use client::{Client, UserStore};
-use codestral::{Codestral, CodestralCompletionProvider};
+use codestral::CodestralCompletionProvider;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language_models::MistralLanguageModelProvider;
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -110,6 +111,10 @@ fn assign_edit_prediction_providers(
     user_store: Entity<UserStore>,
     cx: &mut App,
 ) {
+    if provider == EditPredictionProvider::Codestral {
+        let mistral = MistralLanguageModelProvider::global(client.http_client(), cx);
+        mistral.load_codestral_api_key(cx).detach();
+    }
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -191,11 +196,9 @@ fn assign_edit_prediction_provider(
             }
         }
         EditPredictionProvider::Codestral => {
-            if let Some(codestral) = Codestral::global(cx) {
-                let http_client = client.http_client();
-                let provider = cx.new(|_| CodestralCompletionProvider::new(codestral, http_client));
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
-            }
+            let http_client = client.http_client();
+            let provider = cx.new(|_| CodestralCompletionProvider::new(http_client));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
         EditPredictionProvider::Zed => {
             if user_store.read(cx).current_user().is_some() {

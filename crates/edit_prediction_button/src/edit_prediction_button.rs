@@ -1,7 +1,7 @@
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
-use codestral::Codestral;
+use codestral::CodestralCompletionProvider;
 use copilot::{Copilot, Status};
 use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
@@ -236,34 +236,17 @@ impl Render for EditPredictionButton {
             }
 
             EditPredictionProvider::Codestral => {
-                let Some(codestral) = Codestral::global(cx) else {
-                    return div();
-                };
-
                 let enabled = self.editor_enabled.unwrap_or(true);
-                let status = codestral.read(cx);
+                let has_api_key = CodestralCompletionProvider::has_api_key(cx);
 
-                let icon = match status {
-                    codestral::Codestral::Error { .. } => IconName::AiMistral,
-                    codestral::Codestral::Ready { .. } => {
-                        if enabled {
-                            IconName::AiMistral
-                        } else {
-                            IconName::AiMistral
-                        }
-                    }
-                    _ => IconName::AiMistral,
+                let icon = IconName::AiMistral;
+                let tooltip_text = if has_api_key {
+                    "Codestral API key is configured"
+                } else {
+                    "No Codestral API key configured"
                 };
-
-                let tooltip_text = match status {
-                    codestral::Codestral::Starting => "Codestral is starting...",
-                    codestral::Codestral::Authenticating => "Authenticating with Codestral...",
-                    codestral::Codestral::Ready { .. } => "Codestral",
-                    codestral::Codestral::Error { .. } => "Codestral error",
-                };
-
-                let has_error = matches!(status, codestral::Codestral::Error { .. });
-                let is_ready = matches!(status, codestral::Codestral::Ready { .. });
+                let has_error = !has_api_key;
+                let is_ready = has_api_key;
 
                 let fs = self.fs.clone();
                 let this = cx.entity().clone();
@@ -810,12 +793,13 @@ impl EditPredictionButton {
         ContextMenu::build(window, cx, |menu, window, cx| {
             self.build_language_settings_menu(menu, window, cx)
                 .separator()
+                // todo! remove
                 .entry("Configure API Key", None, |_window, cx| {
                     cx.dispatch_action(&zed_actions::OpenSettings);
                 })
-                .entry("Sign Out", None, |_window, cx| {
-                    cx.dispatch_action(&codestral::SignOut);
-                })
+            // .entry("Sign Out", None, |_window, cx| {
+            //     cx.dispatch_action(&codestral::SignOut);
+            // })
         })
     }
 

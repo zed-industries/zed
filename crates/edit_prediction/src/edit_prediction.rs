@@ -3,7 +3,6 @@ use std::ops::Range;
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt};
-use project::Project;
 
 // TODO: Find a better home for `Direction`.
 //

@@ -1,134 +1,330 @@
-mod codestral_completion_provider;
-
-pub use codestral_completion_provider::*;
-
-use client::Client;
-use gpui::{actions, App, AppContext, Context, Entity, Global};
-use language::language_settings::all_language_settings;
+use anyhow::{Context as _, Result};
+use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
+use futures::AsyncReadExt;
+use gpui::{App, Context, Entity, Task};
+use http_client::HttpClient;
+use language::{
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
+};
+use language_models::MistralLanguageModelProvider;
+use mistral::CODESTRAL_API_URL;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
-use std::sync::Arc;
+use std::{
+    ops::Range,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use text::ToOffset;
 
-actions!(
-    codestral,
-    [
-        /// Signs out of Codestral.
-        SignOut
-    ]
-);
+pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 
-pub fn init(client: Arc<Client>, cx: &mut App) {
-    let codestral = cx.new(|_| Codestral::Starting);
-    Codestral::set_global(codestral.clone(), cx);
+const EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
+    max_bytes: 1050,
+    min_bytes: 525,
+    target_before_cursor_over_total_bytes: 0.66,
+};
 
-    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
-    if provider == language::language_settings::EditPredictionProvider::Codestral {
-        log::info!("Codestral: Provider selected, starting...");
-        codestral.update(cx, |codestral, cx| codestral.start(client.clone(), cx));
-    }
-
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let new_provider = all_language_settings(None, cx).edit_predictions.provider;
-        if new_provider != provider {
-            if new_provider == language::language_settings::EditPredictionProvider::Codestral {
-                log::info!("Codestral: Provider selected, starting...");
-                codestral.update(cx, |codestral, cx| codestral.start(client.clone(), cx));
-            } else if provider == language::language_settings::EditPredictionProvider::Codestral {
-                log::info!("Codestral: Provider deselected, stopping...");
-                codestral.update(cx, |codestral, _cx| codestral.stop());
-            }
-            provider = new_provider;
-        }
-    })
-    .detach();
-
-    cx.on_action(|_: &SignOut, cx| {
-        if let Some(codestral) = Codestral::global(cx) {
-            codestral.update(cx, |codestral, cx| codestral.sign_out(cx));
-        }
-    });
-}
-
-#[derive(Debug)]
-pub enum Codestral {
-    Starting,
-    Authenticating,
-    Ready { api_key: String },
-    Error { error: anyhow::Error },
-}
-
+/// Represents a completion that has been received and processed from Codestral.
+/// This struct maintains the state needed to interpolate the completion as the user types.
 #[derive(Clone)]
-struct CodestralGlobal(Entity<Codestral>);
+struct CurrentCompletion {
+    /// The buffer snapshot at the time the completion was generated.
+    /// Used to detect changes and interpolate edits.
+    snapshot: BufferSnapshot,
+    /// The edits that should be applied to transform the original text into the predicted text.
+    /// Each edit is a range in the buffer and the text to replace it with.
+    edits: Arc<[(Range<Anchor>, String)]>,
+    /// Preview of how the buffer will look after applying the edits.
+    edit_preview: EditPreview,
+}
 
-impl Global for CodestralGlobal {}
+impl CurrentCompletion {
+    /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
+    /// Returns None if the user's edits conflict with the predicted edits.
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
+        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+    }
+}
 
-impl Codestral {
-    pub fn global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<CodestralGlobal>()
-            .map(|model| model.0.clone())
+pub struct CodestralCompletionProvider {
+    http_client: Arc<dyn HttpClient>,
+    pending_request: Option<Task<Result<()>>>,
+    current_completion: Option<CurrentCompletion>,
+}
+
+impl CodestralCompletionProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>) -> Self {
+        Self {
+            http_client,
+            pending_request: None,
+            current_completion: None,
+        }
     }
 
-    pub fn set_global(codestral: Entity<Self>, cx: &mut App) {
-        cx.set_global(CodestralGlobal(codestral));
+    pub fn has_api_key(cx: &App) -> bool {
+        Self::api_key(cx).is_some()
     }
 
-    pub fn start(&mut self, _client: Arc<Client>, cx: &mut Context<Self>) {
-        if let Self::Starting = self {
-            log::debug!("Codestral: Transitioning from Starting to Authenticating");
-            *self = Self::Authenticating;
+    fn api_key(cx: &App) -> Option<Arc<str>> {
+        MistralLanguageModelProvider::try_global(cx)
+            .and_then(|provider| provider.codestral_api_key(CODESTRAL_API_URL, cx))
+    }
 
-            cx.spawn(async move |this, cx| {
-                // Try to get API key from settings first
-                let api_key = cx.update(|cx| {
-                    let settings = all_language_settings(None, cx);
-                    settings.edit_predictions.codestral.api_key.clone()
-                })?;
+    /// Uses Codestral's Fill-in-the-Middle API for code completion.
+    async fn fetch_completion(
+        http_client: Arc<dyn HttpClient>,
+        api_key: &str,
+        prompt: String,
+        suffix: String,
+        model: String,
+        max_tokens: Option<u32>,
+    ) -> Result<String> {
+        let start_time = Instant::now();
 
-                if let Some(api_key) = api_key {
-                    log::info!("Codestral: API key configured, transitioning to Ready");
-                    this.update(cx, |this, cx| {
-                        *this = Self::Ready { api_key };
-                        cx.notify();
-                    })?;
-                } else {
-                    let error_msg =
-                        "No API key configured. Please add your Codestral API key to settings.";
-                    log::error!("Codestral: {}", error_msg);
-                    this.update(cx, |this, cx| {
-                        *this = Self::Error {
-                            error: anyhow::anyhow!(error_msg),
-                        };
-                        cx.notify();
-                    })?;
-                }
-                Ok::<(), anyhow::Error>(())
-            })
-            .detach_and_log_err(cx)
+        log::debug!(
+            "Codestral: Requesting completion (model: {}, max_tokens: {:?})",
+            model,
+            max_tokens
+        );
+
+        let request = CodestralRequest {
+            model,
+            prompt,
+            suffix: if suffix.is_empty() {
+                None
+            } else {
+                Some(suffix)
+            },
+            max_tokens: max_tokens.or(Some(350)),
+            temperature: Some(0.2),
+            top_p: Some(1.0),
+            stream: Some(false),
+            stop: None,
+            random_seed: None,
+            min_tokens: None,
+        };
+
+        let request_body = serde_json::to_string(&request)?;
+
+        log::debug!("Codestral: Sending FIM request");
+
+        let http_request = http_client::Request::builder()
+            .method(http_client::Method::POST)
+            .uri(format!("{}/v1/fim/completions", CODESTRAL_API_URL))
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .body(http_client::AsyncBody::from(request_body))?;
+
+        let mut response = http_client.send(http_request).await?;
+        let status = response.status();
+
+        log::debug!("Codestral: Response status: {}", status);
+
+        if !status.is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            return Err(anyhow::anyhow!(
+                "Codestral API error: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        let codestral_response: CodestralResponse = serde_json::from_str(&body)?;
+
+        let elapsed = start_time.elapsed();
+
+        if let Some(choice) = codestral_response.choices.first() {
+            let completion = &choice.message.content;
+
+            log::debug!(
+                "Codestral: Completion received ({} tokens, {:.2}s)",
+                codestral_response.usage.completion_tokens,
+                elapsed.as_secs_f64()
+            );
+
+            // Return just the completion text for insertion at cursor
+            Ok(completion.clone())
         } else {
-            log::debug!("Codestral: Start called but already in state: {:?}", self);
+            log::error!("Codestral: No completion returned in response");
+            Err(anyhow::anyhow!("No completion returned from Codestral"))
         }
     }
+}
 
-    pub fn stop(&mut self) {
-        log::info!("Codestral: Stopping...");
-        *self = Self::Starting;
+impl EditPredictionProvider for CodestralCompletionProvider {
+    fn name() -> &'static str {
+        "codestral"
     }
 
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Ready { .. })
+    fn display_name() -> &'static str {
+        "Codestral"
     }
 
-    pub fn api_key(&self) -> Option<&str> {
-        match self {
-            Self::Ready { api_key } => Some(api_key),
-            _ => None,
+    fn show_completions_in_menu() -> bool {
+        true
+    }
+
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
+        Self::api_key(cx).is_some()
+    }
+
+    fn is_refreshing(&self) -> bool {
+        self.pending_request.is_some()
+    }
+
+    fn refresh(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut Context<Self>,
+    ) {
+        log::debug!("Codestral: Refresh called (debounce: {})", debounce);
+
+        let Some(api_key) = Self::api_key(cx) else {
+            log::warn!("Codestral: No API key configured, skipping refresh");
+            return;
+        };
+
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Check if current completion is still valid
+        if let Some(current_completion) = self.current_completion.as_ref() {
+            if current_completion.interpolate(&snapshot).is_some() {
+                return;
+            }
         }
+
+        let http_client = self.http_client.clone();
+
+        // Get settings
+        let settings = all_language_settings(None, cx);
+        let model = settings
+            .edit_predictions
+            .codestral
+            .model
+            .clone()
+            .unwrap_or_else(|| "codestral-latest".to_string());
+        let max_tokens = settings.edit_predictions.codestral.max_tokens;
+
+        self.pending_request = Some(cx.spawn(async move |this, cx| {
+            if debounce {
+                log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
+                smol::Timer::after(DEBOUNCE_TIMEOUT).await;
+            }
+
+            let cursor_offset = cursor_position.to_offset(&snapshot);
+            let cursor_point = cursor_offset.to_point(&snapshot);
+            let excerpt = EditPredictionExcerpt::select_from_buffer(
+                cursor_point,
+                &snapshot,
+                &EXCERPT_OPTIONS,
+                None,
+            )
+            .context("Line containing cursor doesn't fit in excerpt max bytes")?;
+
+            let excerpt_text = excerpt.text(&snapshot);
+            let cursor_within_excerpt = cursor_offset
+                .saturating_sub(excerpt.range.start)
+                .min(excerpt_text.body.len());
+            let prompt = excerpt_text.body[..cursor_within_excerpt].to_string();
+            let suffix = excerpt_text.body[cursor_within_excerpt..].to_string();
+
+            let completion_text = match Self::fetch_completion(
+                http_client,
+                &api_key,
+                prompt,
+                suffix,
+                model,
+                max_tokens,
+            )
+            .await
+            {
+                Ok(completion) => completion,
+                Err(e) => {
+                    log::error!("Codestral: Failed to fetch completion: {}", e);
+                    this.update(cx, |this, cx| {
+                        this.pending_request = None;
+                        cx.notify();
+                    })?;
+                    return Err(e);
+                }
+            };
+
+            if completion_text.trim().is_empty() {
+                log::debug!("Codestral: Completion was empty after trimming; ignoring");
+                this.update(cx, |this, cx| {
+                    this.pending_request = None;
+                    cx.notify();
+                })?;
+                return Ok(());
+            }
+
+            let edits: Arc<[(Range<Anchor>, String)]> =
+                vec![(cursor_position..cursor_position, completion_text)].into();
+            let edit_preview = buffer
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .await;
+
+            this.update(cx, |this, cx| {
+                this.current_completion = Some(CurrentCompletion {
+                    snapshot,
+                    edits,
+                    edit_preview,
+                });
+                this.pending_request = None;
+                cx.notify();
+            })?;
+
+            Ok(())
+        }));
     }
 
-    pub fn sign_out(&mut self, cx: &mut Context<Self>) {
-        log::info!("Codestral: Signing out...");
-        *self = Self::Starting;
-        cx.notify();
+    fn cycle(
+        &mut self,
+        _buffer: Entity<Buffer>,
+        _cursor_position: Anchor,
+        _direction: Direction,
+        _cx: &mut Context<Self>,
+    ) {
+        // Codestral doesn't support multiple completions, so cycling does nothing
+    }
+
+    fn accept(&mut self, _cx: &mut Context<Self>) {
+        log::debug!("Codestral: Completion accepted");
+        self.pending_request = None;
+        self.current_completion = None;
+    }
+
+    fn discard(&mut self, _cx: &mut Context<Self>) {
+        log::debug!("Codestral: Completion discarded");
+        self.pending_request = None;
+        self.current_completion = None;
+    }
+
+    /// Returns the completion suggestion, adjusted or invalidated based on user edits
+    fn suggest(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        _cursor_position: Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<EditPrediction> {
+        let current_completion = self.current_completion.as_ref()?;
+        let buffer = buffer.read(cx);
+        let edits = current_completion.interpolate(&buffer.snapshot())?;
+        if edits.is_empty() {
+            return None;
+        }
+        Some(EditPrediction::Local {
+            id: None,
+            edits,
+            edit_preview: Some(current_completion.edit_preview.clone()),
+        })
     }
 }
 
