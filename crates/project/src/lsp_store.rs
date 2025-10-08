@@ -3542,12 +3542,6 @@ struct CodeLensData {
     update: Option<(Global, CodeLensTask)>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LspFetchStrategy {
-    IgnoreCache,
-    UseCache { known_cache_version: Option<usize> },
-}
-
 #[derive(Debug)]
 pub enum LspStoreEvent {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
@@ -6897,48 +6891,47 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        fetch_strategy: LspFetchStrategy,
+        known_cache_version: Option<usize>,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        match fetch_strategy {
-            LspFetchStrategy::IgnoreCache => {}
-            LspFetchStrategy::UseCache {
-                known_cache_version,
-            } => {
-                let current_language_servers = self
-                    .as_local()
-                    .and_then(|local| local.buffers_opened_in_servers.get(&buffer_id).cloned())
-                    .unwrap_or_default();
+        let current_language_servers = self.as_local().map(|local| {
+            local
+                .buffers_opened_in_servers
+                .get(&buffer_id)
+                .cloned()
+                .unwrap_or_default()
+        });
 
-                if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id)
-                    && !version_queried_for.changed_since(&lsp_data.buffer_version)
-                {
-                    if current_language_servers
-                        == lsp_data.document_colors.colors.keys().copied().collect()
-                    {
-                        let cache_version = lsp_data.document_colors.cache_version;
-                        if Some(cache_version) == known_cache_version {
-                            return None;
-                        } else {
-                            return Some(
-                                Task::ready(Ok(DocumentColors {
-                                    colors: lsp_data
-                                        .document_colors
-                                        .colors
-                                        .values()
-                                        .flatten()
-                                        .cloned()
-                                        .collect(),
-                                    cache_version: Some(cache_version),
-                                }))
-                                .shared(),
-                            );
-                        }
-                    }
+        if let Some(cached_data) = self.lsp_data.get_mut(&buffer_id)
+            && !version_queried_for.changed_since(&cached_data.buffer_version)
+        {
+            let has_different_servers =
+                current_language_servers.is_some_and(|current_language_servers| {
+                    current_language_servers
+                        != cached_data.document_colors.colors.keys().copied().collect()
+                });
+            if !has_different_servers {
+                let cache_version = cached_data.document_colors.cache_version;
+                if Some(cache_version) == known_cache_version {
+                    return None;
+                } else {
+                    return Some(
+                        Task::ready(Ok(DocumentColors {
+                            colors: cached_data
+                                .document_colors
+                                .colors
+                                .values()
+                                .flatten()
+                                .cloned()
+                                .collect(),
+                            cache_version: Some(cache_version),
+                        }))
+                        .shared(),
+                    );
                 }
             }
         }
@@ -6968,13 +6961,12 @@ impl LspStore {
                     .map_err(Arc::new);
                 let fetched_colors = match fetched_colors {
                     Ok(fetched_colors) => {
-                        if fetch_strategy != LspFetchStrategy::IgnoreCache
-                            && Some(true)
-                                == buffer
-                                    .update(cx, |buffer, _| {
-                                        buffer.version() != query_version_queried_for
-                                    })
-                                    .ok()
+                        if Some(true)
+                            == buffer
+                                .update(cx, |buffer, _| {
+                                    buffer.version() != query_version_queried_for
+                                })
+                                .ok()
                         {
                             return Ok(DocumentColors::default());
                         }

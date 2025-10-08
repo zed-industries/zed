@@ -6,7 +6,7 @@ use gpui::{Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, InlayId, lsp_store::LspFetchStrategy};
+use project::{DocumentColor, InlayId};
 use settings::Settings as _;
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{App, Context, Window};
@@ -145,7 +145,6 @@ impl LspColorData {
 impl Editor {
     pub(super) fn refresh_colors(
         &mut self,
-        ignore_cache: bool,
         buffer_id: Option<BufferId>,
         _: &Window,
         cx: &mut Context<Self>,
@@ -179,16 +178,10 @@ impl Editor {
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer_id = buffer.read(cx).remote_id();
-                    let fetch_strategy = if ignore_cache {
-                        LspFetchStrategy::IgnoreCache
-                    } else {
-                        LspFetchStrategy::UseCache {
-                            known_cache_version: self.colors.as_ref().and_then(|colors| {
-                                Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
-                            }),
-                        }
-                    };
-                    let colors_task = lsp_store.document_colors(fetch_strategy, buffer, cx)?;
+                    let known_cache_version = self.colors.as_ref().and_then(|colors| {
+                        Some(colors.buffer_colors.get(&buffer_id)?.cache_version_used)
+                    });
+                    let colors_task = lsp_store.document_colors(known_cache_version, buffer, cx)?;
                     Some(async move { (buffer_id, colors_task.await) })
                 })
                 .collect::<Vec<_>>()

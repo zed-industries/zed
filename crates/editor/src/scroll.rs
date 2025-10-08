@@ -498,7 +498,7 @@ impl Editor {
                 editor
                     .update_in(cx, |editor, window, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.refresh_colors(false, None, window, cx);
+                        editor.refresh_colors(None, window, cx);
                     })
                     .ok()
             })
@@ -614,7 +614,7 @@ impl Editor {
         );
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-        self.refresh_colors(false, None, window, cx);
+        self.refresh_colors(None, window, cx);
         editor_was_scrolled
     }
 

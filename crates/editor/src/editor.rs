@@ -1867,7 +1867,7 @@ impl Editor {
                     }
                     project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                         if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
-                            editor.update_lsp_data(false, Some(*buffer_id), window, cx);
+                            editor.update_lsp_data(Some(*buffer_id), window, cx);
                         }
                     }
 
@@ -2354,7 +2354,7 @@ impl Editor {
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
-            editor.update_lsp_data(false, None, window, cx);
+            editor.update_lsp_data(None, window, cx);
         }
 
         if editor.mode.is_full() {
@@ -20639,7 +20639,7 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if let Some(buffer) = edited_buffer {
-                    self.update_lsp_data(false, Some(buffer.read(cx).remote_id()), window, cx);
+                    self.update_lsp_data(Some(buffer.read(cx).remote_id()), window, cx);
                 }
 
                 if *singleton_buffer_edited {
@@ -20702,7 +20702,7 @@ impl Editor {
                     .detach();
                 }
                 if self.active_diagnostics != ActiveDiagnostic::All {
-                    self.update_lsp_data(false, Some(buffer_id), window, cx);
+                    self.update_lsp_data(Some(buffer_id), window, cx);
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
@@ -20891,7 +20891,7 @@ impl Editor {
             if !inlay_splice.is_empty() {
                 self.splice_inlays(&inlay_splice.to_remove, inlay_splice.to_insert, cx);
             }
-            self.refresh_colors(false, None, window, cx);
+            self.refresh_colors(None, window, cx);
         }
 
         cx.notify();
@@ -21784,13 +21784,12 @@ impl Editor {
 
     fn update_lsp_data(
         &mut self,
-        ignore_cache: bool,
         for_buffer: Option<BufferId>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
-        self.refresh_colors(ignore_cache, for_buffer, window, cx);
+        self.refresh_colors(for_buffer, window, cx);
     }
 }
 
