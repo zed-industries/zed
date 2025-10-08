@@ -55,7 +55,9 @@ actions!(
         /// Focuses the next file in the file list.
         FocusNextFile,
         /// Focuses the previous file in the file list.
-        FocusPreviousFile
+        FocusPreviousFile,
+        /// Opens an editor for the current file
+        OpenCurrentFile,
     ]
 );
 
@@ -239,20 +241,14 @@ pub fn init(cx: &mut App) {
 }
 
 fn init_renderers(cx: &mut App) {
-    // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
         .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            // TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
-            Button::new("unimplemented-field", "UNIMPLEMENTED")
-                .size(ButtonSize::Medium)
-                .icon(IconName::XCircle)
-                .icon_position(IconPosition::Start)
-                .icon_color(Color::Error)
-                .icon_size(IconSize::Small)
+            Button::new("open-in-settings-file", "Edit in settings.json")
+                .size(ButtonSize::Default)
                 .style(ButtonStyle::Outlined)
-                .tooltip(Tooltip::text(
-                    "This warning is only displayed in dev builds.",
-                ))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
+                })
                 .into_any_element()
         })
         .add_renderer::<bool>(|settings_field, file, _, _, cx| {
@@ -792,6 +788,10 @@ enum SettingsUiFile {
 }
 
 impl SettingsUiFile {
+    fn is_server(&self) -> bool {
+        matches!(self, SettingsUiFile::Server(_))
+    }
+
     fn worktree_id(&self) -> Option<WorktreeId> {
         match self {
             SettingsUiFile::User => None,
@@ -1176,6 +1176,9 @@ impl SettingsWindow {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
             };
+            if settings_ui_file.is_server() {
+                continue;
+            }
 
             if let Some(worktree_id) = settings_ui_file.worktree_id() {
                 let directory_name = all_projects(cx)
@@ -1798,6 +1801,9 @@ impl Render for SettingsWindow {
             .id("settings-window")
             .key_context("SettingsWindow")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
+                this.open_current_settings_file(cx);
+            }))
             .on_action(|_: &Minimize, window, _cx| {
                 window.minimize_window();
             })
