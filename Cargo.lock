@@ -14363,7 +14363,6 @@ dependencies = [
  "anyhow",
  "assets",
  "client",
- "command_palette_hooks",
  "editor",
  "feature_flags",
  "fs",
@@ -14372,6 +14371,7 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "language",
+ "log",
  "menu",
  "node_runtime",
  "paths",
@@ -19984,7 +19984,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.208.0"
+version = "0.209.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",

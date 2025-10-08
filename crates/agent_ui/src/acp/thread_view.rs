@@ -2727,7 +2727,7 @@ impl AcpThreadView {
         let output_line_count = output.map(|output| output.content_line_count).unwrap_or(0);
 
         let command_failed = command_finished
-            && output.is_some_and(|o| o.exit_status.is_none_or(|status| !status.success()));
+            && output.is_some_and(|o| o.exit_status.is_some_and(|status| !status.success()));
 
         let time_elapsed = if let Some(output) = output {
             output.ended_at.duration_since(started_at)
