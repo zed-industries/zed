@@ -170,8 +170,6 @@ mod tests {
     use crate::{EditPredictionExcerptOptions, SyntaxIndex};
 
     #[gpui::test]
-    // todo! don't skip
-    #[ignore]
     async fn test_call_site(cx: &mut TestAppContext) {
         let (project, index, _rust_lang_id) = init_test(cx).await;
 
@@ -205,7 +203,7 @@ mod tests {
                             omit_excerpt_overlaps: true,
                         },
                     },
-                    Some(index),
+                    Some(index.clone()),
                     cx,
                 )
             })
