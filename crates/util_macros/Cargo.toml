@@ -1,9 +1,10 @@
 [package]
-name = "util_macros"
+name = "zed-util-macros"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "Utility macros for Zed"
 
 [lints]
 workspace = true

@@ -17,3 +17,9 @@ pub struct PanicFeatureFlag;
 impl FeatureFlag for PanicFeatureFlag {
     const NAME: &'static str = "panic";
 }
+
+pub struct CodexAcpFeatureFlag;
+
+impl FeatureFlag for CodexAcpFeatureFlag {
+    const NAME: &'static str = "codex-acp";
+}

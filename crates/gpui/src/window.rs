@@ -4559,7 +4559,7 @@ impl Window {
             if let Some(inspector) = self.inspector.clone() {
                 inspector.update(cx, |inspector, _cx| {
                     if let Some(depth) = inspector.pick_depth.as_mut() {
-                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        *depth += f32::from(delta_y) / SCROLL_PIXELS_PER_LAYER;
                         let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
                         if *depth < 0.0 {
                             *depth = 0.0;
@@ -4631,6 +4631,14 @@ pub struct WindowHandle<V> {
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
     state_type: PhantomData<V>,
+}
+
+impl<V> Debug for WindowHandle<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowHandle")
+            .field("any_handle", &self.any_handle.id.as_u64())
+            .finish()
+    }
 }
 
 impl<V: 'static + Render> WindowHandle<V> {

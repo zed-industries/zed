@@ -47,18 +47,14 @@ impl BlameRenderer for GitBlameRenderer {
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
-        let avatar = if ProjectSettings::get_global(cx)
-            .git
-            .inline_blame
-            .show_commit_summary
-        {
-            None
-        } else {
+        let avatar = if ProjectSettings::get_global(cx).git.blame.show_avatar {
             CommitAvatar::new(
                 &blame_entry.sha.to_string().into(),
                 details.as_ref().and_then(|it| it.remote.as_ref()),
             )
             .render(window, cx)
+        } else {
+            None
         };
         Some(
             div()

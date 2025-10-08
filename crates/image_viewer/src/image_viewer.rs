@@ -98,10 +98,6 @@ impl Item for ImageView {
         f(self.image_item.entity_id(), self.image_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
-    }
-
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         let abs_path = self.image_item.read(cx).abs_path(cx)?;
         let file_path = abs_path.compact().to_string_lossy().into_owned();
@@ -303,10 +299,10 @@ impl Render for ImageView {
                                     _cx: &mut App| {
             let square_size = 32.0;
 
-            let start_y = bounds.origin.y.0;
-            let height = bounds.size.height.0;
-            let start_x = bounds.origin.x.0;
-            let width = bounds.size.width.0;
+            let start_y = bounds.origin.y.into();
+            let height: f32 = bounds.size.height.into();
+            let start_x = bounds.origin.x.into();
+            let width: f32 = bounds.size.width.into();
 
             let mut y = start_y;
             let mut x = start_x;

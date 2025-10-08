@@ -62,7 +62,6 @@ project.workspace = true
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
-sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
@@ -70,7 +69,6 @@ settings.workspace = true
 smol.workspace = true
 url.workspace = true
 task.workspace = true
-tempfile.workspace = true
 theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
@@ -93,7 +91,6 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 workspace-hack.workspace = true
-shlex.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

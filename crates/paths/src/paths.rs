@@ -2,7 +2,7 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
@@ -31,12 +31,16 @@ static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static RelPath {
-    RelPath::unix(".zed_server").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_server").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
-    RelPath::unix(".zed_wsl_server").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed_wsl_server").unwrap());
+    *CACHED
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.
@@ -65,7 +69,7 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
         let mut path = PathBuf::from(dir);
-        if path.is_relative() {
+        if path.is_relative() && path.exists() {
             let abs_path = path
                 .canonicalize()
                 .expect("failed to canonicalize custom data directory's path to an absolute path");
@@ -410,17 +414,23 @@ pub fn local_vscode_folder_name() -> &'static str {
 
 /// Returns the relative path to a `settings.json` file within a project.
 pub fn local_settings_file_relative_path() -> &'static RelPath {
-    RelPath::unix(".zed/settings.json").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/settings.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `tasks.json` file within a project.
 pub fn local_tasks_file_relative_path() -> &'static RelPath {
-    RelPath::unix(".zed/tasks.json").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/tasks.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `.vscode/tasks.json` file within a project.
 pub fn local_vscode_tasks_file_relative_path() -> &'static RelPath {
-    RelPath::unix(".vscode/tasks.json").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".vscode/tasks.json").unwrap());
+    *CACHED
 }
 
 pub fn debug_task_file_name() -> &'static str {
@@ -434,12 +444,16 @@ pub fn task_file_name() -> &'static str {
 /// Returns the relative path to a `debug.json` file within a project.
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static RelPath {
-    RelPath::unix(".zed/debug.json").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".zed/debug.json").unwrap());
+    *CACHED
 }
 
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static RelPath {
-    RelPath::unix(".vscode/launch.json").unwrap()
+    static CACHED: LazyLock<&'static RelPath> =
+        LazyLock::new(|| RelPath::unix(".vscode/launch.json").unwrap());
+    *CACHED
 }
 
 pub fn user_ssh_config_file() -> PathBuf {
