@@ -588,6 +588,15 @@ impl Zeta {
                     None
                 };
 
+                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                    if let Some(debug_response_tx) = debug_response_tx {
+                        debug_response_tx
+                            .send(Err("Request skipped".to_string()))
+                            .ok();
+                    }
+                    anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
+                }
+
                 let response = Self::perform_request(client, llm_token, app_version, request).await;
 
                 if let Some(debug_response_tx) = debug_response_tx {
