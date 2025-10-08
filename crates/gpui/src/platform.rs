@@ -1269,7 +1269,7 @@ pub enum WindowKind {
     /// use sparingly!
     PopUp,
 
-    /// A floating window that appears in top of their parent window
+    /// A floating window that appears on top of its parent window
     Floating,
 }
 
