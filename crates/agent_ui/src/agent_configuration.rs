@@ -409,7 +409,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "always-allow-tool-actions-switch",
-            "Allow running commands without asking for confirmation",
+            Some("Allow running commands without asking for confirmation"),
             Some(
                 "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
             ),
@@ -429,7 +429,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "single-file-review",
-            "Enable single-file agent reviews",
+            Some("Enable single-file agent reviews"),
             Some("Agent edits are also displayed in single-file editors for review.".into()),
             single_file_review,
             move |state, _window, cx| {
@@ -450,7 +450,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "sound-notification",
-            "Play sound when finished generating",
+            Some("Play sound when finished generating"),
             Some(
                 "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
             ),
@@ -470,7 +470,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "modifier-send",
-            "Use modifier to submit a message",
+            Some("Use modifier to submit a message"),
             Some(
                 "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
