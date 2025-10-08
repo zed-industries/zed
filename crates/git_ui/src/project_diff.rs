@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent},
+    git_store::{GitStore, GitStoreEvent, Repository},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -234,15 +234,7 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-
-        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-            CONFLICT_NAMESPACE
-        } else if entry.status.is_created() {
-            NEW_NAMESPACE
-        } else {
-            TRACKED_NAMESPACE
-        };
-
+        let namespace = namespace(repo, &entry.repo_path, entry.status, cx);
         let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
@@ -388,15 +380,7 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
-                    TRACKED_NAMESPACE
-                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-                    CONFLICT_NAMESPACE
-                } else if entry.status.is_created() {
-                    NEW_NAMESPACE
-                } else {
-                    TRACKED_NAMESPACE
-                };
+                let namespace = namespace(repo, &entry.repo_path, entry.status, cx);
                 let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
@@ -538,6 +522,18 @@ impl ProjectDiff {
             .map(|key| key.path())
             .cloned()
             .collect()
+    }
+}
+
+fn namespace(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+    if GitPanelSettings::get_global(cx).sort_by_path {
+        TRACKED_NAMESPACE
+    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
+        CONFLICT_NAMESPACE
+    } else if status.is_created() {
+        NEW_NAMESPACE
+    } else {
+        TRACKED_NAMESPACE
     }
 }
 
