@@ -125,8 +125,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             let mut word_match = word_match;
             let mut file_path = file_path.as_str();
 
-            if let Some((trim_left, trim_right)) = path_surrounded_by_common_symbols(file_path) {
-                shrink_by(trim_left, trim_right, &mut word_match, &mut file_path);
+            if let Some((left_bytes, right_bytes)) = path_surrounded_by_common_symbols(file_path) {
+                shrink_by(left_bytes, right_bytes, &mut word_match, &mut file_path);
                 if is_path_surrounded_by_quotes(file_path) {
                     shrink_by(1, 1, &mut word_match, &mut file_path);
                 }
@@ -137,13 +137,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             while file_path.ends_with(':') {
                 shrink_by(0, 1, &mut word_match, &mut file_path);
             }
-            let mut row_col_delim_count = 0;
-            for c in file_path.chars() {
-                match c {
-                    ':' | '(' | ')' => row_col_delim_count += 1,
-                    _ => {}
-                }
-            }
+            let row_col_delim_count = file_path.chars().filter(|&c| ":()".contains(c)).count();
+
             // strip trailing comment after colon in case of
             //   file/at/path.rs:row:column:description or error message
             //   so that the file path is `file/at/path.rs:row:column`
