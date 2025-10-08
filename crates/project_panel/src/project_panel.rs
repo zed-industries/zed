@@ -3418,17 +3418,20 @@ impl ProjectPanel {
                             new_state.max_width_item_index = Some(visited_worktrees_length + index);
                         }
                     }
-                    if let Some((worktree_id, entry_id)) = new_selected_entry {
-                        new_state.selection = Some(SelectedEntry {
-                            worktree_id,
-                            entry_id,
-                        });
-                    }
                     new_state
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
+                let current_selection = this.state.selection;
                 this.state = new_state;
+                if let Some((worktree_id, entry_id)) = new_selected_entry {
+                    this.state.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
+                } else {
+                    this.state.selection = current_selection;
+                }
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
                     telemetry::event!(
