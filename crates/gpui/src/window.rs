@@ -4633,6 +4633,14 @@ pub struct WindowHandle<V> {
     state_type: PhantomData<V>,
 }
 
+impl<V> Debug for WindowHandle<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowHandle")
+            .field("any_handle", &self.any_handle.id.as_u64())
+            .finish()
+    }
+}
+
 impl<V: 'static + Render> WindowHandle<V> {
     /// Creates a new handle from a window ID.
     /// This does not check if the root type of the window is `V`.

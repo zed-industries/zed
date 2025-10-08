@@ -103,7 +103,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
-use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
+use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
@@ -1435,8 +1435,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                GlobalTheme::reload_theme(cx);
-                GlobalTheme::reload_icon_theme(cx);
+                ThemeSettings::reload_current_theme(cx);
+                ThemeSettings::reload_current_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
@@ -1746,6 +1746,19 @@ impl Workspace {
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
         });
+    }
+
+    pub fn remove_panel<T: Panel>(
+        &mut self,
+        panel: &Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            dock.update(cx, |dock, cx| {
+                dock.remove_panel(panel, window, cx);
+            })
+        }
     }
 
     pub fn status_bar(&self) -> &Entity<StatusBar> {
@@ -4106,11 +4119,11 @@ impl Workspace {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
+                cx.notify();
                 Some(new_pane)
             } else {
                 None
             };
-        cx.notify();
         maybe_pane_handle
     }
 

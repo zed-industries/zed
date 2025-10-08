@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 gpui.workspace = true
 serde.workspace = true
+settings.workspace = true
 theme.workspace = true
 util.workspace = true
 workspace-hack.workspace = true

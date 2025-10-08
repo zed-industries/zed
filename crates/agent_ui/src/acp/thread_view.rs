@@ -6086,7 +6086,7 @@ pub(crate) mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             workspace::init_settings(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            ThemeSettings::register(cx);
             release_channel::init(SemanticVersion::default(), cx);
             EditorSettings::register(cx);
             prompt_store::init(cx)

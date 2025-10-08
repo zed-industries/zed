@@ -67,7 +67,11 @@ pub trait Settings: 'static + Send + Sync + Sized {
     ///
     /// This function *should* panic if default values are missing,
     /// and you should add a default to default.json for documentation.
-    fn from_settings(content: &SettingsContent) -> Self;
+    fn from_settings(content: &SettingsContent, cx: &mut App) -> Self;
+
+    fn missing_default() -> anyhow::Error {
+        anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
+    }
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
@@ -78,8 +82,8 @@ pub trait Settings: 'static + Send + Sync + Sized {
     where
         Self: Sized,
     {
-        SettingsStore::update_global(cx, |store, _| {
-            store.register_setting::<Self>();
+        SettingsStore::update_global(cx, |store, cx| {
+            store.register_setting::<Self>(cx);
         });
     }
 
@@ -158,8 +162,8 @@ pub enum SettingsFile {
     User,
     Server,
     Default,
-    /// Local also represents project settings in ssh projects as well as local projects
-    Local((WorktreeId, Arc<RelPath>)),
+    /// Represents project settings in ssh projects as well as local projects
+    Project((WorktreeId, Arc<RelPath>)),
 }
 
 #[derive(Clone)]
@@ -201,7 +205,7 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any>;
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<RelPath>, &dyn Any)>;
@@ -255,7 +259,7 @@ impl SettingsStore {
     }
 
     /// Add a new type of setting to the store.
-    pub fn register_setting<T: Settings>(&mut self) {
+    pub fn register_setting<T: Settings>(&mut self, cx: &mut App) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
 
@@ -267,7 +271,7 @@ impl SettingsStore {
             global_value: None,
             local_values: Vec::new(),
         }));
-        let value = T::from_settings(&self.merged_settings);
+        let value = T::from_settings(&self.merged_settings, cx);
         setting_value.set_global_value(Box::new(value));
     }
 
@@ -465,7 +469,7 @@ impl SettingsStore {
                 // rev because these are sorted by path, so highest precedence is last
                 .rev()
                 .cloned()
-                .map(SettingsFile::Local),
+                .map(SettingsFile::Project),
         );
 
         if self.server_settings.is_some() {
@@ -492,7 +496,7 @@ impl SettingsStore {
                 .map(|settings| settings.content.as_ref()),
             SettingsFile::Default => Some(self.default_settings.as_ref()),
             SettingsFile::Server => self.server_settings.as_deref(),
-            SettingsFile::Local(ref key) => self.local_settings.get(key),
+            SettingsFile::Project(ref key) => self.local_settings.get(key),
         }
     }
 
@@ -511,8 +515,8 @@ impl SettingsStore {
                 continue;
             }
 
-            if let SettingsFile::Local((wt_id, ref path)) = file
-                && let SettingsFile::Local((target_wt_id, ref target_path)) = target_file
+            if let SettingsFile::Project((wt_id, ref path)) = file
+                && let SettingsFile::Project((target_wt_id, ref target_path)) = target_file
                 && (wt_id != target_wt_id || !target_path.starts_with(path))
             {
                 // if requesting value from a local file, don't return values from local files in different worktrees
@@ -530,12 +534,16 @@ impl SettingsStore {
         overrides
     }
 
+    /// Checks the given file, and files that the passed file overrides for the given field.
+    /// Returns the first file found that contains the value.
+    /// The value will only be None if no file contains the value.
+    /// I.e. if no file contains the value, returns `(File::Default, None)`
     pub fn get_value_from_file<T>(
         &self,
         target_file: SettingsFile,
         pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, &T) {
-        // TODO: Add a metadata field for overriding the "overrides" tag, for contextually different settings
+    ) -> (SettingsFile, Option<&T>) {
+        // todo(settings_ui): Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
         // todo(settings_ui) cache all files
@@ -548,9 +556,9 @@ impl SettingsStore {
             }
             found_file = true;
 
-            if let SettingsFile::Local((wt_id, ref path)) = file
-                && let SettingsFile::Local((target_wt_id, ref target_path)) = target_file
-                && (wt_id != target_wt_id || !target_path.starts_with(&path))
+            if let SettingsFile::Project((worktree_id, ref path)) = file
+                && let SettingsFile::Project((target_worktree_id, ref target_path)) = target_file
+                && (worktree_id != target_worktree_id || !target_path.starts_with(&path))
             {
                 // if requesting value from a local file, don't return values from local files in different worktrees
                 continue;
@@ -560,11 +568,11 @@ impl SettingsStore {
                 continue;
             };
             if let Some(value) = pick(content).as_ref() {
-                return (file, value);
+                return (file, Some(value));
             }
         }
 
-        unreachable!("All values should have defaults");
+        (SettingsFile::Default, None)
     }
 }
 
@@ -940,7 +948,7 @@ impl SettingsStore {
             self.merged_settings = Rc::new(merged);
 
             for setting_value in self.setting_values.values_mut() {
-                let value = setting_value.from_settings(&self.merged_settings);
+                let value = setting_value.from_settings(&self.merged_settings, cx);
                 setting_value.set_global_value(value);
             }
         }
@@ -977,7 +985,8 @@ impl SettingsStore {
             }
 
             for setting_value in self.setting_values.values_mut() {
-                let value = setting_value.from_settings(&project_settings_stack.last().unwrap());
+                let value =
+                    setting_value.from_settings(&project_settings_stack.last().unwrap(), cx);
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
@@ -1061,8 +1070,8 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_settings(&self, s: &SettingsContent) -> Box<dyn Any> {
-        Box::new(T::from_settings(s)) as _
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any> {
+        Box::new(T::from_settings(s, cx)) as _
     }
 
     fn setting_type_name(&self) -> &'static str {
@@ -1133,7 +1142,7 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             AutoUpdateSetting {
                 auto_update: content.auto_update.unwrap(),
             }
@@ -1147,7 +1156,7 @@ mod tests {
     }
 
     impl Settings for ItemSettings {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = content.tabs.clone().unwrap();
             ItemSettings {
                 close_position: content.close_position.unwrap(),
@@ -1176,7 +1185,7 @@ mod tests {
     }
 
     impl Settings for DefaultLanguageSettings {
-        fn from_settings(content: &SettingsContent) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = &content.project.all_languages.defaults;
             DefaultLanguageSettings {
                 tab_size: content.tab_size.unwrap(),
@@ -1200,9 +1209,9 @@ mod tests {
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
-        store.register_setting::<AutoUpdateSetting>();
-        store.register_setting::<ItemSettings>();
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<AutoUpdateSetting>(cx);
+        store.register_setting::<ItemSettings>(cx);
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
@@ -1308,7 +1317,7 @@ mod tests {
         store
             .set_user_settings(r#"{ "auto_update": false }"#, cx)
             .unwrap();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
@@ -1516,9 +1525,9 @@ mod tests {
     #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
-        store.register_setting::<ItemSettings>();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         // create settings that werent present
         check_vscode_import(
@@ -1637,7 +1646,7 @@ mod tests {
     #[gpui::test]
     fn test_global_settings(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<ItemSettings>();
+        store.register_setting::<ItemSettings>(cx);
 
         // Set global settings - these should override defaults but not user settings
         store
@@ -1686,7 +1695,7 @@ mod tests {
     #[gpui::test]
     fn test_get_value_for_field_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         store
             .set_user_settings(r#"{"preferred_line_length": 0}"#, cx)
@@ -1709,17 +1718,17 @@ mod tests {
         let default_value = get(&store.default_settings).unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::User, &0)
+            store.get_value_from_file(SettingsFile::Project(local.clone()), get),
+            (SettingsFile::User, Some(&0))
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::User, get),
-            (SettingsFile::User, &0)
+            (SettingsFile::User, Some(&0))
         );
         store.set_user_settings(r#"{}"#, cx).unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::Default, &default_value)
+            store.get_value_from_file(SettingsFile::Project(local.clone()), get),
+            (SettingsFile::Default, Some(&default_value))
         );
         store
             .set_local_settings(
@@ -1731,20 +1740,20 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::Local(local), &80)
+            store.get_value_from_file(SettingsFile::Project(local.clone()), get),
+            (SettingsFile::Project(local), Some(&80))
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::User, get),
-            (SettingsFile::Default, &default_value)
+            (SettingsFile::Default, Some(&default_value))
         );
     }
 
     #[gpui::test]
     fn test_get_value_for_field_local_worktrees_dont_interfere(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
-        store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
 
         let local_1 = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
 
@@ -1812,12 +1821,12 @@ mod tests {
 
         // each local child should only inherit from it's parent
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_2_child), get),
-            (SettingsFile::Local(local_2), &2)
+            store.get_value_from_file(SettingsFile::Project(local_2_child), get),
+            (SettingsFile::Project(local_2), Some(&2))
         );
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
-            (SettingsFile::Local(local_1.clone()), &1)
+            store.get_value_from_file(SettingsFile::Project(local_1_child.clone()), get),
+            (SettingsFile::Project(local_1.clone()), Some(&1))
         );
 
         // adjacent children should be treated as siblings not inherit from each other
@@ -1842,8 +1851,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), get),
-            (SettingsFile::Local(local_1.clone()), &1)
+            store.get_value_from_file(SettingsFile::Project(local_1_adjacent_child.clone()), get),
+            (SettingsFile::Project(local_1.clone()), Some(&1))
         );
         store
             .set_local_settings(
@@ -1864,15 +1873,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.get_value_from_file(SettingsFile::Local(local_1_child), get),
-            (SettingsFile::Local(local_1), &1)
+            store.get_value_from_file(SettingsFile::Project(local_1_child), get),
+            (SettingsFile::Project(local_1), Some(&1))
         );
     }
 
     #[gpui::test]
     fn test_get_overrides_for_field(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<DefaultLanguageSettings>();
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         let wt0_root = (WorktreeId::from_usize(0), RelPath::empty().into_arc());
         let wt0_child1 = (WorktreeId::from_usize(0), rel_path("child1").into_arc());
@@ -1941,9 +1950,9 @@ mod tests {
             overrides,
             vec![
                 SettingsFile::User,
-                SettingsFile::Local(wt0_root.clone()),
-                SettingsFile::Local(wt0_child1.clone()),
-                SettingsFile::Local(wt1_root.clone()),
+                SettingsFile::Project(wt0_root.clone()),
+                SettingsFile::Project(wt0_child1.clone()),
+                SettingsFile::Project(wt1_root.clone()),
             ]
         );
 
@@ -1951,25 +1960,26 @@ mod tests {
         assert_eq!(
             overrides,
             vec![
-                SettingsFile::Local(wt0_root.clone()),
-                SettingsFile::Local(wt0_child1.clone()),
-                SettingsFile::Local(wt1_root.clone()),
+                SettingsFile::Project(wt0_root.clone()),
+                SettingsFile::Project(wt0_child1.clone()),
+                SettingsFile::Project(wt1_root.clone()),
             ]
         );
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_root), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_root), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1.clone()), get);
+        let overrides =
+            store.get_overrides_for_field(SettingsFile::Project(wt0_child1.clone()), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child2), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_child2), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_root), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt1_root), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt1_subdir), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt1_subdir), get);
         assert_eq!(overrides, vec![]);
 
         let wt0_deep_child = (
@@ -1986,10 +1996,10 @@ mod tests {
             )
             .unwrap();
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_deep_child), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_deep_child), get);
         assert_eq!(overrides, vec![]);
 
-        let overrides = store.get_overrides_for_field(SettingsFile::Local(wt0_child1), get);
+        let overrides = store.get_overrides_for_field(SettingsFile::Project(wt0_child1), get);
         assert_eq!(overrides, vec![]);
     }
 }

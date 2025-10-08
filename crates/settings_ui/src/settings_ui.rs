@@ -7,11 +7,14 @@ use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Div, Entity, Focusable, FontWeight, Global, ReadGlobal as _, ScrollHandle, Task,
-    TitlebarOptions, UniformListScrollHandle, Window, WindowHandle, WindowOptions, div, point,
-    prelude::*, px, size, uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
+    ScrollHandle, Task, TitlebarOptions, UniformListScrollHandle, Window, WindowHandle,
+    WindowOptions, actions, div, point, prelude::*, px, size, uniform_list,
 };
+use heck::ToTitleCase as _;
 use project::WorktreeId;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::{
     BottomDockLayout, CloseWindowWhenNoItems, CodeFade, CursorShape, OnLastWindowClosed,
     RestoreOnStartupBehavior, SaturatingBool, SettingsContent, SettingsStore,
@@ -20,20 +23,47 @@ use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
     collections::HashMap,
-    num::NonZeroU32,
+    num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ButtonLike, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
-    Switch, SwitchColor, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
+    KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
+    prelude::*,
 };
-use ui_input::{NumericStepper, NumericStepperStyle, NumericStepperType};
+use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
+use workspace::{OpenOptions, OpenVisible, Workspace};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
+
+const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
+const NAVBAR_GROUP_TAB_INDEX: isize = 1;
+const CONTENT_CONTAINER_TAB_INDEX: isize = 2;
+const CONTENT_GROUP_TAB_INDEX: isize = 3;
+
+actions!(
+    settings_editor,
+    [
+        /// Minimizes the settings UI window.
+        Minimize,
+        /// Toggles focus between the navbar and the main content.
+        ToggleFocusNav,
+        /// Focuses the next file in the file list.
+        FocusNextFile,
+        /// Focuses the previous file in the file list.
+        FocusPreviousFile,
+        /// Opens an editor for the current file
+        OpenCurrentFile,
+    ]
+);
+
+#[derive(Action, PartialEq, Eq, Clone, Copy, Debug, JsonSchema, Deserialize)]
+#[action(namespace = settings_editor)]
+struct FocusFile(pub u32);
 
 #[derive(Clone, Copy)]
 struct SettingField<T: 'static> {
@@ -61,7 +91,8 @@ trait AnySettingField {
     fn as_any(&self) -> &dyn Any;
     fn type_name(&self) -> &'static str;
     fn type_id(&self) -> TypeId;
-    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile;
+    // Returns the file this value was set in and true, or File::Default and false to indicate it was not found in any file (missing default)
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool);
 }
 
 impl<T> AnySettingField for SettingField<T> {
@@ -77,15 +108,15 @@ impl<T> AnySettingField for SettingField<T> {
         TypeId::of::<T>()
     }
 
-    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> settings::SettingsFile {
+    fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool) {
         if AnySettingField::type_id(self) == TypeId::of::<UnimplementedSettingField>() {
-            return file.to_settings();
+            return (file.to_settings(), true);
         }
 
-        let (file, _) = cx
+        let (file, value) = cx
             .global::<SettingsStore>()
             .get_value_from_file(file.to_settings(), self.pick);
-        return file;
+        return (file, value.is_some());
     }
 }
 
@@ -176,7 +207,13 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
-            let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
+            let settings_ui_actions = [
+                TypeId::of::<OpenSettingsEditor>(),
+                TypeId::of::<ToggleFocusNav>(),
+                TypeId::of::<FocusFile>(),
+                TypeId::of::<FocusNextFile>(),
+                TypeId::of::<FocusPreviousFile>(),
+            ];
             let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
             command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
                 if has_flag {
@@ -186,9 +223,15 @@ pub fn init(cx: &mut App) {
                 }
             });
             if has_flag {
-                div.on_action(cx.listener(|_, _: &OpenSettingsEditor, _, cx| {
-                    open_settings_editor(cx).ok();
-                }))
+                div.on_action(
+                    cx.listener(|workspace, _: &OpenSettingsEditor, window, cx| {
+                        let window_handle = window
+                            .window_handle()
+                            .downcast::<Workspace>()
+                            .expect("Workspaces are root Windows");
+                        open_settings_editor(workspace, window_handle, cx);
+                    }),
+                )
             } else {
                 div
             }
@@ -198,17 +241,14 @@ pub fn init(cx: &mut App) {
 }
 
 fn init_renderers(cx: &mut App) {
-    // fn (field: SettingsField, current_file: SettingsFile, cx) -> (currently_set_in: SettingsFile, overridden_in: Vec<SettingsFile>)
     cx.default_global::<SettingFieldRenderer>()
         .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
-            // TODO(settings_ui): In non-dev builds (`#[cfg(not(debug_assertions))]`) make this render as edit-in-json
-            Button::new("unimplemented-field", "UNIMPLEMENTED")
-                .size(ButtonSize::Medium)
-                .icon(IconName::XCircle)
-                .icon_position(IconPosition::Start)
-                .icon_color(Color::Error)
-                .icon_size(IconSize::Small)
+            Button::new("open-in-settings-file", "Edit in settings.json")
+                .size(ButtonSize::Default)
                 .style(ButtonStyle::Outlined)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(OpenCurrentFile), cx);
+                })
                 .into_any_element()
         })
         .add_renderer::<bool>(|settings_field, file, _, _, cx| {
@@ -344,22 +384,52 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<u32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<u64>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
+        })
+        .add_renderer::<usize>(|settings_field, file, _, window, cx| {
+            render_number_field(*settings_field, file, window, cx)
+        })
+        .add_renderer::<NonZero<usize>>(|settings_field, file, _, window, cx| {
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<CodeFade>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
         })
         .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
-            render_numeric_stepper(*settings_field, file, window, cx)
+            render_number_field(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MinimumContrast>(|settings_field, file, _, window, cx| {
+            render_number_field(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowScrollbar>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ScrollbarDiagnostics>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::ShowMinimap>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::DisplayIn>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MinimapThumb>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::MinimapThumbBorder>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::SteppingGranularity>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
         });
 
     // todo(settings_ui): Figure out how we want to handle discriminant unions
@@ -368,23 +438,47 @@ fn init_renderers(cx: &mut App) {
     // });
 }
 
-pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
-    cx.open_window(
-        WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("Settings Window".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(point(px(12.0), px(12.0))),
-            }),
-            focus: true,
-            show: true,
-            kind: gpui::WindowKind::Normal,
-            window_background: cx.theme().window_background_appearance(),
-            window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
-            ..Default::default()
-        },
-        |window, cx| cx.new(|cx| SettingsWindow::new(window, cx)),
-    )
+pub fn open_settings_editor(
+    _workspace: &mut Workspace,
+    workspace_handle: WindowHandle<Workspace>,
+    cx: &mut App,
+) {
+    let existing_window = cx
+        .windows()
+        .into_iter()
+        .find_map(|window| window.downcast::<SettingsWindow>());
+
+    if let Some(existing_window) = existing_window {
+        existing_window
+            .update(cx, |settings_window, window, _| {
+                settings_window.original_window = Some(workspace_handle);
+                window.activate_window();
+            })
+            .ok();
+        return;
+    }
+
+    // We have to defer this to get the workspace off the stack.
+
+    cx.defer(move |cx| {
+        cx.open_window(
+            WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Settings Window".into()),
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(12.0), px(12.0))),
+                }),
+                focus: true,
+                show: true,
+                kind: gpui::WindowKind::Normal,
+                window_background: cx.theme().window_background_appearance(),
+                window_min_size: Some(size(px(800.), px(600.))), // 4:3 Aspect Ratio
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| SettingsWindow::new(Some(workspace_handle), window, cx)),
+        )
+        .log_err();
+    });
 }
 
 /// The current sub page path that is selected.
@@ -408,16 +502,23 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 }
 
 pub struct SettingsWindow {
-    files: Vec<SettingsUiFile>,
+    original_window: Option<WindowHandle<Workspace>>,
+    files: Vec<(SettingsUiFile, FocusHandle)>,
+    worktree_root_dirs: HashMap<WorktreeId, String>,
     current_file: SettingsUiFile,
     pages: Vec<SettingsPage>,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
-    navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
+    /// Index into navbar_entries
+    navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
     scroll_handle: ScrollHandle,
+    focus_handle: FocusHandle,
+    navbar_focus_handle: FocusHandle,
+    content_focus_handle: FocusHandle,
+    files_focus_handle: FocusHandle,
 }
 
 struct SubPage {
@@ -463,34 +564,35 @@ impl std::fmt::Debug for SettingsPageItem {
 impl SettingsPageItem {
     fn render(
         &self,
-        file: SettingsUiFile,
+        settings_window: &SettingsWindow,
         section_header: &'static str,
         is_last: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> AnyElement {
+        let file = settings_window.current_file.clone();
         match self {
             SettingsPageItem::SectionHeader(header) => v_flex()
                 .w_full()
-                .gap_1()
+                .gap_1p5()
                 .child(
                     Label::new(SharedString::new_static(header))
-                        .size(LabelSize::XSmall)
+                        .size(LabelSize::Small)
                         .color(Color::Muted)
                         .buffer_font(cx),
                 )
-                .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
+                .child(Divider::horizontal().color(DividerColor::BorderFaded))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
-                let file_set_in =
-                    SettingsUiFile::from_settings(setting_item.field.file_set_in(file.clone(), cx));
+                let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
+                let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
                 h_flex()
                     .id(setting_item.title)
                     .w_full()
+                    .min_w_0()
                     .gap_2()
-                    .flex_wrap()
                     .justify_between()
                     .map(|this| {
                         if is_last {
@@ -503,8 +605,8 @@ impl SettingsPageItem {
                     })
                     .child(
                         v_flex()
+                            .w_full()
                             .max_w_1_2()
-                            .flex_shrink()
                             .child(
                                 h_flex()
                                     .w_full()
@@ -516,7 +618,9 @@ impl SettingsPageItem {
                                             this.child(
                                                 Label::new(format!(
                                                     "— set in {}",
-                                                    file_set_in.name()
+                                                    settings_window
+                                                        .display_name(&file_set_in)
+                                                        .expect("File name should exist")
                                                 ))
                                                 .color(Color::Muted)
                                                 .size(LabelSize::Small),
@@ -530,13 +634,27 @@ impl SettingsPageItem {
                                     .color(Color::Muted),
                             ),
                     )
-                    .child(renderer.render(
-                        setting_item.field.as_ref(),
-                        file,
-                        setting_item.metadata.as_deref(),
-                        window,
-                        cx,
-                    ))
+                    .child(if cfg!(debug_assertions) && !found {
+                        Button::new("no-default-field", "NO DEFAULT")
+                            .size(ButtonSize::Medium)
+                            .icon(IconName::XCircle)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(
+                                "This warning is only displayed in dev builds.",
+                            ))
+                            .into_any_element()
+                    } else {
+                        renderer.render(
+                            setting_item.field.as_ref(),
+                            file,
+                            setting_item.metadata.as_deref(),
+                            window,
+                            cx,
+                        )
+                    })
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
@@ -558,7 +676,6 @@ impl SettingsPageItem {
                 )
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
-                        .size(ButtonSize::Medium)
                         .icon(IconName::ChevronRight)
                         .icon_position(IconPosition::End)
                         .icon_color(Color::Muted)
@@ -581,6 +698,55 @@ struct SettingItem {
     description: &'static str,
     field: Box<dyn AnySettingField>,
     metadata: Option<Box<SettingsFieldMetadata>>,
+    files: FileMask,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+struct FileMask(u8);
+
+impl std::fmt::Debug for FileMask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "FileMask(")?;
+        let mut items = vec![];
+
+        if self.contains(USER) {
+            items.push("USER");
+        }
+        if self.contains(LOCAL) {
+            items.push("LOCAL");
+        }
+        if self.contains(SERVER) {
+            items.push("SERVER");
+        }
+
+        write!(f, "{})", items.join(" | "))
+    }
+}
+
+const USER: FileMask = FileMask(1 << 0);
+const LOCAL: FileMask = FileMask(1 << 2);
+const SERVER: FileMask = FileMask(1 << 3);
+
+impl std::ops::BitAnd for FileMask {
+    type Output = Self;
+
+    fn bitand(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+}
+
+impl std::ops::BitOr for FileMask {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl FileMask {
+    fn contains(&self, other: FileMask) -> bool {
+        self.0 & other.0 != 0
+    }
 }
 
 impl PartialEq for SettingItem {
@@ -598,6 +764,7 @@ impl PartialEq for SettingItem {
 #[derive(Clone)]
 struct SubPageLink {
     title: &'static str,
+    files: FileMask,
     render: Arc<
         dyn Fn(&mut SettingsWindow, &mut Window, &mut Context<SettingsWindow>) -> AnyElement
             + 'static
@@ -615,35 +782,28 @@ impl PartialEq for SubPageLink {
 #[allow(unused)]
 #[derive(Clone, PartialEq)]
 enum SettingsUiFile {
-    User,                              // Uses all settings.
-    Local((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
-    Server(&'static str),              // Uses a special name, and the user settings
+    User,                                // Uses all settings.
+    Project((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
+    Server(&'static str),                // Uses a special name, and the user settings
 }
 
 impl SettingsUiFile {
-    fn pages(&self) -> Vec<SettingsPage> {
-        match self {
-            SettingsUiFile::User => page_data::user_settings_data(),
-            SettingsUiFile::Local(_) => page_data::project_settings_data(),
-            SettingsUiFile::Server(_) => page_data::user_settings_data(),
-        }
+    fn is_server(&self) -> bool {
+        matches!(self, SettingsUiFile::Server(_))
     }
 
-    fn name(&self) -> SharedString {
+    fn worktree_id(&self) -> Option<WorktreeId> {
         match self {
-            SettingsUiFile::User => SharedString::new_static("User"),
-            // TODO is PathStyle::local() ever not appropriate?
-            SettingsUiFile::Local((_, path)) => {
-                format!("Local ({})", path.display(PathStyle::local())).into()
-            }
-            SettingsUiFile::Server(file) => format!("Server ({})", file).into(),
+            SettingsUiFile::User => None,
+            SettingsUiFile::Project((worktree_id, _)) => Some(*worktree_id),
+            SettingsUiFile::Server(_) => None,
         }
     }
 
     fn from_settings(file: settings::SettingsFile) -> Option<Self> {
         Some(match file {
             settings::SettingsFile::User => SettingsUiFile::User,
-            settings::SettingsFile::Local(location) => SettingsUiFile::Local(location),
+            settings::SettingsFile::Project(location) => SettingsUiFile::Project(location),
             settings::SettingsFile::Server => SettingsUiFile::Server("todo: server name"),
             settings::SettingsFile::Default => return None,
         })
@@ -652,14 +812,26 @@ impl SettingsUiFile {
     fn to_settings(&self) -> settings::SettingsFile {
         match self {
             SettingsUiFile::User => settings::SettingsFile::User,
-            SettingsUiFile::Local(location) => settings::SettingsFile::Local(location.clone()),
+            SettingsUiFile::Project(location) => settings::SettingsFile::Project(location.clone()),
             SettingsUiFile::Server(_) => settings::SettingsFile::Server,
+        }
+    }
+
+    fn mask(&self) -> FileMask {
+        match self {
+            SettingsUiFile::User => USER,
+            SettingsUiFile::Project(_) => LOCAL,
+            SettingsUiFile::Server(_) => SERVER,
         }
     }
 }
 
 impl SettingsWindow {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        original_window: Option<WindowHandle<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let font_family_cache = theme::FontFamilyCache::global(cx);
 
         cx.spawn(async move |this, cx| {
@@ -693,6 +865,8 @@ impl SettingsWindow {
         .detach();
 
         let mut this = Self {
+            original_window,
+            worktree_root_dirs: HashMap::default(),
             files: vec![],
             current_file: current_file,
             pages: vec![],
@@ -703,6 +877,16 @@ impl SettingsWindow {
             search_task: None,
             search_matches: vec![],
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
+            navbar_focus_handle: cx
+                .focus_handle()
+                .tab_index(NAVBAR_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
+            content_focus_handle: cx
+                .focus_handle()
+                .tab_index(CONTENT_CONTAINER_TAB_INDEX)
+                .tab_stop(false),
+            files_focus_handle: cx.focus_handle().tab_stop(false),
         };
 
         this.fetch_files(cx);
@@ -734,6 +918,24 @@ impl SettingsWindow {
     }
 
     fn build_navbar(&mut self) {
+        let mut prev_navbar_state = HashMap::new();
+        let mut root_entry = "";
+        let mut prev_selected_entry = None;
+        for (index, entry) in self.navbar_entries.iter().enumerate() {
+            let sub_entry_title;
+            if entry.is_root {
+                sub_entry_title = None;
+                root_entry = entry.title;
+            } else {
+                sub_entry_title = Some(entry.title);
+            }
+            let key = (root_entry, sub_entry_title);
+            if index == self.navbar_entry {
+                prev_selected_entry = Some(key);
+            }
+            prev_navbar_state.insert(key, entry.expanded);
+        }
+
         let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
         for (page_index, page) in self.pages.iter().enumerate() {
             navbar_entries.push(NavBarEntry {
@@ -756,6 +958,27 @@ impl SettingsWindow {
                     item_index: Some(item_index),
                 });
             }
+        }
+
+        let mut root_entry = "";
+        let mut found_nav_entry = false;
+        for (index, entry) in navbar_entries.iter_mut().enumerate() {
+            let sub_entry_title;
+            if entry.is_root {
+                root_entry = entry.title;
+                sub_entry_title = None;
+            } else {
+                sub_entry_title = Some(entry.title);
+            };
+            let key = (root_entry, sub_entry_title);
+            if Some(key) == prev_selected_entry {
+                self.navbar_entry = index;
+                found_nav_entry = true;
+            }
+            entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
+        }
+        if !found_nav_entry {
+            self.navbar_entry = 0;
         }
         self.navbar_entries = navbar_entries;
     }
@@ -798,6 +1021,45 @@ impl SettingsWindow {
         })
     }
 
+    fn filter_matches_to_file(&mut self) {
+        let current_file = self.current_file.mask();
+        for (page, page_filter) in std::iter::zip(&self.pages, &mut self.search_matches) {
+            let mut header_index = 0;
+            let mut any_found_since_last_header = true;
+
+            for (index, item) in page.items.iter().enumerate() {
+                match item {
+                    SettingsPageItem::SectionHeader(_) => {
+                        if !any_found_since_last_header {
+                            page_filter[header_index] = false;
+                        }
+                        header_index = index;
+                        any_found_since_last_header = false;
+                    }
+                    SettingsPageItem::SettingItem(setting_item) => {
+                        if !setting_item.files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
+                    }
+                    SettingsPageItem::SubPageLink(sub_page_link) => {
+                        if !sub_page_link.files.contains(current_file) {
+                            page_filter[index] = false;
+                        } else {
+                            any_found_since_last_header = true;
+                        }
+                    }
+                }
+            }
+            if let Some(last_header) = page_filter.get_mut(header_index)
+                && !any_found_since_last_header
+            {
+                *last_header = false;
+            }
+        }
+    }
+
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
         let query = self.search_bar.read(cx).text(cx);
@@ -805,6 +1067,7 @@ impl SettingsWindow {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
+            self.filter_matches_to_file();
             cx.notify();
             return;
         }
@@ -870,6 +1133,7 @@ impl SettingsWindow {
                     page[header_index] = true;
                     page[item_index] = true;
                 }
+                this.filter_matches_to_file();
                 let first_navbar_entry_index = this
                     .visible_navbar_entries()
                     .next()
@@ -891,18 +1155,20 @@ impl SettingsWindow {
     }
 
     fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
-        self.pages = self.current_file.pages();
+        if self.pages.is_empty() {
+            self.pages = page_data::settings_data();
+        }
         self.build_search_matches();
         self.build_navbar();
 
-        if !self.search_bar.read(cx).is_empty(cx) {
-            self.update_matches(cx);
-        }
+        self.update_matches(cx);
 
         cx.notify();
     }
 
     fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.worktree_root_dirs.clear();
+        let prev_files = self.files.clone();
         let settings_store = cx.global::<SettingsStore>();
         let mut ui_files = vec![];
         let all_files = settings_store.get_all_files();
@@ -910,11 +1176,46 @@ impl SettingsWindow {
             let Some(settings_ui_file) = SettingsUiFile::from_settings(file) else {
                 continue;
             };
-            ui_files.push(settings_ui_file);
+            if settings_ui_file.is_server() {
+                continue;
+            }
+
+            if let Some(worktree_id) = settings_ui_file.worktree_id() {
+                let directory_name = all_projects(cx)
+                    .find_map(|project| project.read(cx).worktree_for_id(worktree_id, cx))
+                    .and_then(|worktree| worktree.read(cx).root_dir())
+                    .and_then(|root_dir| {
+                        root_dir
+                            .file_name()
+                            .map(|os_string| os_string.to_string_lossy().to_string())
+                    });
+
+                let Some(directory_name) = directory_name else {
+                    log::error!(
+                        "No directory name found for settings file at worktree ID: {}",
+                        worktree_id
+                    );
+                    continue;
+                };
+
+                self.worktree_root_dirs.insert(worktree_id, directory_name);
+            }
+
+            let focus_handle = prev_files
+                .iter()
+                .find_map(|(prev_file, handle)| {
+                    (prev_file == &settings_ui_file).then(|| handle.clone())
+                })
+                .unwrap_or_else(|| cx.focus_handle());
+            ui_files.push((settings_ui_file, focus_handle));
         }
         ui_files.reverse();
         self.files = ui_files;
-        if !self.files.contains(&self.current_file) {
+        let current_file_still_exists = self
+            .files
+            .iter()
+            .any(|(file, _)| file == &self.current_file);
+        if !current_file_still_exists {
             self.change_file(0, cx);
         }
     }
@@ -924,29 +1225,114 @@ impl SettingsWindow {
             self.current_file = SettingsUiFile::User;
             return;
         }
-        if self.files[ix] == self.current_file {
+        if self.files[ix].0 == self.current_file {
             return;
         }
-        self.current_file = self.files[ix].clone();
-        self.navbar_entry = 0;
+        self.current_file = self.files[ix].0.clone();
+        // self.navbar_entry = 0;
         self.build_ui(cx);
     }
 
-    fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+    fn render_files_header(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<SettingsWindow>,
+    ) -> impl IntoElement {
         h_flex()
+            .w_full()
             .gap_1()
-            .children(self.files.iter().enumerate().map(|(ix, file)| {
-                Button::new(ix, file.name())
-                    .toggle_state(file == &self.current_file)
-                    .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
-            }))
+            .justify_between()
+            .child(
+                h_flex()
+                    .id("file_buttons_container")
+                    .w_64() // Temporary fix until long-term solution is a fixed set of buttons representing a file location (User, Project, and Remote)
+                    .gap_1()
+                    .overflow_x_scroll()
+                    .children(
+                        self.files
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, (file, focus_handle))| {
+                                Button::new(
+                                    ix,
+                                    self.display_name(&file)
+                                        .expect("Files should always have a name"),
+                                )
+                                .toggle_state(file == &self.current_file)
+                                .selected_style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .track_focus(focus_handle)
+                                .on_click(cx.listener(
+                                    move |this, evt: &gpui::ClickEvent, window, cx| {
+                                        this.change_file(ix, cx);
+                                        if evt.is_keyboard() {
+                                            this.focus_first_nav_item(window, cx);
+                                        }
+                                    },
+                                ))
+                            }),
+                    ),
+            )
+            .child(
+                Button::new(
+                    "edit-in-json",
+                    format!("Edit in {}", self.file_location_str()),
+                )
+                .style(ButtonStyle::Outlined)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_current_settings_file(cx);
+                })),
+            )
+    }
+
+    pub(crate) fn display_name(&self, file: &SettingsUiFile) -> Option<String> {
+        match file {
+            SettingsUiFile::User => Some("User".to_string()),
+            SettingsUiFile::Project((worktree_id, path)) => self
+                .worktree_root_dirs
+                .get(&worktree_id)
+                .map(|directory_name| {
+                    let path_style = PathStyle::local();
+                    if path.is_empty() {
+                        directory_name.clone()
+                    } else {
+                        format!(
+                            "{}{}{}",
+                            directory_name,
+                            path_style.separator(),
+                            path.display(path_style)
+                        )
+                    }
+                }),
+            SettingsUiFile::Server(file) => Some(file.to_string()),
+        }
+    }
+
+    fn file_location_str(&self) -> String {
+        match &self.current_file {
+            SettingsUiFile::User => "settings.json".to_string(),
+            SettingsUiFile::Project((worktree_id, path)) => self
+                .worktree_root_dirs
+                .get(&worktree_id)
+                .map(|directory_name| {
+                    let path_style = PathStyle::local();
+                    let file_path = path.join(paths::local_settings_file_relative_path());
+                    format!(
+                        "{}{}{}",
+                        directory_name,
+                        path_style.separator(),
+                        file_path.display(path_style)
+                    )
+                })
+                .expect("Current file should always be present in root dir map"),
+            SettingsUiFile::Server(file) => file.to_string(),
+        }
     }
 
     fn render_search(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
             .py_1()
             .px_1p5()
+            .mb_3()
             .gap_1p5()
             .rounded_sm()
             .bg(cx.theme().colors().editor_background)
@@ -961,14 +1347,18 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let visible_entries: Vec<_> = self.visible_navbar_entries().collect();
-        let visible_count = visible_entries.len();
+        let visible_count = self.visible_navbar_entries().count();
+
+        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+            "Focus Content"
+        } else {
+            "Focus Navbar"
+        };
 
         v_flex()
             .w_64()
             .p_2p5()
             .pt_10()
-            .gap_3()
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().colors().border)
@@ -977,6 +1367,9 @@ impl SettingsWindow {
             .child(
                 v_flex()
                     .size_full()
+                    .track_focus(&self.navbar_focus_handle)
+                    .tab_group()
+                    .tab_index(NAVBAR_GROUP_TAB_INDEX)
                     .child(
                         uniform_list(
                             "settings-ui-nav-bar",
@@ -990,6 +1383,7 @@ impl SettingsWindow {
                                             ("settings-ui-navbar-entry", ix),
                                             entry.title,
                                         )
+                                        .tab_index(0)
                                         .root_item(entry.is_root)
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
@@ -1002,6 +1396,35 @@ impl SettingsWindow {
                                         })
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.navbar_entry = ix;
+
+                                            if !this.navbar_entries[ix].is_root {
+                                                let mut selected_page_ix = ix;
+
+                                                while !this.navbar_entries[selected_page_ix].is_root
+                                                {
+                                                    selected_page_ix -= 1;
+                                                }
+
+                                                let section_header = ix - selected_page_ix;
+
+                                                if let Some(section_index) = this
+                                                    .page_items()
+                                                    .enumerate()
+                                                    .filter(|item| {
+                                                        matches!(
+                                                            item.1,
+                                                            SettingsPageItem::SectionHeader(_)
+                                                        )
+                                                    })
+                                                    .take(section_header)
+                                                    .last()
+                                                    .map(|pair| pair.0)
+                                                {
+                                                    this.scroll_handle
+                                                        .scroll_to_top_of_item(section_index);
+                                                }
+                                            }
+
                                             cx.notify();
                                         }))
                                         .into_any_element()
@@ -1009,11 +1432,41 @@ impl SettingsWindow {
                                     .collect()
                             }),
                         )
-                        .track_scroll(self.list_handle.clone())
-                        .flex_grow(),
+                        .size_full()
+                        .track_scroll(self.list_handle.clone()),
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .pb_0p5()
+                    .flex_none()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .children(
+                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                            KeybindingHint::new(
+                                this,
+                                cx.theme().colors().surface_background.opacity(0.5),
+                            )
+                            .suffix(focus_keybind_label)
+                        }),
+                    ),
+            )
+    }
+
+    fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navbar_focus_handle.focus(window);
+        window.focus_next();
+        cx.notify();
+    }
+
+    fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.content_focus_handle.focus(window);
+        window.focus_next();
+        cx.notify();
     }
 
     fn page_items(&self) -> impl Iterator<Item = &SettingsPageItem> {
@@ -1105,7 +1558,7 @@ impl SettingsWindow {
                         section_header = Some(*header);
                     }
                     item.render(
-                        self.current_file.clone(),
+                        self,
                         section_header.expect("All items rendered after a section header"),
                         no_bottom_border || is_last,
                         window,
@@ -1121,43 +1574,159 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> impl IntoElement {
-        let mut page = v_flex()
-            .w_full()
-            .pt_4()
-            .pb_6()
-            .px_6()
-            .gap_4()
-            .bg(cx.theme().colors().editor_background)
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx);
-
+        let page_header;
         let page_content;
 
         if sub_page_stack().len() == 0 {
-            page = page.child(self.render_files(window, cx));
+            page_header = self.render_files_header(window, cx).into_any_element();
+
             page_content = self
                 .render_page_items(self.page_items(), window, cx)
                 .into_any_element();
         } else {
-            page = page.child(
-                h_flex()
-                    .ml_neg_1p5()
-                    .gap_1()
-                    .child(
-                        IconButton::new("back-btn", IconName::ArrowLeft)
-                            .icon_size(IconSize::Small)
-                            .shape(IconButtonShape::Square)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.pop_sub_page(cx);
-                            })),
-                    )
-                    .child(self.render_sub_page_breadcrumbs()),
-            );
+            page_header = h_flex()
+                .ml_neg_1p5()
+                .gap_1()
+                .child(
+                    IconButton::new("back-btn", IconName::ArrowLeft)
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.pop_sub_page(cx);
+                        })),
+                )
+                .child(self.render_sub_page_breadcrumbs())
+                .into_any_element();
 
             let active_page_render_fn = sub_page_stack().last().unwrap().link.render.clone();
             page_content = (active_page_render_fn)(self, window, cx);
         }
 
-        return page.child(page_content);
+        return v_flex()
+            .w_full()
+            .pt_4()
+            .pb_6()
+            .px_6()
+            .gap_4()
+            .track_focus(&self.content_focus_handle)
+            .bg(cx.theme().colors().editor_background)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .child(page_header)
+            .child(
+                div()
+                    .size_full()
+                    .track_focus(&self.content_focus_handle)
+                    .tab_group()
+                    .tab_index(CONTENT_GROUP_TAB_INDEX)
+                    .child(page_content),
+            );
+    }
+
+    fn open_current_settings_file(&mut self, cx: &mut Context<Self>) {
+        match &self.current_file {
+            SettingsUiFile::User => {
+                let Some(original_window) = self.original_window else {
+                    return;
+                };
+                original_window
+                    .update(cx, |workspace, window, cx| {
+                        workspace
+                            .with_local_workspace(window, cx, |workspace, window, cx| {
+                                let create_task = workspace.project().update(cx, |project, cx| {
+                                    project.find_or_create_worktree(
+                                        paths::config_dir().as_path(),
+                                        false,
+                                        cx,
+                                    )
+                                });
+                                let open_task = workspace.open_paths(
+                                    vec![paths::settings_file().to_path_buf()],
+                                    OpenOptions {
+                                        visible: Some(OpenVisible::None),
+                                        ..Default::default()
+                                    },
+                                    None,
+                                    window,
+                                    cx,
+                                );
+
+                                cx.spawn_in(window, async move |workspace, cx| {
+                                    create_task.await.ok();
+                                    open_task.await;
+
+                                    workspace.update_in(cx, |_, window, cx| {
+                                        window.activate_window();
+                                        cx.notify();
+                                    })
+                                })
+                                .detach();
+                            })
+                            .detach();
+                    })
+                    .ok();
+            }
+            SettingsUiFile::Project((worktree_id, path)) => {
+                let mut corresponding_workspace: Option<WindowHandle<Workspace>> = None;
+                let settings_path = path.join(paths::local_settings_file_relative_path());
+                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
+                    return;
+                };
+                for workspace in app_state.workspace_store.read(cx).workspaces() {
+                    let contains_settings_file = workspace
+                        .read_with(cx, |workspace, cx| {
+                            workspace.project().read(cx).contains_local_settings_file(
+                                *worktree_id,
+                                settings_path.as_ref(),
+                                cx,
+                            )
+                        })
+                        .ok();
+                    if Some(true) == contains_settings_file {
+                        corresponding_workspace = Some(*workspace);
+
+                        break;
+                    }
+                }
+
+                let Some(corresponding_workspace) = corresponding_workspace else {
+                    log::error!(
+                        "No corresponding workspace found for settings file {}",
+                        settings_path.as_std_path().display()
+                    );
+
+                    return;
+                };
+
+                // TODO: move zed::open_local_file() APIs to this crate, and
+                // re-implement the "initial_contents" behavior
+                corresponding_workspace
+                    .update(cx, |workspace, window, cx| {
+                        let open_task = workspace.open_path(
+                            (*worktree_id, settings_path.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+
+                        cx.spawn_in(window, async move |workspace, cx| {
+                            if open_task.await.log_err().is_some() {
+                                workspace
+                                    .update_in(cx, |_, window, cx| {
+                                        window.activate_window();
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
+                    })
+                    .ok();
+            }
+            SettingsUiFile::Server(_) => {
+                return;
+            }
+        };
     }
 
     fn current_page_index(&self) -> usize {
@@ -1197,6 +1766,31 @@ impl SettingsWindow {
         sub_page_stack_mut().pop();
         cx.notify();
     }
+
+    fn focus_file_at_index(&mut self, index: usize, window: &mut Window) {
+        if let Some((_, handle)) = self.files.get(index) {
+            handle.focus(window);
+        }
+    }
+
+    fn focused_file_index(&self, window: &Window, cx: &Context<Self>) -> usize {
+        if self.files_focus_handle.contains_focused(window, cx)
+            && let Some(index) = self
+                .files
+                .iter()
+                .position(|(_, handle)| handle.is_focused(window))
+        {
+            return index;
+        }
+        if let Some(current_file_index) = self
+            .files
+            .iter()
+            .position(|(file, _)| file == &self.current_file)
+        {
+            return current_file_index;
+        }
+        0
+    }
 }
 
 impl Render for SettingsWindow {
@@ -1204,7 +1798,47 @@ impl Render for SettingsWindow {
         let ui_font = theme::setup_ui_font(window, cx);
 
         div()
+            .id("settings-window")
             .key_context("SettingsWindow")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
+                this.open_current_settings_file(cx);
+            }))
+            .on_action(|_: &Minimize, window, _cx| {
+                window.minimize_window();
+            })
+            .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
+                this.search_bar.focus_handle(cx).focus(window);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
+                if this.navbar_focus_handle.contains_focused(window, cx) {
+                    this.focus_first_content_item(window, cx);
+                } else {
+                    this.focus_first_nav_item(window, cx);
+                }
+            }))
+            .on_action(
+                cx.listener(|this, FocusFile(file_index): &FocusFile, window, _| {
+                    this.focus_file_at_index(*file_index as usize, window);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
+                let next_index = usize::min(
+                    this.focused_file_index(window, cx) + 1,
+                    this.files.len().saturating_sub(1),
+                );
+                this.focus_file_at_index(next_index, window);
+            }))
+            .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
+                let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
+                this.focus_file_at_index(prev_index, window);
+            }))
+            .on_action(|_: &menu::SelectNext, window, _| {
+                window.focus_next();
+            })
+            .on_action(|_: &menu::SelectPrevious, window, _| {
+                window.focus_prev();
+            })
             .flex()
             .flex_row()
             .size_full()
@@ -1216,29 +1850,28 @@ impl Render for SettingsWindow {
     }
 }
 
+fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
+    workspace::AppState::global(cx)
+        .upgrade()
+        .map(|app_state| {
+            app_state
+                .workspace_store
+                .read(cx)
+                .workspaces()
+                .iter()
+                .filter_map(|workspace| Some(workspace.read(cx).ok()?.project().clone()))
+        })
+        .into_iter()
+        .flatten()
+}
+
 fn update_settings_file(
     file: SettingsUiFile,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) -> Result<()> {
     match file {
-        SettingsUiFile::Local((worktree_id, rel_path)) => {
-            fn all_projects(cx: &App) -> impl Iterator<Item = Entity<project::Project>> {
-                workspace::AppState::global(cx)
-                    .upgrade()
-                    .map(|app_state| {
-                        app_state
-                            .workspace_store
-                            .read(cx)
-                            .workspaces()
-                            .iter()
-                            .filter_map(|workspace| {
-                                Some(workspace.read(cx).ok()?.project().clone())
-                            })
-                    })
-                    .into_iter()
-                    .flatten()
-            }
+        SettingsUiFile::Project((worktree_id, rel_path)) => {
             let rel_path = rel_path.join(paths::local_settings_file_relative_path());
             let project = all_projects(cx).find(|project| {
                 project.read_with(cx, |project, cx| {
@@ -1273,11 +1906,12 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
 ) -> AnyElement {
     let (_, initial_text) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let initial_text = Some(initial_text.clone()).filter(|s| !s.as_ref().is_empty());
+    let initial_text = initial_text.filter(|s| !s.as_ref().is_empty());
 
     SettingsEditor::new()
+        .tab_index(0)
         .when_some(initial_text, |editor, text| {
-            editor.with_initial_text(text.into())
+            editor.with_initial_text(text.as_ref().to_string())
         })
         .when_some(
             metadata.and_then(|metadata| metadata.placeholder),
@@ -1299,9 +1933,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     file: SettingsUiFile,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
 
-    let toggle_state = if value.into() {
+    let toggle_state = if value.copied().map_or(false, Into::into) {
         ToggleState::Selected
     } else {
         ToggleState::Unselected
@@ -1318,6 +1952,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
+        .tab_index(0_isize)
         .color(SwitchColor::Accent)
         .into_any_element()
 }
@@ -1331,7 +1966,8 @@ fn render_font_picker(
     let current_value = SettingsStore::global(cx)
         .get_value_from_file(file.to_settings(), field.pick)
         .1
-        .clone();
+        .cloned()
+        .unwrap_or_else(|| SharedString::default().into());
 
     let font_picker = cx.new(|cx| {
         ui_input::font_picker(
@@ -1347,47 +1983,36 @@ fn render_font_picker(
         )
     });
 
-    div()
-        .child(
-            PopoverMenu::new("font-picker")
-                .menu(move |_window, _cx| Some(font_picker.clone()))
-                .trigger(
-                    ButtonLike::new("font-family-button")
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium)
-                        .full_width()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_between()
-                                .child(Label::new(current_value))
-                                .child(
-                                    Icon::new(IconName::ChevronUpDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
-                        ),
-                )
-                .full_width(true)
-                .anchor(gpui::Corner::TopLeft)
-                .offset(gpui::Point {
-                    x: px(0.0),
-                    y: px(4.0),
-                })
-                .with_handle(ui::PopoverMenuHandle::default()),
+    PopoverMenu::new("font-picker")
+        .menu(move |_window, _cx| Some(font_picker.clone()))
+        .trigger(
+            Button::new("font-family-button", current_value)
+                .tab_index(0_isize)
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .icon(IconName::ChevronUpDown)
+                .icon_color(Color::Muted)
+                .icon_size(IconSize::Small)
+                .icon_position(IconPosition::End),
         )
+        .anchor(gpui::Corner::TopLeft)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .with_handle(ui::PopoverMenuHandle::default())
         .into_any_element()
 }
 
-fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
+fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let (_, &value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-
-    NumericStepper::new("numeric_stepper", value, window, cx)
+    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let value = value.copied().unwrap_or_else(T::min_value);
+    NumberField::new("numeric_stepper", value, window, cx)
         .on_change({
             move |value, _window, cx| {
                 let value = *value;
@@ -1397,7 +2022,6 @@ fn render_numeric_stepper<T: NumericStepperType + Send + Sync>(
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
-        .style(NumericStepperStyle::Outlined)
         .into_any_element()
 }
 
@@ -1413,20 +2037,21 @@ where
     let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
     let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
 
-    let (_, &current_value) =
+    let (_, current_value) =
         SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
+    let current_value = current_value.copied().unwrap_or(variants()[0]);
 
     let current_value_label =
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
 
     DropdownMenu::new(
         "dropdown",
-        current_value_label,
+        current_value_label.to_title_case(),
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
                 let file = file.clone();
                 menu = menu.toggleable_entry(
-                    label,
+                    label.to_title_case(),
                     value == current_value,
                     IconPosition::Start,
                     None,
@@ -1450,6 +2075,7 @@ where
         x: px(0.0),
         y: px(2.0),
     })
+    .tab_index(0)
     .into_any_element()
 }
 
@@ -1464,7 +2090,7 @@ mod test {
         }
 
         fn new_builder(window: &mut Window, cx: &mut Context<Self>) -> Self {
-            let mut this = Self::new(window, cx);
+            let mut this = Self::new(None, window, cx);
             this.navbar_entries.clear();
             this.pages.clear();
             this
@@ -1537,6 +2163,7 @@ mod test {
     impl SettingsPageItem {
         fn basic_item(title: &'static str, description: &'static str) -> Self {
             SettingsPageItem::SettingItem(SettingItem {
+                files: USER,
                 title,
                 description,
                 field: Box::new(SettingField {
@@ -1613,6 +2240,8 @@ mod test {
         }
 
         let mut settings_window = SettingsWindow {
+            original_window: None,
+            worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
             current_file: crate::SettingsUiFile::User,
             pages,
@@ -1623,6 +2252,10 @@ mod test {
             search_matches: vec![],
             search_task: None,
             scroll_handle: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
+            navbar_focus_handle: cx.focus_handle(),
+            content_focus_handle: cx.focus_handle(),
+            files_focus_handle: cx.focus_handle(),
         };
 
         settings_window.build_search_matches();
