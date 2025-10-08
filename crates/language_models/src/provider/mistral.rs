@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::BTreeMap;
+use fs::Fs;
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, Window};
 use http_client::HttpClient;
@@ -12,7 +13,7 @@ use language_model::{
 };
 use mistral::{CODESTRAL_API_URL, MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
-use settings::{Settings, SettingsStore};
+use settings::{EditPredictionProvider, Settings, SettingsStore, update_settings_file};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -852,7 +853,10 @@ impl ConfigurationView {
                 .update(cx, |state, cx| {
                     state.set_codestral_api_key(Some(api_key), cx)
                 })?
-                .await
+                .await?;
+            cx.update(|_window, cx| {
+                set_edit_prediction_provider(EditPredictionProvider::Codestral, cx)
+            })
         })
         .detach_and_log_err(cx);
     }
@@ -865,7 +869,8 @@ impl ConfigurationView {
         cx.spawn_in(window, async move |_, cx| {
             state
                 .update(cx, |state, cx| state.set_codestral_api_key(None, cx))?
-                .await
+                .await?;
+            cx.update(|_window, cx| set_edit_prediction_provider(EditPredictionProvider::Zed, cx))
         })
         .detach_and_log_err(cx);
     }
@@ -1033,6 +1038,18 @@ impl Render for ConfigurationView {
                 .into_any()
         }
     }
+}
+
+fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
+    let fs = <dyn Fs>::global(cx);
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
+            .get_or_insert_default()
+            .edit_prediction_provider = Some(provider);
+    });
 }
 
 #[cfg(test)]
