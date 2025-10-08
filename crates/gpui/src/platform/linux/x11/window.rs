@@ -533,11 +533,6 @@ impl X11WindowState {
                 )?;
             }
 
-            match params.kind {
-                WindowKind::Normal | WindowKind::Floating => {}
-                _ => {}
-            }
-
             if params.kind == WindowKind::PopUp {
                 check_reply(
                     || "X11 ChangeProperty32 setting window type for pop-up failed.",
