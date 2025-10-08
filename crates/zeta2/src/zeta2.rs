@@ -11,7 +11,7 @@ use edit_prediction_context::{
     EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui::http_client::Method;
 use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
@@ -76,7 +76,7 @@ pub struct Zeta {
     projects: HashMap<EntityId, ZetaProject>,
     options: ZetaOptions,
     update_required: bool,
-    debug_tx: Option<mpsc::UnboundedSender<Result<PredictionDebugInfo, String>>>,
+    debug_tx: Option<mpsc::UnboundedSender<PredictionDebugInfo>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,9 +91,9 @@ pub struct ZetaOptions {
 pub struct PredictionDebugInfo {
     pub context: EditPredictionContext,
     pub retrieval_time: TimeDelta,
-    pub request: RequestDebugInfo,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
+    pub response_rx: oneshot::Receiver<Result<RequestDebugInfo, String>>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -204,7 +204,7 @@ impl Zeta {
         }
     }
 
-    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<Result<PredictionDebugInfo, String>> {
+    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<PredictionDebugInfo> {
         let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
         self.debug_tx = Some(debug_watch_tx);
         debug_watch_rx
@@ -537,8 +537,22 @@ impl Zeta {
                     return Ok(None);
                 };
 
-                let debug_context = if let Some(debug_tx) = debug_tx {
-                    Some((debug_tx, context.clone()))
+                let retrieval_time = chrono::Utc::now() - before_retrieval;
+
+                let debug_response_tx = if let Some(debug_tx) = debug_tx {
+                    let (response_tx, response_rx) = oneshot::channel();
+                    let context = context.clone();
+
+                    debug_tx
+                        .unbounded_send(PredictionDebugInfo {
+                            context,
+                            retrieval_time,
+                            buffer: buffer.downgrade(),
+                            position,
+                            response_rx,
+                        })
+                        .ok();
+                    Some(response_tx)
                 } else {
                     None
                 };
@@ -560,32 +574,21 @@ impl Zeta {
                     diagnostic_groups,
                     diagnostic_groups_truncated,
                     None,
-                    debug_context.is_some(),
+                    debug_response_tx.is_some(),
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
                     options.prompt_format,
                 );
 
-                let retrieval_time = chrono::Utc::now() - before_retrieval;
                 let response = Self::perform_request(client, llm_token, app_version, request).await;
 
-                if let Some((debug_tx, context)) = debug_context {
-                    debug_tx
-                        .unbounded_send(response.as_ref().map_err(|err| err.to_string()).and_then(
-                            |response| {
-                                let Some(request) =
-                                    some_or_debug_panic(response.0.debug_info.clone())
-                                else {
-                                    return Err("Missing debug info".to_string());
-                                };
-                                Ok(PredictionDebugInfo {
-                                    context,
-                                    request,
-                                    retrieval_time,
-                                    buffer: buffer.downgrade(),
-                                    position,
-                                })
+                if let Some(debug_response_tx) = debug_response_tx {
+                    debug_response_tx
+                        .send(response.as_ref().map_err(|err| err.to_string()).and_then(
+                            |response| match some_or_debug_panic(response.0.debug_info.clone()) {
+                                Some(debug_info) => Ok(debug_info),
+                                None => Err("Missing debug info".to_string()),
                             },
                         ))
                         .ok();
