@@ -3321,7 +3321,6 @@ name = "codestral"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "edit_prediction",
  "edit_prediction_context",
  "futures 0.3.31",
@@ -3332,13 +3331,9 @@ dependencies = [
  "mistral",
  "serde",
  "serde_json",
- "settings",
  "smol",
  "text",
- "ui",
- "zed-collections",
  "zed-http-client",
- "zed-util",
 ]
 
 [[package]]

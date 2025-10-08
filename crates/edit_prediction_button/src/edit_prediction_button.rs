@@ -239,7 +239,7 @@ impl Render for EditPredictionButton {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let has_api_key = CodestralCompletionProvider::has_api_key(cx);
                 let fs = self.fs.clone();
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 div().child(
                     PopoverMenu::new("codestral")
