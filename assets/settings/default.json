@@ -76,7 +76,7 @@
   "ui_font_size": 16,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
-  // The default font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+  // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
