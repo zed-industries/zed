@@ -123,9 +123,11 @@ impl settings::Settings for TerminalSettings {
         let name = |s| format!("terminal.integrated.{s}");
 
         vscode.f32_setting(&name("fontSize"), &mut current.font_size);
-        if let Some(font_family) = vscode.read_string(&name("fontFamily")) {
-            current.font_family = Some(FontFamilyName(font_family.into()));
-        }
+        vscode.font_family_setting(
+            &name("fontFamily"),
+            &mut current.font_family,
+            &mut current.font_fallbacks,
+        );
         vscode.bool_setting(&name("copyOnSelection"), &mut current.copy_on_select);
         vscode.bool_setting("macOptionIsMeta", &mut current.option_as_meta);
         vscode.usize_setting("scrollback", &mut current.max_scroll_history_lines);
