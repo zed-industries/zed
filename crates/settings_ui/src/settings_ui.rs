@@ -409,7 +409,7 @@ pub fn open_settings_editor(
                 }),
                 focus: true,
                 show: true,
-                kind: gpui::WindowKind::Normal,
+                kind: gpui::WindowKind::Floating,
                 window_background: cx.theme().window_background_appearance(),
                 window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
                 window_bounds: Some(WindowBounds::centered(size(px(900.), px(750.)), cx)),
