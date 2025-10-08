@@ -1,4 +1,4 @@
-use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
+use gpui::{div, Context, Element, Entity, FontWeight, Render, Subscription, WeakEntity, Window};
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
@@ -96,7 +96,6 @@ impl Render for ModeIndicator {
         let status_label = vim_readable.status_label.clone();
         let temp_mode = vim_readable.temp_mode;
         let mode = vim_readable.mode.clone();
-        // drop(vim_readable);
 
         let label = if let Some(label) = status_label {
             label
@@ -112,7 +111,7 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode_str).into()
+            format!("{} {} ", pending, mode_str).into()
         };
 
         // Map vim mode to a theme color for the background
@@ -137,6 +136,8 @@ impl Render for ModeIndicator {
                 Label::new(label)
                     .size(LabelSize::Small)
                     .line_height_style(LineHeightStyle::UiLabel)
+                    .weight(FontWeight::MEDIUM)
+                    .color(theme.colors().vim_mode_text.into())
             )
             .into_any()
     }

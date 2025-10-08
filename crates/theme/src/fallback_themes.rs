@@ -108,6 +108,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_block_background: SystemColors::default().transparent,
                 vim_helix_normal_background: SystemColors::default().transparent,
                 vim_helix_select_background: SystemColors::default().transparent,
+                vim_mode_text: SystemColors::default().transparent,
                 // Existing fields
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
