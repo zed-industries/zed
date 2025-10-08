@@ -6509,7 +6509,8 @@ impl LspStore {
             .collect::<Vec<_>>();
         debug_assert!(
             !applicable_chunks.is_empty(),
-            "Found no chunks for buffer range {range:?}"
+            "Found no chunks for buffer range {:?}",
+            range.to_point(&buffer_snapshot),
         );
         for row_chunk in applicable_chunks {
             match (
@@ -6783,7 +6784,11 @@ impl LspStore {
                     .into_iter()
                     .map(|(server_id, mut new_hints)| {
                         new_hints.retain(|hint| {
-                            hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
+                            // TODO kb this is all bad
+                            hint.position.is_valid(&buffer_snapshot)
+                                && range.start.is_valid(&buffer_snapshot)
+                                && range.end.is_valid(&buffer_snapshot)
+                                && hint.position.cmp(&range.start, &buffer_snapshot).is_ge()
                                 && hint.position.cmp(&range.end, &buffer_snapshot).is_le()
                         });
                         (server_id, new_hints)
