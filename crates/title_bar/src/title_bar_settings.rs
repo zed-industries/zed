@@ -1,4 +1,5 @@
 use settings::{Settings, SettingsContent};
+use ui::App;
 
 #[derive(Copy, Clone, Debug)]
 pub struct TitleBarSettings {
@@ -12,7 +13,7 @@ pub struct TitleBarSettings {
 }
 
 impl Settings for TitleBarSettings {
-    fn from_settings(s: &SettingsContent) -> Self {
+    fn from_settings(s: &SettingsContent, _: &mut App) -> Self {
         let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
             show_branch_icon: content.show_branch_icon.unwrap(),

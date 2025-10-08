@@ -418,7 +418,7 @@ pub enum PaneSplitDirectionVertical {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -564,7 +564,9 @@ pub enum ProjectPanelEntrySpacing {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
 }

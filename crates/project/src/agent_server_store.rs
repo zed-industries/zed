@@ -14,7 +14,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
 use http_client::github::AssetKind;
 use node_runtime::NodeRuntime;
@@ -22,7 +22,7 @@ use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{SettingsContent, SettingsStore};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -1294,7 +1294,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),
@@ -1307,4 +1307,6 @@ impl settings::Settings for AllAgentServersSettings {
                 .collect(),
         }
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

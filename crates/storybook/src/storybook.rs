@@ -19,7 +19,7 @@ use reqwest_client::ReqwestClient;
 use settings::{KeymapFile, Settings};
 use simplelog::SimpleLogger;
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
+use theme::{ThemeRegistry, ThemeSettings};
 use ui::prelude::*;
 use workspace;
 
@@ -80,9 +80,9 @@ fn main() {
 
         let selector = story_selector;
 
+        let theme_registry = ThemeRegistry::global(cx);
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
-        theme_settings.theme =
-            theme::ThemeSelection::Static(settings::ThemeName(theme_name.into()));
+        theme_settings.active_theme = theme_registry.get(&theme_name).unwrap();
         ThemeSettings::override_global(theme_settings, cx);
 
         language::init(cx);

@@ -183,10 +183,9 @@ pub async fn run_randomized_test<T: RandomizedTest>(
 
     for (client, cx) in clients {
         cx.update(|cx| {
-            let settings = cx.remove_global::<SettingsStore>();
+            let store = cx.remove_global::<SettingsStore>();
             cx.clear_globals();
-            cx.set_global(settings);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            cx.set_global(store);
             drop(client);
         });
     }
