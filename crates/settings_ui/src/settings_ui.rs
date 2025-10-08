@@ -554,7 +554,7 @@ struct SubPage {
     section_header: &'static str,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
@@ -2350,6 +2350,17 @@ mod test {
         fn item(mut self, item: SettingsPageItem) -> Self {
             self.items.push(item);
             self
+        }
+    }
+
+    impl PartialEq for NavBarEntry {
+        fn eq(&self, other: &Self) -> bool {
+            self.title == other.title
+                && self.is_root == other.is_root
+                && self.expanded == other.expanded
+                && self.page_index == other.page_index
+                && self.item_index == other.item_index
+            // ignoring focus_handle
         }
     }
 
