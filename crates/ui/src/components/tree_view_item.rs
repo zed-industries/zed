@@ -21,6 +21,7 @@ pub struct TreeViewItem {
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     tab_index: Option<isize>,
+    focus_handle: Option<gpui::FocusHandle>,
 }
 
 impl TreeViewItem {
@@ -41,6 +42,7 @@ impl TreeViewItem {
             on_toggle: None,
             on_secondary_mouse_down: None,
             tab_index: None,
+            focus_handle: None,
         }
     }
 
@@ -107,6 +109,11 @@ impl TreeViewItem {
         self.focused = focused;
         self
     }
+
+    pub fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
 }
 
 impl Disableable for TreeViewItem {
@@ -163,6 +170,9 @@ impl RenderOnce for TreeViewItem {
                                 })
                                 .focus(|s| s.border_color(focused_border))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when_some(self.focus_handle, |this, handle| {
+                                    this.track_focus(&handle)
+                                })
                                 .when_some(self.tab_index, |this, index| this.tab_index(index))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
@@ -221,6 +231,9 @@ impl RenderOnce for TreeViewItem {
                                     })
                                     .focus(|s| s.border_color(focused_border))
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .when_some(self.focus_handle, |this, handle| {
+                                        this.track_focus(&handle)
+                                    })
                                     .when_some(self.tab_index, |this, index| this.tab_index(index))
                                     .child(
                                         Label::new(label)

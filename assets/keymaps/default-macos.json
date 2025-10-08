@@ -1372,5 +1372,13 @@
       "cmd-{": "settings_editor::FocusPreviousFile",
       "cmd-}": "settings_editor::FocusNextFile"
     }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "use_key_equivalents": true,
+    "bindings": {
+      "right": "settings_editor::ExpandNavEntry",
+      "left": "settings_editor::CollapseNavEntry"
+    }
   }
 ]
