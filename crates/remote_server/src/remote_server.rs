@@ -49,7 +49,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
     use unix::{ExecuteProxyError, execute_proxy, execute_run};
 
-    use crate::unix::execute_p2p;
+    use crate::unix::p2p::execute as execute_p2p;
 
     match command {
         Commands::Run {
