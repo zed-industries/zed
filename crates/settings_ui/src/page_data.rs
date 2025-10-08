@@ -131,7 +131,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Settings Profiles",
-                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings.",
+                    description: "Any number of settings profiles that are temporarily applied on top of your existing user settings",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| &settings_content.workspace.use_system_prompts,
@@ -1020,7 +1020,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Min Line Number Digits",
-                        description: "Minimum number of characters to reserve space for in the gutter.",
+                        description: "Minimum number of characters to reserve space for in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -4006,7 +4006,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor.",
+            description: "Whether to show wrap guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
