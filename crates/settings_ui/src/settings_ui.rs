@@ -920,8 +920,6 @@ impl SettingsWindow {
 
         this.observe_workspace_release(window, cx);
 
-        this.fetch_files(cx);
-        this.build_ui(cx);
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
 
