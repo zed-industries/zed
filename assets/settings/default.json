@@ -1317,8 +1317,6 @@
       "proxy_no_verify": null
     },
     "codestral": {
-      // todo! remove api_key
-      "api_key": null,
       "model": null,
       "max_tokens": null
     },
