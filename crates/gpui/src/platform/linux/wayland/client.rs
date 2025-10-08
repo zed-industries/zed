@@ -695,6 +695,8 @@ impl LinuxClient for WaylandClient {
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
 
+        let parent = state.keyboard_focused_window.as_ref().map(|w| w.toplevel());
+
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
@@ -702,6 +704,7 @@ impl LinuxClient for WaylandClient {
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
+            parent,
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
