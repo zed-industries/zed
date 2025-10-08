@@ -553,6 +553,10 @@ impl X11WindowState {
 
             if params.kind == WindowKind::Floating {
                 if let Some(parent_window) = parent_window {
+                    // WM_TRANSIENT_FOR hint indicating the main application window. For floating windows, we set
+                    // a parent window (WM_TRANSIENT_FOR) such that the window manager knows where to
+                    // place the floating window in relation to the main window.
+                    // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
                     check_reply(
                         || "X11 ChangeProperty32 setting WM_TRANSIENT_FOR for floating window failed.",
                         xcb.change_property32(
@@ -565,6 +569,8 @@ impl X11WindowState {
                     )?;
                 }
 
+                // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
+                // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
                 check_reply(
                     || "X11 ChangeProperty32 setting window type for floating window failed.",
                     xcb.change_property32(
