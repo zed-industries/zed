@@ -3093,7 +3093,7 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    let matching_abs_path = path!("/file1.txt").to_string();
+    let matching_abs_path = "/file1.txt".to_string();
     picker
         .update_in(cx, |picker, window, cx| {
             picker
