@@ -695,10 +695,6 @@ impl FileMask {
     fn contains(&self, other: FileMask) -> bool {
         self.0 & other.0 != 0
     }
-
-    fn is_superset(&self, other: FileMask) -> bool {
-        self.0 & other.0 == self.0
-    }
 }
 
 impl PartialEq for SettingItem {
@@ -711,12 +707,6 @@ impl PartialEq for SettingItem {
                 _ => false,
             })
     }
-}
-
-#[derive(PartialEq, Clone)]
-struct SubPageLinkSection {
-    files: FileMask,
-    links: Vec<SubPageLink>,
 }
 
 #[derive(Clone)]
