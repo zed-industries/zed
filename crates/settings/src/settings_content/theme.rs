@@ -364,6 +364,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "vim.helix_select.background")]
     pub vim_helix_select_background: Option<String>,
 
+    /// Text color for Vim mode indicator label.
+    #[serde(rename = "vim.mode.text")]
+    pub vim_mode_text: Option<String>,
+
     /// Border color. Used for most borders, is usually a high contrast color.
     #[serde(rename = "border")]
     pub border: Option<String>,
