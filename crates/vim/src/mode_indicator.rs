@@ -107,7 +107,12 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
+
+            if pending.is_empty() {
+                format!("-- {mode} --").into()
+            } else {
+                format!("{pending} -- {mode} --").into()
+            }
         };
 
         Label::new(label)
