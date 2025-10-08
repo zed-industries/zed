@@ -29,9 +29,8 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
-    KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
-    prelude::*,
+    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
+    Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -1300,7 +1299,8 @@ impl SettingsWindow {
         }
     }
 
-    // TODO: Reconsider this after preview launch
+    // TODO:
+    //  Reconsider this after preview launch
     // fn file_location_str(&self) -> String {
     //     match &self.current_file {
     //         SettingsUiFile::User => "settings.json".to_string(),
@@ -1343,11 +1343,11 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
 
-        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
-            "Focus Content"
-        } else {
-            "Focus Navbar"
-        };
+        // let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+        //     "Focus Content"
+        // } else {
+        //     "Focus Navbar"
+        // };
 
         v_flex()
             .w_64()
@@ -1431,24 +1431,25 @@ impl SettingsWindow {
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
-            .child(
-                h_flex()
-                    .w_full()
-                    .p_2()
-                    .pb_0p5()
-                    .flex_none()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .children(
-                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
-                            KeybindingHint::new(
-                                this,
-                                cx.theme().colors().surface_background.opacity(0.5),
-                            )
-                            .suffix(focus_keybind_label)
-                        }),
-                    ),
-            )
+        // TODO: Restore this once we've fixed the ToggleFocusNav action
+        // .child(
+        //     h_flex()
+        //         .w_full()
+        //         .p_2()
+        //         .pb_0p5()
+        //         .flex_none()
+        //         .border_t_1()
+        //         .border_color(cx.theme().colors().border_variant)
+        //         .children(
+        //             KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+        //                 KeybindingHint::new(
+        //                     this,
+        //                     cx.theme().colors().surface_background.opacity(0.5),
+        //                 )
+        //                 .suffix(focus_keybind_label)
+        //             }),
+        //         ),
+        // )
     }
 
     fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
