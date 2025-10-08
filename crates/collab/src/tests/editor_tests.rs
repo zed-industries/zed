@@ -1024,7 +1024,6 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 }
 
 #[gpui::test]
-// TODO kb hangs
 async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -4182,36 +4181,26 @@ fn tab_undo_assert(
     cx_b.assert_editor_state(expected_initial);
 }
 
-fn extract_hint_labels(editor: &Editor, cx: &App) -> Vec<String> {
-    let inlay_hint_cache = &editor
-        .project()
-        .unwrap()
-        .read(cx)
-        .lsp_store()
-        .read(cx)
-        .lsp_data;
+fn extract_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
+    let lsp_store = editor.project().unwrap().read(cx).lsp_store();
 
     let mut all_cached_labels = Vec::new();
     let mut all_fetched_hints = Vec::new();
-    for lsp_data in editor
-        .buffer()
-        .read(cx)
-        .all_buffer_ids()
-        .into_iter()
-        .filter_map(|buffer_id| inlay_hint_cache.get(&buffer_id))
-    {
-        let hints = &lsp_data.inlay_hints;
-        all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
-            let mut label = hint.text().to_string();
-            if hint.padding_left {
-                label.insert(0, ' ');
-            }
-            if hint.padding_right {
-                label.push_str(" ");
-            }
-            label
-        }));
-        all_fetched_hints.extend(hints.all_fetched_hints());
+    for buffer in editor.buffer().read(cx).all_buffers() {
+        lsp_store.update(cx, |lsp_store, cx| {
+            let hints = &lsp_store.latest_lsp_data(&buffer, cx).inlay_hints;
+            all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
+                let mut label = hint.text().to_string();
+                if hint.padding_left {
+                    label.insert(0, ' ');
+                }
+                if hint.padding_right {
+                    label.push_str(" ");
+                }
+                label
+            }));
+            all_fetched_hints.extend(hints.all_fetched_hints());
+        });
     }
 
     assert!(
