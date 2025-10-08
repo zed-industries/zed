@@ -278,7 +278,7 @@ impl RegisteredBuffer {
                                         content_changes,
                                     },
                                 )
-                                .detach();
+                                .ok();
                         }
                         let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
                         Some(())
@@ -753,7 +753,7 @@ impl Copilot {
                             },
                         },
                     )
-                    .detach();
+                    .ok();
 
                 e.insert(RegisteredBuffer {
                     uri,
@@ -799,7 +799,7 @@ impl Copilot {
                                 text: None,
                             },
                         )
-                        .detach();
+                        .ok();
                 }
                 language::BufferEvent::FileHandleChanged
                 | language::BufferEvent::LanguageChanged => {
@@ -819,7 +819,7 @@ impl Copilot {
                                     text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                 },
                             )
-                            .detach();
+                            .ok();
                         server
                             .lsp
                             .notify::<lsp::notification::DidOpenTextDocument>(
@@ -832,7 +832,7 @@ impl Copilot {
                                     ),
                                 },
                             )
-                            .detach();
+                            .ok();
                     }
                 }
                 _ => {}
@@ -853,7 +853,7 @@ impl Copilot {
                         text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                     },
                 )
-                .detach();
+                .ok();
         }
     }
 
@@ -1158,7 +1158,7 @@ fn notify_did_change_config_to_server(
         .notify::<lsp::notification::DidChangeConfiguration>(lsp::DidChangeConfigurationParams {
             settings,
         })
-        .detach();
+        .ok();
     Ok(())
 }
 

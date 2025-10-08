@@ -429,11 +429,9 @@ impl LocalLspStore {
                             }
                         })?;
 
-                    language_server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            did_change_configuration_params,
-                        )
-                        .await?;
+                    language_server.notify::<lsp::notification::DidChangeConfiguration>(
+                        did_change_configuration_params,
+                    )?;
 
                     anyhow::Ok(language_server)
                 }
@@ -7213,7 +7211,7 @@ impl LspStore {
                         content_changes,
                     },
                 )
-                .detach();
+                .ok();
             self.pull_workspace_diagnostics(language_server.server_id());
         }
 
@@ -7247,7 +7245,7 @@ impl LspStore {
                             text,
                         },
                     )
-                    .detach();
+                    .ok();
             }
         }
 
@@ -7315,7 +7313,6 @@ impl LspStore {
                                             .notify::<lsp::notification::DidChangeConfiguration>(
                                                 lsp::DidChangeConfigurationParams { settings },
                                             )
-                                            .await
                                             .ok()?;
                                         Some(())
                                     }))
@@ -8544,7 +8541,7 @@ impl LspStore {
             }
         })?;
         if let Some(task) = task {
-            task.await.context("handling lsp ext cancel flycheck")?;
+            task.context("handling lsp ext cancel flycheck")?;
         }
 
         Ok(proto::Ack {})
@@ -8579,11 +8576,9 @@ impl LspStore {
                 } else {
                     None
                 };
-                server
-                    .notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
-                        lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
-                    )
-                    .detach();
+                server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                    lsp_store::lsp_ext_command::RunFlycheckParams { text_document },
+                )?;
             }
             anyhow::Ok(())
         })??;
@@ -8597,16 +8592,15 @@ impl LspStore {
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        let task = lsp_store.read_with(&cx, |lsp_store, _| {
-            if let Some(server) = lsp_store.language_server_for_id(server_id) {
-                Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
-            } else {
-                None
-            }
-        })?;
-        if let Some(task) = task {
-            task.await.context("handling lsp ext clear flycheck")?;
-        }
+        lsp_store
+            .read_with(&cx, |lsp_store, _| {
+                if let Some(server) = lsp_store.language_server_for_id(server_id) {
+                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
+                } else {
+                    None
+                }
+            })
+            .context("handling lsp ext clear flycheck")?;
 
         Ok(proto::Ack {})
     }
@@ -8751,7 +8745,7 @@ impl LspStore {
                                 new_uri: new_uri.clone(),
                             }],
                         })
-                        .detach();
+                        .ok();
                 }
             }
             Some(())
@@ -8861,7 +8855,7 @@ impl LspStore {
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
                         lsp::DidChangeWatchedFilesParams { changes },
                     )
-                    .detach();
+                    .ok();
             }
             Some(())
         });
@@ -10673,7 +10667,7 @@ impl LspStore {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
-                            .detach();
+                            .ok();
                     }
                 }
             }
@@ -10801,7 +10795,7 @@ impl LspStore {
                 if !params.changes.is_empty() {
                     server
                         .notify::<lsp::notification::DidChangeWatchedFiles>(params)
-                        .detach();
+                        .ok();
                 }
             }
         }

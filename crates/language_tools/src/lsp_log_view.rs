@@ -607,7 +607,7 @@ impl LspLogView {
 
             server
                 .notify::<SetTrace>(SetTraceParams { value: level })
-                .detach();
+                .ok();
         }
     }
 

@@ -116,16 +116,15 @@ pub fn cancel_flycheck(
                 .await
                 .context("lsp ext cancel flycheck proto request")?;
         } else {
-            let notification = lsp_store.read_with(cx, |lsp_store, _| {
-                if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(()))
-                } else {
-                    None
-                }
-            })?;
-            if let Some(notification) = notification {
-                notification.await.context("lsp ext cancel flycheck")?;
-            }
+            lsp_store
+                .read_with(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
+                        server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(())
+                    } else {
+                        Ok(())
+                    }
+                })
+                .context("lsp ext cancel flycheck")??;
         };
         anyhow::Ok(())
     })
@@ -171,22 +170,19 @@ pub fn run_flycheck(
                 .await
                 .context("lsp ext run flycheck proto request")?;
         } else {
-            let task = lsp_store.read_with(cx, |lsp_store, _| {
-                if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                    Some(
+            lsp_store
+                .read_with(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
                             lsp_store::lsp_ext_command::RunFlycheckParams {
                                 text_document: None,
                             },
-                        ),
-                    )
-                } else {
-                    None
-                }
-            })?;
-            if let Some(task) = task {
-                task.await.context("lsp ext run flycheck")?;
-            }
+                        )
+                    } else {
+                        Ok(())
+                    }
+                })
+                .context("lsp ext run flycheck")??;
         };
         anyhow::Ok(())
     })
@@ -227,16 +223,15 @@ pub fn clear_flycheck(
                 .await
                 .context("lsp ext clear flycheck proto request")?;
         } else {
-            let task = lsp_store.read_with(cx, |lsp_store, _| {
-                if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
-                    Some(server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(()))
-                } else {
-                    None
-                }
-            })?;
-            if let Some(task) = task {
-                task.await.context("lsp ext clear flycheck")?;
-            }
+            lsp_store
+                .read_with(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
+                        server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(())
+                    } else {
+                        Ok(())
+                    }
+                })
+                .context("lsp ext clear flycheck")??;
         };
         anyhow::Ok(())
     })
