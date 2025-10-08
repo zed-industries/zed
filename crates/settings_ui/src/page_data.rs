@@ -2430,7 +2430,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show folder icons or chevrons for directories in the project panel",
+                    description: "Whether to show file icons in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
