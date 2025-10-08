@@ -1289,11 +1289,17 @@ mod test {
             match self {
                 Self::Namespace(namespace) => namespace.to_identifier_parts(identifier),
                 Self::SourceExact(path) => {
-                    vec![format!("SOURCE {}", path.display()), identifier.to_string()]
+                    vec![
+                        format!("SOURCE {}", path.display().to_string().replace("\\", "/")),
+                        identifier.to_string(),
+                    ]
                 }
                 Self::SourceFuzzy(path) => {
                     vec![
-                        format!("SOURCE FUZZY {}", path.display()),
+                        format!(
+                            "SOURCE FUZZY {}",
+                            path.display().to_string().replace("\\", "/")
+                        ),
                         identifier.to_string(),
                     ]
                 }
