@@ -253,7 +253,6 @@ impl AgentServerStore {
                     names: self
                         .external_agents
                         .keys()
-                        .filter(|name| name.0 != CODEX_NAME)
                         .map(|name| name.to_string())
                         .collect(),
                 })
@@ -297,12 +296,12 @@ impl AgentServerStore {
     pub(crate) fn remote(
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
-        let external_agents = [
+        let mut external_agents = [
             (
                 GEMINI_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
@@ -325,7 +324,21 @@ impl AgentServerStore {
             ),
         ]
         .into_iter()
-        .collect();
+        .collect::<HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>>();
+
+        use feature_flags::FeatureFlagAppExt as _;
+        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() {
+            external_agents.insert(
+                CODEX_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: CODEX_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            );
+        }
 
         Self {
             state: AgentServerStoreState::Remote {
