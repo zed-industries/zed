@@ -2,7 +2,10 @@ use std::{num::NonZero, time::Duration};
 
 use denoise::{Denoiser, DenoiserError};
 use log::warn;
-use rodio::{ChannelCount, Sample, SampleRate, Source, buffer::SamplesBuffer, conversions::ChannelCountConverter, nz};
+use rodio::{
+    ChannelCount, Sample, SampleRate, Source, buffer::SamplesBuffer,
+    conversions::ChannelCountConverter, nz,
+};
 
 use crate::rodio_ext::resample::FixedResampler;
 pub use replayable::{Replay, ReplayDurationTooShort, Replayable};
