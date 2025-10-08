@@ -170,6 +170,13 @@ pub fn main() {
 
     let args = Args::parse();
 
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    #[cfg(not(target_os = "windows"))]
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return;
+    }
+
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
         crashes::crash_server(socket.as_path());
@@ -209,6 +216,15 @@ pub fn main() {
 
         if args.foreground {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    match util::get_zed_cli_path() {
+        Ok(path) => askpass::set_askpass_program(path),
+        Err(err) => {
+            eprintln!("Error: {}", err);
+            process::exit(1);
         }
     }
 
@@ -664,7 +680,8 @@ pub fn main() {
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
-        cx.set_menus(app_menus());
+        let menus = app_menus(cx);
+        cx.set_menus(menus);
         initialize_workspace(app_state.clone(), prompt_builder, cx);
 
         cx.activate(true);
@@ -1264,6 +1281,13 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long)]
+    #[cfg(not(target_os = "windows"))]
+    #[arg(hide = true)]
+    askpass: Option<String>,
 
     #[arg(long, hide = true)]
     dump_all_actions: bool,

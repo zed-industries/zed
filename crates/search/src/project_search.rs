@@ -522,10 +522,6 @@ impl Item for ProjectSearchView {
         self.results_editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn can_save(&self, _: &App) -> bool {
         true
     }

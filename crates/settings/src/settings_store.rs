@@ -534,11 +534,15 @@ impl SettingsStore {
         overrides
     }
 
+    /// Checks the given file, and files that the passed file overrides for the given field.
+    /// Returns the first file found that contains the value.
+    /// The value will only be None if no file contains the value.
+    /// I.e. if no file contains the value, returns `(File::Default, None)`
     pub fn get_value_from_file<T>(
         &self,
         target_file: SettingsFile,
         pick: fn(&SettingsContent) -> &Option<T>,
-    ) -> (SettingsFile, &T) {
+    ) -> (SettingsFile, Option<&T>) {
         // TODO: Add a metadata field for overriding the "overrides" tag, for contextually different settings
         //  e.g. disable AI isn't overridden, or a vec that gets extended instead or some such
 
@@ -564,11 +568,11 @@ impl SettingsStore {
                 continue;
             };
             if let Some(value) = pick(content).as_ref() {
-                return (file, value);
+                return (file, Some(value));
             }
         }
 
-        unreachable!("All values should have defaults");
+        (SettingsFile::Default, None)
     }
 }
 
@@ -1715,16 +1719,16 @@ mod tests {
 
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::User, &0)
+            (SettingsFile::User, Some(&0))
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::User, get),
-            (SettingsFile::User, &0)
+            (SettingsFile::User, Some(&0))
         );
         store.set_user_settings(r#"{}"#, cx).unwrap();
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::Default, &default_value)
+            (SettingsFile::Default, Some(&default_value))
         );
         store
             .set_local_settings(
@@ -1737,11 +1741,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local.clone()), get),
-            (SettingsFile::Local(local), &80)
+            (SettingsFile::Local(local), Some(&80))
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::User, get),
-            (SettingsFile::Default, &default_value)
+            (SettingsFile::Default, Some(&default_value))
         );
     }
 
@@ -1818,11 +1822,11 @@ mod tests {
         // each local child should only inherit from it's parent
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_2_child), get),
-            (SettingsFile::Local(local_2), &2)
+            (SettingsFile::Local(local_2), Some(&2))
         );
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_1_child.clone()), get),
-            (SettingsFile::Local(local_1.clone()), &1)
+            (SettingsFile::Local(local_1.clone()), Some(&1))
         );
 
         // adjacent children should be treated as siblings not inherit from each other
@@ -1848,7 +1852,7 @@ mod tests {
 
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_1_adjacent_child.clone()), get),
-            (SettingsFile::Local(local_1.clone()), &1)
+            (SettingsFile::Local(local_1.clone()), Some(&1))
         );
         store
             .set_local_settings(
@@ -1870,7 +1874,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             store.get_value_from_file(SettingsFile::Local(local_1_child), get),
-            (SettingsFile::Local(local_1), &1)
+            (SettingsFile::Local(local_1), Some(&1))
         );
     }
 

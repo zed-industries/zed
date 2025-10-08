@@ -17,6 +17,7 @@ use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
     StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
 };
+pub use ui_input::font_picker;
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -357,8 +358,6 @@ impl Onboarding {
     }
 
     fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ai_setup_page = matches!(self.selected_page, SelectedPage::AiSetup);
-
         v_flex()
             .h_full()
             .w(rems_from_px(220.))
@@ -398,106 +397,94 @@ impl Onboarding {
                                     .children(self.render_nav_buttons(window, cx)),
                             )
                             .map(|this| {
-                                let keybinding = KeyBinding::for_action_in(
-                                    &Finish,
-                                    &self.focus_handle,
-                                    window,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.)));
-
-                                if ai_setup_page {
+                                if let Some(user) = self.user_store.read(cx).current_user() {
                                     this.child(
-                                        ButtonLike::new("start_building")
-                                            .style(ButtonStyle::Outlined)
-                                            .size(ButtonSize::Medium)
+                                        v_flex()
+                                            .gap_1()
                                             .child(
                                                 h_flex()
-                                                    .ml_1()
+                                                    .ml_2()
+                                                    .gap_2()
+                                                    .max_w_full()
                                                     .w_full()
-                                                    .justify_between()
-                                                    .child(Label::new("Start Building"))
-                                                    .children(keybinding),
+                                                    .child(Avatar::new(user.avatar_uri.clone()))
+                                                    .child(
+                                                        Label::new(user.github_login.clone())
+                                                            .truncate(),
+                                                    ),
                                             )
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            }),
+                                            .child(
+                                                ButtonLike::new("open_account")
+                                                    .size(ButtonSize::Medium)
+                                                    .child(
+                                                        h_flex()
+                                                            .ml_1()
+                                                            .w_full()
+                                                            .justify_between()
+                                                            .child(Label::new("Open Account"))
+                                                            .children(
+                                                                KeyBinding::for_action_in(
+                                                                    &OpenAccount,
+                                                                    &self.focus_handle,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                                .map(|kb| {
+                                                                    kb.size(rems_from_px(12.))
+                                                                }),
+                                                            ),
+                                                    )
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(
+                                                            OpenAccount.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    }),
+                                            ),
                                     )
                                 } else {
                                     this.child(
-                                        ButtonLike::new("skip_all")
+                                        ButtonLike::new("sign_in")
                                             .size(ButtonSize::Medium)
                                             .child(
                                                 h_flex()
                                                     .ml_1()
                                                     .w_full()
                                                     .justify_between()
-                                                    .child(
-                                                        Label::new("Skip All").color(Color::Muted),
-                                                    )
-                                                    .children(keybinding),
+                                                    .child(Label::new("Sign In"))
+                                                    .children(
+                                                        KeyBinding::for_action_in(
+                                                            &SignIn,
+                                                            &self.focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                                    ),
                                             )
                                             .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                                telemetry::event!("Welcome Sign In Clicked");
+                                                window.dispatch_action(SignIn.boxed_clone(), cx);
                                             }),
                                     )
                                 }
                             }),
                     ),
             )
-            .child(
-                if let Some(user) = self.user_store.read(cx).current_user() {
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            h_flex()
-                                .ml_2()
-                                .gap_2()
-                                .max_w_full()
-                                .w_full()
-                                .child(Avatar::new(user.avatar_uri.clone()))
-                                .child(Label::new(user.github_login.clone()).truncate()),
-                        )
-                        .child(
-                            ButtonLike::new("open_account")
-                                .size(ButtonSize::Medium)
-                                .child(
-                                    h_flex()
-                                        .ml_1()
-                                        .w_full()
-                                        .justify_between()
-                                        .child(Label::new("Open Account"))
-                                        .children(
-                                            KeyBinding::for_action_in(
-                                                &OpenAccount,
-                                                &self.focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(12.))),
-                                        ),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(OpenAccount.boxed_clone(), cx);
-                                }),
-                        )
-                        .into_any_element()
-                } else {
-                    Button::new("sign_in", "Sign In")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .size(ButtonSize::Medium)
-                        .key_binding(
-                            KeyBinding::for_action_in(&SignIn, &self.focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            telemetry::event!("Welcome Sign In Clicked");
-                            window.dispatch_action(SignIn.boxed_clone(), cx);
-                        })
-                        .into_any_element()
-                },
-            )
+            .child({
+                Button::new("start_building", "Start Building")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
+                    .key_binding(
+                        KeyBinding::for_action_in(&Finish, &self.focus_handle, window, cx)
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                    )
+                    .on_click(|_, window, cx| {
+                        telemetry::event!("Welcome Start Building Clicked");
+                        window.dispatch_action(Finish.boxed_clone(), cx);
+                    })
+            })
     }
 
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {

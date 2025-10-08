@@ -1225,7 +1225,7 @@ impl Item for TerminalView {
                 let cwd = project
                     .active_project_directory(cx)
                     .map(|it| it.to_path_buf());
-                project.clone_terminal(self.terminal(), cx, || cwd)
+                project.clone_terminal(self.terminal(), cx, cwd)
             })
             .ok()?
             .log_err()?;
@@ -1255,10 +1255,6 @@ impl Item for TerminalView {
 
     fn can_save_as(&self, _cx: &App) -> bool {
         false
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {

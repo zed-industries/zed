@@ -35,10 +35,6 @@ Each channel has a notes file associated with it to keep track of current status
 
 This is similar to a Google Doc, except powered by Zed's collaborative software and persisted to our servers.
 
-## Chat
-
-The chat is also there for quickly sharing context without a microphone, getting questions answered, or however else you'd want to use a chat channel.
-
 ## Inviting people
 
 By default, channels you create can only be accessed by you. You can invite collaborators by right clicking and selecting `Manage members`.
@@ -51,6 +47,6 @@ Once you have added someone, they can either join your channel by clicking on it
 
 A Channel can also be made Public. This allows anyone to join the channel by clicking on the link.
 
-Guest users in channels can hear and see everything that is happening, and have read only access to projects and channel notes. They can use the Chat as normal.
+Guest users in channels can hear and see everything that is happening, and have read only access to projects and channel notes.
 
 If you'd like to invite a guest to participate in a channel for the duration of a call you can do so by right clicking on them in the Collaboration Panel. "Allowing Write Access" will allow them to edit any projects shared into the call, and to use their microphone and share their screen if they wish.
