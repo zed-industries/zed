@@ -360,7 +360,7 @@ mod tests {
     use editor::test::editor_test_context::assert_state_with_diff;
     use gpui::TestAppContext;
     use project::{FakeFs, Fs, Project};
-    use settings::{Settings, SettingsStore};
+    use settings::SettingsStore;
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
@@ -374,7 +374,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             editor::init_settings(cx);
-            theme::ThemeSettings::register(cx)
+            theme::init(theme::LoadThemes::JustBase, cx);
         });
     }
 

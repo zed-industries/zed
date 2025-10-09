@@ -207,6 +207,26 @@ impl NeovimBackedTestContext {
         }
     }
 
+    pub async fn new_tsx(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+        #[cfg(feature = "neovim")]
+        cx.executor().allow_parking();
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(':')
+            .next_back()
+            .unwrap()
+            .to_string();
+        Self {
+            cx: VimTestContext::new_tsx(cx).await,
+            neovim: NeovimConnection::new(test_name).await,
+
+            last_set_state: None,
+            recent_keystrokes: Default::default(),
+        }
+    }
+
     pub async fn set_shared_state(&mut self, marked_text: &str) {
         let mode = if marked_text.contains('»') {
             Mode::Visual

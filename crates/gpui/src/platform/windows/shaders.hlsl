@@ -107,6 +107,12 @@ float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, Bounds clip_bo
     return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
+float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bounds clip_bounds, TransformationMatrix transformation) {
+    float2 position = unit_vertex * bounds.size + bounds.origin;
+    float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
+    return distance_from_clip_rect_impl(transformed, clip_bounds);
+}
+
 // Convert linear RGB to sRGB
 float3 linear_to_srgb(float3 color) {
     return pow(color, float3(2.2, 2.2, 2.2));
@@ -654,7 +660,14 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // out on each straight line, rather than around the whole
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-                float border_width = is_horizontal ? border.x : border.y;
+                // Choosing the right border width for dashed borders.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
+                float2 dashed_border = float2(
+                    max(quad.border_widths.bottom, quad.border_widths.top),
+                    max(quad.border_widths.right, quad.border_widths.left)
+                );
+                float border_width = is_horizontal ? dashed_border.x : dashed_border.y;
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;
@@ -1088,7 +1101,7 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     MonochromeSprite sprite = mono_sprites[sprite_id];
     float4 device_position =
         to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
     float4 color = hsla_to_rgba(sprite.color);
 

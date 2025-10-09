@@ -65,7 +65,13 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
+/// Runs the provided migrations on the given text.
+/// Will automatically return `Ok(None)` if there's no content to migrate.
 fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
     for migration in migrations.iter() {
@@ -369,6 +375,11 @@ mod tests {
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
         assert_migrated_correctly(migrated, output);
+    }
+
+    #[test]
+    fn test_empty_content() {
+        assert_migrate_settings("", None)
     }
 
     #[test]

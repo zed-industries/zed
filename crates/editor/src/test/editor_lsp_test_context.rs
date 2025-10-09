@@ -262,6 +262,77 @@ impl EditorLspTestContext {
         Self::new(language, capabilities, cx).await
     }
 
+    pub async fn new_tsx(
+        capabilities: lsp::ServerCapabilities,
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
+        let mut word_characters: HashSet<char> = Default::default();
+        word_characters.insert('$');
+        word_characters.insert('#');
+        let language = Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["tsx".to_string()],
+                    ..Default::default()
+                },
+                brackets: language::BracketPairConfig {
+                    pairs: vec![language::BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        surround: true,
+                        newline: true,
+                    }],
+                    disabled_scopes_by_bracket_ix: Default::default(),
+                },
+                word_characters,
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("(" @open ")" @close)
+                ("[" @open "]" @close)
+                ("{" @open "}" @close)
+                ("<" @open ">" @close)
+                ("<" @open "/>" @close)
+                ("</" @open ">" @close)
+                ("\"" @open "\"" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
+                ((jsx_element (jsx_opening_element) @open (jsx_closing_element) @close) (#set! newline.only))"#})),
+            indents: Some(Cow::from(indoc! {r#"
+                [
+                    (call_expression)
+                    (assignment_expression)
+                    (member_expression)
+                    (lexical_declaration)
+                    (variable_declaration)
+                    (assignment_expression)
+                    (if_statement)
+                    (for_statement)
+                ] @indent
+
+                (_ "[" "]" @end) @indent
+                (_ "<" ">" @end) @indent
+                (_ "{" "}" @end) @indent
+                (_ "(" ")" @end) @indent
+
+                (jsx_opening_element ">" @end) @indent
+
+                (jsx_element
+                  (jsx_opening_element) @start
+                  (jsx_closing_element)? @end) @indent
+                "#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
+
+        Self::new(language, capabilities, cx).await
+    }
+
     pub async fn new_html(cx: &mut gpui::TestAppContext) -> Self {
         let language = Language::new(
             LanguageConfig {
@@ -369,7 +440,7 @@ impl EditorLspTestContext {
     }
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.lsp.notify::<T>(&params);
+        self.lsp.notify::<T>(params);
     }
 
     #[cfg(target_os = "windows")]

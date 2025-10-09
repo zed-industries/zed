@@ -76,7 +76,7 @@
   "ui_font_size": 16,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
-  // The default font size for user messages in the agent panel. Falls back to the buffer font size if unset.
+  // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
@@ -1311,15 +1311,18 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
-    // Whether edit predictions are enabled when editing text threads.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
-
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null
-    }
+    },
+    "codestral": {
+      "model": null,
+      "max_tokens": null
+    },
+    // Whether edit predictions are enabled when editing text threads.
+    // This setting has no effect if globally disabled.
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1401,8 +1404,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -1424,8 +1427,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
