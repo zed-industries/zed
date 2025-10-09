@@ -14384,10 +14384,7 @@ impl Editor {
                 let mut next_selected_range = None;
 
                 // Collect and sort selection ranges for efficient overlap checking
-                let mut selection_ranges: Vec<_> = selections
-                    .iter()
-                    .map(|s| s.range())
-                    .collect();
+                let mut selection_ranges: Vec<_> = selections.iter().map(|s| s.range()).collect();
                 selection_ranges.sort_by_key(|r| r.start);
 
                 let bytes_after_last_selection =
@@ -14412,15 +14409,17 @@ impl Editor {
                             && !buffer.is_inside_word(offset_range.end, None))
                     {
                         // Use binary search to check for overlap (O(log n))
-                        let overlaps = selection_ranges.binary_search_by(|range| {
-                            if range.end <= offset_range.start {
-                                std::cmp::Ordering::Less
-                            } else if range.start >= offset_range.end {
-                                std::cmp::Ordering::Greater
-                            } else {
-                                std::cmp::Ordering::Equal
-                            }
-                        }).is_ok();
+                        let overlaps = selection_ranges
+                            .binary_search_by(|range| {
+                                if range.end <= offset_range.start {
+                                    std::cmp::Ordering::Less
+                                } else if range.start >= offset_range.end {
+                                    std::cmp::Ordering::Greater
+                                } else {
+                                    std::cmp::Ordering::Equal
+                                }
+                            })
+                            .is_ok();
 
                         if !overlaps {
                             next_selected_range = Some(offset_range);
