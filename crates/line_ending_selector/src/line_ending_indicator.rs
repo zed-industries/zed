@@ -30,6 +30,10 @@ impl LineEndingIndicator {
 
 impl Render for LineEndingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !StatusBarSettings::get_global(cx).line_endings_button {
+            return div();
+        }
+
         div().when_some(self.line_ending.as_ref(), |el, line_ending| {
             el.child(
                 Button::new("change-line-ending", line_ending.label())
@@ -62,9 +66,5 @@ impl StatusItemView for LineEndingIndicator {
             self._observe_active_editor = None;
         }
         cx.notify();
-    }
-
-    fn visible(&self, cx: &App) -> bool {
-        StatusBarSettings::get_global(cx).line_endings_button
     }
 }

@@ -104,8 +104,4 @@ impl StatusItemView for ImageInfo {
         }
         cx.notify();
     }
-
-    fn visible(&self, _: &App) -> bool {
-        self.metadata.is_some()
-    }
 }

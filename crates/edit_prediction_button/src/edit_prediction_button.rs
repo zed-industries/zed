@@ -70,6 +70,11 @@ enum SupermavenButtonStatus {
 
 impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Return empty div if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return div();
+        }
+
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
@@ -936,15 +941,6 @@ impl StatusItemView for EditPredictionButton {
             self.editor_enabled = None;
         }
         cx.notify();
-    }
-
-    fn visible(&self, cx: &App) -> bool {
-        let ai_enabled = !DisableAiSettings::get_global(cx).disable_ai;
-        let provider = all_language_settings(None, cx).edit_predictions.provider;
-
-        ai_enabled
-            && provider != EditPredictionProvider::None
-            && (provider != EditPredictionProvider::Copilot || Copilot::global(cx).is_some())
     }
 }
 
