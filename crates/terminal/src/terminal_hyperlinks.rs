@@ -214,22 +214,20 @@ fn sanitize_file_path<T: EventListener>(
         shrink_by(0, 1, &mut word_match, &mut file_path);
     }
 
-    if let Some((left_byte_count, right_byte_count)) = path_surrounded_by_common_symbols(file_path)
-    {
+    let common_symbols = path_surrounded_by_common_symbols(file_path);
+    if let Some((left_byte_count, right_byte_count)) = common_symbols {
         shrink_by(
             left_byte_count,
             right_byte_count,
             &mut word_match,
             &mut file_path,
         );
-        if is_path_surrounded_by_quotes(file_path) {
-            shrink_by(1, 1, &mut word_match, &mut file_path);
-        }
-    } else if is_path_surrounded_by_quotes(file_path) {
-        shrink_by(1, 1, &mut word_match, &mut file_path);
     }
 
-    let row_col_delim_count = file_path.chars().filter(|&c| ":()".contains(c)).count();
+    let quotes = is_path_surrounded_by_quotes(file_path);
+    if quotes {
+        shrink_by(1, 1, &mut word_match, &mut file_path);
+    }
 
     // strip trailing comment after colon in case of
     //   file/at/path.rs:row:column:description or error message
@@ -237,7 +235,8 @@ fn sanitize_file_path<T: EventListener>(
     // or
     //   file/at/path.rs(row,column):description or error message
     //   so that the file path is `file/at/path.rs(row,column)`
-    if row_col_delim_count > 2
+    if common_symbols.is_none()
+        && !quotes
         && let Some(last_colon_index) = file_path.rfind(':')
         && let PathWithPosition {
             row: Some(_),
@@ -245,8 +244,8 @@ fn sanitize_file_path<T: EventListener>(
             ..
         } = PathWithPosition::parse_str(&file_path[..last_colon_index])
     {
-        let desc_len = file_path.len() - last_colon_index;
-        shrink_by(0, desc_len, &mut word_match, &mut file_path);
+        let desc_byte_count = file_path.len() - last_colon_index;
+        shrink_by(0, desc_byte_count, &mut word_match, &mut file_path);
         if !word_match.contains(&point) {
             return None;
         }
@@ -803,6 +802,27 @@ mod tests {
                 test_path!(
                     "‹«test/controllers/template_items_controller_test.rb»:«19»›:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
+            }
+
+            #[test]
+            #[cfg_attr(
+                not(target_os = "windows"),
+                should_panic(
+                    expected = "Path = «/test/cool.rs:4:NotDesc», at grid cells (0, 1)..=(7, 2)"
+                )
+            )]
+            #[cfg_attr(
+                target_os = "windows",
+                should_panic(
+                    expected = r#"Path = «C:\\test\\cool.rs:4:NotDesc», at grid cells (0, 1)..=(9, 0)"#
+                )
+            )]
+            // PathWithPosition::parse_str considers "/test/co👉ol.rs:4:NotDesc" invalid input, but
+            // still succeedes and truncates the part after the position. Ideally this would be
+            // parsed as the path "/test/co👉ol.rs:4:NotDesc" with no position.
+            fn path_with_position_parse_str() {
+                test_path!("`‹«/test/co👉ol.rs:4:NotDesc»›`");
+                test_path!("<‹«/test/co👉ol.rs:4:NotDesc»›>");
             }
         }
 
