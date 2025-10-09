@@ -613,7 +613,6 @@ impl SettingsPageItem {
         &self,
         settings_window: &SettingsWindow,
         section_header: &'static str,
-        item_index: usize,
         is_last: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -637,7 +636,7 @@ impl SettingsPageItem {
                 let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
                 h_flex()
-                    .id((setting_item.title, item_index))
+                    .id(setting_item.title)
                     .min_w_0()
                     .gap_2()
                     .justify_between()
@@ -706,7 +705,7 @@ impl SettingsPageItem {
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
-                .id((sub_page_link.title, item_index))
+                .id(sub_page_link.title)
                 .w_full()
                 .min_w_0()
                 .gap_2()
@@ -1730,6 +1729,7 @@ impl SettingsWindow {
                     v_flex()
                         .w_full()
                         .min_w_0()
+                        .id(("settings-page-item", actual_item_index))
                         .when_some(page_index, |element, page_index| {
                             element.track_focus(
                                 &self.content_handles[page_index][actual_item_index]
@@ -1739,7 +1739,6 @@ impl SettingsWindow {
                         .child(item.render(
                             self,
                             section_header.expect("All items rendered after a section header"),
-                            index,
                             no_bottom_border || is_last,
                             window,
                             cx,
