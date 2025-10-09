@@ -224,7 +224,7 @@ impl ShellKind {
             Self::Tcsh => input.to_owned(),
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
-            Self::Xonsh => input.to_owned()
+            Self::Xonsh => input.to_owned(),
         }
     }
 

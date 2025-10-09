@@ -137,7 +137,12 @@ async fn capture_windows(
 
     let shell_kind = ShellKind::new(shell_path);
     let env_output = match shell_kind {
-        ShellKind::Posix | ShellKind::Csh | ShellKind::Tcsh | ShellKind::Rc | ShellKind::Fish | ShellKind::Xonsh => {
+        ShellKind::Posix
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Fish
+        | ShellKind::Xonsh => {
             return Err(anyhow::anyhow!("unsupported shell kind"));
         }
         ShellKind::PowerShell => {
