@@ -159,11 +159,19 @@ impl RainbowBracketTracker {
         let current_edit_count = buffer.edit_count();
         if self.cached_edit_count == Some(current_edit_count) {
             // Buffer unchanged - use cached nesting levels
-            eprintln!("🟢 CACHE HIT: Using cached brackets (edit_count={}, {} brackets)", current_edit_count, self.nesting_levels.len());
+            log::trace!(
+                "rainbow_brackets: cache hit (edit_count={}, brackets={})",
+                current_edit_count,
+                self.nesting_levels.len()
+            );
             return;
         }
 
-        eprintln!("🔴 CACHE MISS: Recalculating brackets (old={:?}, new={})", self.cached_edit_count, current_edit_count);
+        log::trace!(
+            "rainbow_brackets: cache miss (old_edit_count={:?}, new_edit_count={})",
+            self.cached_edit_count,
+            current_edit_count
+        );
 
         // IMPORTANT: Calculate nesting levels for the ENTIRE buffer, not just viewport!
         // This ensures colors stay consistent when scrolling.
@@ -179,7 +187,11 @@ impl RainbowBracketTracker {
             let mut brackets: Vec<(usize, bool, Range<usize>)> = Vec::new();
 
             let pairs_vec: Vec<_> = pairs.collect();
-            eprintln!("📋 Tree-sitter found {} bracket pairs in buffer range 0..{}", pairs_vec.len(), entire_buffer_range.end);
+            log::trace!(
+                "rainbow_brackets: tree-sitter pairs found count={} buffer_end={}",
+                pairs_vec.len(),
+                entire_buffer_range.end
+            );
 
             for (open_range, close_range) in pairs_vec {
                 brackets.push((open_range.start, true, open_range));
@@ -220,12 +232,16 @@ impl RainbowBracketTracker {
             // If tree-sitter returns 0 brackets, don't cache - it might not be ready yet.
             if !self.nesting_levels.is_empty() {
                 self.cached_edit_count = Some(current_edit_count);
-                eprintln!("✅ Cached {} brackets for edit_count={}", self.nesting_levels.len(), current_edit_count);
+                log::trace!(
+                    "rainbow_brackets: cached brackets count={} edit_count={}",
+                    self.nesting_levels.len(),
+                    current_edit_count
+                );
             } else {
-                eprintln!("⏳ Tree-sitter not ready yet (0 brackets), will retry...");
+                log::trace!("rainbow_brackets: tree-sitter not ready yet (0 brackets)");
             }
         } else {
-            eprintln!("⚠️ buffer.bracket_ranges() returned None");
+            log::trace!("rainbow_brackets: buffer.bracket_ranges() returned None");
         }
     }
 
@@ -254,27 +270,19 @@ impl RainbowBracketTracker {
         scroll_distance > threshold
     }
 
+    // get_bracket_highlights remains for tests and potential future API uses.
+    // It returns base colors without animation to avoid extra overhead.
+    #[cfg(test)]
     pub fn get_bracket_highlights(&self) -> Vec<(Range<Anchor>, HighlightStyle)> {
         if !self.enabled {
             return Vec::new();
         }
 
-        self.nesting_levels
+        self
+            .nesting_levels
             .iter()
             .map(|(range, level)| {
-                let base_color = self.get_color_for_level(*level);
-
-                // Check if this bracket is part of the active scope
-                let is_active = if let Some(ref active) = self.active_scope {
-                    range.start == active.start || range.end == active.end
-                } else {
-                    false
-                };
-
-                // Apply animation effects (fade-in cascade + active glow)
-                let color = self.apply_animation(base_color, *level, is_active);
-
-                // Use TEXT color for gradient rainbow effect
+                let color = self.get_color_for_level(*level);
                 (
                     range.clone(),
                     HighlightStyle {
@@ -306,6 +314,7 @@ impl RainbowBracketTracker {
         }
     }
 
+    #[cfg(test)]
     pub fn active_scope(&self) -> Option<Range<Anchor>> {
         self.active_scope.clone()
     }
@@ -357,6 +366,7 @@ impl RainbowBracketTracker {
     /// Apply animation effects to a color
     /// depth: nesting level (for cascade delay)
     /// is_active: whether this bracket is in the active scope
+    #[cfg(test)]
     pub(crate) fn apply_animation(&self, color: Hsla, depth: u32, is_active: bool) -> Hsla {
         let mut result = color;
 
@@ -419,13 +429,14 @@ enum RainbowBracketHighlight8 {}
 enum RainbowBracketHighlight9 {}
 enum RainbowBracketHighlight10 {}
 enum RainbowBracketHighlight11 {}
+enum RainbowBracketActiveHighlight {}
 
 pub fn refresh_rainbow_brackets(
     editor: &mut Editor,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    use crate::editor_settings::EditorSettings;
+    use crate::editor_settings::{EditorSettings, RainbowMode as SettingsRainbowMode};
 
     // Clear all highlight types
     editor.clear_highlights::<RainbowBracketHighlight0>(cx);
@@ -440,14 +451,32 @@ pub fn refresh_rainbow_brackets(
     editor.clear_highlights::<RainbowBracketHighlight9>(cx);
     editor.clear_highlights::<RainbowBracketHighlight10>(cx);
     editor.clear_highlights::<RainbowBracketHighlight11>(cx);
+    editor.clear_highlights::<RainbowBracketActiveHighlight>(cx);
 
     if !editor.rainbow_bracket_tracker.is_enabled() {
         return;
     }
 
-    // Update animation settings from EditorSettings and extract max_brackets
+    // Update settings-driven configuration
     let settings = EditorSettings::get_global(cx);
     let max_brackets = settings.rainbow_brackets.max_brackets as usize;
+    let animate_glow = settings.rainbow_brackets.animate_glow;
+    // Ensure tracker enabled flag follows settings
+    editor
+        .rainbow_bracket_tracker
+        .set_enabled(settings.rainbow_brackets.enabled);
+    // Map coloring mode from editor settings
+    let mode = match settings.rainbow_brackets.mode {
+        SettingsRainbowMode::Gradient => RainbowMode::Gradient,
+        SettingsRainbowMode::Classic => RainbowMode::Classic,
+    };
+    editor.rainbow_bracket_tracker.set_mode(mode);
+    // Apply gradient configuration from settings
+    editor.rainbow_bracket_tracker.set_gradient_config(GradientConfig {
+        start_hue: settings.rainbow_brackets.gradient_start_hue,
+        step_degrees: settings.rainbow_brackets.gradient_step,
+        ..GradientConfig::default()
+    });
     editor.rainbow_bracket_tracker.update_animation_settings(
         settings.rainbow_brackets.animate_fade,
         settings.rainbow_brackets.animate_glow,
@@ -456,6 +485,16 @@ pub fn refresh_rainbow_brackets(
 
     let snapshot = editor.snapshot(window, cx);
     let buffer = snapshot.buffer_snapshot();
+
+    // Keep active scope updated for glow when enabled
+    if animate_glow {
+        let cursor_anchor = editor.selections.newest_anchor().head();
+        editor
+            .rainbow_bracket_tracker
+            .update_active_scope(cursor_anchor, &buffer);
+    } else {
+        editor.rainbow_bracket_tracker.active_scope = None;
+    }
 
     // Get the visible viewport range
     let start_anchor = snapshot.display_snapshot.buffer_snapshot().anchor_before(0);
@@ -475,11 +514,18 @@ pub fn refresh_rainbow_brackets(
     let mut by_level: [Vec<(Range<Anchor>, Hsla)>; 12] = Default::default();
 
     let bracket_count = editor.rainbow_bracket_tracker.nesting_levels.len();
-    eprintln!("🎨 refresh_rainbow_brackets: Processing {} brackets", bracket_count);
+    log::trace!(
+        "rainbow_brackets: refresh processing brackets count={}",
+        bracket_count
+    );
 
     // Performance safety: Don't try to highlight an absurd number of brackets
     if bracket_count > max_brackets {
-        eprintln!("⚠️ Too many brackets ({}) - skipping rainbow highlighting (max: {})", bracket_count, max_brackets);
+        log::debug!(
+            "rainbow_brackets: too many brackets count={} max={}, skipping",
+            bracket_count,
+            max_brackets
+        );
         return;
     }
 
@@ -494,16 +540,22 @@ pub fn refresh_rainbow_brackets(
         by_level[color_index].push((range.clone(), color));
     }
 
-    eprintln!("🎨 Color buckets: 0={}, 1={}, 2={}, 3={}, 4={}, 5={}",
+    log::trace!(
+        "rainbow_brackets: bucket sizes 0={} 1={} 2={} 3={} 4={} 5={}",
         by_level[0].len(), by_level[1].len(), by_level[2].len(),
-        by_level[3].len(), by_level[4].len(), by_level[5].len());
+        by_level[3].len(), by_level[4].len(), by_level[5].len()
+    );
 
-    // Apply highlights using different type for each level
+    // Apply highlights using different type for each level, with optional fade alpha
     macro_rules! apply_level {
         ($index:literal, $type:ty) => {
             if !by_level[$index].is_empty() {
                 let ranges: Vec<_> = by_level[$index].iter().map(|(r, _)| r.clone()).collect();
-                let color = by_level[$index][0].1; // All brackets at this level have same color
+                let mut color = by_level[$index][0].1; // All brackets at this level have same color
+                // If fade is active, apply a uniform alpha for this frame
+                if let Some(alpha) = editor.rainbow_bracket_tracker.calculate_fade_progress() {
+                    color = hsla(color.h, color.s, color.l, alpha);
+                }
                 editor.highlight_text::<$type>(
                     ranges,
                     HighlightStyle {
@@ -528,6 +580,35 @@ pub fn refresh_rainbow_brackets(
     apply_level!(9, RainbowBracketHighlight9);
     apply_level!(10, RainbowBracketHighlight10);
     apply_level!(11, RainbowBracketHighlight11);
+
+    // Overlay active bracket glow as a separate highlight, if enabled
+    if animate_glow {
+        if let Some(active) = &editor.rainbow_bracket_tracker.active_scope {
+            let mut active_ranges: Vec<(Range<Anchor>, Hsla)> = Vec::new();
+            for (range, &level) in &editor.rainbow_bracket_tracker.nesting_levels {
+                if range.start == active.start || range.end == active.end {
+                    let mut color = editor.rainbow_bracket_tracker.get_color_for_level(level);
+                    let glow = editor.rainbow_bracket_tracker.calculate_glow_intensity();
+                    let lightness_boost = 0.2 * (glow - 0.8) / 0.2;
+                    color = hsla(color.h, color.s, (color.l + lightness_boost).min(1.0), color.a);
+                    if let Some(alpha) = editor.rainbow_bracket_tracker.calculate_fade_progress() {
+                        color = hsla(color.h, color.s, color.l, alpha);
+                    }
+                    active_ranges.push((range.clone(), color));
+                }
+            }
+
+            if !active_ranges.is_empty() {
+                let ranges: Vec<_> = active_ranges.iter().map(|(r, _)| r.clone()).collect();
+                let color = active_ranges[0].1;
+                editor.highlight_text::<RainbowBracketActiveHighlight>(
+                    ranges,
+                    HighlightStyle { color: Some(color), ..Default::default() },
+                    cx,
+                );
+            }
+        }
+    }
 
     // Request animation frame if needed
     editor.rainbow_bracket_tracker.complete_fade_if_done();

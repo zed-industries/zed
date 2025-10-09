@@ -22,6 +22,7 @@
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
 - [Visual Customization](./visual-customization.md)
+- [Rainbow Brackets](./rainbow_brackets.md)
 - [Vim Mode](./vim.md)
 - [Helix Mode](./helix.md)
 
