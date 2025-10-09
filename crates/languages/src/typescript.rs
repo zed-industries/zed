@@ -1108,9 +1108,11 @@ mod tests {
                 .collect::<Vec<_>>(),
             &[
                 ("function normalFunction()", 0),
+                ("log normal", 1),
                 ("function* simpleGenerator()", 0),
                 ("async function* asyncGenerator()", 0),
                 ("function* generatorWithParams( )", 0),
+                ("let i", 1),
                 ("class TestClass", 0),
                 ("*methodGenerator()", 1),
                 ("async *asyncMethodGenerator()", 1),
