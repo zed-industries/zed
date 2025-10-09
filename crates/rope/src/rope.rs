@@ -347,6 +347,30 @@ impl Rope {
         Chunks::new(self, range, true)
     }
 
+    /// Formats the rope's text with the specified line ending string.
+    /// This replaces all `\n` characters with the provided line ending.
+    ///
+    /// The rope internally stores all line breaks as `\n` (see `Display` impl).
+    /// Use this method to convert to different line endings (e.g., `\r\n` for Windows).
+    pub fn to_string_with_line_ending(&self, line_ending: &str) -> String {
+        if line_ending == "\n" {
+            // Fast path: if line ending is already \n, use Display impl
+            self.to_string()
+        } else {
+            // Replace \n with the specified line ending
+            let mut result = String::new();
+            for chunk in self.chunks() {
+                if line_ending == "\r\n" {
+                    // Optimize for Windows line endings
+                    result.push_str(&chunk.replace('\n', "\r\n"));
+                } else {
+                    result.push_str(&chunk.replace('\n', line_ending));
+                }
+            }
+            result
+        }
+    }
+
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
         if offset >= self.summary().len {
             return self.summary().len_utf16;
@@ -537,6 +561,12 @@ impl From<&String> for Rope {
     }
 }
 
+/// Display implementation for Rope.
+///
+/// Note: This always uses `\n` as the line separator, regardless of the original
+/// file's line endings. The rope internally normalizes all line breaks to `\n`.
+/// If you need to preserve original line endings (e.g., for LSP communication),
+/// use `to_string_with_line_ending()` instead.
 impl fmt::Display for Rope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {
@@ -2218,6 +2248,53 @@ mod tests {
         for b in 0..=fixture.len() {
             assert_eq!(rope.ceil_char_boundary(b), ceil_char_boundary(&fixture, b));
         }
+    }
+
+    #[test]
+    fn test_to_string_with_line_ending() {
+        // Test Unix line endings (no conversion)
+        let rope = Rope::from("line1\nline2\nline3");
+        assert_eq!(rope.to_string_with_line_ending("\n"), "line1\nline2\nline3");
+
+        // Test Windows line endings
+        assert_eq!(
+            rope.to_string_with_line_ending("\r\n"),
+            "line1\r\nline2\r\nline3"
+        );
+
+        // Test custom line ending
+        assert_eq!(
+            rope.to_string_with_line_ending("\r"),
+            "line1\rline2\rline3"
+        );
+
+        // Test empty rope
+        let empty_rope = Rope::from("");
+        assert_eq!(empty_rope.to_string_with_line_ending("\r\n"), "");
+
+        // Test single line (no newlines)
+        let single_line = Rope::from("single line");
+        assert_eq!(
+            single_line.to_string_with_line_ending("\r\n"),
+            "single line"
+        );
+
+        // Test rope ending with newline
+        let ending_newline = Rope::from("line1\nline2\n");
+        assert_eq!(
+            ending_newline.to_string_with_line_ending("\r\n"),
+            "line1\r\nline2\r\n"
+        );
+
+        // Test large rope with multiple chunks
+        let mut large_rope = Rope::new();
+        for i in 0..100 {
+            large_rope.push(&format!("line{}\n", i));
+        }
+        let result = large_rope.to_string_with_line_ending("\r\n");
+        assert!(result.contains("\r\n"));
+        assert!(!result.contains("\n\n"));
+        assert_eq!(result.matches("\r\n").count(), 100);
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {

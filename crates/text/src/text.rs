@@ -2022,8 +2022,24 @@ impl BufferSnapshot {
         start..position
     }
 
+    /// Returns the buffer's text as a String.
+    ///
+    /// Note: This always uses `\n` as the line separator, regardless of the buffer's
+    /// actual line ending setting. For LSP communication or other cases where you need
+    /// to preserve the original line endings, use `text_with_line_endings()` instead.
     pub fn text(&self) -> String {
         self.visible_text.to_string()
+    }
+
+    /// Returns the buffer's text with the buffer's configured line endings preserved.
+    ///
+    /// Unlike `text()`, this method formats the text using the buffer's actual line
+    /// ending setting (Unix `\n` or Windows `\r\n`). This is essential for LSP
+    /// communication, as language servers expect to receive text with the same line
+    /// endings as the file on disk.
+    pub fn text_with_line_endings(&self) -> String {
+        self.visible_text
+            .to_string_with_line_ending(self.line_ending.as_str())
     }
 
     pub fn line_ending(&self) -> LineEnding {
