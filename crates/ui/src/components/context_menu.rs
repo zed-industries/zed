@@ -587,14 +587,9 @@ impl ContextMenu {
         disabled: bool,
         label: impl Into<SharedString>,
         action: Box<dyn Action>,
-        checked: bool,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
-            toggle: if checked {
-                Some((IconPosition::Start, true))
-            } else {
-                None
-            },
+            toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |context, window, cx| {
