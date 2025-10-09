@@ -252,8 +252,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        // TODO kb when hints are turned off in the editor and toggled on again, nothing happens
-        // TODO kb multi buffer is eager to hide the hints which is wrong
+        // TODO kb refactor this and other hints-related lengthy methods/functions
         if !self.mode.is_full() || self.inlay_hints.is_none() {
             return;
         }
@@ -272,7 +271,7 @@ impl Editor {
                     match inlay_hints.modifiers_override(enabled) {
                         Some(enabled) => {
                             if enabled {
-                                InvalidationStrategy::RefreshRequested(None)
+                                InvalidationStrategy::None
                             } else {
                                 self.splice_inlays(
                                     &visible_inlay_hints
@@ -338,7 +337,7 @@ impl Editor {
                 InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
                 InlayHintRefreshReason::BufferEdited => InvalidationStrategy::BufferEdited,
                 InlayHintRefreshReason::RefreshRequested(server_id) => {
-                    InvalidationStrategy::RefreshRequested(Some(server_id))
+                    InvalidationStrategy::RefreshRequested(server_id)
                 }
             };
             invalidate_cache
@@ -346,7 +345,9 @@ impl Editor {
 
         match &self.inlay_hints {
             Some(inlay_hints) => {
-                if !inlay_hints.enabled {
+                if !inlay_hints.enabled
+                    && !matches!(reason, InlayHintRefreshReason::ModifiersChanged(_))
+                {
                     return;
                 }
             }
@@ -721,6 +722,7 @@ impl Editor {
 #[cfg(test)]
 pub mod tests {
     use crate::editor_tests::update_test_language_settings;
+    use crate::inlays::inlay_hints::InlayHintRefreshReason;
     use crate::scroll::ScrollAmount;
     use crate::{Editor, SelectionEffects};
     use crate::{ExcerptRange, scroll::Autoscroll, test::editor_lsp_test_context::rust_lang};
@@ -2647,7 +2649,7 @@ pub mod tests {
                             lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
 
-                        let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
+                        let i = lsp_request_count.fetch_add(1, Ordering::AcqRel) + 1;
                         Ok(Some(vec![lsp::InlayHint {
                             position: lsp::Position::new(0, i),
                             label: lsp::InlayHintLabel::String(i.to_string()),
@@ -2766,6 +2768,232 @@ pub mod tests {
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
         }).unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_modifiers_change(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let (_, editor, _fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
+            let lsp_request_count = Arc::new(AtomicU32::new(0));
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                move |params, _| {
+                    let lsp_request_count = lsp_request_count.clone();
+                    async move {
+                        assert_eq!(
+                            params.text_document.uri,
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                        );
+
+                        let i = lsp_request_count.fetch_add(1, Ordering::AcqRel) + 1;
+                        Ok(Some(vec![lsp::InlayHint {
+                            position: lsp::Position::new(0, i),
+                            label: lsp::InlayHintLabel::String(i.to_string()),
+                            kind: None,
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        }]))
+                    }
+                },
+            );
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Should display inlays after toggle despite them disabled in settings"
+                );
+                assert_eq!(vec!["1".to_string()], visible_hint_labels(editor, cx));
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Nothing happens with the cache on modifiers change"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "On modifiers change and hints toggled on, should hide editor inlays"
+                );
+            })
+            .unwrap();
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["1".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "Nothing changes on concequent modifiers change of the same kind"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "When modifiers change is off, no extra requests are sent"
+                );
+                assert_eq!(
+                    vec!["1".to_string()],
+                    visible_hint_labels(editor, cx),
+                    "When modifiers change is off, hints are back into the editor"
+                );
+            })
+            .unwrap();
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["1".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(
+                    vec!["1".to_string()],
+                    visible_hint_labels(editor, cx),
+                    "Nothing changes on concequent modifiers change of the same kind (2)"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.toggle_inlay_hints(&crate::ToggleInlayHints, window, cx)
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Nothing happens with the cache on modifiers change"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "When toggled off, should hide editor inlays"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "Nothing happens with the cache on modifiers change"
+                );
+                assert_eq!(
+                    vec!["1".to_string()],
+                    visible_hint_labels(editor, cx),
+                    "On modifiers change & hints toggled off, should show editor inlays"
+                );
+            })
+            .unwrap();
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(true), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["1".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(
+                    vec!["1".to_string()],
+                    visible_hint_labels(editor, cx),
+                    "Nothing changes on concequent modifiers change of the same kind"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(
+                    vec!["1".to_string()],
+                    cached_hint_labels(editor, cx),
+                    "When modifiers change is off, no extra requests are sent"
+                );
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "When modifiers change is off, editor hints are back into their toggled off state"
+                );
+            })
+            .unwrap();
+        editor
+            .update(cx, |editor, _, cx| {
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert_eq!(vec!["1".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(
+                    Vec::<String>::new(),
+                    visible_hint_labels(editor, cx),
+                    "Nothing changes on concequent modifiers change of the same kind (3)"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
