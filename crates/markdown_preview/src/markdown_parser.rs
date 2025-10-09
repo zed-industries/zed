@@ -60,11 +60,11 @@ struct MarkdownParser<'a> {
 }
 
 #[derive(Debug)]
-struct ParseNodeContext {
+struct ParseHtmlNodeContext {
     list_item_depth: u16,
 }
 
-impl Default for ParseNodeContext {
+impl Default for ParseHtmlNodeContext {
     fn default() -> Self {
         Self { list_item_depth: 1 }
     }
@@ -835,7 +835,7 @@ impl<'a> MarkdownParser<'a> {
                 start..end,
                 &dom.document,
                 &mut elements,
-                &ParseNodeContext::default(),
+                &ParseHtmlNodeContext::default(),
             );
         }
 
@@ -847,7 +847,7 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
-        context: &ParseNodeContext,
+        context: &ParseHtmlNodeContext,
     ) {
         match &node.data {
             markup5ever_rcdom::NodeData::Document => {
@@ -962,7 +962,7 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
-        context: &ParseNodeContext,
+        context: &ParseHtmlNodeContext,
     ) {
         for node in node.children.borrow().iter() {
             self.parse_html_node(source_range.clone(), node, elements, context);
@@ -1055,7 +1055,7 @@ impl<'a> MarkdownParser<'a> {
                         source_range.clone(),
                         node,
                         &mut content,
-                        &ParseNodeContext {
+                        &ParseHtmlNodeContext {
                             list_item_depth: depth + 1,
                         },
                     );
@@ -1095,7 +1095,7 @@ impl<'a> MarkdownParser<'a> {
             source_range.clone(),
             node,
             &mut children,
-            &ParseNodeContext::default(),
+            &ParseHtmlNodeContext::default(),
         );
 
         if children.is_empty() {
