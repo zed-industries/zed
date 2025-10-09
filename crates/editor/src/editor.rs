@@ -6607,26 +6607,31 @@ impl Editor {
         &self.context_menu
     }
 
-    fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
-        let newest_selection = self.selections.newest_anchor().clone();
-        let newest_selection_adjusted = self.selections.newest_adjusted(cx);
-        let buffer = self.buffer.read(cx);
-        if newest_selection.head().diff_base_anchor.is_some() {
-            return None;
-        }
-        let (start_buffer, start) =
-            buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
-        let (end_buffer, end) =
-            buffer.text_anchor_for_position(newest_selection_adjusted.end, cx)?;
-        if start_buffer != end_buffer {
-            return None;
-        }
-
+    fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.code_actions_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
 
+            let (start_buffer, start, _, end, newest_selection) = this
+                .update(cx, |this, cx| {
+                    let newest_selection = this.selections.newest_anchor().clone();
+                    let newest_selection_adjusted = this.selections.newest_adjusted(cx);
+                    let buffer = this.buffer.read(cx);
+                    if newest_selection.head().diff_base_anchor.is_some() {
+                        return None;
+                    }
+                    let (start_buffer, start) =
+                        buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
+                    let (end_buffer, end) =
+                        buffer.text_anchor_for_position(newest_selection_adjusted.end, cx)?;
+
+                    Some((start_buffer, start, end_buffer, end, newest_selection))
+                })?
+                .filter(|(start_buffer, _, end_buffer, _, _)| start_buffer == end_buffer)
+                .context(
+                    "Expected selection to lie in a single buffer when refreshing code actions",
+                )?;
             let (providers, tasks) = this.update_in(cx, |this, window, cx| {
                 let providers = this.code_action_providers.clone();
                 let tasks = this
@@ -6667,7 +6672,6 @@ impl Editor {
                 cx.notify();
             })
         }));
-        None
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
