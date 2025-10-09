@@ -113,7 +113,9 @@ impl CursorPosition {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all_adjusted(cx) {
+                                    for selection in
+                                        editor.selections.all_adjusted_with_snapshot(&snapshot)
+                                    {
                                         let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
@@ -304,7 +306,7 @@ impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
 }
 
 impl Settings for LineIndicatorFormat {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         content.line_indicator_format.unwrap().into()
     }
 }

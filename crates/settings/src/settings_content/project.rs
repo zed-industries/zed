@@ -7,7 +7,9 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, ExtendingVec, SlashCommandSettings};
+use crate::{
+    AllLanguageSettingsContent, ExtendingVec, ProjectTerminalSettingsContent, SlashCommandSettings,
+};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -28,6 +30,9 @@ pub struct ProjectSettingsContent {
     /// Default: null
     #[serde(default)]
     pub lsp: HashMap<Arc<str>, LspSettings>,
+
+    #[serde(default)]
+    pub terminal: Option<ProjectTerminalSettingsContent>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]

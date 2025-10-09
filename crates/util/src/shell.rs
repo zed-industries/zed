@@ -11,6 +11,7 @@ pub enum ShellKind {
     PowerShell,
     Nushell,
     Cmd,
+    Xonsh,
 }
 
 pub fn get_system_shell() -> String {
@@ -165,6 +166,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Nushell => write!(f, "nu"),
             ShellKind::Cmd => write!(f, "cmd"),
             ShellKind::Rc => write!(f, "rc"),
+            ShellKind::Xonsh => write!(f, "xonsh"),
         }
     }
 }
@@ -197,6 +199,8 @@ impl ShellKind {
             ShellKind::Tcsh
         } else if program == "rc" {
             ShellKind::Rc
+        } else if program == "xonsh" {
+            ShellKind::Xonsh
         } else if program == "sh" || program == "bash" {
             ShellKind::Posix
         } else {
@@ -220,6 +224,7 @@ impl ShellKind {
             Self::Tcsh => input.to_owned(),
             Self::Rc => input.to_owned(),
             Self::Nushell => Self::to_nushell_variable(input),
+            Self::Xonsh => input.to_owned(),
         }
     }
 
@@ -345,7 +350,8 @@ impl ShellKind {
             | ShellKind::Fish
             | ShellKind::Csh
             | ShellKind::Tcsh
-            | ShellKind::Rc => interactive
+            | ShellKind::Rc
+            | ShellKind::Xonsh => interactive
                 .then(|| "-i".to_owned())
                 .into_iter()
                 .chain(["-c".to_owned(), combined_command])
@@ -353,11 +359,18 @@ impl ShellKind {
         }
     }
 
-    pub fn command_prefix(&self) -> Option<char> {
+    pub const fn command_prefix(&self) -> Option<char> {
         match self {
             ShellKind::PowerShell => Some('&'),
             ShellKind::Nushell => Some('^'),
             _ => None,
+        }
+    }
+
+    pub const fn sequential_commands_separator(&self) -> char {
+        match self {
+            ShellKind::Cmd => '&',
+            _ => ';',
         }
     }
 
@@ -369,5 +382,25 @@ impl ShellKind {
             ShellKind::PowerShell => Cow::Owned(arg.replace("\\\"", "`\"")),
             _ => arg,
         })
+    }
+
+    pub const fn activate_keyword(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "",
+            ShellKind::Nushell => "overlay use",
+            ShellKind::PowerShell => ".",
+            ShellKind::Fish => "source",
+            ShellKind::Csh => "source",
+            ShellKind::Tcsh => "source",
+            ShellKind::Posix | ShellKind::Rc => "source",
+            ShellKind::Xonsh => "source",
+        }
+    }
+
+    pub const fn clear_screen_command(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "cls",
+            _ => "clear",
+        }
     }
 }

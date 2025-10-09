@@ -5,13 +5,13 @@ use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
+use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
 use edit_prediction_context::{
-    DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
-    SyntaxIndexState,
+    DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use gpui::http_client::Method;
 use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
@@ -43,14 +43,20 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
-    max_bytes: 512,
-    min_bytes: 128,
-    target_before_cursor_over_total_bytes: 0.5,
+pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPredictionContextOptions {
+    use_imports: true,
+    excerpt: EditPredictionExcerptOptions {
+        max_bytes: 512,
+        min_bytes: 128,
+        target_before_cursor_over_total_bytes: 0.5,
+    },
+    score: EditPredictionScoreOptions {
+        omit_excerpt_overlaps: true,
+    },
 };
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
-    excerpt: DEFAULT_EXCERPT_OPTIONS,
+    context: DEFAULT_CONTEXT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::DEFAULT,
@@ -70,12 +76,12 @@ pub struct Zeta {
     projects: HashMap<EntityId, ZetaProject>,
     options: ZetaOptions,
     update_required: bool,
-    debug_tx: Option<mpsc::UnboundedSender<Result<PredictionDebugInfo, String>>>,
+    debug_tx: Option<mpsc::UnboundedSender<PredictionDebugInfo>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
-    pub excerpt: EditPredictionExcerptOptions,
+    pub context: EditPredictionContextOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
@@ -85,9 +91,10 @@ pub struct ZetaOptions {
 pub struct PredictionDebugInfo {
     pub context: EditPredictionContext,
     pub retrieval_time: TimeDelta,
-    pub request: RequestDebugInfo,
     pub buffer: WeakEntity<Buffer>,
     pub position: language::Anchor,
+    pub local_prompt: Result<String, String>,
+    pub response_rx: oneshot::Receiver<Result<RequestDebugInfo, String>>,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -198,7 +205,7 @@ impl Zeta {
         }
     }
 
-    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<Result<PredictionDebugInfo, String>> {
+    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<PredictionDebugInfo> {
         let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
         self.debug_tx = Some(debug_watch_tx);
         debug_watch_rx
@@ -501,6 +508,11 @@ impl Zeta {
 
         let diagnostics = snapshot.diagnostic_sets().clone();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -519,17 +531,14 @@ impl Zeta {
                 let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
-                    &options.excerpt,
+                    parent_abs_path.as_deref(),
+                    &options.context,
                     index_state.as_deref(),
                 ) else {
                     return Ok(None);
                 };
 
-                let debug_context = if let Some(debug_tx) = debug_tx {
-                    Some((debug_tx, context.clone()))
-                } else {
-                    None
-                };
+                let retrieval_time = chrono::Utc::now() - before_retrieval;
 
                 let (diagnostic_groups, diagnostic_groups_truncated) =
                     Self::gather_nearby_diagnostics(
@@ -538,6 +547,8 @@ impl Zeta {
                         &snapshot,
                         options.max_diagnostic_bytes,
                     );
+
+                let debug_context = debug_tx.map(|tx| (tx, context.clone()));
 
                 let request = make_cloud_request(
                     excerpt_path,
@@ -555,25 +566,45 @@ impl Zeta {
                     options.prompt_format,
                 );
 
-                let retrieval_time = chrono::Utc::now() - before_retrieval;
+                let debug_response_tx = if let Some((debug_tx, context)) = debug_context {
+                    let (response_tx, response_rx) = oneshot::channel();
+
+                    let local_prompt = PlannedPrompt::populate(&request)
+                        .and_then(|p| p.to_prompt_string().map(|p| p.0))
+                        .map_err(|err| err.to_string());
+
+                    debug_tx
+                        .unbounded_send(PredictionDebugInfo {
+                            context,
+                            retrieval_time,
+                            buffer: buffer.downgrade(),
+                            local_prompt,
+                            position,
+                            response_rx,
+                        })
+                        .ok();
+                    Some(response_tx)
+                } else {
+                    None
+                };
+
+                if cfg!(debug_assertions) && std::env::var("ZED_ZETA2_SKIP_REQUEST").is_ok() {
+                    if let Some(debug_response_tx) = debug_response_tx {
+                        debug_response_tx
+                            .send(Err("Request skipped".to_string()))
+                            .ok();
+                    }
+                    anyhow::bail!("Skipping request because ZED_ZETA2_SKIP_REQUEST is set")
+                }
+
                 let response = Self::perform_request(client, llm_token, app_version, request).await;
 
-                if let Some((debug_tx, context)) = debug_context {
-                    debug_tx
-                        .unbounded_send(response.as_ref().map_err(|err| err.to_string()).and_then(
-                            |response| {
-                                let Some(request) =
-                                    some_or_debug_panic(response.0.debug_info.clone())
-                                else {
-                                    return Err("Missing debug info".to_string());
-                                };
-                                Ok(PredictionDebugInfo {
-                                    context,
-                                    request,
-                                    retrieval_time,
-                                    buffer: buffer.downgrade(),
-                                    position,
-                                })
+                if let Some(debug_response_tx) = debug_response_tx {
+                    debug_response_tx
+                        .send(response.as_ref().map_err(|err| err.to_string()).and_then(
+                            |response| match some_or_debug_panic(response.0.debug_info.clone()) {
+                                Some(debug_info) => Ok(debug_info),
+                                None => Err("Missing debug info".to_string()),
                             },
                         ))
                         .ok();
@@ -785,6 +816,11 @@ impl Zeta {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect::<Vec<_>>();
 
+        let parent_abs_path = project::File::from_dyn(buffer.read(cx).file()).and_then(|f| {
+            let mut path = f.worktree.read(cx).absolutize(&f.path);
+            if path.pop() { Some(path) } else { None }
+        });
+
         cx.background_spawn(async move {
             let index_state = if let Some(index_state) = index_state {
                 Some(index_state.lock_owned().await)
@@ -798,7 +834,8 @@ impl Zeta {
             EditPredictionContext::gather_context(
                 cursor_point,
                 &snapshot,
-                &options.excerpt,
+                parent_abs_path.as_deref(),
+                &options.context,
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")
@@ -893,9 +930,9 @@ fn make_cloud_request(
             text_is_truncated,
             signature_range: snippet.declaration.signature_range_in_item_text(),
             parent_index,
-            score_components: snippet.score_components,
-            signature_score: snippet.scores.signature,
-            declaration_score: snippet.scores.declaration,
+            signature_score: snippet.score(DeclarationStyle::Signature),
+            declaration_score: snippet.score(DeclarationStyle::Declaration),
+            score_components: snippet.components,
         });
     }
 
@@ -1350,7 +1387,7 @@ mod tests {
 
                                 let (res_tx, res_rx) = oneshot::channel();
                                 req_tx.unbounded_send((req, res_tx)).unwrap();
-                                serde_json::to_string(&res_rx.await.unwrap()).unwrap()
+                                serde_json::to_string(&res_rx.await?).unwrap()
                             }
                             _ => {
                                 panic!("Unexpected path: {}", uri)

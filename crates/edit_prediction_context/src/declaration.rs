@@ -1,9 +1,11 @@
-use language::LanguageId;
+use language::{Language, LanguageId};
 use project::ProjectEntryId;
-use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
+use std::{borrow::Cow, path::Path};
 use text::{Bias, BufferId, Rope};
+use util::paths::{path_ends_with, strip_path_suffix};
+use util::rel_path::RelPath;
 
 use crate::outline::OutlineDeclaration;
 
@@ -22,12 +24,14 @@ pub enum Declaration {
     File {
         project_entry_id: ProjectEntryId,
         declaration: FileDeclaration,
+        cached_path: CachedDeclarationPath,
     },
     Buffer {
         project_entry_id: ProjectEntryId,
         buffer_id: BufferId,
         rope: Rope,
         declaration: BufferDeclaration,
+        cached_path: CachedDeclarationPath,
     },
 }
 
@@ -70,6 +74,13 @@ impl Declaration {
             Declaration::Buffer {
                 project_entry_id, ..
             } => *project_entry_id,
+        }
+    }
+
+    pub fn cached_path(&self) -> &CachedDeclarationPath {
+        match self {
+            Declaration::File { cached_path, .. } => cached_path,
+            Declaration::Buffer { cached_path, .. } => cached_path,
         }
     }
 
@@ -232,6 +243,72 @@ impl BufferDeclaration {
             item_range_is_truncated,
             signature_range,
             signature_range_is_truncated,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedDeclarationPath {
+    pub worktree_abs_path: Arc<Path>,
+    pub rel_path: Arc<RelPath>,
+    /// The relative path of the file, possibly stripped according to `import_path_strip_regex`.
+    pub rel_path_after_regex_stripping: Arc<RelPath>,
+}
+
+impl CachedDeclarationPath {
+    pub fn new(
+        worktree_abs_path: Arc<Path>,
+        path: &Arc<RelPath>,
+        language: Option<&Arc<Language>>,
+    ) -> Self {
+        let rel_path = path.clone();
+        let rel_path_after_regex_stripping = if let Some(language) = language
+            && let Some(strip_regex) = language.config().import_path_strip_regex.as_ref()
+            && let Ok(stripped) = RelPath::unix(&Path::new(
+                strip_regex.replace_all(rel_path.as_unix_str(), "").as_ref(),
+            )) {
+            Arc::from(stripped)
+        } else {
+            rel_path.clone()
+        };
+        CachedDeclarationPath {
+            worktree_abs_path,
+            rel_path,
+            rel_path_after_regex_stripping,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_for_test(worktree_abs_path: &str, rel_path: &str) -> Self {
+        let rel_path: Arc<RelPath> = util::rel_path::rel_path(rel_path).into();
+        CachedDeclarationPath {
+            worktree_abs_path: std::path::PathBuf::from(worktree_abs_path).into(),
+            rel_path_after_regex_stripping: rel_path.clone(),
+            rel_path,
+        }
+    }
+
+    pub fn ends_with_posix_path(&self, path: &Path) -> bool {
+        if path.as_os_str().len() <= self.rel_path_after_regex_stripping.as_unix_str().len() {
+            path_ends_with(self.rel_path_after_regex_stripping.as_std_path(), path)
+        } else {
+            if let Some(remaining) =
+                strip_path_suffix(path, self.rel_path_after_regex_stripping.as_std_path())
+            {
+                path_ends_with(&self.worktree_abs_path, remaining)
+            } else {
+                false
+            }
+        }
+    }
+
+    pub fn equals_absolute_path(&self, path: &Path) -> bool {
+        if let Some(remaining) =
+            strip_path_suffix(path, &self.rel_path_after_regex_stripping.as_std_path())
+        {
+            self.worktree_abs_path.as_ref() == remaining
+        } else {
+            false
         }
     }
 }

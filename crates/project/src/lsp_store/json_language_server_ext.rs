@@ -42,7 +42,7 @@ impl lsp::notification::Notification for SchemaContentsChanged {
     type Params = String;
 }
 
-pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: &String, cx: &App) {
+pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: String, cx: &App) {
     zlog::trace!(LOGGER => "Notifying schema changed for URI: {:?}", uri);
     let servers = lsp_store.read_with(cx, |lsp_store, _| {
         let mut servers = Vec::new();
@@ -65,7 +65,7 @@ pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: &String, cx: &App
     for server in servers {
         zlog::trace!(LOGGER => "Notifying server {:?} of schema change for URI: {:?}", server.server_id(), &uri);
         // TODO: handle errors
-        server.notify::<SchemaContentsChanged>(uri).ok();
+        server.notify::<SchemaContentsChanged>(uri.clone()).ok();
     }
 }
 
