@@ -1046,32 +1046,33 @@ impl AcpThreadView {
             };
 
             let connection = thread.read(cx).connection().clone();
-            let auth_methods = connection.auth_methods();
-            let has_supported_auth = auth_methods.iter().any(|method| {
-                let id = method.id.0.as_ref();
-                id == "claude-login" || id == "spawn-gemini-cli"
-            });
-            let can_login = has_supported_auth || auth_methods.is_empty() || self.login.is_some();
-            if !can_login {
+            let can_login = !connection.auth_methods().is_empty() || self.login.is_some();
+            // Does the agent have a specific logout command? Prefer that in case they need to reset internal state.
+            let logout_supported = text == "/logout"
+                && self
+                    .available_commands
+                    .borrow()
+                    .iter()
+                    .any(|command| command.name == "logout");
+            if can_login && !logout_supported {
+                let this = cx.weak_entity();
+                let agent = self.agent.clone();
+                window.defer(cx, |window, cx| {
+                    Self::handle_auth_required(
+                        this,
+                        AuthRequired {
+                            description: None,
+                            provider_id: None,
+                        },
+                        agent,
+                        connection,
+                        window,
+                        cx,
+                    );
+                });
+                cx.notify();
                 return;
-            };
-            let this = cx.weak_entity();
-            let agent = self.agent.clone();
-            window.defer(cx, |window, cx| {
-                Self::handle_auth_required(
-                    this,
-                    AuthRequired {
-                        description: None,
-                        provider_id: None,
-                    },
-                    agent,
-                    connection,
-                    window,
-                    cx,
-                );
-            });
-            cx.notify();
-            return;
+            }
         }
 
         self.send_impl(self.message_editor.clone(), window, cx)
