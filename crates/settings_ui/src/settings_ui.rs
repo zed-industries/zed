@@ -1779,18 +1779,15 @@ impl SettingsWindow {
             .pb_8()
             .px_8()
             .bg(cx.theme().colors().editor_background)
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .child(page_header)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .track_focus(&self.content_focus_handle.focus_handle(cx))
             .child(
                 div()
                     .size_full()
-                    .track_focus(&self.content_focus_handle.focus_handle(cx))
-                    .child(
-                        div()
-                            .tab_group()
-                            .tab_index(CONTENT_GROUP_TAB_INDEX)
-                            .child(page_content),
-                    ),
+                    .tab_group()
+                    .tab_index(CONTENT_GROUP_TAB_INDEX)
+                    .child(page_content),
             );
     }
 
