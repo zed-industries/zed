@@ -2467,7 +2467,7 @@ mod test {
 
         let mut settings_window = SettingsWindow {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|cx| PlatformTitleBar::new("settins-window-title-bar", cx)))
+                Some(cx.new(|cx| PlatformTitleBar::new("settings-window-title-bar", cx)))
             } else {
                 None
             },
