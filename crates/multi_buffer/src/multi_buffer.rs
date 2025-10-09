@@ -161,27 +161,25 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    // Used by the derived PartialOrd & Ord, enables us to devide a sorted list
-    // in sections based on the namespace. Like files with conflicts then
-    // changed files etc
-    namespace: Option<u64>,
+    // Used by the derived PartialOrd & Ord
+    sort_prefix: Option<u64>,
     path: Arc<RelPath>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u64, path: Arc<RelPath>) -> Self {
+    pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
         Self {
-            namespace: Some(namespace),
+            sort_prefix: Some(sort_prefix),
             path,
         }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(file.worktree_id(cx).to_proto(), file.path().clone())
+            Self::with_sort_prefix(file.worktree_id(cx).to_proto(), file.path().clone())
         } else {
             Self {
-                namespace: None,
+                sort_prefix: None,
                 path: RelPath::unix(&buffer.entity_id().to_string())
                     .unwrap()
                     .into_arc(),

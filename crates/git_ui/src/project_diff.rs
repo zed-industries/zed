@@ -73,10 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-// These influence the sort order
-const CONFLICT_NAMESPACE: u64 = 1;
-const TRACKED_NAMESPACE: u64 = 2;
-const NEW_NAMESPACE: u64 = 3;
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -235,8 +234,8 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-        let namespace = namespace(repo, &entry.repo_path, entry.status, cx);
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
+        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -381,8 +380,8 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = namespace(repo, &entry.repo_path, entry.status, cx);
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -526,15 +525,15 @@ impl ProjectDiff {
     }
 }
 
-fn namespace(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
     if GitPanelSettings::get_global(cx).sort_by_path {
-        TRACKED_NAMESPACE
+        TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
-        CONFLICT_NAMESPACE
+        CONFLICT_SORT_PREFIX
     } else if status.is_created() {
-        NEW_NAMESPACE
+        NEW_SORT_PREFIX
     } else {
-        TRACKED_NAMESPACE
+        TRACKED_SORT_PREFIX
     }
 }
 
@@ -1460,7 +1459,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1481,7 +1480,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
