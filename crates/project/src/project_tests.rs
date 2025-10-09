@@ -8536,6 +8536,7 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 // a directory which some program has already open.
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// See: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
@@ -8615,7 +8616,8 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 // NOTE: This test always fails on Windows, because on Windows, unlike on Unix,
 // you can't rename a directory which some program has already open. This is a
 // limitation of the Windows. See:
-// https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// See: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut gpui::TestAppContext) {
