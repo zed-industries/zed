@@ -1404,8 +1404,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
