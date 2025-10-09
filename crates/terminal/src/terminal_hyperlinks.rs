@@ -180,30 +180,25 @@ fn sanitize_file_path<T: EventListener>(
 ) -> Option<(String, bool, Match)> {
     let shrink_by = |left_byte_count: usize,
                      right_byte_count: usize,
-                     word_match: &mut Match,
+                     match_: &mut Match,
                      file_path: &mut &str| {
-        let trim_side =
-            |word_match: &mut Match, char_count: usize, dir: AlacDirection| -> AlacPoint {
-                let mut side = match dir {
-                    AlacDirection::Right => *word_match.start(),
-                    AlacDirection::Left => *word_match.end(),
+        let go = |dir: AlacDirection, mut point: AlacPoint, char_count: usize| -> AlacPoint {
+            for _ in 0..char_count {
+                point = term.expand_wide(point, dir);
+                point = match dir {
+                    AlacDirection::Right => point.add(term, Boundary::Grid, 1),
+                    AlacDirection::Left => point.sub(term, Boundary::Grid, 1),
                 };
-                for _ in 0..char_count {
-                    side = term.expand_wide(side, dir);
-                    side = match dir {
-                        AlacDirection::Right => side.add(term, Boundary::Grid, 1),
-                        AlacDirection::Left => side.sub(term, Boundary::Grid, 1),
-                    };
-                }
-                term.expand_wide(side, dir)
-            };
+            }
+            point
+        };
 
         let left_chars = file_path[..left_byte_count].chars();
         let right_chars = file_path[file_path.len() - right_byte_count..].chars();
 
-        *word_match = Match::new(
-            trim_side(word_match, left_chars.count(), AlacDirection::Right),
-            trim_side(word_match, right_chars.count(), AlacDirection::Left),
+        *match_ = Match::new(
+            go(AlacDirection::Right, *match_.start(), left_chars.count()),
+            go(AlacDirection::Left, *match_.end(), right_chars.count()),
         );
         *file_path = &file_path[left_byte_count..file_path.len() - right_byte_count];
     };
