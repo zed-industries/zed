@@ -482,7 +482,6 @@ fn calculate_column_length(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkdo
         for cell in row.columns.iter() {
             let length = paragraph_len(&cell.children);
 
-            // Distribute the length across the spanned columns
             let length_per_col = length / cell.col_span.max(1);
             for i in 0..cell.col_span {
                 if col_index + i < max_lengths.len() {
@@ -502,7 +501,6 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
     let mut max_lengths: Vec<usize> = vec![0; max_column_count];
 
-    // Calculate max lengths for each actual column
     calculate_column_length(&mut max_lengths, &parsed.header);
     calculate_column_length(&mut max_lengths, &parsed.body);
 
