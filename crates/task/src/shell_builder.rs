@@ -56,7 +56,8 @@ impl ShellBuilder {
                 | ShellKind::Fish
                 | ShellKind::Csh
                 | ShellKind::Tcsh
-                | ShellKind::Rc => {
+                | ShellKind::Rc
+                | ShellKind::Xonsh => {
                     let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
                     format!(
                         "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
@@ -91,7 +92,8 @@ impl ShellBuilder {
                     | ShellKind::Fish
                     | ShellKind::Csh
                     | ShellKind::Tcsh
-                    | ShellKind::Rc => {
+                    | ShellKind::Rc
+                    | ShellKind::Xonsh => {
                         combined_command.insert(0, '(');
                         combined_command.push_str(") </dev/null");
                     }
