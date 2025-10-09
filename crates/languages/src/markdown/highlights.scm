@@ -8,8 +8,8 @@
   (atx_heading)
   (setext_heading)
   (thematic_break)
-] @title.markup
-(setext_heading (paragraph) @title.markup)
+] @heading.markup
+(setext_heading (paragraph) @heading.markup)
 
 [
   (list_marker_plus)
@@ -17,7 +17,7 @@
   (list_marker_star)
   (list_marker_dot)
   (list_marker_parenthesis)
-] @punctuation.list_marker.markup
+] @punctuation.list.markup
 
 (block_quote_marker) @punctuation.markup
 (pipe_table_header "|" @punctuation.markup)
@@ -30,5 +30,6 @@
   (info_string)
 ] @punctuation.embedded.markup
 
-(link_reference_definition) @link_text.markup
-(link_destination) @link_uri.markup
+(link_reference_definition) @link.markup
+(link_label) @link.label.markup
+(link_destination) @link.uri.markup
