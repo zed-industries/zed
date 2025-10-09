@@ -143,7 +143,6 @@ impl MenuItem {
     ///
     /// Only for [`MenuItem::Action`], otherwise, will be ignored.
     pub fn checked(mut self, checked: bool) -> Self {
-        debug_assert!(matches!(self, MenuItem::Action { .. }));
         match self {
             MenuItem::Action {
                 action,
