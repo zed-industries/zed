@@ -241,12 +241,11 @@ fn sanitize_file_path<T: EventListener>(
     {
         let desc_byte_count = file_path.len() - last_colon_index;
         shrink_by(0, desc_byte_count, &mut word_match, &mut file_path);
-        if !word_match.contains(&point) {
-            return None;
-        }
     }
 
-    Some((file_path.to_owned(), false, word_match))
+    word_match
+        .contains(&point)
+        .then_some((file_path.to_owned(), false, word_match))
 }
 
 /// Check if path is surrounded by quotes: `""` or `''` or ````
@@ -607,8 +606,8 @@ mod tests {
             test_path!("‹«/test/cool.rs»:«4»:«👉2»›:");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:");
             test_path!("‹«/test/cool.rs»(«4»,«2»👉)›:");
-            test_path!("‹«/test/cool.rs»:«4»:«2»›👉:", "What is this?");
-            test_path!("‹«/test/cool.rs»(«4»,«2»)›👉:", "What is this?");
+            test_path!("/test/cool.rs:4:2👉:", "What is this?");
+            test_path!("/test/cool.rs(4,2)👉:", "What is this?");
 
             // path, line, column, and description
             test_path!("/test/cool.rs:4:2👉:Error!");
@@ -616,9 +615,9 @@ mod tests {
             test_path!("‹«/test/co👉ol.rs»(«4»,«2»)›:Error!");
 
             // Cargo output
-            test_path!("    Compiling Cool 👉(‹«/test/Cool»›)");
+            test_path!("    Compiling Cool 👉(/test/Cool)");
             test_path!("    Compiling Cool (‹«/👉test/Cool»›)");
-            test_path!("    Compiling Cool (‹«/test/Cool»›👉)");
+            test_path!("    Compiling Cool (/test/Cool👉)");
 
             // Python
             test_path!("‹«awe👉some.py»›");
@@ -637,7 +636,7 @@ mod tests {
             test_path!("/test/cool.rs:4:2:例Desc例👉例例");
             test_path!("‹«/👉test/cool.rs»(«4»,«2»)›:例Desc例例例");
             test_path!("‹«/test/cool.rs»(«4»👉,«2»)›:例Desc例例例");
-            test_path!("/test/cool.rs»(4,2):例Desc例👉例例");
+            test_path!("/test/cool.rs(4,2):例Desc例👉例例");
 
             // path, line, column and description w/extra colons
             test_path!("‹«/👉test/cool.rs»:«4»:«2»:›:例Desc例例例");
@@ -854,15 +853,15 @@ mod tests {
             #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/cool.rs»")
+                should_panic(expected = "Path = «/te:st/co:ol.r:s:4:2::::::»")
             )]
             #[cfg_attr(
                 target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\test\\cool.rs»"#)
+                should_panic(expected = r#"Path = «C:\\te:st\\co:ol.r:s:4:2::::::»"#)
             )]
             fn many_trailing_colons_should_be_parsed_as_part_of_the_path() {
-                test_path!("‹«/test/cool.rs:::👉:»›");
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
+                test_path!("/test/cool.rs:::👉:");
             }
         }
 
