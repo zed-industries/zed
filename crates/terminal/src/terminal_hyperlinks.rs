@@ -814,7 +814,7 @@ mod tests {
             #[cfg_attr(
                 target_os = "windows",
                 should_panic(
-                    expected = r#"Path = «C:\\test\\cool.rs:4:NotDesc», at grid cells (0, 1)..=(9, 0)"#
+                    expected = r#"Path = «C:\\test\\cool.rs:4:NotDesc», at grid cells (0, 1)..=(8, 1)"#
                 )
             )]
             // PathWithPosition::parse_str considers "/test/co👉ol.rs:4:NotDesc" invalid input, but
