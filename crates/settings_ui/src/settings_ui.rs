@@ -1426,7 +1426,7 @@ impl SettingsWindow {
             .border_r_1()
             .key_context("NavigationMenu")
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
-                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
                 };
                 let focused_entry_parent = this.root_entry_containing(focused_entry);
@@ -1437,7 +1437,7 @@ impl SettingsWindow {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ExpandNavEntry, window, cx| {
-                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
                 };
                 if !this.navbar_entries[focused_entry].is_root {
@@ -1449,8 +1449,10 @@ impl SettingsWindow {
                 cx.notify();
             }))
             .on_action(
-                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, _| {
-                    let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, cx| {
+                    let entry_index = this
+                        .focused_nav_entry(window, cx)
+                        .unwrap_or(this.navbar_entry);
                     let mut root_index = None;
                     for (index, entry) in this.visible_navbar_entries() {
                         if index >= entry_index {
@@ -1466,8 +1468,10 @@ impl SettingsWindow {
                     this.focus_and_scroll_to_nav_entry(previous_root_index, window);
                 }),
             )
-            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, _| {
-                let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, cx| {
+                let entry_index = this
+                    .focused_nav_entry(window, cx)
+                    .unwrap_or(this.navbar_entry);
                 let mut root_index = None;
                 for (index, entry) in this.visible_navbar_entries() {
                     if index <= entry_index {
@@ -1737,7 +1741,7 @@ impl SettingsWindow {
         let page_header;
         let page_content;
 
-        if sub_page_stack().len() == 0 {
+        if sub_page_stack().is_empty() {
             page_header = self.render_files_header(window, cx).into_any_element();
 
             page_content = self
@@ -1965,7 +1969,14 @@ impl SettingsWindow {
         window.focus(&self.content_handles[page_index][item_index].focus_handle(cx));
     }
 
-    fn focused_nav_entry(&self, window: &Window) -> Option<usize> {
+    fn focused_nav_entry(&self, window: &Window, cx: &App) -> Option<usize> {
+        if !self
+            .navbar_focus_handle
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            return None;
+        }
         for (index, entry) in self.navbar_entries.iter().enumerate() {
             if entry.focus_handle.is_focused(window) {
                 return Some(index);
