@@ -2,19 +2,21 @@
 
 ## Install Zed (Windows)
 
-###  **Option A**:  Standard installer (recommended)
+### **Option A**: Standard installer (recommended)
 
 Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
 
-###  ***Option B***: Build from source
+### **_Option B_**: Build from source
 
 1. Install prerequisites:
+
 - Rust via rustup.
 - [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the Desktop development with C++ workload (or Build Tools for Visual Studio), including MSVC toolchain and Spectre‑mitigated libs.
 - Windows 10/11 SDK (version 10.0.20348.0 or newer).
 - [CMake](https://cmake.org/download) (installed via Visual Studio or standalone; ensure cmake is on your PATH).
 
 2. Clone the Zed repository and build:
+
 ```json
 # Debug build
 cargo run
@@ -25,6 +27,7 @@ cargo run --release
 # Run tests
 cargo test --workspace
 ```
+
 You can learn more here: [Building Windows] ( https://zed.dev/docs/development/windows)
 
 ## Uninstall
