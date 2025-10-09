@@ -17,7 +17,7 @@ use text::{Bias, SelectionGoal};
 use workspace::searchable;
 use workspace::searchable::FilteredSearchRange;
 
-use crate::motion;
+use crate::motion::{self, MotionKind};
 use crate::state::SearchState;
 use crate::{
     Vim,
@@ -40,6 +40,10 @@ actions!(
         HelixSelectLine,
         /// Select all matches of a given pattern within the current selection.
         HelixSelectRegex,
+        /// Delete the selection and enter edit mode.
+        HelixSubstitute,
+        /// Delete the selection and enter edit mode, without yanking the selection.
+        HelixSubstituteNoYank,
     ]
 );
 
@@ -51,6 +55,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
+    Vim::action(editor, cx, Vim::helix_substitute);
+    Vim::action(editor, cx, Vim::helix_substitute_no_yank);
 }
 
 impl Vim {
@@ -574,6 +580,54 @@ impl Vim {
                 s.select(selections);
             });
         });
+    }
+
+    fn do_helix_substitute(&mut self, yank: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        if selection.start == selection.end {
+                            selection.end = movement::right(map, selection.end);
+                        }
+
+                        // If the selection starts and ends on a newline, we exclude the last one.
+                        if !selection.is_empty()
+                            && selection.start.column() == 0
+                            && selection.end.column() == 0
+                        {
+                            selection.end = movement::left(map, selection.end);
+                        }
+                    })
+                });
+                if yank {
+                    vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
+                }
+                let selections = editor.selections.all::<Point>(cx).into_iter();
+                let edits = selections.map(|selection| (selection.start..selection.end, ""));
+                editor.edit(edits, cx);
+            });
+        });
+        self.switch_mode(Mode::Insert, true, window, cx);
+    }
+
+    pub fn helix_substitute(
+        &mut self,
+        _: &HelixSubstitute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_substitute(true, window, cx);
+    }
+
+    pub fn helix_substitute_no_yank(
+        &mut self,
+        _: &HelixSubstituteNoYank,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.do_helix_substitute(false, window, cx);
     }
 }
 
@@ -1211,5 +1265,68 @@ mod test {
         cx.set_state("ˇone two one", Mode::HelixNormal);
         cx.simulate_keystrokes("s o n e enter");
         cx.assert_state("ˇone two one", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_substitute(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("c");
+        cx.assert_state("ˇne two", Mode::Insert);
+
+        cx.set_state("«oneˇ» two", Mode::HelixNormal);
+        cx.simulate_keystrokes("c");
+        cx.assert_state("ˇ two", Mode::Insert);
+
+        cx.set_state(
+            indoc! {"
+            oneˇ two
+            three
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x c");
+        cx.assert_state(
+            indoc! {"
+            ˇ
+            three
+            "},
+            Mode::Insert,
+        );
+
+        cx.set_state(
+            indoc! {"
+            one twoˇ
+            three
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("c");
+        cx.assert_state(
+            indoc! {"
+            one twoˇthree
+            "},
+            Mode::Insert,
+        );
+
+        // Helix doesn't set the cursor to the first non-blank one when
+        // replacing lines: it uses language-dependent indent queries instead.
+        cx.set_state(
+            indoc! {"
+            one two
+            «    indented
+            three not indentedˇ»
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("c");
+        cx.set_state(
+            indoc! {"
+            one two
+            ˇ
+            "},
+            Mode::Insert,
+        );
     }
 }
