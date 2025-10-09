@@ -2084,6 +2084,7 @@ impl AcpThread {
         output_byte_limit: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        dbg!(&command, &args);
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
                 let worktree = project.find_worktree(dir.as_path(), cx);
@@ -2128,6 +2129,7 @@ impl AcpThread {
                 let (task_command, task_args) = ShellBuilder::new(&Shell::Program(shell))
                     .redirect_stdin_to_dev_null()
                     .build(Some(command.clone()), &args);
+                dbg!(&task_command, &task_args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -2135,7 +2137,7 @@ impl AcpThread {
                                 command: Some(task_command),
                                 args: task_args,
                                 cwd: cwd.clone(),
-                                env,
+                                env: dbg!(env),
                                 ..Default::default()
                             },
                             cx,

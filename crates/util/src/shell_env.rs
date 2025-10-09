@@ -20,6 +20,7 @@ pub async fn capture(
     args: &[String],
     directory: impl AsRef<Path>,
 ) -> Result<collections::HashMap<String, String>> {
+    dbg!(shell_path.as_ref(), &args, directory.as_ref());
     #[cfg(windows)]
     return capture_windows(shell_path.as_ref(), args, directory.as_ref()).await;
     #[cfg(unix)]
