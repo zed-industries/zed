@@ -696,7 +696,7 @@ mod tests {
         }
 
         #[test]
-        fn trailing_puncutation() {
+        fn trailing_punctuation() {
             test_path!("‹«/test/co👉ol.rs»:«4»›:,");
             test_path!("/test/cool.rs:4:👉,");
             test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]:,");
