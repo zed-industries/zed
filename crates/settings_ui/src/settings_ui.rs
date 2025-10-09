@@ -29,13 +29,14 @@ use std::{
     rc::Rc,
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
     Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
@@ -529,6 +530,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 }
 
 pub struct SettingsWindow {
+    title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
@@ -896,6 +898,11 @@ impl SettingsWindow {
         .detach();
 
         let mut this = Self {
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|cx| PlatformTitleBar::new("settings-window-title-bar", cx)))
+            } else {
+                None
+            },
             original_window,
             worktree_root_dirs: HashMap::default(),
             files: vec![],
@@ -1990,60 +1997,71 @@ impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
 
-        div()
-            .id("settings-window")
-            .key_context("SettingsWindow")
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
-                this.open_current_settings_file(cx);
-            }))
-            .on_action(|_: &Minimize, window, _cx| {
-                window.minimize_window();
-            })
-            .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
-                this.search_bar.focus_handle(cx).focus(window);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
-                if this
-                    .navbar_focus_handle
-                    .focus_handle(cx)
-                    .contains_focused(window, cx)
-                {
-                    this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
-                } else {
-                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window);
-                }
-            }))
-            .on_action(
-                cx.listener(|this, FocusFile(file_index): &FocusFile, window, _| {
-                    this.focus_file_at_index(*file_index as usize, window);
-                }),
-            )
-            .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
-                let next_index = usize::min(
-                    this.focused_file_index(window, cx) + 1,
-                    this.files.len().saturating_sub(1),
-                );
-                this.focus_file_at_index(next_index, window);
-            }))
-            .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
-                let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
-                this.focus_file_at_index(prev_index, window);
-            }))
-            .on_action(|_: &menu::SelectNext, window, _| {
-                window.focus_next();
-            })
-            .on_action(|_: &menu::SelectPrevious, window, _| {
-                window.focus_prev();
-            })
-            .flex()
-            .flex_row()
-            .size_full()
-            .font(ui_font)
-            .bg(cx.theme().colors().background)
-            .text_color(cx.theme().colors().text)
-            .child(self.render_nav(window, cx))
-            .child(self.render_page(window, cx))
+        client_side_decorations(
+            v_flex()
+                .id("settings-window")
+                .key_context("SettingsWindow")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
+                    this.open_current_settings_file(cx);
+                }))
+                .on_action(|_: &Minimize, window, _cx| {
+                    window.minimize_window();
+                })
+                .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
+                    this.search_bar.focus_handle(cx).focus(window);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
+                    if this
+                        .navbar_focus_handle
+                        .focus_handle(cx)
+                        .contains_focused(window, cx)
+                    {
+                        this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
+                    } else {
+                        this.focus_and_scroll_to_nav_entry(this.navbar_entry, window);
+                    }
+                }))
+                .on_action(
+                    cx.listener(|this, FocusFile(file_index): &FocusFile, window, _| {
+                        this.focus_file_at_index(*file_index as usize, window);
+                    }),
+                )
+                .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
+                    let next_index = usize::min(
+                        this.focused_file_index(window, cx) + 1,
+                        this.files.len().saturating_sub(1),
+                    );
+                    this.focus_file_at_index(next_index, window);
+                }))
+                .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
+                    let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
+                    this.focus_file_at_index(prev_index, window);
+                }))
+                .on_action(|_: &menu::SelectNext, window, _| {
+                    window.focus_next();
+                })
+                .on_action(|_: &menu::SelectPrevious, window, _| {
+                    window.focus_prev();
+                })
+                .size_full()
+                .overflow_hidden()
+                .font(ui_font)
+                .bg(cx.theme().colors().background)
+                .text_color(cx.theme().colors().text)
+                .flex_col()
+                .children(self.title_bar.clone())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .size_full()
+                        .child(self.render_nav(window, cx))
+                        .child(self.render_page(window, cx)),
+                ),
+            window,
+            cx,
+        )
     }
 }
 
@@ -2448,6 +2466,11 @@ mod test {
         }
 
         let mut settings_window = SettingsWindow {
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|cx| PlatformTitleBar::new("settins-window-title-bar", cx)))
+            } else {
+                None
+            },
             original_window: None,
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),

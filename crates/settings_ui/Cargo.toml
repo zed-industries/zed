@@ -32,6 +32,7 @@ serde.workspace = true
 settings.workspace = true
 strum.workspace = true
 theme.workspace = true
+title_bar.workspace = true
 ui_input.workspace = true
 ui.workspace = true
 util.workspace = true

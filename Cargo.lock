@@ -14403,6 +14403,7 @@ dependencies = [
  "settings",
  "strum 0.27.1",
  "theme",
+ "title_bar",
  "ui",
  "ui_input",
  "workspace",
