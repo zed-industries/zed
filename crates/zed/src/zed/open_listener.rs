@@ -823,8 +823,16 @@ mod tests {
         let app_state = init_test(cx);
 
         let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
-        let file1_path = if cfg!(windows) { "C:\\root\\file1.txt" } else { "/root/file1.txt" };
-        let file2_path = if cfg!(windows) { "C:\\root\\file2.txt" } else { "/root/file2.txt" };
+        let file1_path = if cfg!(windows) {
+            "C:\\root\\file1.txt"
+        } else {
+            "/root/file1.txt"
+        };
+        let file2_path = if cfg!(windows) {
+            "C:\\root\\file2.txt"
+        } else {
+            "/root/file2.txt"
+        };
 
         app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
         app_state
