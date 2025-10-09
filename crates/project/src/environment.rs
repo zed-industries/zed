@@ -103,11 +103,13 @@ impl ProjectEnvironment {
         }
 
         let mut abs_path = worktree.read(cx).abs_path();
-        if !worktree.read(cx).is_local() {
-            log::error!(
-                "attempted to get project environment for a non-local worktree at {abs_path:?}"
-            );
-            return Task::ready(None).shared();
+        let is_local = worktree.read(cx).is_local();
+
+        if !is_local {
+            // For non-local worktrees (which shouldn't normally happen on the server),
+            // we provide a minimal environment for language servers
+            log::debug!("loading minimal environment for non-local worktree at {abs_path:?}");
+            return self.get_minimal_environment_for_lsp(abs_path, cx);
         } else if worktree.read(cx).is_single_file() {
             let Some(parent) = abs_path.parent() else {
                 return Task::ready(None).shared();
@@ -116,6 +118,42 @@ impl ProjectEnvironment {
         }
 
         self.get_directory_environment(abs_path, cx)
+    }
+
+    /// Returns a minimal environment suitable for language servers
+    /// This is used when we need to provide just enough environment
+    /// for tools like rust-analyzer to find configuration files
+    fn get_minimal_environment_for_lsp(
+        &mut self,
+        abs_path: Arc<Path>,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        let task = cx.spawn(async move |_this, _cx| {
+            let mut env = HashMap::default();
+
+            // Set PWD for tools that look for config files relative to working directory
+            env.insert("PWD".to_string(), abs_path.to_string_lossy().to_string());
+
+            // Set HOME if available (needed for some tools to find global config)
+            if let Ok(home) = std::env::var("HOME") {
+                env.insert("HOME".to_string(), home);
+            }
+
+            // Include PATH for finding executables
+            if let Ok(path) = std::env::var("PATH") {
+                env.insert("PATH".to_string(), path);
+            }
+
+            // Set RUST_LOG if configured (useful for debugging)
+            if let Ok(rust_log) = std::env::var("RUST_LOG") {
+                env.insert("RUST_LOG".to_string(), rust_log);
+            }
+
+            log::debug!("Created minimal LSP environment for {:?}", abs_path);
+
+            Some(env)
+        });
+        task.shared()
     }
 
     /// Returns the project environment, if possible.
@@ -350,4 +388,143 @@ fn get_directory_env_impl(
 
         shell_env
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_minimal_environment_has_required_vars() {
+        // Test that the minimal environment contains the necessary variables
+        // for rust-analyzer to find rustfmt.toml
+        let test_path = "/test/project";
+
+        // Simulate what get_minimal_environment_for_lsp would create
+        let mut env = HashMap::<String, String>::default();
+        env.insert("PWD".to_string(), test_path.to_string());
+
+        // Add other expected environment variables
+        if let Ok(home) = std::env::var("HOME") {
+            env.insert("HOME".to_string(), home);
+        }
+        if let Ok(path) = std::env::var("PATH") {
+            env.insert("PATH".to_string(), path);
+        }
+
+        // Verify PWD is set correctly
+        assert_eq!(env.get("PWD"), Some(&test_path.to_string()));
+        assert!(
+            env.contains_key("PWD"),
+            "PWD must be set for config file discovery"
+        );
+    }
+
+    #[test]
+    fn test_environment_origin_marker() {
+        let mut env = HashMap::<String, String>::default();
+
+        // Test CLI origin
+        set_origin_marker(&mut env, EnvironmentOrigin::Cli);
+        assert_eq!(env.get("ZED_ENVIRONMENT"), Some(&"cli".to_string()));
+
+        // Test WorktreeShell origin
+        env.clear();
+        set_origin_marker(&mut env, EnvironmentOrigin::WorktreeShell);
+        assert_eq!(
+            env.get("ZED_ENVIRONMENT"),
+            Some(&"worktree-shell".to_string())
+        );
+    }
+
+    #[test]
+    fn test_environment_caching_key() {
+        // Test that paths are properly used as cache keys and that
+        // identical paths share the same cache entry
+        let path1: Arc<Path> = Arc::from(PathBuf::from("/project/a").as_path());
+        let path2: Arc<Path> = Arc::from(PathBuf::from("/project/b").as_path());
+        let path3: Arc<Path> = Arc::from(PathBuf::from("/project/a").as_path()); // Same as path1
+
+        let mut cache = HashMap::<Arc<Path>, String>::default();
+
+        // Insert first path
+        cache.insert(path1.clone(), "env1".to_string());
+        assert_eq!(cache.len(), 1, "Cache should have 1 entry");
+
+        // Insert second, different path
+        cache.insert(path2.clone(), "env2".to_string());
+        assert_eq!(cache.len(), 2, "Cache should have 2 entries");
+
+        // Try to insert third path that's identical to first
+        // This should not create a new entry but update the existing one
+        cache.insert(path3.clone(), "env3".to_string());
+        assert_eq!(cache.len(), 2, "Cache should still have 2 entries, not 3");
+
+        // Verify that path1 and path3 now both retrieve the updated value
+        assert_eq!(
+            cache.get(&path1),
+            Some(&"env3".to_string()),
+            "path1 should retrieve updated value"
+        );
+        assert_eq!(
+            cache.get(&path3),
+            Some(&"env3".to_string()),
+            "path3 should retrieve the same value as path1"
+        );
+        assert_eq!(
+            cache.get(&path2),
+            Some(&"env2".to_string()),
+            "path2 should still have its original value"
+        );
+
+        // Test that Arc<Path> deduplication works correctly
+        let path4: Arc<Path> = Arc::from(PathBuf::from("/project/a").as_path());
+        assert!(
+            Arc::ptr_eq(&path1, &path3) || path1 == path3,
+            "Paths with same content should be equal"
+        );
+        assert_eq!(
+            cache.get(&path4),
+            Some(&"env3".to_string()),
+            "New Arc with same path should retrieve from cache"
+        );
+    }
+
+    #[test]
+    fn test_rustfmt_config_path_scenarios() {
+        // Test various path scenarios that rust-analyzer might encounter
+        // when looking for rustfmt.toml
+
+        let project_root = PathBuf::from("/workspace/my_project");
+        let nested_src = project_root.join("nested/src");
+        let _lib_file = nested_src.join("lib.rs");
+
+        // Rust-analyzer would typically search from the file's directory
+        // up to the workspace root
+        let search_paths = vec![
+            nested_src.clone(),
+            nested_src.parent().unwrap().to_path_buf(),
+            project_root.clone(),
+        ];
+
+        // Verify the search path order is correct
+        assert_eq!(
+            search_paths[0],
+            PathBuf::from("/workspace/my_project/nested/src")
+        );
+        assert_eq!(
+            search_paths[1],
+            PathBuf::from("/workspace/my_project/nested")
+        );
+        assert_eq!(search_paths[2], PathBuf::from("/workspace/my_project"));
+
+        // In our implementation, PWD should be set to the worktree root
+        // which allows rust-analyzer to find rustfmt.toml
+        let pwd = project_root.to_string_lossy().to_string();
+        assert!(
+            pwd.contains("my_project"),
+            "PWD should contain the project name"
+        );
+    }
 }

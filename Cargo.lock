@@ -12973,6 +12973,7 @@ dependencies = [
  "clap",
  "client",
  "clock",
+ "collections",
  "crash-handler",
  "crashes",
  "dap",

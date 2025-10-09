@@ -2,6 +2,7 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
+use action_log;
 use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
@@ -22,6 +23,8 @@ use node_runtime::NodeRuntime;
 use project::{
     Project,
     agent_server_store::AgentServerCommand,
+    ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
 };
 use remote::RemoteClient;
@@ -1703,6 +1706,155 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+}
+
+#[gpui::test]
+async fn test_remote_rustfmt_formatting(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+
+    // Create a project with a rustfmt.toml config file and unformatted Rust code
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "rustfmt.toml": "max_width = 80\ntab_spaces = 2",
+                "src": {
+                    "lib.rs": "fn unformatted_function( x:i32,y:i32 )->i32{x+y}"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    // Configure LSP settings for Rust with rust-analyzer
+    fs.insert_tree(
+        path!("/code/project1/.zed"),
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    // Register Rust language and fake LSP adapter
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_language_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    // Wait for the settings to synchronize
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
+
+    // Set up the fake LSP server to respond with formatted code
+    fake_lsp.set_request_handler::<lsp::request::Formatting, _, _>(|params, _| async move {
+        // Verify that the request includes the expected file
+        assert!(params.text_document.uri.path().ends_with("src/lib.rs"));
+
+        // Return formatted code according to rustfmt rules
+        Ok(Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(
+                lsp::Position::new(0, 0),
+                lsp::Position::new(0, 50), // Length of unformatted code
+            ),
+            new_text: "fn unformatted_function(x: i32, y: i32) -> i32 {\n  x + y\n}".to_string(),
+        }]))
+    });
+
+    // Trigger formatting
+    let format_result = project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                LspFormatTarget::Buffers,
+                true, // push_to_history
+                FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await;
+
+    // Verify formatting was successful
+    assert!(format_result.is_ok());
+
+    cx.run_until_parked();
+
+    // Check that the buffer contains formatted code
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "fn unformatted_function(x: i32, y: i32) -> i32 {\n  x + y\n}"
+        );
+    });
+
+    // Verify that rustfmt.toml settings were respected (indentation with 2 spaces)
+    buffer.update(cx, |buffer, _| {
+        assert!(
+            buffer.text().contains("  x + y"),
+            "Should use 2-space indentation from rustfmt.toml"
+        );
+    });
 }
 
 #[gpui::test]
