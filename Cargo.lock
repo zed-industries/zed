@@ -6828,6 +6828,7 @@ dependencies = [
  "serde_json",
  "settings",
  "url",
+ "urlencoding",
  "workspace-hack",
  "zed-http-client",
  "zed-util",

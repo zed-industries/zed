@@ -9,6 +9,7 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
+use urlencoding;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -209,9 +210,10 @@ impl GitHostingProvider for Github {
             selection,
         } = params;
 
+        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
+            .join(&format!("{owner}/{repo}/blob/{sha}/{encoded_path}"))
             .unwrap();
         if path.ends_with(".md") {
             permalink.set_query(Some("plain=1"));

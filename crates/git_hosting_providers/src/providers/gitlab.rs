@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use anyhow::{Result, bail};
 use url::Url;
+use urlencoding;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -108,9 +109,10 @@ impl GitHostingProvider for Gitlab {
             selection,
         } = params;
 
+        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("{owner}/{repo}/-/blob/{sha}/{path}"))
+            .join(&format!("{owner}/{repo}/-/blob/{sha}/{encoded_path}"))
             .unwrap();
         if path.ends_with(".md") {
             permalink.set_query(Some("plain=1"));

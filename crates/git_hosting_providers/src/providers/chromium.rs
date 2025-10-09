@@ -139,9 +139,10 @@ impl GitHostingProvider for Chromium {
             selection,
         } = params;
 
+        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("{repo}/+/{sha}/{path}"))
+            .join(&format!("{repo}/+/{sha}/{encoded_path}"))
             .unwrap();
         permalink.set_fragment(
             selection

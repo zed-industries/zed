@@ -173,9 +173,10 @@ impl GitHostingProvider for Codeberg {
             selection,
         } = params;
 
+        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("{owner}/{repo}/src/commit/{sha}/{path}"))
+            .join(&format!("{owner}/{repo}/src/commit/{sha}/{encoded_path}"))
             .unwrap();
         permalink.set_fragment(
             selection

@@ -47,6 +47,13 @@ pub fn register_additional_providers(
     }
 }
 
+pub fn encode_path_segments(path: &str) -> String {
+    path.split('/')
+        .map(|segment| urlencoding::encode(segment))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
     maybe!({
         if let Some(remote_url) = remote_url.strip_prefix("git@")

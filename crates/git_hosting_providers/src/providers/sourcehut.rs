@@ -74,9 +74,10 @@ impl GitHostingProvider for Sourcehut {
             selection,
         } = params;
 
+        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("~{owner}/{repo}/tree/{sha}/item/{path}"))
+            .join(&format!("~{owner}/{repo}/tree/{sha}/item/{encoded_path}"))
             .unwrap();
         permalink.set_fragment(
             selection
