@@ -31,23 +31,25 @@ impl LineEndingIndicator {
 impl Render for LineEndingIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !StatusBarSettings::get_global(cx).line_endings_button {
-            return div();
+            return div().none();
         }
 
-        div().when_some(self.line_ending.as_ref(), |el, line_ending| {
-            el.child(
-                Button::new("change-line-ending", line_ending.label())
-                    .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        if let Some(editor) = this.active_editor.as_ref() {
-                            LineEndingSelector::toggle(editor, window, cx);
-                        }
-                    }))
-                    .tooltip(|window, cx| {
-                        Tooltip::for_action("Select Line Ending", &Toggle, window, cx)
-                    }),
-            )
-        })
+        let Some(line_ending) = self.line_ending else {
+            return div().none();
+        };
+
+        div().child(
+            Button::new("change-line-ending", line_ending.label())
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some(editor) = this.active_editor.as_ref() {
+                        LineEndingSelector::toggle(editor, window, cx);
+                    }
+                }))
+                .tooltip(|window, cx| {
+                    Tooltip::for_action("Select Line Ending", &Toggle, window, cx)
+                }),
+        )
     }
 }
 
