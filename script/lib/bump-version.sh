@@ -32,7 +32,7 @@ Locally committed and tagged ${package} version ${new_version}
 
 To push this (don't forget to open a PR!):
 
-    git push origin ${tag_name} ${branch_name}
+    git push origin ${tag_name}; gh pr create -H ${branch_name}
 
 To undo this:
 
