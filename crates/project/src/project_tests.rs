@@ -94,6 +94,9 @@ async fn test_block_via_smol(cx: &mut gpui::TestAppContext) {
     task.await;
 }
 
+// NOTE:
+// While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
+// we assume that they are not supported out of the box.
 #[cfg(not(windows))]
 #[gpui::test]
 async fn test_symlinks(cx: &mut gpui::TestAppContext) {
