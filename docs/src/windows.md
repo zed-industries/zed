@@ -27,12 +27,18 @@ cargo test --workspace
 ```
 You can learn more here: [Building Windows] ( https://zed.dev/docs/development/windows)
 
-## Uninstall 
+## Uninstall
 
 - Installed via installer: Use Settings → Apps → Installed apps, search for Zed, and click Uninstall.
 - Built from source: Remove the build output directory you created (e.g., your target/install folder).
 
 Your settings and extensions live in your user profile. When uninstalling, you can choose to keep or remove them.
+
+## Remote Development (SSH)
+
+Zed supports SSH remoting on Windows and will prompt for credentials using a Windows‑compatible askpass flow when needed.
+
+If you encounter authentication issues, confirm that your SSH key agent is running (e.g., ssh-agent or your Git client’s agent) and that ssh.exe is on PATH.
 
 ## WSL Support
 
@@ -41,6 +47,22 @@ Zed supports opening folders inside of WSL natively.
 To open a local folder inside a WSL container use the `projects: open in wsl` action and select the folder you want to open, after which you will be presented with a list of available WSL distributions to open the folder in.
 
 To open a folder that's already located inside of a WSL container use the `projects: open wsl` action and select the WSL distribution, after which you the distro will be added to the `Remote Projects` window where you will be able to open the folder, see [Remote Development](./remote-development.md)
+
+## Troubleshooting
+
+### Zed fails to start or shows a blank window
+
+- Update your GPU drivers from your GPU vendor (Intel/AMD/NVIDIA).
+- Ensure hardware acceleration is enabled in Windows and not blocked by third‑party software.
+- Try launching Zed with no extensions or custom settings to isolate conflicts.
+
+### Terminal issues
+
+If activation scripts don’t run, update to the latest version and verify your shell profile files are not exiting early. For Git operations, confirm Git Bash or PowerShell is available and on PATH.
+
+### SSH remoting problems
+
+When prompted for credentials, use the graphical askpass dialog. If it doesn’t appear, check for credential manager conflicts and that GUI prompts aren’t blocked by your terminal.
 
 ### Graphics issues
 
