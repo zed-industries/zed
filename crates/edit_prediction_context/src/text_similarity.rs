@@ -141,61 +141,91 @@ fn fx_hash<T: Hash + ?Sized>(data: &T) -> u64 {
 }
 
 // Splits camelcase / snakecase / kebabcase / pascalcase
-//
-// TODO: Make this more efficient / elegant.
-fn split_identifier(identifier: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let chars: Vec<char> = identifier.chars().collect();
+fn split_identifier(identifier: &str) -> IdentifierSplitIterator<'_> {
+    IdentifierSplitIterator::new(identifier)
+}
 
-    if chars.is_empty() {
-        return parts;
+struct IdentifierSplitIterator<'a> {
+    input: &'a str,
+    chars: std::str::CharIndices<'a>,
+    start: usize,
+    prev_char_is_lowercase: bool,
+    prev_char_is_uppercase: bool,
+    prev_char_is_ascii_digit: bool,
+}
+
+impl<'a> IdentifierSplitIterator<'a> {
+    fn new(identifier: &'a str) -> Self {
+        Self {
+            input: identifier,
+            chars: identifier.char_indices(),
+            start: 0,
+            prev_char_is_lowercase: false,
+            prev_char_is_uppercase: false,
+            prev_char_is_ascii_digit: false,
+        }
     }
+}
 
-    let mut i = 0;
-    while i < chars.len() {
-        let ch = chars[i];
+impl<'a> Iterator for IdentifierSplitIterator<'a> {
+    type Item = &'a str;
 
-        // Handle explicit delimiters (underscore and hyphen)
-        if ch == '_' || ch == '-' {
-            if i > start {
-                parts.push(&identifier[start..i]);
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((byte_index, ch)) = self.chars.next() {
+            if ch == '_' || ch == '-' {
+                self.prev_char_is_lowercase = false;
+                self.prev_char_is_uppercase = false;
+                self.prev_char_is_ascii_digit = false;
+                if byte_index > self.start {
+                    let part = &self.input[self.start..byte_index];
+                    self.start = byte_index + 1;
+                    return Some(part);
+                }
+                self.start = byte_index + 1;
+                continue;
             }
-            start = i + 1;
-            i += 1;
-            continue;
+
+            // Handle camelCase and PascalCase transitions
+            let should_split = if byte_index <= self.start {
+                false
+            } else {
+                if (self.prev_char_is_lowercase || self.prev_char_is_ascii_digit)
+                    && ch.is_uppercase()
+                {
+                    // lowercase/digit to uppercase
+                    true
+                } else if ch.is_uppercase() && self.prev_char_is_uppercase {
+                    // Handle sequences like "XMLParser" -> ["XML", "Parser"]
+                    self.input[byte_index..]
+                        .chars()
+                        .nth(1)
+                        .map_or(false, |c| c.is_lowercase())
+                } else {
+                    false
+                }
+            };
+
+            self.prev_char_is_lowercase = ch.is_lowercase();
+            self.prev_char_is_uppercase = ch.is_uppercase();
+            self.prev_char_is_ascii_digit = ch.is_ascii_digit();
+
+            if should_split {
+                let part = &self.input[self.start..byte_index];
+                self.start = byte_index;
+                return Some(part);
+            }
         }
 
-        // Handle camelCase and PascalCase transitions
-        if i > 0 && i < chars.len() {
-            let prev_char = chars[i - 1];
-
-            // Transition from lowercase/digit to uppercase
-            if (prev_char.is_lowercase() || prev_char.is_ascii_digit()) && ch.is_uppercase() {
-                parts.push(&identifier[start..i]);
-                start = i;
-            }
-            // Handle sequences like "XMLParser" -> ["XML", "Parser"]
-            else if i + 1 < chars.len()
-                && ch.is_uppercase()
-                && chars[i + 1].is_lowercase()
-                && prev_char.is_uppercase()
-            {
-                parts.push(&identifier[start..i]);
-                start = i;
+        if self.start < self.input.len() {
+            let part = &self.input[self.start..];
+            self.start = self.input.len();
+            if !part.is_empty() {
+                return Some(part);
             }
         }
 
-        i += 1;
+        None
     }
-
-    // Add the last part if there's any remaining
-    if start < identifier.len() {
-        parts.push(&identifier[start..]);
-    }
-
-    // Filter out empty strings
-    parts.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
 pub fn jaccard_similarity<'a>(mut set_a: &'a Occurrences, mut set_b: &'a Occurrences) -> f32 {
@@ -404,11 +434,51 @@ mod test {
 
     #[test]
     fn test_split_identifier() {
-        assert_eq!(split_identifier("snake_case"), vec!["snake", "case"]);
-        assert_eq!(split_identifier("kebab-case"), vec!["kebab", "case"]);
-        assert_eq!(split_identifier("PascalCase"), vec!["Pascal", "Case"]);
-        assert_eq!(split_identifier("camelCase"), vec!["camel", "Case"]);
-        assert_eq!(split_identifier("XMLParser"), vec!["XML", "Parser"]);
+        assert_eq!(
+            split_identifier("snake_case").collect::<Vec<_>>(),
+            vec!["snake", "case"]
+        );
+        assert_eq!(
+            split_identifier("kebab-case").collect::<Vec<_>>(),
+            vec!["kebab", "case"]
+        );
+        assert_eq!(
+            split_identifier("PascalCase").collect::<Vec<_>>(),
+            vec!["Pascal", "Case"]
+        );
+        assert_eq!(
+            split_identifier("camelCase").collect::<Vec<_>>(),
+            vec!["camel", "Case"]
+        );
+        assert_eq!(
+            split_identifier("XMLParser").collect::<Vec<_>>(),
+            vec!["XML", "Parser"]
+        );
+        assert_eq!(split_identifier("").collect::<Vec<_>>(), Vec::<&str>::new());
+        assert_eq!(split_identifier("a").collect::<Vec<_>>(), vec!["a"]);
+        assert_eq!(split_identifier("ABC").collect::<Vec<_>>(), vec!["ABC"]);
+        assert_eq!(split_identifier("abc").collect::<Vec<_>>(), vec!["abc"]);
+        assert_eq!(split_identifier("123").collect::<Vec<_>>(), vec!["123"]);
+        assert_eq!(
+            split_identifier("a1B2c3").collect::<Vec<_>>(),
+            vec!["a1", "B2c3"]
+        );
+        assert_eq!(
+            split_identifier("HTML5Parser").collect::<Vec<_>>(),
+            vec!["HTML5", "Parser"]
+        );
+        assert_eq!(
+            split_identifier("_leading_underscore").collect::<Vec<_>>(),
+            vec!["leading", "underscore"]
+        );
+        assert_eq!(
+            split_identifier("trailing_underscore_").collect::<Vec<_>>(),
+            vec!["trailing", "underscore"]
+        );
+        assert_eq!(
+            split_identifier("--multiple--delimiters--").collect::<Vec<_>>(),
+            vec!["multiple", "delimiters"]
+        );
     }
 
     #[test]
