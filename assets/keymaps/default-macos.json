@@ -582,15 +582,15 @@
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
       "cmd-k cmd-]": "editor::UnfoldRecursive",
-      "cmd-k cmd-1": ["editor::FoldAtLevel", 1],
-      "cmd-k cmd-2": ["editor::FoldAtLevel", 2],
-      "cmd-k cmd-3": ["editor::FoldAtLevel", 3],
-      "cmd-k cmd-4": ["editor::FoldAtLevel", 4],
-      "cmd-k cmd-5": ["editor::FoldAtLevel", 5],
-      "cmd-k cmd-6": ["editor::FoldAtLevel", 6],
-      "cmd-k cmd-7": ["editor::FoldAtLevel", 7],
-      "cmd-k cmd-8": ["editor::FoldAtLevel", 8],
-      "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
+      "cmd-k cmd-1": "editor::FoldAtLevel_1",
+      "cmd-k cmd-2": "editor::FoldAtLevel_2",
+      "cmd-k cmd-3": "editor::FoldAtLevel_3",
+      "cmd-k cmd-4": "editor::FoldAtLevel_4",
+      "cmd-k cmd-5": "editor::FoldAtLevel_5",
+      "cmd-k cmd-6": "editor::FoldAtLevel_6",
+      "cmd-k cmd-7": "editor::FoldAtLevel_7",
+      "cmd-k cmd-8": "editor::FoldAtLevel_8",
+      "cmd-k cmd-9": "editor::FoldAtLevel_9",
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
       // Using `ctrl-space` / `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
@@ -1334,10 +1334,7 @@
     "context": "Onboarding",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-1": "onboarding::ActivateBasicsPage",
-      "cmd-2": "onboarding::ActivateEditingPage",
-      "cmd-3": "onboarding::ActivateAISetupPage",
-      "cmd-escape": "onboarding::Finish",
+      "cmd-enter": "onboarding::Finish",
       "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
     }
@@ -1371,6 +1368,18 @@
       "ctrl-0": ["settings_editor::FocusFile", 9],
       "cmd-{": "settings_editor::FocusPreviousFile",
       "cmd-}": "settings_editor::FocusNextFile"
+    }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "use_key_equivalents": true,
+    "bindings": {
+      "right": "settings_editor::ExpandNavEntry",
+      "left": "settings_editor::CollapseNavEntry",
+      "pageup": "settings_editor::FocusPreviousRootNavEntry",
+      "pagedown": "settings_editor::FocusNextRootNavEntry",
+      "home": "settings_editor::FocusFirstNavEntry",
+      "end": "settings_editor::FocusLastNavEntry"
     }
   }
 ]

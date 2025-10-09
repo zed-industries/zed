@@ -17,3 +17,5 @@ brackets = [
 collapsed_placeholder = " /* ... */ "
 debuggers = ["CodeLLDB", "GDB"]
 documentation_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+ignored_import_segments = ["crate", "super"]
+import_path_strip_regex = "/(lib|mod)\\.rs$"

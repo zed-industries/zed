@@ -12416,11 +12416,6 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         .join("\n"),
     );
 
-    // Submit a format request.
-    let format = cx
-        .update_editor(|editor, window, cx| editor.format(&Format, window, cx))
-        .unwrap();
-
     // Record which buffer changes have been sent to the language server
     let buffer_changes = Arc::new(Mutex::new(Vec::new()));
     cx.lsp
@@ -12441,28 +12436,29 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         .set_request_handler::<lsp::request::Formatting, _, _>({
             let buffer_changes = buffer_changes.clone();
             move |_, _| {
-                // When formatting is requested, trailing whitespace has already been stripped,
-                // and the trailing newline has already been added.
-                assert_eq!(
-                    &buffer_changes.lock()[1..],
-                    &[
-                        (
-                            lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                            "".into()
-                        ),
-                        (
-                            lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                            "".into()
-                        ),
-                        (
-                            lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                            "\n".into()
-                        ),
-                    ]
-                );
-
+                let buffer_changes = buffer_changes.clone();
                 // Insert blank lines between each line of the buffer.
                 async move {
+                    // When formatting is requested, trailing whitespace has already been stripped,
+                    // and the trailing newline has already been added.
+                    assert_eq!(
+                        &buffer_changes.lock()[1..],
+                        &[
+                            (
+                                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                                "".into()
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                                "".into()
+                            ),
+                            (
+                                lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                                "\n".into()
+                            ),
+                        ]
+                    );
+
                     Ok(Some(vec![
                         lsp::TextEdit {
                             range: lsp::Range::new(
@@ -12483,10 +12479,17 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
             }
         });
 
+    // Submit a format request.
+    let format = cx
+        .update_editor(|editor, window, cx| editor.format(&Format, window, cx))
+        .unwrap();
+
+    cx.run_until_parked();
     // After formatting the buffer, the trailing whitespace is stripped,
     // a newline is appended, and the edits provided by the language server
     // have been applied.
     format.await.unwrap();
+
     cx.assert_editor_state(
         &[
             "one",   //
@@ -16515,7 +16518,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, rel_path("b.txt").into_arc()),
+                PathKey::with_sort_prefix(1, rel_path("b.txt").into_arc()),
                 buffer_1.clone(),
                 vec![
                     Point::row_range(0..3),
@@ -16526,7 +16529,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
                 cx,
             );
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(1, rel_path("a.txt").into_arc()),
+                PathKey::with_sort_prefix(1, rel_path("a.txt").into_arc()),
                 buffer_2.clone(),
                 vec![Point::row_range(0..6), Point::row_range(8..12)],
                 0,
@@ -21029,7 +21032,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
+                PathKey::with_sort_prefix(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 2,
@@ -26474,4 +26477,65 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .filter_map(|inlay| inlay.get_color())
         .map(Rgba::from)
         .collect()
+}
+
+#[gpui::test]
+fn test_duplicate_line_up_on_last_line_without_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("line1\nline2", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)
+                ])
+            });
+
+            editor.duplicate_line_up(&DuplicateLineUp, window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "line1\nline2\nline2",
+                "Duplicating last line upward should create duplicate above, not on same line"
+            );
+
+            assert_eq!(
+                editor.selections.display_ranges(cx),
+                vec![DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0)],
+                "Selection should remain on the original line"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_copy_line_without_trailing_newline(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2ˇ");
+
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+
+    let clipboard_text = cx
+        .read_from_clipboard()
+        .and_then(|item| item.text().as_deref().map(str::to_string));
+
+    assert_eq!(
+        clipboard_text,
+        Some("line2\n".to_string()),
+        "Copying a line without trailing newline should include a newline"
+    );
+
+    cx.set_state("line1\nˇ");
+
+    cx.update_editor(|e, window, cx| e.paste(&Paste, window, cx));
+
+    cx.assert_editor_state("line1\nline2\nˇ");
 }

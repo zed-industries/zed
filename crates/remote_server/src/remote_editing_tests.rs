@@ -1792,7 +1792,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "claude"]);
+    pretty_assertions::assert_eq!(names, ["codex", "gemini", "claude"]);
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
             .set_server_settings(
@@ -1822,7 +1822,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "foo", "claude"]);
+    pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
     let (command, root, login) = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {

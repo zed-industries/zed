@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent},
+    git_store::{GitStore, GitStoreEvent, Repository},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u64 = 1;
-const TRACKED_NAMESPACE: u64 = 2;
-const NEW_NAMESPACE: u64 = 3;
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -234,16 +234,8 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-
-        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-            CONFLICT_NAMESPACE
-        } else if entry.status.is_created() {
-            NEW_NAMESPACE
-        } else {
-            TRACKED_NAMESPACE
-        };
-
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
+        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -388,16 +380,8 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
-                    TRACKED_NAMESPACE
-                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-                    CONFLICT_NAMESPACE
-                } else if entry.status.is_created() {
-                    NEW_NAMESPACE
-                } else {
-                    TRACKED_NAMESPACE
-                };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -538,6 +522,18 @@ impl ProjectDiff {
             .map(|key| key.path())
             .cloned()
             .collect()
+    }
+}
+
+fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+    if GitPanelSettings::get_global(cx).sort_by_path {
+        TRACKED_SORT_PREFIX
+    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
+        CONFLICT_SORT_PREFIX
+    } else if status.is_created() {
+        NEW_SORT_PREFIX
+    } else {
+        TRACKED_SORT_PREFIX
     }
 }
 
@@ -1463,7 +1459,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("foo").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1484,7 +1480,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
