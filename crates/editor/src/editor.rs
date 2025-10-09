@@ -6921,19 +6921,24 @@ impl Editor {
         if self.selections.count() != 1 || self.selections.line_mode() {
             return None;
         }
-        let selection = self.selections.newest::<Point>(cx);
-        if selection.is_empty() || selection.start.row != selection.end.row {
+        let selection = self.selections.newest_anchor();
+        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
+        let selection_point_range = selection.start.to_point(&multi_buffer_snapshot)
+            ..selection.end.to_point(&multi_buffer_snapshot);
+        // If the selection spans multiple rows OR it is empty
+        if selection_point_range.start.row != selection_point_range.end.row
+            || selection_point_range.start.column == selection_point_range.end.column
+        {
             return None;
         }
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let selection_anchor_range = selection.range().to_anchors(&multi_buffer_snapshot);
+
         let query = multi_buffer_snapshot
-            .text_for_range(selection_anchor_range.clone())
+            .text_for_range(selection.range())
             .collect::<String>();
         if query.trim().is_empty() {
             return None;
         }
-        Some((query, selection_anchor_range))
+        Some((query, selection.range()))
     }
 
     fn update_selection_occurrence_highlights(
