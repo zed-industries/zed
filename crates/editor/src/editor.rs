@@ -6616,11 +6616,12 @@ impl Editor {
             let (start_buffer, start, _, end, newest_selection) = this
                 .update(cx, |this, cx| {
                     let newest_selection = this.selections.newest_anchor().clone();
-                    let newest_selection_adjusted = this.selections.newest_adjusted(cx);
-                    let buffer = this.buffer.read(cx);
                     if newest_selection.head().diff_base_anchor.is_some() {
                         return None;
                     }
+                    let newest_selection_adjusted = this.selections.newest_adjusted(cx);
+                    let buffer = this.buffer.read(cx);
+
                     let (start_buffer, start) =
                         buffer.text_anchor_for_position(newest_selection_adjusted.start, cx)?;
                     let (end_buffer, end) =
