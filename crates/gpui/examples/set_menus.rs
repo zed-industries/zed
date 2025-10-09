@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Context, Global, Menu, MenuItem, SystemMenuType, Window, WindowOptions,
-    actions, div, prelude::*, rgb,
+    App, Application, Context, Global, Menu, MenuItem, SharedString, SystemMenuType, Window,
+    WindowOptions, actions, div, prelude::*, rgb,
 };
 
 struct SetMenus;
@@ -35,6 +35,7 @@ fn main() {
     });
 }
 
+#[derive(PartialEq)]
 enum ViewMode {
     List,
     Grid,
@@ -47,18 +48,15 @@ impl ViewMode {
             ViewMode::Grid => ViewMode::List,
         }
     }
-
-    fn name(&self) -> &'static str {
-        match self {
-            ViewMode::List => "List",
-            ViewMode::Grid => "Grid",
-        }
-    }
 }
 
 impl Into<SharedString> for ViewMode {
     fn into(self) -> SharedString {
-        self.name().into()
+        match self {
+            ViewMode::List => "List",
+            ViewMode::Grid => "Grid",
+        }
+        .into()
     }
 }
 
