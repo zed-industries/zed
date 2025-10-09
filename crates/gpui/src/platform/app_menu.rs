@@ -71,7 +71,7 @@ pub enum MenuItem {
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
 
-        /// Whether this action is checked.
+        /// Whether this action is checked
         checked: bool,
     },
 }
@@ -139,9 +139,9 @@ impl MenuItem {
         }
     }
 
-    /// Sets whether this action is checked.
+    /// Set whether this menu item is checked
     ///
-    /// Only for [`MenuItem::Action`], otherwise, will be ignored.
+    /// Only for [`MenuItem::Action`], otherwise, will be ignored
     pub fn checked(mut self, checked: bool) -> Self {
         match self {
             MenuItem::Action {
@@ -205,7 +205,7 @@ pub enum OwnedMenuItem {
         /// See [`OsAction`] for more information
         os_action: Option<OsAction>,
 
-        /// Whether this action is checked.
+        /// Whether this action is checked
         checked: bool,
     },
 }
