@@ -542,7 +542,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn action(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+    pub fn action(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
         self.action_checked(label, action, false)
     }
 
