@@ -8,7 +8,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use client::Client;
 use collections::HashMap;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::{Fs, RemoveOptions, RenameOptions};
@@ -16,7 +15,7 @@ use futures::StreamExt as _;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
-use http_client::github::AssetKind;
+use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -114,6 +113,7 @@ enum AgentServerStoreState {
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
+        http_client: Arc<dyn HttpClient>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
@@ -174,6 +174,7 @@ impl AgentServerStore {
             project_environment,
             downstream_client,
             settings: old_settings,
+            http_client,
             ..
         } = &mut self.state
         else {
@@ -227,6 +228,8 @@ impl AgentServerStore {
                         .codex
                         .clone()
                         .and_then(|settings| settings.custom_command()),
+                    http_client: http_client.clone(),
+                    is_remote: downstream_client.is_some(),
                 }),
             );
         }
@@ -253,7 +256,6 @@ impl AgentServerStore {
                     names: self
                         .external_agents
                         .keys()
-                        .filter(|name| name.0 != CODEX_NAME)
                         .map(|name| name.to_string())
                         .collect(),
                 })
@@ -266,6 +268,7 @@ impl AgentServerStore {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         project_environment: Entity<ProjectEnvironment>,
+        http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
@@ -283,6 +286,7 @@ impl AgentServerStore {
                 node_runtime,
                 fs,
                 project_environment,
+                http_client,
                 downstream_client: None,
                 settings: None,
                 _subscriptions: [subscription],
@@ -297,12 +301,12 @@ impl AgentServerStore {
     pub(crate) fn remote(
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
-        let external_agents = [
+        let mut external_agents = [
             (
                 GEMINI_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
@@ -325,7 +329,21 @@ impl AgentServerStore {
             ),
         ]
         .into_iter()
-        .collect();
+        .collect::<HashMap<ExternalAgentServerName, Box<dyn ExternalAgentServer>>>();
+
+        use feature_flags::FeatureFlagAppExt as _;
+        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() {
+            external_agents.insert(
+                CODEX_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: CODEX_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            );
+        }
 
         Self {
             state: AgentServerStoreState::Remote {
@@ -1003,7 +1021,9 @@ impl ExternalAgentServer for LocalClaudeCode {
 struct LocalCodex {
     fs: Arc<dyn Fs>,
     project_environment: Entity<ProjectEnvironment>,
+    http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
+    is_remote: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -1017,11 +1037,13 @@ impl ExternalAgentServer for LocalCodex {
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
         let project_environment = self.project_environment.downgrade();
+        let http = self.http_client.clone();
         let custom_command = self.custom_command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
             .into();
+        let is_remote = self.is_remote;
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1030,6 +1052,9 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
+            if is_remote {
+                env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+            }
 
             let mut command = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
@@ -1040,7 +1065,6 @@ impl ExternalAgentServer for LocalCodex {
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
-                let http = cx.update(|cx| Client::global(cx).http_client())?;
                 let release = ::http_client::github::latest_github_release(
                     CODEX_ACP_REPO,
                     true,
