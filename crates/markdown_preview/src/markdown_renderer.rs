@@ -463,59 +463,48 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
         .sum()
 }
 
-fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    // Calculate the actual number of columns (considering col_span)
+fn calculate_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     let mut actual_column_count = 0;
-    for row in &parsed.header {
-        let mut col_index = 0;
-        for cell in &row.columns {
-            col_index += cell.col_span;
-        }
-        actual_column_count = actual_column_count.max(col_index);
+    for row in rows {
+        actual_column_count = actual_column_count.max(
+            row.columns
+                .iter()
+                .map(|column| column.col_span)
+                .sum::<usize>(),
+        );
     }
-    for row in &parsed.body {
-        let mut col_index = 0;
-        for cell in &row.columns {
-            col_index += cell.col_span;
-        }
-        actual_column_count = actual_column_count.max(col_index);
-    }
+    actual_column_count
+}
 
-    // Initialize max_lengths for the actual number of columns
+fn calculate_column_length(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkdownTableRow>) {
+    for row in rows {
+        let mut col_index = 0;
+        for cell in row.columns.iter() {
+            let length = paragraph_len(&cell.children);
+
+            // Distribute the length across the spanned columns
+            let length_per_col = length / cell.col_span.max(1);
+            for i in 0..cell.col_span {
+                if col_index + i < max_lengths.len() {
+                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
+                }
+            }
+            col_index += cell.col_span;
+        }
+    }
+}
+
+fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
+    let actual_header_column_count = calculate_columns_count(&parsed.header);
+    let actual_body_column_count = calculate_columns_count(&parsed.body);
+
+    let actual_column_count = std::cmp::max(actual_header_column_count, actual_body_column_count);
+
     let mut max_lengths: Vec<usize> = vec![0; actual_column_count];
 
     // Calculate max lengths for each actual column
-    for row in &parsed.header {
-        let mut col_index = 0;
-        for cell in row.columns.iter() {
-            let length = paragraph_len(&cell.children);
-
-            // Distribute the length across the spanned columns
-            let length_per_col = length / cell.col_span.max(1);
-            for i in 0..cell.col_span {
-                if col_index + i < max_lengths.len() {
-                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
-                }
-            }
-            col_index += cell.col_span;
-        }
-    }
-
-    for row in &parsed.body {
-        let mut col_index = 0;
-        for cell in row.columns.iter() {
-            let length = paragraph_len(&cell.children);
-
-            // Distribute the length across the spanned columns
-            let length_per_col = length / cell.col_span.max(1);
-            for i in 0..cell.col_span {
-                if col_index + i < max_lengths.len() {
-                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
-                }
-            }
-            col_index += cell.col_span;
-        }
-    }
+    calculate_column_length(&mut max_lengths, &parsed.header);
+    calculate_column_length(&mut max_lengths, &parsed.body);
 
     let total_max_length: usize = max_lengths.iter().sum::<usize>().max(1);
     let max_column_widths: Vec<f32> = max_lengths
@@ -579,18 +568,15 @@ fn render_markdown_table_row(
             }
         }
 
-        let mut cell_element = container
+        let cell_element = container
             .w(Length::Definite(relative(combined_width)))
             .h_full()
             .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color)
-            .border_r_1();
-
-        if cell.is_header {
-            cell_element = cell_element.bg(cx.element_background_color)
-        }
+            .border_r_1()
+            .when(cell.is_header, |this| this.bg(cx.element_background_color));
 
         items.push(cell_element);
         col_index += cell.col_span;
