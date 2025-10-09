@@ -56,12 +56,24 @@ actions!(
         Minimize,
         /// Toggles focus between the navbar and the main content.
         ToggleFocusNav,
+        /// Expands the navigation entry.
+        ExpandNavEntry,
+        /// Collapses the navigation entry.
+        CollapseNavEntry,
         /// Focuses the next file in the file list.
         FocusNextFile,
         /// Focuses the previous file in the file list.
         FocusPreviousFile,
         /// Opens an editor for the current file
         OpenCurrentFile,
+        /// Focuses the previous root navigation entry.
+        FocusPreviousRootNavEntry,
+        /// Focuses the next root navigation entry.
+        FocusNextRootNavEntry,
+        /// Focuses the first navigation entry.
+        FocusFirstNavEntry,
+        /// Focuses the last navigation entry.
+        FocusLastNavEntry
     ]
 );
 
@@ -542,13 +554,14 @@ struct SubPage {
     section_header: &'static str,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
     expanded: bool,
     page_index: usize,
     item_index: Option<usize>,
+    focus_handle: FocusHandle,
 }
 
 struct SettingsPage {
@@ -925,26 +938,27 @@ impl SettingsWindow {
         this
     }
 
-    fn toggle_navbar_entry(&mut self, ix: usize) {
+    fn toggle_navbar_entry(&mut self, nav_entry_index: usize) {
         // We can only toggle root entries
-        if !self.navbar_entries[ix].is_root {
+        if !self.navbar_entries[nav_entry_index].is_root {
             return;
         }
 
-        let toggle_page_index = self.page_index_from_navbar_index(ix);
-        let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
-
-        let expanded = &mut self.navbar_entries[ix].expanded;
+        let expanded = &mut self.navbar_entries[nav_entry_index].expanded;
         *expanded = !*expanded;
+        let expanded = *expanded;
+
+        let toggle_page_index = self.page_index_from_navbar_index(nav_entry_index);
+        let selected_page_index = self.page_index_from_navbar_index(self.navbar_entry);
         // if currently selected page is a child of the parent page we are folding,
         // set the current page to the parent page
-        if !*expanded && selected_page_index == toggle_page_index {
-            self.navbar_entry = ix;
+        if !expanded && selected_page_index == toggle_page_index {
+            self.navbar_entry = nav_entry_index;
             // note: not opening page. Toggling does not change content just selected page
         }
     }
 
-    fn build_navbar(&mut self) {
+    fn build_navbar(&mut self, cx: &App) {
         let mut prev_navbar_state = HashMap::new();
         let mut root_entry = "";
         let mut prev_selected_entry = None;
@@ -971,6 +985,7 @@ impl SettingsWindow {
                 expanded: false,
                 page_index,
                 item_index: None,
+                focus_handle: cx.focus_handle().tab_index(0).tab_stop(true),
             });
 
             for (item_index, item) in page.items.iter().enumerate() {
@@ -983,6 +998,7 @@ impl SettingsWindow {
                     expanded: false,
                     page_index,
                     item_index: Some(item_index),
+                    focus_handle: cx.focus_handle().tab_index(0).tab_stop(true),
                 });
             }
         }
@@ -999,7 +1015,7 @@ impl SettingsWindow {
             };
             let key = (root_entry, sub_entry_title);
             if Some(key) == prev_selected_entry {
-                self.open_nav_page(index);
+                self.open_navbar_entry_page(index);
                 found_nav_entry = true;
             }
             entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
@@ -1195,7 +1211,7 @@ impl SettingsWindow {
         sub_page_stack_mut().clear();
         self.build_content_handles(window, cx);
         self.build_search_matches();
-        self.build_navbar();
+        self.build_navbar(cx);
 
         self.update_matches(cx);
 
@@ -1256,7 +1272,7 @@ impl SettingsWindow {
         }
     }
 
-    fn open_nav_page(&mut self, navbar_entry: usize) {
+    fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
         self.navbar_entry = navbar_entry;
         sub_page_stack_mut().clear();
     }
@@ -1267,7 +1283,7 @@ impl SettingsWindow {
             .next()
             .map(|e| e.0)
             .unwrap_or(0);
-        self.open_nav_page(first_navbar_entry_index);
+        self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
     fn change_file(&mut self, ix: usize, window: &mut Window, cx: &mut Context<SettingsWindow>) {
@@ -1280,7 +1296,7 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        self.open_nav_page(0);
+        self.open_navbar_entry_page(0);
         self.build_ui(window, cx);
 
         self.open_first_nav_page();
@@ -1417,6 +1433,75 @@ impl SettingsWindow {
             .pt_10()
             .flex_none()
             .border_r_1()
+            .key_context("NavigationMenu")
+            .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
+                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                    return;
+                };
+                let focused_entry_parent = this.root_entry_containing(focused_entry);
+                if this.navbar_entries[focused_entry_parent].expanded {
+                    this.toggle_navbar_entry(focused_entry_parent);
+                    window.focus(&this.navbar_entries[focused_entry_parent].focus_handle);
+                }
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ExpandNavEntry, window, cx| {
+                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                    return;
+                };
+                if !this.navbar_entries[focused_entry].is_root {
+                    return;
+                }
+                if !this.navbar_entries[focused_entry].expanded {
+                    this.toggle_navbar_entry(focused_entry);
+                }
+                cx.notify();
+            }))
+            .on_action(
+                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, _| {
+                    let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                    let mut root_index = None;
+                    for (index, entry) in this.visible_navbar_entries() {
+                        if index >= entry_index {
+                            break;
+                        }
+                        if entry.is_root {
+                            root_index = Some(index);
+                        }
+                    }
+                    let Some(previous_root_index) = root_index else {
+                        return;
+                    };
+                    this.focus_and_scroll_to_nav_entry(previous_root_index, window);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, _| {
+                let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                let mut root_index = None;
+                for (index, entry) in this.visible_navbar_entries() {
+                    if index <= entry_index {
+                        continue;
+                    }
+                    if entry.is_root {
+                        root_index = Some(index);
+                        break;
+                    }
+                }
+                let Some(next_root_index) = root_index else {
+                    return;
+                };
+                this.focus_and_scroll_to_nav_entry(next_root_index, window);
+            }))
+            .on_action(cx.listener(|this, _: &FocusFirstNavEntry, window, _| {
+                if let Some((first_entry_index, _)) = this.visible_navbar_entries().next() {
+                    this.focus_and_scroll_to_nav_entry(first_entry_index, window);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &FocusLastNavEntry, window, _| {
+                if let Some((last_entry_index, _)) = this.visible_navbar_entries().last() {
+                    this.focus_and_scroll_to_nav_entry(last_entry_index, window);
+                }
+            }))
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().panel_background)
             .child(self.render_search(window, cx))
@@ -1439,61 +1524,26 @@ impl SettingsWindow {
                                             ("settings-ui-navbar-entry", ix),
                                             entry.title,
                                         )
-                                        .tab_index(0)
+                                        .track_focus(&entry.focus_handle)
                                         .root_item(entry.is_root)
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
                                             item.expanded(entry.expanded).on_toggle(cx.listener(
-                                                move |this, _, _, cx| {
+                                                move |this, _, window, cx| {
                                                     this.toggle_navbar_entry(ix);
+                                                    window.focus(
+                                                        &this.navbar_entries[ix].focus_handle,
+                                                    );
                                                     cx.notify();
                                                 },
                                             ))
                                         })
                                         .on_click(
-                                            cx.listener(
-                                                move |this, evt: &gpui::ClickEvent, window, cx| {
-                                                    if !this.navbar_entries[ix].is_root {
-                                                        this.open_nav_page(ix);
-                                                        let mut selected_page_ix = ix;
-
-                                                        while !this.navbar_entries[selected_page_ix]
-                                                            .is_root
-                                                        {
-                                                            selected_page_ix -= 1;
-                                                        }
-
-                                                        let section_header = ix - selected_page_ix;
-
-                                                        if let Some(section_index) =
-                                                            this.page_items()
-                                                                .enumerate()
-                                                                .filter(|(_, (_, item))| {
-                                                                    matches!(
-                                                                 item,
-                                                                 SettingsPageItem::SectionHeader(_)
-                                                             )
-                                                                })
-                                                                .take(section_header)
-                                                                .last()
-                                                                .map(|(index, _)| index)
-                                                        {
-                                                            this.scroll_handle
-                                                                .scroll_to_top_of_item(
-                                                                    section_index,
-                                                                );
-                                                            this.focus_content_element(
-                                                                section_index,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    } else if !evt.is_keyboard() {
-                                                        this.open_nav_page(ix);
-                                                    }
-                                                    cx.notify();
-                                                },
-                                            ),
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.open_and_scroll_to_navbar_entry(
+                                                    ix, window, cx,
+                                                );
+                                            }),
                                         )
                                     })
                                     .collect()
@@ -1525,16 +1575,47 @@ impl SettingsWindow {
         // )
     }
 
-    fn focus_first_nav_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.navbar_focus_handle.focus_handle(cx).focus(window);
-        window.focus_next();
+    fn open_and_scroll_to_navbar_entry(
+        &mut self,
+        navbar_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_navbar_entry_page(navbar_entry_index);
         cx.notify();
+
+        if self.navbar_entries[navbar_entry_index].is_root {
+            let Some(first_item_index) = self.page_items().next().map(|(index, _)| index) else {
+                return;
+            };
+            self.focus_content_element(first_item_index, window, cx);
+            self.scroll_handle.set_offset(point(px(0.), px(0.)));
+        } else {
+            let entry_item_index = self.navbar_entries[navbar_entry_index]
+                .item_index
+                .expect("Non-root items should have an item index");
+            let Some(selected_item_index) = self
+                .page_items()
+                .position(|(index, _)| index == entry_item_index)
+            else {
+                return;
+            };
+            self.scroll_handle
+                .scroll_to_top_of_item(selected_item_index);
+            self.focus_content_element(selected_item_index, window, cx);
+        }
     }
 
-    fn focus_first_content_item(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.content_focus_handle.focus_handle(cx).focus(window);
-        window.focus_next();
-        cx.notify();
+    fn focus_and_scroll_to_nav_entry(&self, nav_entry_index: usize, window: &mut Window) {
+        let Some(position) = self
+            .visible_navbar_entries()
+            .position(|(index, _)| index == nav_entry_index)
+        else {
+            return;
+        };
+        self.list_handle
+            .scroll_to_item(position, gpui::ScrollStrategy::Top);
+        window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
     }
 
     fn page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
@@ -1884,6 +1965,25 @@ impl SettingsWindow {
         let page_index = self.current_page_index();
         window.focus(&self.content_handles[page_index][item_index].focus_handle(cx));
     }
+
+    fn focused_nav_entry(&self, window: &Window) -> Option<usize> {
+        for (index, entry) in self.navbar_entries.iter().enumerate() {
+            if entry.focus_handle.is_focused(window) {
+                return Some(index);
+            }
+        }
+        None
+    }
+
+    fn root_entry_containing(&self, nav_entry_index: usize) -> usize {
+        let mut index = Some(nav_entry_index);
+        while let Some(prev_index) = index
+            && !self.navbar_entries[prev_index].is_root
+        {
+            index = prev_index.checked_sub(1);
+        }
+        return index.expect("No root entry found");
+    }
 }
 
 impl Render for SettingsWindow {
@@ -1909,9 +2009,9 @@ impl Render for SettingsWindow {
                     .focus_handle(cx)
                     .contains_focused(window, cx)
                 {
-                    this.focus_first_content_item(window, cx);
+                    this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
                 } else {
-                    this.focus_first_nav_item(window, cx);
+                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window);
                 }
             }))
             .on_action(
@@ -2193,9 +2293,9 @@ mod test {
             this
         }
 
-        fn build(mut self) -> Self {
+        fn build(mut self, cx: &App) -> Self {
             self.build_search_matches();
-            self.build_navbar();
+            self.build_navbar(cx);
             self
         }
 
@@ -2254,6 +2354,17 @@ mod test {
         fn item(mut self, item: SettingsPageItem) -> Self {
             self.items.push(item);
             self
+        }
+    }
+
+    impl PartialEq for NavBarEntry {
+        fn eq(&self, other: &Self) -> bool {
+            self.title == other.title
+                && self.is_root == other.is_root
+                && self.expanded == other.expanded
+                && self.page_index == other.page_index
+                && self.item_index == other.item_index
+            // ignoring focus_handle
         }
     }
 
@@ -2367,7 +2478,7 @@ mod test {
         };
 
         settings_window.build_search_matches();
-        settings_window.build_navbar();
+        settings_window.build_navbar(cx);
         for expanded_page_index in expanded_pages {
             for entry in &mut settings_window.navbar_entries {
                 if entry.page_index == expanded_page_index && entry.is_root {
@@ -2566,7 +2677,7 @@ mod test {
                         page.item(SettingsPageItem::SectionHeader("General settings"))
                             .item(SettingsPageItem::basic_item("test title", "General test"))
                     })
-                    .build()
+                    .build(cx)
             });
 
             let actual = cx.new(|cx| {
@@ -2578,7 +2689,7 @@ mod test {
                     .add_page("Theme", |page| {
                         page.item(SettingsPageItem::SectionHeader("Theme settings"))
                     })
-                    .build()
+                    .build(cx)
             });
 
             actual.update(cx, |settings, cx| settings.search("gen", window, cx));
@@ -2628,7 +2739,7 @@ mod test {
                             ),
                         )
                     })
-                    .build()
+                    .build(cx)
             });
 
             let expected = cx.new(|cx| {
@@ -2641,7 +2752,7 @@ mod test {
                             ),
                         )
                     })
-                    .build()
+                    .build(cx)
             });
 
             actual.update(cx, |settings, cx| settings.search("cursor", window, cx));

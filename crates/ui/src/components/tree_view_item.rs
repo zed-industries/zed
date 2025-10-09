@@ -21,6 +21,7 @@ pub struct TreeViewItem {
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     tab_index: Option<isize>,
+    focus_handle: Option<gpui::FocusHandle>,
 }
 
 impl TreeViewItem {
@@ -41,6 +42,7 @@ impl TreeViewItem {
             on_toggle: None,
             on_secondary_mouse_down: None,
             tab_index: None,
+            focus_handle: None,
         }
     }
 
@@ -107,6 +109,11 @@ impl TreeViewItem {
         self.focused = focused;
         self
     }
+
+    pub fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
 }
 
 impl Disableable for TreeViewItem {
@@ -163,6 +170,9 @@ impl RenderOnce for TreeViewItem {
                                 })
                                 .focus(|s| s.border_color(focused_border))
                                 .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when_some(self.focus_handle, |this, handle| {
+                                    this.track_focus(&handle)
+                                })
                                 .when_some(self.tab_index, |this, index| this.tab_index(index))
                                 .child(
                                     Disclosure::new("toggle", self.expanded)
@@ -182,22 +192,7 @@ impl RenderOnce for TreeViewItem {
                                 .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
                                 .when_some(
                                     self.on_click.filter(|_| !self.disabled),
-                                    |this, on_click| {
-                                        if self.root_item
-                                            && let Some(on_toggle) = self.on_toggle.clone()
-                                        {
-                                            this.on_click(move |event, window, cx| {
-                                                if event.is_keyboard() {
-                                                    on_click(event, window, cx);
-                                                    on_toggle(event, window, cx);
-                                                } else {
-                                                    on_click(event, window, cx);
-                                                }
-                                            })
-                                        } else {
-                                            this.on_click(on_click)
-                                        }
-                                    },
+                                    |this, on_click| this.on_click(on_click),
                                 )
                                 .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
                                     this.on_mouse_down(
@@ -221,6 +216,9 @@ impl RenderOnce for TreeViewItem {
                                     })
                                     .focus(|s| s.border_color(focused_border))
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                    .when_some(self.focus_handle, |this, handle| {
+                                        this.track_focus(&handle)
+                                    })
                                     .when_some(self.tab_index, |this, index| this.tab_index(index))
                                     .child(
                                         Label::new(label)
