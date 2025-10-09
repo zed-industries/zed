@@ -99,17 +99,6 @@ pub(crate) fn zed_default_dark() -> Theme {
             system: SystemColors::default(),
             accents: AccentColors(vec![blue, orange, purple, teal, red, green, yellow]),
             colors: ThemeColors {
-                // Vim mode backgrounds
-                vim_normal_background: SystemColors::default().transparent,
-                vim_insert_background: SystemColors::default().transparent,
-                vim_replace_background: SystemColors::default().transparent,
-                vim_visual_background: SystemColors::default().transparent,
-                vim_visual_line_background: SystemColors::default().transparent,
-                vim_visual_block_background: SystemColors::default().transparent,
-                vim_helix_normal_background: SystemColors::default().transparent,
-                vim_helix_select_background: SystemColors::default().transparent,
-                vim_mode_text: SystemColors::default().transparent,
-                // Existing fields
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 border_focused: hsla(223. / 360., 78. / 100., 65. / 100., 1.),
@@ -244,6 +233,16 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_ignored: crate::gray().light().step_12(),
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
+
+                vim_normal_background: SystemColors::default().transparent,
+                vim_insert_background: SystemColors::default().transparent,
+                vim_replace_background: SystemColors::default().transparent,
+                vim_visual_background: SystemColors::default().transparent,
+                vim_visual_line_background: SystemColors::default().transparent,
+                vim_visual_block_background: SystemColors::default().transparent,
+                vim_helix_normal_background: SystemColors::default().transparent,
+                vim_helix_select_background: SystemColors::default().transparent,
+                vim_mode_text: SystemColors::default().transparent,
             },
             status: StatusColors {
                 conflict: yellow,
