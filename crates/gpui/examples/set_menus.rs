@@ -35,13 +35,42 @@ fn main() {
     });
 }
 
+enum ViewMode {
+    List,
+    Grid,
+}
+
+impl ViewMode {
+    fn toggle(&mut self) {
+        *self = match self {
+            ViewMode::List => ViewMode::Grid,
+            ViewMode::Grid => ViewMode::List,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            ViewMode::List => "List",
+            ViewMode::Grid => "Grid",
+        }
+    }
+}
+
+impl Into<SharedString> for ViewMode {
+    fn into(self) -> SharedString {
+        self.name().into()
+    }
+}
+
 struct AppState {
-    checked: bool,
+    view_mode: ViewMode,
 }
 
 impl AppState {
     fn new() -> Self {
-        Self { checked: false }
+        Self {
+            view_mode: ViewMode::List,
+        }
     }
 }
 
@@ -54,7 +83,10 @@ fn set_app_menus(cx: &mut App) {
         items: vec![
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
-            MenuItem::action("Checkable Item", ToggleCheck).checked(app_state.checked),
+            MenuItem::action(ViewMode::List, ToggleCheck)
+                .checked(app_state.view_mode == ViewMode::List),
+            MenuItem::action(ViewMode::Grid, ToggleCheck)
+                .checked(app_state.view_mode == ViewMode::Grid),
             MenuItem::separator(),
             MenuItem::action("Quit", Quit),
         ],
@@ -72,6 +104,6 @@ fn quit(_: &Quit, cx: &mut App) {
 
 fn toggle_check(_: &ToggleCheck, cx: &mut App) {
     let app_state = cx.global_mut::<AppState>();
-    app_state.checked = !app_state.checked;
+    app_state.view_mode.toggle();
     set_app_menus(cx);
 }
