@@ -408,9 +408,10 @@ impl EditorTestContext {
 
         assert!(
             excerpts.len() == expected_excerpts.len(),
-            "should have {} excerpts, got {}",
+            "should have {} excerpts, got {}\nEXPECTED:\n{marked_text}\nGIVEN:\n{}",
             expected_excerpts.len(),
-            excerpts.len()
+            excerpts.len(),
+            self.multibuffer_to_marked_text(),
         );
 
         for (ix, (excerpt_id, snapshot, range)) in excerpts.into_iter().enumerate() {
@@ -424,13 +425,13 @@ impl EditorTestContext {
                 if !expected_selections.is_empty() {
                     assert!(
                         is_selected,
-                        "excerpt {ix} should be selected. got {:?}",
+                        "excerpt {ix} should contain selections. got {:?}",
                         self.editor_state(),
                     );
                 } else {
                     assert!(
                         !is_selected,
-                        "excerpt {ix} should not be selected, got: {selections:?}",
+                        "excerpt {ix} should not contain selections, got: {selections:?}",
                     );
                 }
                 continue;
@@ -569,6 +570,66 @@ impl EditorTestContext {
             );
         }
     }
+
+    fn multibuffer_to_marked_text(&mut self) -> String {
+        let mut output = String::new();
+
+        let (multibuffer_snapshot, selections, excerpts) = self.update_editor(|editor, _, cx| {
+            let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+
+            let selections = editor.selections.disjoint_anchors_arc();
+            let excerpts = multibuffer_snapshot
+                .excerpts()
+                .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))
+                .collect::<Vec<_>>();
+
+            (multibuffer_snapshot, selections, excerpts)
+        });
+
+        for (excerpt_id, snapshot, range) in excerpts.iter() {
+            let is_folded = self
+                .update_editor(|editor, _, cx| editor.is_buffer_folded(snapshot.remote_id(), cx));
+            output.push_str("[EXCERPT]\n");
+            if is_folded {
+                output.push_str("[FOLDED]\n");
+            }
+
+            let mut text = multibuffer_snapshot
+                .text_for_range(Anchor::range_in_buffer(
+                    *excerpt_id,
+                    snapshot.remote_id(),
+                    range.context.clone(),
+                ))
+                .collect::<String>();
+
+            let selections = selections
+                .iter()
+                .filter(|s| s.head().excerpt_id == *excerpt_id)
+                .map(|s| {
+                    let head = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    let tail = text::ToOffset::to_offset(&s.head().text_anchor, &snapshot)
+                        - text::ToOffset::to_offset(&range.context.start, &snapshot);
+                    tail..head
+                })
+                .rev()
+                .collect::<Vec<_>>();
+
+            for selection in selections {
+                if selection.is_empty() {
+                    text.insert(selection.start, 'ˇ');
+                    continue;
+                }
+                text.insert(selection.end, '»');
+                text.insert(selection.start, '«');
+            }
+
+            output.push_str(&format!("{text}"));
+        }
+
+        output
+    }
+
 }
 
 #[track_caller]

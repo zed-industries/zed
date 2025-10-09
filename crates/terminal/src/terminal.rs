@@ -516,6 +516,7 @@ impl TerminalBuilder {
                 escape_args: shell_kind != util::shell::ShellKind::Cmd,
             }
         };
+        dbg!(&pty_options);
 
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {

@@ -1619,7 +1619,7 @@ mod tests {
         project_diff::{self, ProjectDiff},
     };
 
-    #[cfg_attr(windows, ignore = "currently fails on windows")]
+    // #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1925,6 +1925,7 @@ mod tests {
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+
         assert_state_with_diff(
             &editor,
             cx,
