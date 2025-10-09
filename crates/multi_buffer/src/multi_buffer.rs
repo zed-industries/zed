@@ -161,6 +161,9 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
+    // Used by the derived PartialOrd & Ord, enables us to devide a sorted list
+    // in sections based on the namespace. Like files with conflicts then
+    // changed files etc
     namespace: Option<u64>,
     path: Arc<RelPath>,
 }

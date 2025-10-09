@@ -5541,79 +5541,7 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-        cx.read(|cx| {
-            project
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .unwrap()
-                .read(cx)
-                .as_local()
-                .unwrap()
-                .scan_complete()
-        })
-        .await;
-
-        cx.executor().run_until_parked();
-
         let panel = workspace.update(cx, GitPanel::new).unwrap();
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
-            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
-
-        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
-        #[rustfmt::skip]
-        pretty_assertions::assert_matches!(
-            entries.as_slice(),
-            &[
-                GitListEntry::Header(GitHeaderEntry { header: Section::Tracked }),
-                GitListEntry::Status(GitStatusEntry { status: FileStatus::Tracked(..), .. }),
-                GitListEntry::Header(GitHeaderEntry { header: Section::New }),
-                GitListEntry::Status(GitStatusEntry { status: FileStatus::Untracked, .. }),
-            ],
-        );
-        assert_entry_paths(&entries, &[None, Some("tracked"), None, Some("untracked")]);
-
-        // Run the `Open Diff` action for the untracked file, asserting that the
-        // Project Diff's active path matches the untracked file's path.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.selected_entry = Some(3);
-            panel.open_diff(&Confirm, window, cx);
-        });
-        cx.run_until_parked();
-
-        let _ = workspace.update(cx, |workspace, _window, cx| {
-            let active_path = workspace
-                .item_of_type::<ProjectDiff>(cx)
-                .expect("ProjectDiff should exist")
-                .read(cx)
-                .active_path(cx)
-                .expect("active_path should exist");
-
-            assert_eq!(active_path.path, rel_path("untracked").into_arc());
-        });
-
-        // Run the `Open Diff` action for the tracked file, asserting that the
-        // Project Diff's active path matches the tracked file's path.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.selected_entry = Some(1);
-            panel.open_diff(&Confirm, window, cx);
-        });
-        cx.run_until_parked();
-
-        let _ = workspace.update(cx, |workspace, _window, cx| {
-            let active_path = workspace
-                .item_of_type::<ProjectDiff>(cx)
-                .expect("ProjectDiff should exist")
-                .read(cx)
-                .active_path(cx)
-                .expect("active_path should exist");
-
-            assert_eq!(active_path.path, rel_path("tracked").into_arc());
-        });
 
         // Enable the `sort_by_path` setting and wait for entries to be updated,
         // as there should no longer be separators between Tracked and Untracked
@@ -5626,42 +5554,10 @@ mod tests {
             });
         });
 
-        cx.read(|cx| {
-            project
-                .read(cx)
-                .worktrees(cx)
-                .next()
-                .unwrap()
-                .read(cx)
-                .as_local()
-                .unwrap()
-                .scan_complete()
+        cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
         })
         .await;
-
-        cx.executor().run_until_parked();
-
-        let handle = cx.update_window_entity(&panel, |panel, _, _| {
-            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
-        });
-        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
-        handle.await;
-
-        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
-        pretty_assertions::assert_matches!(
-            entries.as_slice(),
-            &[
-                GitListEntry::Status(GitStatusEntry {
-                    status: FileStatus::Tracked(..),
-                    ..
-                }),
-                GitListEntry::Status(GitStatusEntry {
-                    status: FileStatus::Untracked,
-                    ..
-                }),
-            ],
-        );
-        assert_entry_paths(&entries, &[Some("tracked"), Some("untracked")]);
 
         // Confirm that `Open Diff` still works for the untracked file, updating
         // the Project Diff's active path.

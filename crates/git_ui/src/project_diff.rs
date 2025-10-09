@@ -73,6 +73,7 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
+// These influence the sort order
 const CONFLICT_NAMESPACE: u64 = 1;
 const TRACKED_NAMESPACE: u64 = 2;
 const NEW_NAMESPACE: u64 = 3;
