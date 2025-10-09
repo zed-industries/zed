@@ -420,7 +420,7 @@ jobs:
     needs: [macos_tests, windows_tests, linux_tests]
     if: | # TODO! Change this tag check somehow
       github.repository_owner == 'zed-industries' &&
-      startsWith(github.ref, 'refs/tags/v')
+      startsWith(github.ref, 'refs/tags/gpui-v')
     runs-on:
       - namespace-profile-16x32-ubuntu-2204
     steps: # TODO! Actually run the action here TODO! get a secret into CI???
