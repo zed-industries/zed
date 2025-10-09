@@ -1412,11 +1412,11 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
 
-        // let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
-        //     "Focus Content"
-        // } else {
-        //     "Focus Navbar"
-        // };
+        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+            "Focus Content"
+        } else {
+            "Focus Navbar"
+        };
 
         v_flex()
             .w_64()
@@ -1549,25 +1549,24 @@ impl SettingsWindow {
                     )
                     .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
             )
-        // TODO: Restore this once we've fixed the ToggleFocusNav action
-        // .child(
-        //     h_flex()
-        //         .w_full()
-        //         .p_2()
-        //         .pb_0p5()
-        //         .flex_none()
-        //         .border_t_1()
-        //         .border_color(cx.theme().colors().border_variant)
-        //         .children(
-        //             KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
-        //                 KeybindingHint::new(
-        //                     this,
-        //                     cx.theme().colors().surface_background.opacity(0.5),
-        //                 )
-        //                 .suffix(focus_keybind_label)
-        //             }),
-        //         ),
-        // )
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .pb_0p5()
+                    .flex_none()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .children(
+                        KeyBinding::for_action(&ToggleFocusNav, window, cx).map(|this| {
+                            KeybindingHint::new(
+                                this,
+                                cx.theme().colors().surface_background.opacity(0.5),
+                            )
+                            .suffix(focus_keybind_label)
+                        }),
+                    ),
+            )
     }
 
     fn open_and_scroll_to_navbar_entry(
