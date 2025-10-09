@@ -2656,6 +2656,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .default_width
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2676,6 +2677,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .default_height
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2693,6 +2695,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                             &mut settings_content.terminal.get_or_insert_default().blinking
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2713,6 +2716,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .cursor_shape
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2733,6 +2737,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .alternate_scroll
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2753,6 +2758,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .option_as_meta
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2773,6 +2779,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .copy_on_select
                         },
                     }),
+                    files: USER,
                     metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -2794,6 +2801,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Scroll History Lines",
@@ -2814,6 +2822,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         },
                     }),
                     metadata: None,
+                    files: USER,
                 }),
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
