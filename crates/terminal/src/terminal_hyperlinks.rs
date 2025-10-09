@@ -818,7 +818,7 @@ mod tests {
                 )
             )]
             // PathWithPosition::parse_str considers "/test/co👉ol.rs:4:NotDesc" invalid input, but
-            // still succeedes and truncates the part after the position. Ideally this would be
+            // still succeeds and truncates the part after the position. Ideally this would be
             // parsed as the path "/test/co👉ol.rs:4:NotDesc" with no position.
             fn path_with_position_parse_str() {
                 test_path!("`‹«/test/co👉ol.rs:4:NotDesc»›`");
