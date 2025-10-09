@@ -30,8 +30,9 @@ use std::{
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
 use ui::{
-    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, PopoverMenu,
-    Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar, prelude::*,
+    ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
+    KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
+    prelude::*,
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
@@ -1412,7 +1413,12 @@ impl SettingsWindow {
     ) -> impl IntoElement {
         let visible_count = self.visible_navbar_entries().count();
 
-        let focus_keybind_label = if self.navbar_focus_handle.contains_focused(window, cx) {
+        let focus_keybind_label = if self
+            .navbar_focus_handle
+            .read(cx)
+            .handle
+            .contains_focused(window, cx)
+        {
             "Focus Content"
         } else {
             "Focus Navbar"
