@@ -326,6 +326,7 @@ impl TitleBar {
                 (options.nickname.map(|nick| nick.into()), IconName::Server)
             }
             RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
+            RemoteConnectionOptions::Iroh(_) => (None, IconName::Server),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 

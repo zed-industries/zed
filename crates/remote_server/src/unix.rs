@@ -29,10 +29,9 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
-use smol::Async;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
-use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use smol::{Async, net::unix::UnixListener, stream::StreamExt as _};
 use std::{
     env,
     ffi::OsStr,
@@ -53,6 +52,8 @@ pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
         option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
     }
 });
+
+pub(crate) mod p2p;
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -191,6 +192,7 @@ fn start_server(
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
 ) -> AnyProtoClient {
+    log::info!("START SSH SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -245,6 +247,8 @@ fn start_server(
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
 
+            // STDIN -> stdin_msg_tx
+
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
@@ -262,6 +266,8 @@ fn start_server(
                     }
 
                     stdin_message = stdin_msg_rx.next().fuse() => {
+                        // stdin_msg_tx -> incoming_tx
+
                         let Some(message) = stdin_message else {
                             log::warn!("error reading message on stdin. exiting.");
                             break;
@@ -278,6 +284,7 @@ fn start_server(
                             break;
                         };
 
+                        // outgoing_rx -> STDOUT
                         if let Err(error) =
                             write_message(&mut stdout_stream, &mut output_buffer, message).await
                         {
@@ -291,6 +298,8 @@ fn start_server(
                     }
 
                     log_message = log_rx.recv().fuse() => {
+                        // log_rx -> STDERR
+
                         if let Ok(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
                                 log::error!("failed to write log message to stderr: {:?}", error);
@@ -336,6 +345,7 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
+    log::info!("START RUN");
     init_paths()?;
 
     match daemonize()? {
@@ -378,6 +388,7 @@ pub fn execute_run(
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
+
         let session = start_server(listeners, log_rx, cx);
 
         client::init_settings(cx);
@@ -582,18 +593,21 @@ pub(crate) fn execute_proxy(
         Ok(())
     })?;
 
+    // STDIN(proxy) -> STDIN(run)
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
         handle_io(stdin, stream, "stdin").await
     });
 
+    // STDOUT(run) -> STDOUT(proxy)
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = Async::new(std::io::stdout())?;
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
         handle_io(stream, stdout, "stdout").await
     });
 
+    // STDERR(run) -> STDERR(proxy)
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = Async::new(std::io::stderr())?;
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
@@ -687,7 +701,9 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
+    log::debug!("log file: {:?}, binary {:?}", paths.log_file, binary_name);
     let mut server_process = smol::process::Command::new(binary_name);
+
     server_process
         .arg("run")
         .arg("--log-file")

@@ -829,6 +829,7 @@ pub enum ImageFileSizeUnit {
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
+    pub p2p_connections: Option<Vec<P2pConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
@@ -859,6 +860,15 @@ pub struct WslConnection {
     pub user: Option<String>,
     #[serde(default)]
     pub projects: BTreeSet<SshProject>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct P2pConnection {
+    pub ticket: SharedString,
+    #[serde(default)]
+    pub projects: BTreeSet<SshProject>,
+    /// Name to use for this server in UI.
+    pub nickname: Option<String>,
 }
 
 #[skip_serializing_none]
