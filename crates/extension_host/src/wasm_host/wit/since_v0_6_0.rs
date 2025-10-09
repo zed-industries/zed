@@ -31,7 +31,9 @@ use std::{
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
-use util::{archive::extract_zip, fs::make_file_executable, maybe};
+use util::{
+    archive::extract_zip, fs::make_file_executable, maybe, paths::PathStyle, rel_path::RelPath,
+};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
@@ -564,7 +566,7 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(path.into())
+            .read_text_file(&RelPath::new(Path::new(&path), PathStyle::Posix)?)
             .await
             .map_err(|error| error.to_string()))
     }
@@ -722,7 +724,7 @@ impl nodejs::Host for WasmState {
             .node_runtime
             .binary_path()
             .await
-            .map(|path| path.to_string_lossy().to_string())
+            .map(|path| path.to_string_lossy().into_owned())
             .to_wasmtime_result()
     }
 
@@ -914,11 +916,15 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = location
+                let path = location.as_ref().and_then(|location| {
+                    RelPath::new(Path::new(&location.path), PathStyle::Posix).ok()
+                });
+                let location = path
                     .as_ref()
-                    .map(|location| ::settings::SettingsLocation {
+                    .zip(location.as_ref())
+                    .map(|(path, location)| ::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: Path::new(&location.path),
+                        path,
                     });
 
                 cx.update(|cx| match category.as_str() {

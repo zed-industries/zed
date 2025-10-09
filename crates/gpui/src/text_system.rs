@@ -19,7 +19,7 @@ use crate::{
 use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
 use core::fmt;
-use derive_more::Deref;
+use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{SmallVec, smallvec};
@@ -43,11 +43,12 @@ pub struct FontFamilyId(pub usize);
 
 pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
 
-pub(crate) const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") {
-    1
-} else {
-    SUBPIXEL_VARIANTS_X
-};
+pub(crate) const SUBPIXEL_VARIANTS_Y: u8 =
+    if cfg!(target_os = "windows") || cfg!(target_os = "linux") {
+        1
+    } else {
+        SUBPIXEL_VARIANTS_X
+    };
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -429,33 +430,7 @@ impl WindowTextSystem {
                     break;
                 };
 
-                let mut run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
-
-                // Ensure the run length respects UTF-8 character boundaries
-                if run_len_within_line > 0 {
-                    let text_slice = &line_text[run_start - line_start..];
-                    if run_len_within_line < text_slice.len()
-                        && !text_slice.is_char_boundary(run_len_within_line)
-                    {
-                        // Find the previous character boundary using efficient bit-level checking
-                        // UTF-8 characters are at most 4 bytes, so we only need to check up to 3 bytes back
-                        let lower_bound = run_len_within_line.saturating_sub(3);
-                        let search_range =
-                            &text_slice.as_bytes()[lower_bound..=run_len_within_line];
-
-                        // SAFETY: A valid character boundary must exist in this range because:
-                        // 1. run_len_within_line is a valid position in the string slice
-                        // 2. UTF-8 characters are at most 4 bytes, so some boundary exists in [run_len_within_line-3..=run_len_within_line]
-                        let pos_from_lower = unsafe {
-                            search_range
-                                .iter()
-                                .rposition(|&b| (b as i8) >= -0x40)
-                                .unwrap_unchecked()
-                        };
-
-                        run_len_within_line = lower_bound + pos_from_lower;
-                    }
-                }
+                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
 
                 if last_font == Some(run.font.clone()) {
                     font_runs.last_mut().unwrap().len += run_len_within_line;
@@ -630,8 +605,21 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Add, Sub, FromStr)]
+#[serde(transparent)]
 pub struct FontWeight(pub f32);
+
+impl Display for FontWeight {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<f32> for FontWeight {
+    fn from(weight: f32) -> Self {
+        FontWeight(weight)
+    }
+}
 
 impl Default for FontWeight {
     #[inline]
@@ -680,6 +668,23 @@ impl FontWeight {
         Self::EXTRA_BOLD,
         Self::BLACK,
     ];
+}
+
+impl schemars::JsonSchema for FontWeight {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FontWeight".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        use schemars::json_schema;
+        json_schema!({
+            "type": "number",
+            "minimum": Self::THIN,
+            "maximum": Self::BLACK,
+            "default": Self::default(),
+            "description": "Font weight value between 100 (thin) and 900 (black)"
+        })
+    }
 }
 
 /// Allows italic or oblique faces to be selected.

@@ -94,14 +94,14 @@ impl Vim {
                                 format!("{}{}", maybe_space, pair.end),
                             )
                         };
-                        let start_anchor = display_map.buffer_snapshot.anchor_before(start);
+                        let start_anchor = display_map.buffer_snapshot().anchor_before(start);
 
                         edits.push((start..start, start_cursor_str));
                         edits.push((end..end, end_cursor_str));
                         anchors.push(start_anchor..start_anchor);
                     } else {
                         let start_anchor = display_map
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .anchor_before(selection.head().to_offset(&display_map, Bias::Left));
                         anchors.push(start_anchor..start_anchor);
                     }
@@ -349,7 +349,7 @@ impl Vim {
                         .disjoint_anchors_arc()
                         .iter()
                         .map(|selection| {
-                            let start = selection.start.bias_left(&display_map.buffer_snapshot);
+                            let start = selection.start.bias_left(&display_map.buffer_snapshot());
                             start..start
                         })
                         .collect::<Vec<_>>();

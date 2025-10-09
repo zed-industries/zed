@@ -15,6 +15,7 @@ use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
+use feature_flags::{CodexAcpFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
@@ -26,7 +27,7 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, GEMINI_NAME},
+    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -408,7 +409,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "always-allow-tool-actions-switch",
-            "Allow running commands without asking for confirmation",
+            Some("Allow running commands without asking for confirmation"),
             Some(
                 "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
             ),
@@ -428,7 +429,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "single-file-review",
-            "Enable single-file agent reviews",
+            Some("Enable single-file agent reviews"),
             Some("Agent edits are also displayed in single-file editors for review.".into()),
             single_file_review,
             move |state, _window, cx| {
@@ -449,7 +450,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "sound-notification",
-            "Play sound when finished generating",
+            Some("Play sound when finished generating"),
             Some(
                 "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
             ),
@@ -469,7 +470,7 @@ impl AgentConfiguration {
 
         SwitchField::new(
             "modifier-send",
-            "Use modifier to submit a message",
+            Some("Use modifier to submit a message"),
             Some(
                 "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux or Windows) required to send messages.".into(),
             ),
@@ -1014,7 +1015,9 @@ impl AgentConfiguration {
             .agent_server_store
             .read(cx)
             .external_agents()
-            .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
+            .filter(|name| {
+                name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME && name.0 != CODEX_NAME
+            })
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1078,13 +1081,21 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(self.render_agent_server(
-                        IconName::AiGemini,
-                        "Gemini CLI",
-                    ))
-                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    .child(self.render_agent_server(
                         IconName::AiClaude,
                         "Claude Code",
+                    ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
+                        this
+                            .child(self.render_agent_server(
+                                IconName::AiOpenAi,
+                                "Codex",
+                            ))
+                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
+                    })
+                    .child(self.render_agent_server(
+                        IconName::AiGemini,
+                        "Gemini CLI",
                     ))
                     .map(|mut parent| {
                         for agent in user_defined_agents {

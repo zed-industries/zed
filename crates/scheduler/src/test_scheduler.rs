@@ -41,14 +41,26 @@ impl TestScheduler {
     }
 
     /// Run a test multiple times with sequential seeds (0, 1, 2, ...)
-    pub fn many<R>(iterations: usize, mut f: impl AsyncFnMut(Arc<TestScheduler>) -> R) -> Vec<R> {
-        (0..iterations as u64)
+    pub fn many<R>(
+        default_iterations: usize,
+        mut f: impl AsyncFnMut(Arc<TestScheduler>) -> R,
+    ) -> Vec<R> {
+        let num_iterations = std::env::var("ITERATIONS")
+            .map(|iterations| iterations.parse().unwrap())
+            .unwrap_or(default_iterations);
+
+        let seed = std::env::var("SEED")
+            .map(|seed| seed.parse().unwrap())
+            .unwrap_or(0);
+
+        (seed..num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
+                eprintln!("Running seed: {seed}");
                 match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
                     Ok(result) => result,
                     Err(error) => {
-                        eprintln!("Failing Seed: {seed}");
+                        eprintln!("\x1b[31mFailing Seed: {seed}\x1b[0m");
                         panic::resume_unwind(error);
                     }
                 }
@@ -56,8 +68,7 @@ impl TestScheduler {
             .collect()
     }
 
-    /// Run a test once with a specific seed
-    pub fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
+    fn with_seed<R>(seed: u64, f: impl AsyncFnOnce(Arc<TestScheduler>) -> R) -> R {
         let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::with_seed(seed)));
         let future = f(scheduler.clone());
         let result = scheduler.foreground().block_on(future);

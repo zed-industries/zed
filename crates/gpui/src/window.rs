@@ -13,7 +13,7 @@ use crate::{
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
     SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabHandles, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
@@ -58,7 +58,7 @@ mod prompts;
 use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
-pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
+pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
 
 /// Represents the two different phases when dispatching events.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -684,7 +684,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_handles: TabHandles,
+    pub(crate) tab_stops: TabStopMap,
 }
 
 #[derive(Clone, Default)]
@@ -733,7 +733,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
-            tab_handles: TabHandles::default(),
+            tab_stops: TabStopMap::default(),
         }
     }
 
@@ -749,7 +749,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
-        self.tab_handles.clear();
+        self.tab_stops.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1415,7 +1415,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -1426,7 +1426,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -2285,7 +2285,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: self.next_frame.tab_handles.handles.len(),
+            tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2315,11 +2315,9 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        self.next_frame.tab_handles.handles.extend(
-            self.rendered_frame.tab_handles.handles
-                [range.start.tab_handle_index..range.end.tab_handle_index]
-                .iter()
-                .cloned(),
+        self.next_frame.tab_stops.replay(
+            &self.rendered_frame.tab_stops.insertion_history
+                [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
         self.text_system
@@ -2731,6 +2729,19 @@ impl Window {
                 "you must not return an element state when passing None for the global id"
             );
             result
+        }
+    }
+
+    /// Executes the given closure within the context of a tab group.
+    #[inline]
+    pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if let Some(index) = index {
+            self.next_frame.tab_stops.begin_group(index);
+            let result = f(self);
+            self.next_frame.tab_stops.end_group();
+            result
+        } else {
+            f(self)
         }
     }
 
@@ -4548,7 +4559,7 @@ impl Window {
             if let Some(inspector) = self.inspector.clone() {
                 inspector.update(cx, |inspector, _cx| {
                     if let Some(depth) = inspector.pick_depth.as_mut() {
-                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        *depth += f32::from(delta_y) / SCROLL_PIXELS_PER_LAYER;
                         let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
                         if *depth < 0.0 {
                             *depth = 0.0;
@@ -4620,6 +4631,14 @@ pub struct WindowHandle<V> {
     #[deref_mut]
     pub(crate) any_handle: AnyWindowHandle,
     state_type: PhantomData<V>,
+}
+
+impl<V> Debug for WindowHandle<V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowHandle")
+            .field("any_handle", &self.any_handle.id.as_u64())
+            .finish()
+    }
 }
 
 impl<V: 'static + Render> WindowHandle<V> {

@@ -30,8 +30,10 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Opens the settings editor.
+        /// Opens the settings JSON file.
         OpenSettings,
+        /// Opens the settings editor.
+        OpenSettingsEditor,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens account settings.
@@ -183,18 +185,6 @@ pub mod git {
             Branch,
             /// Opens the git stash selector.
             ViewStash
-        ]
-    );
-}
-
-pub mod jj {
-    use gpui::actions;
-
-    actions!(
-        jj,
-        [
-            /// Opens the Jujutsu bookmark list.
-            BookmarkList
         ]
     );
 }

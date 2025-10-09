@@ -371,7 +371,7 @@ async fn read_kernelspec_at(
 ) -> Result<LocalKernelSpecification> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
-        kernel_name.to_string_lossy().to_string()
+        kernel_name.to_string_lossy().into_owned()
     } else {
         anyhow::bail!("Invalid kernelspec directory: {path:?}");
     };

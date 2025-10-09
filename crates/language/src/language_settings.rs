@@ -7,7 +7,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 
 pub use settings::{
@@ -57,6 +57,12 @@ pub struct AllLanguageSettings {
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhitespaceMap {
+    pub space: SharedString,
+    pub tab: SharedString,
 }
 
 /// The settings for a particular language.
@@ -118,7 +124,7 @@ pub struct LanguageSettings {
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: settings::ShowWhitespaceSetting,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
-    pub whitespace_map: settings::WhitespaceMap,
+    pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -371,6 +377,8 @@ pub struct EditPredictionSettings {
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
+    /// Settings specific to Codestral.
+    pub codestral: CodestralSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -384,7 +392,7 @@ impl EditPredictionSettings {
                 file.as_local()
                     .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
-                glob.matcher.is_match(file.path())
+                glob.matcher.is_match(file.path().as_std_path())
             }
         })
     }
@@ -404,6 +412,14 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CodestralSettings {
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
 }
 
 impl AllLanguageSettings {
@@ -494,7 +510,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let all_languages = &content.project.all_languages;
 
         fn load_from_content(settings: LanguageSettingsContent) -> LanguageSettings {
@@ -503,6 +519,8 @@ impl settings::Settings for AllLanguageSettings {
             let prettier = settings.prettier.unwrap();
             let indent_guides = settings.indent_guides.unwrap();
             let tasks = settings.tasks.unwrap();
+            let whitespace_map = settings.whitespace_map.unwrap();
+
             LanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
@@ -525,9 +543,9 @@ impl settings::Settings for AllLanguageSettings {
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
-                    parser: prettier.parser,
-                    plugins: prettier.plugins,
-                    options: prettier.options,
+                    parser: prettier.parser.filter(|parser| !parser.is_empty()),
+                    plugins: prettier.plugins.unwrap_or_default(),
+                    options: prettier.options.unwrap_or_default(),
                 },
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
@@ -536,7 +554,10 @@ impl settings::Settings for AllLanguageSettings {
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
                 show_whitespaces: settings.show_whitespaces.unwrap(),
-                whitespace_map: settings.whitespace_map.unwrap(),
+                whitespace_map: WhitespaceMap {
+                    space: SharedString::new(whitespace_map.space.unwrap().to_string()),
+                    tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
+                },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
@@ -560,7 +581,7 @@ impl settings::Settings for AllLanguageSettings {
                 code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
-                    variables: tasks.variables,
+                    variables: tasks.variables.unwrap_or_default(),
                     enabled: tasks.enabled.unwrap(),
                     prefer_lsp: tasks.prefer_lsp.unwrap(),
                 },
@@ -568,7 +589,7 @@ impl settings::Settings for AllLanguageSettings {
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
-                    words_min_length: completions.words_min_length.unwrap(),
+                    words_min_length: completions.words_min_length.unwrap() as usize,
                     lsp: completions.lsp.unwrap(),
                     lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
@@ -611,6 +632,12 @@ impl settings::Settings for AllLanguageSettings {
             enterprise_uri: copilot.enterprise_uri,
         };
 
+        let codestral = edit_predictions.codestral.unwrap();
+        let codestral_settings = CodestralSettings {
+            model: codestral.model,
+            max_tokens: codestral.max_tokens,
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
@@ -644,6 +671,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
+                codestral: codestral_settings,
                 enabled_in_text_threads,
             },
             defaults: default_language_settings,
@@ -787,6 +815,7 @@ pub struct JsxTagAutoCloseSettings {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use util::rel_path::rel_path;
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {
@@ -828,11 +857,11 @@ mod tests {
 
         const WORKTREE_NAME: &str = "project";
         let make_test_file = |segments: &[&str]| -> Arc<dyn File> {
-            let mut path_buf = PathBuf::new();
-            path_buf.extend(segments);
+            let path = segments.join("/");
+            let path = rel_path(&path);
 
             Arc::new(TestFile {
-                path: path_buf.as_path().into(),
+                path: path.into(),
                 root_name: WORKTREE_NAME.to_string(),
                 local_root: Some(PathBuf::from(if cfg!(windows) {
                     "C:\\absolute\\"
@@ -885,7 +914,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&test_file, &cx));
 
         let test_file_root: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from("file.rs").as_path().into(),
+            path: rel_path("file.rs").into(),
             root_name: WORKTREE_NAME.to_string(),
             local_root: Some(PathBuf::from("/absolute/")),
         });
@@ -917,8 +946,12 @@ mod tests {
 
         // Test tilde expansion
         let home = shellexpand::tilde("~").into_owned();
-        let home_file = make_test_file(&[&home, "test.rs"]);
-        let settings = build_settings(&["~/test.rs"]);
+        let home_file = Arc::new(TestFile {
+            path: rel_path("test.rs").into(),
+            root_name: "the-dir".to_string(),
+            local_root: Some(PathBuf::from(home)),
+        }) as Arc<dyn File>;
+        let settings = build_settings(&["~/the-dir/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 

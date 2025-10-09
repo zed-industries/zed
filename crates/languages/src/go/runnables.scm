@@ -71,6 +71,15 @@
   (#set! tag go-subtest)
 )
 
+; Functions names start with `Example`
+(
+  (
+    (function_declaration name: (_) @run @_name
+      (#match? @_name "^Example.*"))
+  ) @_
+  (#set! tag go-example)
+)
+
 ; Functions names start with `Benchmark`
 (
   (
@@ -147,9 +156,9 @@
         [
           (
             (identifier)
-            (identifier) @_loop_var
+            (identifier) @_loop_var_inner
           )
-          (identifier) @_loop_var
+          (identifier) @_loop_var_outer
         ]
       )
       right: (identifier) @_range_var
@@ -159,7 +168,7 @@
       (expression_statement
         (call_expression
           function: (selector_expression
-            operand: (identifier) @_t_var
+            operand: (identifier)
             field: (field_identifier) @_run_method
             (#eq? @_run_method "Run")
           )
@@ -168,12 +177,12 @@
             [
               (selector_expression
                 operand: (identifier) @_tc_var
-                (#eq? @_tc_var @_loop_var)
+                (#eq? @_tc_var @_loop_var_inner)
                 field: (field_identifier) @_field_check
                 (#eq? @_field_check @_field_name)
               )
               (identifier) @_arg_var
-              (#eq? @_arg_var @_loop_var)
+              (#eq? @_arg_var @_loop_var_outer)
             ]
             .
             (func_literal

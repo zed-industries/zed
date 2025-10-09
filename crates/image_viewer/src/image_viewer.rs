@@ -1,8 +1,6 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::path::PathBuf;
-
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
@@ -100,13 +98,9 @@ impl Item for ImageView {
         f(self.image_item.entity_id(), self.image_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &App) -> bool {
-        true
-    }
-
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         let abs_path = self.image_item.read(cx).abs_path(cx)?;
-        let file_path = abs_path.compact().to_string_lossy().to_string();
+        let file_path = abs_path.compact().to_string_lossy().into_owned();
         Some(file_path.into())
     }
 
@@ -144,7 +138,6 @@ impl Item for ImageView {
             .read(cx)
             .file
             .file_name(cx)
-            .to_string_lossy()
             .to_string()
             .into()
     }
@@ -198,20 +191,14 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let path = image.file.file_name(cx);
-    if project.visible_worktrees(cx).count() <= 1 {
-        return path.to_string_lossy().to_string();
+    let mut path = image.file.path().clone();
+    if project.visible_worktrees(cx).count() > 1
+        && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
+    {
+        path = worktree.read(cx).root_name().join(&path);
     }
 
-    project
-        .worktree_for_id(image.project_path(cx).worktree_id, cx)
-        .map(|worktree| {
-            PathBuf::from(worktree.read(cx).root_name())
-                .join(path)
-                .to_string_lossy()
-                .to_string()
-        })
-        .unwrap_or_else(|| path.to_string_lossy().to_string())
+    path.display(project.path_style(cx)).to_string()
 }
 
 impl SerializableItem for ImageView {
@@ -242,7 +229,7 @@ impl SerializableItem for ImageView {
 
             let project_path = ProjectPath {
                 worktree_id,
-                path: relative_path.into(),
+                path: relative_path,
             };
 
             let image_item = project
@@ -312,10 +299,10 @@ impl Render for ImageView {
                                     _cx: &mut App| {
             let square_size = 32.0;
 
-            let start_y = bounds.origin.y.0;
-            let height = bounds.size.height.0;
-            let start_x = bounds.origin.x.0;
-            let width = bounds.size.width.0;
+            let start_y = bounds.origin.y.into();
+            let height: f32 = bounds.size.height.into();
+            let start_x = bounds.origin.x.into();
+            let width: f32 = bounds.size.width.into();
 
             let mut y = start_y;
             let mut x = start_x;

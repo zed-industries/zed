@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+askpass.workspace = true
 auto_update.workspace = true
 editor.workspace = true
 extension_host.workspace = true

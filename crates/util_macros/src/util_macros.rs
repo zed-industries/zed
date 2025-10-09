@@ -12,7 +12,7 @@ use syn::{ItemFn, LitStr, parse_macro_input, parse_quote};
 ///
 /// # Example
 /// ```rust
-/// use util_macros::path;
+/// use zed_util_macros::path;
 ///
 /// let path = path!("/Users/user/file.txt");
 /// #[cfg(target_os = "windows")]
@@ -43,7 +43,7 @@ pub fn path(input: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```rust
-/// use util_macros::uri;
+/// use zed_util_macros::uri;
 ///
 /// let uri = uri!("file:///path/to/file");
 /// #[cfg(target_os = "windows")]
@@ -69,7 +69,7 @@ pub fn uri(input: TokenStream) -> TokenStream {
 ///
 /// # Example
 /// ```rust
-/// use util_macros::line_endings;
+/// use zed_util_macros::line_endings;
 ///
 /// let text = line_endings!("Hello\nWorld");
 /// #[cfg(target_os = "windows")]
@@ -133,12 +133,11 @@ impl PerfArgs {
 /// Marks a test as perf-sensitive, to be triaged when checking the performance
 /// of a build. This also automatically applies `#[test]`.
 ///
-///
 /// # Usage
 /// Applying this attribute to a test marks it as average importance by default.
-/// There are 4 levels of importance (`Critical`, `Important`, `Average`, `Fluff`);
-/// see the documentation on `Importance` for details. Add the importance as a
-/// parameter to override the default (e.g. `#[perf(important)]`).
+/// There are 5 levels of importance (`Critical`, `Important`, `Average`, `Iffy`,
+/// `Fluff`); see the documentation on `Importance` for details. Add the importance
+/// as a parameter to override the default (e.g. `#[perf(important)]`).
 ///
 /// Each test also has a weight factor. This is irrelevant on its own, but is considered
 /// when comparing results across different runs. By default, this is set to 50;
@@ -157,7 +156,7 @@ impl PerfArgs {
 ///
 /// # Examples
 /// ```rust
-/// use util_macros::perf;
+/// use zed_util_macros::perf;
 ///
 /// #[perf]
 /// fn generic_test() {
@@ -173,7 +172,7 @@ impl PerfArgs {
 /// This also works with `#[gpui::test]`s, though in most cases it shouldn't
 /// be used with automatic iterations.
 /// ```rust,ignore
-/// use util_macros::perf;
+/// use zed_util_macros::perf;
 ///
 /// #[perf(iterations = 1, critical)]
 /// #[gpui::test]
@@ -194,7 +193,12 @@ pub fn perf(our_attr: TokenStream, input: TokenStream) -> TokenStream {
         sig: mut sig_main,
         block,
     } = parse_macro_input!(input as ItemFn);
-    attrs_main.push(parse_quote!(#[test]));
+    if !attrs_main
+        .iter()
+        .any(|a| Some(&parse_quote!(test)) == a.path().segments.last())
+    {
+        attrs_main.push(parse_quote!(#[test]));
+    }
     attrs_main.push(parse_quote!(#[allow(non_snake_case)]));
 
     let fns = if cfg!(perf_enabled) {

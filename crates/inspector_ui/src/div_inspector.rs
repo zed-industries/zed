@@ -24,6 +24,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::LazyLock;
 use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
+use util::rel_path::RelPath;
 use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
@@ -466,7 +467,7 @@ impl DivInspector {
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
-            path: Path::new("").into(),
+            path: RelPath::empty().into(),
         })?;
 
         let buffer = project
@@ -575,7 +576,12 @@ fn render_layout_state(inspector_state: &DivInspectorState, cx: &App) -> Div {
         .child(
             div()
                 .text_ui(cx)
-                .child(format!("Bounds: {}", inspector_state.bounds)),
+                .child(format!(
+                    "Bounds: ⌜{} - {}⌟",
+                    inspector_state.bounds.origin,
+                    inspector_state.bounds.bottom_right()
+                ))
+                .child(format!("Size: {}", inspector_state.bounds.size)),
         )
         .child(
             div()

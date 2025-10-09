@@ -1,9 +1,10 @@
 [package]
-name = "http_client"
+name = "zed-http-client"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "A HTTP client library for Zed and GPUI"
 
 [lints]
 workspace = true
@@ -16,16 +17,22 @@ path = "src/http_client.rs"
 doctest = true
 
 [dependencies]
-bytes.workspace = true
 anyhow.workspace = true
+async-compression.workspace = true
+async-fs.workspace = true
+async-tar.workspace = true
+bytes.workspace = true
 derive_more.workspace = true
 futures.workspace = true
-http.workspace = true
 http-body.workspace = true
+http.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 url.workspace = true
+util.workspace = true
 workspace-hack.workspace = true

@@ -674,13 +674,7 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
-            format!(
-                "failed to spawn command `{} {}`.",
-                binary_command,
-                binary.arguments.join(" ")
-            )
-        })?;
+        let mut process = Child::spawn(command, Stdio::piped())?;
 
         let err_task = process.stderr.take().map(|stderr| {
             cx.background_spawn(TransportDelegate::handle_adapter_log(
@@ -1058,11 +1052,13 @@ impl Child {
     #[cfg(not(windows))]
     fn spawn(mut command: std::process::Command, stdin: Stdio) -> Result<Self> {
         util::set_pre_exec_to_start_new_session(&mut command);
-        let process = smol::process::Command::from(command)
+        let mut command = smol::process::Command::from(command);
+        let process = command
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
         Ok(Self { process })
     }
 
@@ -1070,11 +1066,13 @@ impl Child {
     fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
         // TODO(windows): create a job object and add the child process handle to it,
         // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
-        let process = smol::process::Command::from(command)
+        let mut command = smol::process::Command::from(command);
+        let process = command
             .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .with_context(|| format!("failed to spawn command `{command:?}`",))?;
         Ok(Self { process })
     }
 

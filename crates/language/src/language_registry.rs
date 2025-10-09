@@ -229,6 +229,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("runnables", |q| &mut q.runnables),
     ("debugger", |q| &mut q.debugger),
     ("textobjects", |q| &mut q.text_objects),
+    ("imports", |q| &mut q.imports),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -245,6 +246,7 @@ pub struct LanguageQueries {
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
     pub debugger: Option<Cow<'static, str>>,
+    pub imports: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -731,15 +733,19 @@ impl LanguageRegistry {
         )
     }
 
-    pub fn language_for_file_path<'a>(
+    pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<AvailableLanguage> {
+        self.language_for_file_internal(path, None, None)
+    }
+
+    pub fn load_language_for_file_path<'a>(
         self: &Arc<Self>,
         path: &'a Path,
     ) -> impl Future<Output = Result<Arc<Language>>> + 'a {
-        let available_language = self.language_for_file_internal(path, None, None);
+        let language = self.language_for_file_path(path);
 
         let this = self.clone();
         async move {
-            if let Some(language) = available_language {
+            if let Some(language) = language {
                 this.load_language(&language).await?
             } else {
                 Err(anyhow!(LanguageNotFound))
@@ -753,7 +759,7 @@ impl LanguageRegistry {
         content: Option<&Rope>,
         user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
-        let filename = path.file_name().and_then(|name| name.to_str());
+        let filename = path.file_name().and_then(|filename| filename.to_str());
         // `Path.extension()` returns None for files with a leading '.'
         // and no other extension which is not the desired behavior here,
         // as we want `.zshrc` to result in extension being `Some("zshrc")`
