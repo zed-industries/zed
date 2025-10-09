@@ -811,6 +811,13 @@
     }
   },
   {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "g t": "vim::GoToTab",
+      "g shift-t": "vim::GoToPreviousTab"
+    }
+  },
+  {
     "context": "VimControl || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
