@@ -1498,14 +1498,14 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .size_full()
+                    .flex_grow()
                     .track_focus(&self.navbar_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
                     .child(
                         uniform_list(
                             "settings-ui-nav-bar",
-                            visible_count,
+                            visible_count + 1,
                             cx.processor(move |this, range: Range<usize>, _, cx| {
                                 this.visible_navbar_entries()
                                     .skip(range.start.saturating_sub(1))
