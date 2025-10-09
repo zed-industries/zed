@@ -200,10 +200,19 @@ impl SettingFieldRenderer {
         if let Some(renderer) = self.renderers.borrow().get(&key) {
             renderer(any_setting_field, settings_file, metadata, window, cx)
         } else {
-            panic!(
-                "No renderer found for type: {}",
-                any_setting_field.type_name()
-            )
+            Button::new("no-renderer", "NO RENDERER")
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .icon(Some(IconName::XCircle))
+                .icon_position(IconPosition::Start)
+                .icon_color(Color::Error)
+                .tab_index(0_isize)
+                .tooltip(Tooltip::text(any_setting_field.type_name()))
+                .into_any_element()
+            // panic!(
+            //     "No renderer found for type: {}",
+            //     any_setting_field.type_name()
+            // )
         }
     }
 }
@@ -407,6 +416,15 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::LspInsertMode>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::AlternateScroll>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::TerminalBlink>(|settings_field, file, _, window, cx| {
+            render_dropdown(*settings_field, file, window, cx)
+        })
+        .add_renderer::<settings::CursorShapeContent>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<f32>(|settings_field, file, _, window, cx| {
