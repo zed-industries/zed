@@ -173,7 +173,7 @@ fn assert_similar_voice_spectra(a: impl rodio::Source + Clone, b: impl rodio::So
 
         if !voice_detector.may_contain_voice(&input) {
             voice_less_duration += Duration::from_millis(100);
-            return;
+            continue;
         }
         assert_same_voice_signal(input, output);
     }
@@ -285,9 +285,9 @@ fn recording_of_davids_voice(
     // We can not resample this file ourselves as then we would not be testing
     // the resampler. These are test files resampled by audacity.
     let recording = match (channels.get(), sample_rate.get()) {
-        (1, 16_000) => include_bytes!("../input_test_1_16000.wav").as_slice(),
-        (2, 48_000) => include_bytes!("../input_test_2_48000.wav").as_slice(),
-        (3, 32_000) => include_bytes!("../input_test_3_32000.wav").as_slice(),
+        (1, 16_000) => include_bytes!("../test/input_test_1_16000.wav").as_slice(),
+        (2, 48_000) => include_bytes!("../test/input_test_2_48000.wav").as_slice(),
+        (3, 32_000) => include_bytes!("../test/input_test_3_32000.wav").as_slice(),
         _ => panic!("No test recording with {channels} channels and sampler rate: {sample_rate}"),
     };
 
@@ -301,6 +301,29 @@ fn recording_of_davids_voice(
 }
 
 #[test]
+#[should_panic]
+fn test_rejects_pitch_shift() {
+    // also known as 'robot/chipmunk voice'
+    let original = recording_of_davids_voice(nz!(1), nz!(16000));
+    let pitch_shifted = original
+        .clone()
+        .speed(1.2) // effectively increases the pitch by 20%
+        .constant_samplerate(original.sample_rate())
+        .into_samples_buffer();
+
+    assert_similar_voice_spectra(original, pitch_shifted);
+}
+
+#[test]
+#[should_panic]
+fn test_rejects_large_amounts_of_noise() {
+    let original = recording_of_davids_voice(nz!(1), nz!(16000));
+    let with_noise = add_noise(&original, 0.5);
+
+    assert_similar_voice_spectra(original, with_noise);
+}
+
+#[test]
 fn test_ignores_volume() {
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
     let amplified = original.clone().amplify(1.42);
@@ -311,8 +334,14 @@ fn test_ignores_volume() {
 #[test]
 fn test_ignore_low_volume_noise() {
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
+    // 10% noise is actually already pretty loud as the noise is across
+    // all frequencies so is perceived far more intense then a voice
+    let with_noise = add_noise(&original, 0.1);
+    assert_similar_voice_spectra(original, with_noise);
+}
+
+fn add_noise(original: &(impl Source + Clone + Send + 'static), amount: f32) -> SamplesBuffer {
     let original_volume = original.clone().max_by(|a, b| a.total_cmp(b)).unwrap();
-    dbg!(original_volume);
 
     let noise = rodio::source::noise::WhiteUniform::new_with_rng(
         original.sample_rate(),
@@ -321,9 +350,7 @@ fn test_ignore_low_volume_noise() {
     let (mixer, with_noise) = mixer::mixer(original.channels(), original.sample_rate());
 
     mixer.add(original.clone());
-    // adding 1% noise can be well heard as the noise is across
-    // all frequencies so is perceived far more intense then a single wave
-    mixer.add(noise.amplify(0.1 * original_volume));
+    mixer.add(noise.amplify(amount * original_volume));
 
     let with_noise = with_noise
         .take_duration(
@@ -332,7 +359,7 @@ fn test_ignore_low_volume_noise() {
                 .expect("should be a fixed length recording"),
         )
         .into_samples_buffer();
-    assert_similar_voice_spectra(original, with_noise);
+    with_noise
 }
 
 #[test]
