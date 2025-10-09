@@ -11,6 +11,7 @@ pub mod lsp_command;
 pub mod lsp_store;
 mod manifest_tree;
 pub mod prettier_store;
+mod project_search;
 pub mod project_settings;
 pub mod search;
 mod task_inventory;
