@@ -6677,7 +6677,6 @@ impl LspStore {
         }
     }
 
-    // TODO kb this is identical to code_lens_actions, consider deduplication
     fn fetch_inlay_hints(
         &mut self,
         for_server: Option<LanguageServerId>,
@@ -6771,7 +6770,6 @@ impl LspStore {
                     .into_iter()
                     .map(|(server_id, mut new_hints)| {
                         new_hints.retain(|hint| {
-                            // TODO kb this is all bad
                             hint.position.is_valid(&buffer_snapshot)
                                 && range.start.is_valid(&buffer_snapshot)
                                 && range.end.is_valid(&buffer_snapshot)
@@ -12248,12 +12246,13 @@ impl LspStore {
         self.worktree_store.clone()
     }
 
-    /// TODO kb docs
+    /// Gets what's stored in the LSP data for the given buffer.
     pub fn current_lsp_data(&mut self, buffer_id: BufferId) -> Option<&mut BufferLspData> {
         self.lsp_data.get_mut(&buffer_id)
     }
 
-    /// TODO kb docs
+    /// Gets the most recent LSP data for the given buffer: if the data is absent or out of date,
+    /// new [`BufferLspData`] will be created to replace the previous state.
     pub fn latest_lsp_data(&mut self, buffer: &Entity<Buffer>, cx: &mut App) -> &mut BufferLspData {
         let (buffer_id, buffer_version) =
             buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version()));

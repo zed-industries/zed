@@ -245,7 +245,8 @@ impl Editor {
         self.inlay_hints.as_ref().is_some_and(|cache| cache.enabled)
     }
 
-    /// TODO kb docs
+    /// Updates inlay hints for the visible ranges of the singleton buffer(s).
+    /// Based on its parameters, either invalidates the previous data, or appends to it.
     pub(crate) fn refresh_inlay_hints(
         &mut self,
         reason: InlayHintRefreshReason,
@@ -1597,7 +1598,6 @@ pub mod tests {
         .await;
 
         // TODO kb we seem to run inlay fetch both on editor registration and on editor creation?
-        // TODO kb also, what's up with the color task inside lsp_data, for zero color capabilities?
         let mut expected_changes = Vec::new();
         for change_after_opening in [
             "initial change #1",

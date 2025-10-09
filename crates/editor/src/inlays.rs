@@ -1,4 +1,20 @@
-/// TODO kb docs, inlays-vs-inlay hints.
+/// The logic, responsible for managing [`Inlay`]s in the editor.
+///
+/// Inlays are "not real" text that gets mixed into the "real" buffer's text.
+/// They are attached to a certain [`Anchor`], and display certain contents (usually, strings)
+/// between real text around that anchor.
+///
+/// Inlay examples in Zed:
+/// * inlay hints, received from LSP
+/// * inline values, shown in the debugger
+/// * inline predictions, showing the Zeta/Copilot/etc. predictions
+/// * document color values, if configured to be displayed as inlays
+/// * ... anything else, potentially.
+///
+/// Editor uses [`crate::DisplayMap`] and [`crate::display_map::InlayMap`] to manage what's rendered inside the editor, using
+/// [`InlaySplice`] to update this state.
+
+/// Logic, related to managing LSP inlay hint inlays.
 pub mod inlay_hints;
 
 use std::{any::TypeId, sync::OnceLock};
@@ -122,6 +138,7 @@ impl InlineValueCache {
 }
 
 impl Editor {
+    /// Modify which hints are displayed in the editor.
     pub fn splice_inlays(
         &mut self,
         to_remove: &[InlayId],
