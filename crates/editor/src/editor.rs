@@ -34,6 +34,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
+mod rainbow_brackets;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -160,6 +161,7 @@ use project::{
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
+use rainbow_brackets::refresh_rainbow_brackets;
 use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager};
@@ -1191,6 +1193,7 @@ pub struct Editor {
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    rainbow_bracket_tracker: rainbow_brackets::RainbowBracketTracker,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2271,6 +2274,9 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            rainbow_bracket_tracker: rainbow_brackets::RainbowBracketTracker::new(
+                EditorSettings::get_global(cx).rainbow_brackets.enabled,
+            ),
         };
 
         if is_minimap {
@@ -3172,7 +3178,8 @@ impl Editor {
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
             self.refresh_selected_text_highlights(false, window, cx);
-            refresh_matching_bracket_highlights(self, cx);
+            refresh_matching_bracket_highlights(self, window, cx);
+            refresh_rainbow_brackets(self, window, cx);
             self.update_visible_edit_prediction(window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
@@ -20815,7 +20822,8 @@ impl Editor {
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
                 self.refresh_single_line_folds(window, cx);
-                refresh_matching_bracket_highlights(self, cx);
+                refresh_matching_bracket_highlights(self, window, cx);
+                refresh_rainbow_brackets(self, window, cx);
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }

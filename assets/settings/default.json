@@ -576,6 +576,38 @@
     // 2. "indent_aware"
     "background_coloring": "disabled"
   },
+  // Rainbow brackets settings
+  "rainbow_brackets": {
+    // Whether rainbow brackets are enabled.
+    // When enabled, brackets are colored by their nesting level using a gradient or fixed colors.
+    "enabled": true,
+    // The coloring mode for rainbow brackets.
+    // - "gradient": Infinite HSL gradient with no color repetition (Zed's innovation)
+    // - "classic": 6-color cycling for VS Code parity
+    "mode": "gradient",
+    // Starting hue for gradient mode (0-360 degrees).
+    // 0 = red, 60 = yellow, 120 = green, 180 = cyan, 240 = blue, 300 = magenta
+    "gradient_start_hue": 0,
+    // Hue step per nesting level for gradient mode (degrees).
+    // 60 degrees gives 6 highly contrasting colors: red, yellow, green, cyan, blue, magenta.
+    "gradient_step": 60,
+    // Whether to show bracket structure visualization in the minimap.
+    "show_in_minimap": true,
+    // Whether to pulse/animate the active bracket pair containing the cursor.
+    "pulse_active_scope": true,
+    // Duration of the pulse animation in milliseconds.
+    "pulse_duration_ms": 300,
+    // Whether to dim inactive bracket scopes for better focus.
+    "dim_inactive_scopes": false,
+    // Whether to show cascade fade-in animation when opening files or scrolling.
+    // Brackets fade in smoothly, staggered by depth for a cascading effect.
+    "animate_fade": false,
+    // Whether to show subtle glow animation on the active bracket pair.
+    // The active brackets pulse gently to draw attention.
+    "animate_glow": false,
+    // Duration of fade-in animation in milliseconds.
+    "animation_duration_ms": 200
+  },
   // Whether the editor will scroll beyond the last line.
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling with the keyboard

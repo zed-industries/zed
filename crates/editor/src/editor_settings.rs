@@ -57,6 +57,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub rainbow_brackets: RainbowBracketSettings,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -161,6 +162,30 @@ pub struct SearchSettings {
     pub case_sensitive: bool,
     pub include_ignored: bool,
     pub regex: bool,
+}
+
+/// Rainbow bracket coloring mode
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RainbowMode {
+    Gradient,
+    Classic,
+}
+
+/// Rainbow brackets settings
+#[derive(Clone, Debug, PartialEq)]
+pub struct RainbowBracketSettings {
+    pub enabled: bool,
+    pub mode: RainbowMode,
+    pub gradient_start_hue: f32,
+    pub gradient_step: f32,
+    pub show_in_minimap: bool,
+    pub pulse_active_scope: bool,
+    pub pulse_duration_ms: u32,
+    pub dim_inactive_scopes: bool,
+    pub animate_fade: bool,
+    pub animate_glow: bool,
+    pub animation_duration_ms: u32,
+    pub max_brackets: u32,
 }
 
 impl EditorSettings {
@@ -268,6 +293,43 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
+            rainbow_brackets: {
+                if let Some(rb) = editor.rainbow_brackets {
+                    RainbowBracketSettings {
+                        enabled: rb.enabled.unwrap_or(true),
+                        mode: match rb.mode.unwrap_or(settings::RainbowModeContent::Gradient) {
+                            settings::RainbowModeContent::Gradient => RainbowMode::Gradient,
+                            settings::RainbowModeContent::Classic => RainbowMode::Classic,
+                        },
+                        gradient_start_hue: rb.gradient_start_hue.unwrap_or(0.0),
+                        gradient_step: rb.gradient_step.unwrap_or(30.0),
+                        show_in_minimap: rb.show_in_minimap.unwrap_or(true),
+                        pulse_active_scope: rb.pulse_active_scope.unwrap_or(true),
+                        pulse_duration_ms: rb.pulse_duration_ms.unwrap_or(300),
+                        dim_inactive_scopes: rb.dim_inactive_scopes.unwrap_or(false),
+                        animate_fade: rb.animate_fade.unwrap_or(true),
+                        animate_glow: rb.animate_glow.unwrap_or(true),
+                        animation_duration_ms: rb.animation_duration_ms.unwrap_or(200),
+                        max_brackets: rb.max_brackets.unwrap_or(100000),
+                    }
+                } else {
+                    // Default values when rainbow_brackets is not specified
+                    RainbowBracketSettings {
+                        enabled: true,
+                        mode: RainbowMode::Gradient,
+                        gradient_start_hue: 0.0,
+                        gradient_step: 30.0,
+                        show_in_minimap: true,
+                        pulse_active_scope: true,
+                        pulse_duration_ms: 300,
+                        dim_inactive_scopes: false,
+                        animate_fade: true,
+                        animate_glow: true,
+                        animation_duration_ms: 200,
+                        max_brackets: 100000,
+                    }
+                }
+            },
         }
     }
 

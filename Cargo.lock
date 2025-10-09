@@ -5221,6 +5221,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "indexmap 2.9.0",
  "indoc",
  "itertools 0.14.0",
  "language",

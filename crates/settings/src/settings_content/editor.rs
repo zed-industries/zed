@@ -191,6 +191,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+
+    /// Rainbow brackets settings
+    pub rainbow_brackets: Option<RainbowBracketsContent>,
 }
 
 // Toolbar related settings
@@ -791,4 +794,89 @@ impl Display for MinimumContrast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:.1}", self.0)
     }
+}
+
+/// Rainbow brackets settings
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct RainbowBracketsContent {
+    /// Whether rainbow brackets are enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+
+    /// The coloring mode for rainbow brackets.
+    /// - "gradient": Infinite HSL gradient with no color repetition
+    /// - "classic": 6-color cycling for VS Code parity
+    ///
+    /// Default: gradient
+    pub mode: Option<RainbowModeContent>,
+
+    /// Starting hue for gradient mode (0-360 degrees).
+    ///
+    /// Default: 0 (red)
+    #[schemars(range(min = 0.0, max = 360.0))]
+    pub gradient_start_hue: Option<f32>,
+
+    /// Hue step per nesting level for gradient mode (degrees).
+    ///
+    /// Default: 30
+    #[schemars(range(min = 1.0, max = 180.0))]
+    pub gradient_step: Option<f32>,
+
+    /// Whether to show bracket structure in the minimap.
+    ///
+    /// Default: true
+    pub show_in_minimap: Option<bool>,
+
+    /// Whether to pulse/animate the active bracket pair.
+    ///
+    /// Default: true
+    pub pulse_active_scope: Option<bool>,
+
+    /// Duration of the pulse animation in milliseconds.
+    ///
+    /// Default: 300
+    #[schemars(range(min = 100, max = 1000))]
+    pub pulse_duration_ms: Option<u32>,
+
+    /// Whether to dim inactive bracket scopes.
+    ///
+    /// Default: false
+    pub dim_inactive_scopes: Option<bool>,
+
+    /// Whether to show cascade fade-in animation when opening files.
+    ///
+    /// Default: true
+    pub animate_fade: Option<bool>,
+
+    /// Whether to show subtle glow animation on active bracket pair.
+    ///
+    /// Default: true
+    pub animate_glow: Option<bool>,
+
+    /// Duration of fade-in animation in milliseconds.
+    ///
+    /// Default: 200
+    #[schemars(range(min = 50, max = 1000))]
+    pub animation_duration_ms: Option<u32>,
+
+    /// Maximum number of brackets to colorize for performance.
+    /// Set to a high value to handle large files (e.g., 100000+).
+    ///
+    /// Default: 100000
+    pub max_brackets: Option<u32>,
+}
+
+/// Rainbow bracket coloring mode
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RainbowModeContent {
+    /// Infinite HSL gradient (Zed innovation)
+    #[default]
+    Gradient,
+    /// 6-color cycling (VS Code parity)
+    Classic,
 }
