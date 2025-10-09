@@ -2724,48 +2724,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Default Width",
-                    description: "Default width when the terminal is docked to the left or right",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(terminal) = &settings_content.terminal {
-                                &terminal.default_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .default_width
-                        },
-                    }),
-                    files: USER,
-                    metadata: None,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Default Height",
-                    description: "Default height when the terminal is docked to the bottom",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(terminal) = &settings_content.terminal {
-                                &terminal.default_height
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .terminal
-                                .get_or_insert_default()
-                                .default_height
-                        },
-                    }),
-                    files: USER,
-                    metadata: None,
-                }),
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Button",
@@ -4347,6 +4305,49 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SectionHeader("Layout Settings"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Width",
+                    description: "Default width when the terminal is docked to the left or right (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Default Height",
+                    description: "Default height when the terminal is docked to the bottom (in pixels)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(terminal) = &settings_content.terminal {
+                                &terminal.default_height
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .terminal
+                                .get_or_insert_default()
+                                .default_height
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Advanced Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Max Scroll History Lines",
@@ -5300,7 +5301,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp Fetch Timeout Ms",
+            title: "LSP Fetch Timeout Ms",
             description: "When fetching LSP completions, determines how long to wait for a response of a particular server (set to 0 to wait indefinitely)",
             field: Box::new(SettingField {
                 pick: |settings_content| {
@@ -5325,7 +5326,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp Insert Mode",
+            title: "LSP Insert Mode",
             description: "Controls how LSP completions are inserted",
             field: Box::new(SettingField {
                 pick: |settings_content| {
@@ -5615,7 +5616,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Prefer Lsp",
+            title: "Prefer LSP",
             description: "Use LSP tasks over Zed language extension ones",
             field: Box::new(SettingField {
                 pick: |settings_content| {

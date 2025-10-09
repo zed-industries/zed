@@ -474,15 +474,6 @@ fn init_renderers(cx: &mut App) {
         })
         .add_renderer::<settings::SteppingGranularity>(|settings_field, file, _, window, cx| {
             render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::TerminalBlink>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::AlternateScroll>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::CursorShapeContent>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
         });
 
     // todo(settings_ui): Figure out how we want to handle discriminant unions
@@ -2172,7 +2163,6 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
-                dbg!(state);
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = Some(state.into());
                 })
