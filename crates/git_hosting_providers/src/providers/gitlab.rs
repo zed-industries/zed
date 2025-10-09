@@ -2,7 +2,6 @@ use std::str::FromStr;
 
 use anyhow::{Result, bail};
 use url::Url;
-use urlencoding;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,

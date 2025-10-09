@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
 use url::Url;
-use urlencoding;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
@@ -70,10 +69,9 @@ impl GitHostingProvider for Gitee {
             selection,
         } = params;
 
-        let encoded_path = crate::encode_path_segments(&path);
         let mut permalink = self
             .base_url()
-            .join(&format!("{owner}/{repo}/blob/{sha}/{encoded_path}"))
+            .join(&format!("{owner}/{repo}/blob/{sha}/{path}"))
             .unwrap();
         permalink.set_fragment(
             selection
