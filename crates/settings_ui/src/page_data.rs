@@ -5278,7 +5278,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             files: USER | LOCAL,
         }),
         SettingsPageItem::SettingItem(SettingItem {
-            title: "Lsp",
+            title: "LSP",
             description: "Whether to fetch LSP completions or not",
             field: Box::new(SettingField {
                 pick: |settings_content| {

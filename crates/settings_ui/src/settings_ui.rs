@@ -461,14 +461,6 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::ShowMinimap>(|settings_field, file, _, window, cx| {
-            let variants = || -> &'static [settings::ShowMinimap] {
-                <settings::ShowMinimap as strum::VariantArray>::VARIANTS
-            };
-            let labels = || -> &'static [&'static str] {
-                <settings::ShowMinimap as strum::VariantNames>::VARIANTS
-            };
-            dbg!(variants(), labels());
-
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::DisplayIn>(|settings_field, file, _, window, cx| {
@@ -630,6 +622,7 @@ impl SettingsPageItem {
         &self,
         settings_window: &SettingsWindow,
         section_header: &'static str,
+        item_index: usize,
         is_last: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -653,7 +646,7 @@ impl SettingsPageItem {
                 let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
                 h_flex()
-                    .id(setting_item.title)
+                    .id((setting_item.title, item_index))
                     .min_w_0()
                     .gap_2()
                     .justify_between()
@@ -722,7 +715,7 @@ impl SettingsPageItem {
                     .into_any_element()
             }
             SettingsPageItem::SubPageLink(sub_page_link) => h_flex()
-                .id(sub_page_link.title)
+                .id((sub_page_link.title, item_index))
                 .w_full()
                 .min_w_0()
                 .gap_2()
@@ -1755,6 +1748,7 @@ impl SettingsWindow {
                         .child(item.render(
                             self,
                             section_header.expect("All items rendered after a section header"),
+                            index,
                             no_bottom_border || is_last,
                             window,
                             cx,
@@ -2178,6 +2172,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
         .on_click({
             move |state, _window, cx| {
                 let state = *state == ui::ToggleState::Selected;
+                dbg!(state);
                 update_settings_file(file.clone(), cx, move |settings, _cx| {
                     *(field.pick_mut)(settings) = Some(state.into());
                 })
@@ -2277,7 +2272,7 @@ where
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
 
     DropdownMenu::new(
-        SharedString::from(format!("dropdown-{}", field.type_name())),
+        "dropdown",
         current_value_label.to_title_case(),
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
