@@ -123,6 +123,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableColumn {
     pub col_span: usize,
+    pub is_header: bool,
     pub children: MarkdownParagraph,
 }
 

@@ -464,37 +464,60 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    let mut max_lengths: Vec<usize> = vec![0; parsed.header.len()];
-
+    // Calculate the actual number of columns (considering col_span)
+    let mut actual_column_count = 0;
     for row in &parsed.header {
-        for (index, cell) in row.columns.iter().enumerate() {
-            let length = paragraph_len(&cell.children) * cell.col_span;
+        let mut col_index = 0;
+        for cell in &row.columns {
+            col_index += cell.col_span;
+        }
+        actual_column_count = actual_column_count.max(col_index);
+    }
+    for row in &parsed.body {
+        let mut col_index = 0;
+        for cell in &row.columns {
+            col_index += cell.col_span;
+        }
+        actual_column_count = actual_column_count.max(col_index);
+    }
 
-            if index >= max_lengths.len() {
-                max_lengths.resize(index + 1, length);
-            }
+    // Initialize max_lengths for the actual number of columns
+    let mut max_lengths: Vec<usize> = vec![0; actual_column_count];
 
-            if length > max_lengths[index] {
-                max_lengths[index] = length;
+    // Calculate max lengths for each actual column
+    for row in &parsed.header {
+        let mut col_index = 0;
+        for cell in row.columns.iter() {
+            let length = paragraph_len(&cell.children);
+
+            // Distribute the length across the spanned columns
+            let length_per_col = length / cell.col_span.max(1);
+            for i in 0..cell.col_span {
+                if col_index + i < max_lengths.len() {
+                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
+                }
             }
+            col_index += cell.col_span;
         }
     }
 
     for row in &parsed.body {
-        for (index, cell) in row.columns.iter().enumerate() {
-            let length = paragraph_len(&cell.children) * cell.col_span;
+        let mut col_index = 0;
+        for cell in row.columns.iter() {
+            let length = paragraph_len(&cell.children);
 
-            if index >= max_lengths.len() {
-                max_lengths.resize(index + 1, length);
+            // Distribute the length across the spanned columns
+            let length_per_col = length / cell.col_span.max(1);
+            for i in 0..cell.col_span {
+                if col_index + i < max_lengths.len() {
+                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
+                }
             }
-
-            if length > max_lengths[index] {
-                max_lengths[index] = length;
-            }
+            col_index += cell.col_span;
         }
     }
 
-    let total_max_length: usize = max_lengths.iter().sum();
+    let total_max_length: usize = max_lengths.iter().sum::<usize>().max(1);
     let max_column_widths: Vec<f32> = max_lengths
         .iter()
         .map(|&length| length as f32 / total_max_length as f32)
@@ -504,7 +527,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .header
         .iter()
         .map(|row| {
-            render_markdown_table_row(row, &parsed.column_alignments, &max_column_widths, true, cx)
+            render_markdown_table_row(row, &parsed.column_alignments, &max_column_widths, cx)
         })
         .collect();
 
@@ -512,18 +535,14 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .body
         .iter()
         .map(|row| {
-            render_markdown_table_row(
-                row,
-                &parsed.column_alignments,
-                &max_column_widths,
-                false,
-                cx,
-            )
+            render_markdown_table_row(row, &parsed.column_alignments, &max_column_widths, cx)
         })
         .collect();
 
     cx.with_common_p(v_flex())
         .w_full()
+        .border_t_1()
+        .border_color(cx.border_color)
         .children(header)
         .children(body)
         .into_any()
@@ -533,15 +552,14 @@ fn render_markdown_table_row(
     parsed: &ParsedMarkdownTableRow,
     alignments: &Vec<ParsedMarkdownTableAlignment>,
     max_column_widths: &Vec<f32>,
-    is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let mut items = Vec::with_capacity(parsed.columns.len());
-    let count = parsed.columns.len();
+    let mut items = Vec::new();
+    let mut col_index = 0;
 
-    for (index, cell) in parsed.columns.iter().enumerate() {
+    for (cell_index, cell) in parsed.columns.iter().enumerate() {
         let alignment = alignments
-            .get(index)
+            .get(cell_index)
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
@@ -553,36 +571,37 @@ fn render_markdown_table_row(
             ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
         };
 
-        let max_width = max_column_widths.get(index).unwrap_or(&0.0);
-        let mut cell = container
-            .w(Length::Definite(relative(*max_width)))
+        // Calculate the combined width for cells that span multiple columns
+        let mut combined_width = 0.0;
+        for i in 0..cell.col_span {
+            if col_index + i < max_column_widths.len() {
+                combined_width += max_column_widths[col_index + i];
+            }
+        }
+
+        let mut cell_element = container
+            .w(Length::Definite(relative(combined_width)))
             .h_full()
             .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color)
-            .border_l_1();
+            .border_r_1();
 
-        if count == index + 1 {
-            cell = cell.border_r_1();
+        if cell.is_header {
+            cell_element = cell_element.bg(cx.element_background_color)
         }
 
-        if is_header {
-            cell = cell.bg(cx.element_background_color)
-        }
-
-        items.push(cell);
+        items.push(cell_element);
+        col_index += cell.col_span;
     }
 
-    let mut row = h_flex().border_color(cx.border_color);
-
-    if is_header {
-        row = row.border_y_1();
-    } else {
-        row = row.border_b_1();
-    }
-
-    row.children(items).into_any_element()
+    h_flex()
+        .border_b_1()
+        .border_l_1()
+        .border_color(cx.border_color)
+        .children(items)
+        .into_any_element()
 }
 
 fn render_markdown_block_quote(
