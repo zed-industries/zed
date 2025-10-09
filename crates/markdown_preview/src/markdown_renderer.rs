@@ -498,9 +498,9 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     let actual_header_column_count = calculate_columns_count(&parsed.header);
     let actual_body_column_count = calculate_columns_count(&parsed.body);
 
-    let actual_column_count = std::cmp::max(actual_header_column_count, actual_body_column_count);
+    let max_column_count = std::cmp::max(actual_header_column_count, actual_body_column_count);
 
-    let mut max_lengths: Vec<usize> = vec![0; actual_column_count];
+    let mut max_lengths: Vec<usize> = vec![0; max_column_count];
 
     // Calculate max lengths for each actual column
     calculate_column_length(&mut max_lengths, &parsed.header);
