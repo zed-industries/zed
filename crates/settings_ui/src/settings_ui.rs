@@ -461,6 +461,14 @@ fn init_renderers(cx: &mut App) {
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::ShowMinimap>(|settings_field, file, _, window, cx| {
+            let variants = || -> &'static [settings::ShowMinimap] {
+                <settings::ShowMinimap as strum::VariantArray>::VARIANTS
+            };
+            let labels = || -> &'static [&'static str] {
+                <settings::ShowMinimap as strum::VariantNames>::VARIANTS
+            };
+            dbg!(variants(), labels());
+
             render_dropdown(*settings_field, file, window, cx)
         })
         .add_renderer::<settings::DisplayIn>(|settings_field, file, _, window, cx| {
@@ -2269,7 +2277,7 @@ where
         labels()[variants().iter().position(|v| *v == current_value).unwrap()];
 
     DropdownMenu::new(
-        "dropdown",
+        SharedString::from(format!("dropdown-{}", field.type_name())),
         current_value_label.to_title_case(),
         ContextMenu::build(window, cx, move |mut menu, _, _| {
             for (&value, &label) in std::iter::zip(variants(), labels()) {
