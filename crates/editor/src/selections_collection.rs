@@ -184,6 +184,27 @@ impl SelectionsCollection {
         selections
     }
 
+    /// Returns all of the selections, adjusted to take into account the selection line_mode. Uses a provided snapshot to resolve selections.
+    pub fn all_adjusted_with_snapshot(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<Selection<Point>> {
+        let mut selections = self
+            .disjoint
+            .iter()
+            .chain(self.pending_anchor())
+            .map(|anchor| anchor.map(|anchor| anchor.to_point(&snapshot)))
+            .collect::<Vec<_>>();
+        if self.line_mode {
+            for selection in &mut selections {
+                let new_range = snapshot.expand_to_line(selection.range());
+                selection.start = new_range.start;
+                selection.end = new_range.end;
+            }
+        }
+        selections
+    }
+
     /// Returns the newest selection, adjusted to take into account the selection line_mode
     pub fn newest_adjusted(&self, cx: &mut App) -> Selection<Point> {
         let mut selection = self.newest::<Point>(cx);
