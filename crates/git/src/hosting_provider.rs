@@ -5,8 +5,11 @@ use async_trait::async_trait;
 use derive_more::{Deref, DerefMut};
 use gpui::{App, Global, SharedString};
 use http_client::HttpClient;
+use itertools::Itertools;
 use parking_lot::RwLock;
 use url::Url;
+
+use crate::repository::RepoPath;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PullRequest {
@@ -55,8 +58,19 @@ pub struct BuildCommitPermalinkParams<'a> {
 
 pub struct BuildPermalinkParams<'a> {
     pub sha: &'a str,
-    pub path: &'a str,
+    /// URL-escaped path using unescaped `/` as the directory separator.
+    pub path: String,
     pub selection: Option<Range<u32>>,
+}
+
+impl<'a> BuildPermalinkParams<'a> {
+    pub fn new(sha: &'a str, path: &RepoPath, selection: Option<Range<u32>>) -> Self {
+        Self {
+            sha,
+            path: path.components().map(urlencoding::encode).join("/"),
+            selection,
+        }
+    }
 }
 
 /// A Git hosting provider.
