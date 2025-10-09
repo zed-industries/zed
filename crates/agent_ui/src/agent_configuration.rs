@@ -15,7 +15,6 @@ use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
-use feature_flags::{CodexAcpFeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
@@ -1085,14 +1084,11 @@ impl AgentConfiguration {
                         "Claude Code",
                     ))
                     .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    .when(cx.has_flag::<CodexAcpFeatureFlag>(), |this| {
-                        this
-                            .child(self.render_agent_server(
-                                IconName::AiOpenAi,
-                                "Codex",
-                            ))
-                            .child(Divider::horizontal().color(DividerColor::BorderFaded))
-                    })
+                    .child(self.render_agent_server(
+                        IconName::AiOpenAi,
+                        "Codex",
+                    ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
                         IconName::AiGemini,
                         "Gemini CLI",
