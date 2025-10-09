@@ -1,17 +1,40 @@
 # Zed on Windows
 
-Zed is not supported on Windows (yet). We have limited developer bandwidth, and a
-new platform is a large undertaking. However, the community has developed
-a build of Zed on Windows, and you can compile it yourself with these instructions:
+## Install Zed (Windows)
 
-- [Building for Windows](./development/windows.md)
+###  **Option A**:  Standard installer (recommended)
 
-For now, we welcome contributions from the community to improve Windows support.
+Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
 
-- [GitHub Issues with 'Windows' label](https://github.com/zed-industries/zed/issues?q=is%3Aissue+is%3Aopen+label%3Awindows)
-- [Zed Community Discord](https://zed.dev/community-links) -> `#windows`
+###  ***Option B***: Build from source
 
-### WSL support
+1. Install prerequisites:
+- Rust via rustup.
+- [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the Desktop development with C++ workload (or Build Tools for Visual Studio), including MSVC toolchain and Spectre‑mitigated libs.
+- Windows 10/11 SDK (version 10.0.20348.0 or newer).
+- [CMake](https://cmake.org/download) (installed via Visual Studio or standalone; ensure cmake is on your PATH).
+
+2. Clone the Zed repository and build:
+```json
+# Debug build
+cargo run
+
+# Release build
+cargo run --release
+
+# Run tests
+cargo test --workspace
+```
+You can learn more here: [Building Windows] ( https://zed.dev/docs/development/windows)
+
+## Uninstall 
+
+- Installed via installer: Use Settings → Apps → Installed apps, search for Zed, and click Uninstall.
+- Built from source: Remove the build output directory you created (e.g., your target/install folder).
+
+Your settings and extensions live in your user profile. When uninstalling, you can choose to keep or remove them.
+
+## WSL Support
 
 Zed supports opening folders inside of WSL natively.
 
