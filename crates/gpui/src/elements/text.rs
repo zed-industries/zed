@@ -467,6 +467,19 @@ impl TextLayout {
 
     /// Get the byte index into the input of the pixel position.
     pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
+        self._index_for_position(position, false)
+    }
+
+    /// Get the closest byte index into the input of the pixel position.
+    pub fn closest_index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
+        self._index_for_position(position, true)
+    }
+
+    fn _index_for_position(
+        &self,
+        mut position: Point<Pixels>,
+        closest: bool,
+    ) -> Result<usize, usize> {
         let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
@@ -489,7 +502,12 @@ impl TextLayout {
                 line_start_ix += line.len() + 1;
             } else {
                 let position_within_line = position - line_origin;
-                match line.index_for_position(position_within_line, line_height) {
+                let index_for_position = if closest {
+                    line.closest_index_for_position(position_within_line, line_height)
+                } else {
+                    line.index_for_position(position_within_line, line_height)
+                };
+                match index_for_position {
                     Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
                     Err(index_within_line) => return Err(line_start_ix + index_within_line),
                 }
