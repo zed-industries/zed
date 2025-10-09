@@ -207,13 +207,13 @@ async fn build_remote_server_from_source(
             #[cfg(not(target_os = "windows"))]
             {
                 anyhow::bail!(
-                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    "zig not found on $PATH, install zig (see https://ziglang.org/learn/getting-started or use zigup)"
                 )
             }
             #[cfg(target_os = "windows")]
             {
                 anyhow::bail!(
-                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup) or pass ZED_BUILD_REMOTE_SERVER=cross to use cross"
+                    "zig not found on $PATH, install zig (use `winget install -e --id zig.zig` or see https://ziglang.org/learn/getting-started or use zigup)"
                 )
             }
         }
