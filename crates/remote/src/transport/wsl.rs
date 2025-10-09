@@ -509,6 +509,24 @@ fn wsl_command_impl(
         command.arg("--user").arg(user);
     }
 
+    // Construct the full command string with proper quoting
+    let mut shell_command = String::new();
+    if let Ok(quoted_program) = shlex::try_quote(program) {
+        shell_command.push_str(&quoted_program);
+    } else {
+        shell_command.push_str(program);
+    }
+
+    for arg in args {
+        shell_command.push(' ');
+        let arg_str = arg.as_ref().to_string_lossy();
+        if let Ok(quoted_arg) = shlex::try_quote(&arg_str) {
+            shell_command.push_str(&quoted_arg);
+        } else {
+            shell_command.push_str(&arg_str);
+        }
+    }
+
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -518,8 +536,9 @@ fn wsl_command_impl(
         .arg("--cd")
         .arg("~")
         .arg("--exec")
-        .arg(program)
-        .args(args);
+        .arg("sh")
+        .arg("-c")
+        .arg(shell_command);
 
     log::debug!("wsl {:?}", command);
     command
