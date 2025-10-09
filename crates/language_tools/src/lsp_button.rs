@@ -1006,14 +1006,14 @@ impl StatusItemView for LspButton {
             self.refresh_lsp_menu(false, window, cx);
         }
     }
+
+    fn visible(&self, cx: &App) -> bool {
+        (!self.server_state.read(cx).language_servers.is_empty()) && self.lsp_menu.is_some()
+    }
 }
 
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        if self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none() {
-            return div();
-        }
-
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;

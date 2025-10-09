@@ -1,5 +1,6 @@
 use editor::Editor;
 use gpui::{
+    App,
     Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window, div,
 };
 use language::LanguageName;
@@ -40,10 +41,6 @@ impl ActiveBufferLanguage {
 
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !StatusBarSettings::get_global(cx).active_language_button {
-            return div();
-        }
-
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
@@ -86,5 +83,9 @@ impl StatusItemView for ActiveBufferLanguage {
         }
 
         cx.notify();
+    }
+
+    fn visible(&self, cx: &App) -> bool {
+        StatusBarSettings::get_global(cx).active_language_button
     }
 }

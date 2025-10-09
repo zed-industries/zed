@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{
-    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
+    App, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
     WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
@@ -259,5 +259,9 @@ impl StatusItemView for ActiveToolchain {
             self.update_lister(editor, window, cx);
         }
         cx.notify();
+    }
+
+    fn visible(&self, _: &App) -> bool {
+        self.active_toolchain.is_some()
     }
 }

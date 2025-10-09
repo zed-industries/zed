@@ -207,10 +207,6 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !StatusBarSettings::get_global(cx).cursor_position_button {
-            return div();
-        }
-
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -287,6 +283,10 @@ impl StatusItemView for CursorPosition {
         }
 
         cx.notify();
+    }
+
+    fn visible(&self, cx: &App) -> bool {
+        StatusBarSettings::get_global(cx).cursor_position_button
     }
 }
 

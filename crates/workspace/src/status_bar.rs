@@ -16,6 +16,9 @@ pub trait StatusItemView: Render {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
+    fn visible(&self, _: &App) -> bool {
+        true
+    }
 }
 
 trait StatusItemViewHandle: Send {
@@ -27,6 +30,7 @@ trait StatusItemViewHandle: Send {
         cx: &mut App,
     );
     fn item_type(&self) -> TypeId;
+    fn visible(&self, _: &App) -> bool;
 }
 
 pub struct StatusBar {
@@ -59,24 +63,24 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools())
-            .child(self.render_right_tools())
+            .child(self.render_left_tools(cx))
+            .child(self.render_right_tools(cx))
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(&self) -> impl IntoElement {
+    fn render_left_tools(&self, cx: &App) -> impl IntoElement {
         h_flex()
             .gap_1()
             .overflow_x_hidden()
-            .children(self.left_items.iter().map(|item| item.to_any()))
+            .children(self.left_items.iter().filter(|item| item.visible(cx)).map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self) -> impl IntoElement {
+    fn render_right_tools(&self, cx: &App) -> impl IntoElement {
         h_flex()
             .gap_1()
             .overflow_x_hidden()
-            .children(self.right_items.iter().rev().map(|item| item.to_any()))
+            .children(self.right_items.iter().rev().filter(|item| item.visible(cx)).map(|item| item.to_any()))
     }
 }
 
@@ -213,6 +217,10 @@ impl<T: StatusItemView> StatusItemViewHandle for Entity<T> {
 
     fn item_type(&self) -> TypeId {
         TypeId::of::<T>()
+    }
+
+    fn visible(&self, cx: &App) -> bool {
+        self.read(cx).visible(cx)
     }
 }
 
