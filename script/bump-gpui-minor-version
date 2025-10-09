@@ -6,12 +6,11 @@ if [[ -n $(git status --short --untracked-files=no) ]]; then
   echo "can't bump versions with uncommitted changes"
   exit 1
 fi
-# TODO!: Restore this
-# if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
-#   echo "this command must be run on main"
-#   exit 1
-# fi
-# git pull -q --ff-only origin main
+if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
+  echo "this command must be run on main"
+  exit 1
+fi
+git pull -q --ff-only origin main
 
 
 # Parse the current version
@@ -26,6 +25,4 @@ git checkout -b ${next_minor_branch_name}
 
 script/lib/bump-version.sh gpui v "-gpui" minor true
 
-# TODO!: restore
-# git checkout -q main
-git checkout -q publish-gpui-on-ci
+git checkout -q main
