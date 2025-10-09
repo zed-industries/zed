@@ -1714,6 +1714,7 @@ impl SettingsWindow {
                     v_flex()
                         .w_full()
                         .min_w_0()
+                        .id(("settings-page-item", actual_item_index))
                         .when_some(page_index, |element, page_index| {
                             element.track_focus(
                                 &self.content_handles[page_index][actual_item_index]
@@ -1777,7 +1778,6 @@ impl SettingsWindow {
             .pt_6()
             .pb_8()
             .px_8()
-            .track_focus(&self.content_focus_handle.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
             .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .child(page_header)
@@ -1785,9 +1785,12 @@ impl SettingsWindow {
                 div()
                     .size_full()
                     .track_focus(&self.content_focus_handle.focus_handle(cx))
-                    .tab_group()
-                    .tab_index(CONTENT_GROUP_TAB_INDEX)
-                    .child(page_content),
+                    .child(
+                        div()
+                            .tab_group()
+                            .tab_index(CONTENT_GROUP_TAB_INDEX)
+                            .child(page_content),
+                    ),
             );
     }
 
