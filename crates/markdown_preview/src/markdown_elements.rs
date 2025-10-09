@@ -1,5 +1,5 @@
 use gpui::{
-    DefiniteLength, FontStyle, FontWeight, HighlightStyle, Hsla, SharedString, StrikethroughStyle,
+    DefiniteLength, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, px,
 };
 use language::HighlightId;
