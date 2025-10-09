@@ -725,6 +725,7 @@ impl SettingsPageItem {
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
                         .icon(IconName::ChevronRight)
+                        .tab_index(0_isize)
                         .icon_position(IconPosition::End)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::Small)
