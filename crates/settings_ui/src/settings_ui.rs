@@ -557,10 +557,10 @@ pub struct SettingsWindow {
     /// Index into navbar_entries
     navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
-    list_handle: UniformListScrollHandle,
+    navbar_scroll_handle: UniformListScrollHandle,
     search_matches: Vec<Vec<bool>>,
     content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
-    scroll_handle: ScrollHandle,
+    page_scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
@@ -921,12 +921,12 @@ impl SettingsWindow {
             pages: vec![],
             navbar_entries: vec![],
             navbar_entry: 0,
-            list_handle: UniformListScrollHandle::default(),
+            navbar_scroll_handle: UniformListScrollHandle::default(),
             search_bar,
             search_task: None,
             search_matches: vec![],
             content_handles: vec![],
-            scroll_handle: ScrollHandle::new(),
+            page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
@@ -1476,7 +1476,7 @@ impl SettingsWindow {
                 cx.notify();
             }))
             .on_action(
-                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, _| {
+                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, cx| {
                     let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
                     let mut root_index = None;
                     for (index, entry) in this.visible_navbar_entries() {
@@ -1490,10 +1490,10 @@ impl SettingsWindow {
                     let Some(previous_root_index) = root_index else {
                         return;
                     };
-                    this.focus_and_scroll_to_nav_entry(previous_root_index, window);
+                    this.focus_and_scroll_to_nav_entry(previous_root_index, window, cx);
                 }),
             )
-            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, _| {
+            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, cx| {
                 let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
                 let mut root_index = None;
                 for (index, entry) in this.visible_navbar_entries() {
@@ -1508,16 +1508,16 @@ impl SettingsWindow {
                 let Some(next_root_index) = root_index else {
                     return;
                 };
-                this.focus_and_scroll_to_nav_entry(next_root_index, window);
+                this.focus_and_scroll_to_nav_entry(next_root_index, window, cx);
             }))
-            .on_action(cx.listener(|this, _: &FocusFirstNavEntry, window, _| {
+            .on_action(cx.listener(|this, _: &FocusFirstNavEntry, window, cx| {
                 if let Some((first_entry_index, _)) = this.visible_navbar_entries().next() {
-                    this.focus_and_scroll_to_nav_entry(first_entry_index, window);
+                    this.focus_and_scroll_to_nav_entry(first_entry_index, window, cx);
                 }
             }))
-            .on_action(cx.listener(|this, _: &FocusLastNavEntry, window, _| {
+            .on_action(cx.listener(|this, _: &FocusLastNavEntry, window, cx| {
                 if let Some((last_entry_index, _)) = this.visible_navbar_entries().last() {
-                    this.focus_and_scroll_to_nav_entry(last_entry_index, window);
+                    this.focus_and_scroll_to_nav_entry(last_entry_index, window, cx);
                 }
             }))
             .border_color(cx.theme().colors().border)
@@ -1568,9 +1568,9 @@ impl SettingsWindow {
                             }),
                         )
                         .size_full()
-                        .track_scroll(self.list_handle.clone()),
+                        .track_scroll(self.navbar_scroll_handle.clone()),
                     )
-                    .vertical_scrollbar_for(self.list_handle.clone(), window, cx),
+                    .vertical_scrollbar_for(self.navbar_scroll_handle.clone(), window, cx),
             )
         // TODO: Restore this once we've fixed the ToggleFocusNav action
         // .child(
@@ -1607,7 +1607,7 @@ impl SettingsWindow {
                 return;
             };
             self.focus_content_element(first_item_index, window, cx);
-            self.scroll_handle.set_offset(point(px(0.), px(0.)));
+            self.page_scroll_handle.set_offset(point(px(0.), px(0.)));
         } else {
             let entry_item_index = self.navbar_entries[navbar_entry_index]
                 .item_index
@@ -1618,22 +1618,41 @@ impl SettingsWindow {
             else {
                 return;
             };
-            self.scroll_handle
+            self.page_scroll_handle
                 .scroll_to_top_of_item(selected_item_index);
             self.focus_content_element(selected_item_index, window, cx);
         }
+
+        // Page scroll handle updates the active item index
+        // in it's next paint call after using scroll_handle.scroll_to_top_of_item
+        // The call after that updates the offset of the scroll handle. So to
+        // ensure the scroll handle doesn't lag behind we need to render three frames
+        // back to back.
+        cx.on_next_frame(window, |_, window, cx| {
+            cx.on_next_frame(window, |_, _, cx| {
+                cx.notify();
+            });
+            cx.notify();
+        });
+        cx.notify();
     }
 
-    fn focus_and_scroll_to_nav_entry(&self, nav_entry_index: usize, window: &mut Window) {
+    fn focus_and_scroll_to_nav_entry(
+        &self,
+        nav_entry_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(position) = self
             .visible_navbar_entries()
             .position(|(index, _)| index == nav_entry_index)
         else {
             return;
         };
-        self.list_handle
+        self.navbar_scroll_handle
             .scroll_to_item(position, gpui::ScrollStrategy::Top);
         window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
+        cx.notify();
     }
 
     fn page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
@@ -1680,7 +1699,7 @@ impl SettingsWindow {
             .id("settings-ui-page")
             .size_full()
             .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle);
+            .track_scroll(&self.page_scroll_handle);
 
         let items: Vec<_> = items.collect();
         let items_len = items.len();
@@ -1794,7 +1813,7 @@ impl SettingsWindow {
             .px_8()
             .track_focus(&self.content_focus_handle.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .vertical_scrollbar_for(self.page_scroll_handle.clone(), window, cx)
             .child(page_header)
             .child(
                 div()
@@ -2029,7 +2048,7 @@ impl Render for SettingsWindow {
                 {
                     this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
                 } else {
-                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window);
+                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window, cx);
                 }
             }))
             .on_action(
@@ -2474,11 +2493,11 @@ mod test {
             search_bar: cx.new(|cx| Editor::single_line(window, cx)),
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
-            list_handle: UniformListScrollHandle::default(),
+            navbar_scroll_handle: UniformListScrollHandle::default(),
             search_matches: vec![],
             content_handles: vec![],
             search_task: None,
-            scroll_handle: ScrollHandle::new(),
+            page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
