@@ -862,16 +862,16 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
 
-      - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
+      - name: Upload installer (x86_64) to Workflow - zed (main branch preview or run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        if: (${{ github.ref == 'refs/heads/main' }} && ${{ env.RELEASE_CHANNEL == 'preview' }}) || contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
           name: ZedEditorUserSetup-x64-${{ github.event.pull_request.head.sha || github.sha }}.exe
           path: ${{ env.SETUP_PATH }}
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
+        if: ${{ env.RELEASE_CHANNEL == 'preview' }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
