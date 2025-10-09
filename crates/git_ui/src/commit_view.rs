@@ -1,7 +1,8 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
+use git::commit::{CommitDetails, CommitSummary};
+use git::repository::{CommitDiff, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
@@ -382,18 +383,20 @@ fn format_commit(commit: &CommitDetails) -> String {
         &mut result,
         "Date:   {}",
         time_format::format_local_timestamp(
-            time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
+            commit.commit_time,
             time::OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         ),
     )
     .unwrap();
     result.push('\n');
-    for line in commit.message.split('\n') {
-        if line.is_empty() {
-            result.push('\n');
-        } else {
-            writeln!(&mut result, "    {}", line).unwrap();
+    if let Some(message) = commit.message.as_ref() {
+        for line in message.message.split('\n') {
+            if line.is_empty() {
+                result.push('\n');
+            } else {
+                writeln!(&mut result, "    {}", line).unwrap();
+            }
         }
     }
     if result.ends_with("\n\n") {
@@ -429,13 +432,23 @@ impl Item for CommitView {
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
-        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
+        let subject = self
+            .commit
+            .message
+            .as_ref()
+            .map(|m| truncate_and_trailoff(m.message.split('\n').next().unwrap(), 20))
+            .unwrap_or_else(|| "".into());
         format!("{short_sha} - {subject}").into()
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
-        let subject = self.commit.message.split('\n').next().unwrap();
+        let subject = self
+            .commit
+            .message
+            .as_ref()
+            .and_then(|m| m.message.split('\n').next())
+            .unwrap_or("");
         Some(format!("{short_sha} - {subject}").into())
     }
 
