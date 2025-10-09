@@ -2983,6 +2983,12 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// NOTE: This test is skipped on Windows, because on Windows, unlike on Unix,
+// you can't rename a directory which some program has already open. This is a
+// limitation of the Windows. Since Zed will have the root open, it will hold an open handle
+// to it, and thus renaming it will fail on Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
+// See: https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
