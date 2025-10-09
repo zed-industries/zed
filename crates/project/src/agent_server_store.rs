@@ -229,6 +229,7 @@ impl AgentServerStore {
                         .clone()
                         .and_then(|settings| settings.custom_command()),
                     http_client: http_client.clone(),
+                    is_remote: downstream_client.is_some(),
                 }),
             );
         }
@@ -1022,6 +1023,7 @@ struct LocalCodex {
     project_environment: Entity<ProjectEnvironment>,
     http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
+    is_remote: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -1041,6 +1043,7 @@ impl ExternalAgentServer for LocalCodex {
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
             .into();
+        let is_remote = self.is_remote;
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1049,6 +1052,9 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
+            if is_remote {
+                env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+            }
 
             let mut command = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
