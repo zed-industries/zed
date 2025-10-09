@@ -543,14 +543,6 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    // We use custom columns in many tests to workaround this issue by ensuring a wrapped
-    // line never ends on a wide char:
-    //
-    // <https://github.com/alacritty/alacritty/issues/8586>
-    //
-    // This issue was recently fixed, as soon as we update to a version containing the fix we
-    // can remove all the custom columns from these tests.
-    //
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
