@@ -678,6 +678,7 @@ impl Vim {
                     vim.push_operator(
                         Operator::ChangeSurrounds {
                             target: action.target,
+                            opening: false,
                         },
                         window,
                         cx,
@@ -945,6 +946,7 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
                 });
+
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -1142,11 +1144,11 @@ impl Vim {
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot());
                     end = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot().anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1412,7 +1414,8 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);
 
-            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let snapshot = editor.snapshot(window, cx);
+            let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
                 snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
             if kind == Some(CharKind::Word) {
@@ -1779,10 +1782,10 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target }) => match self.mode {
+            Some(Operator::ChangeSurrounds { target, opening }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, window, cx);
+                        self.change_surrounds(text, target, opening, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
@@ -1912,7 +1915,7 @@ impl From<settings::ModeContent> for Mode {
 }
 
 impl Settings for VimSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let vim = content.vim.clone().unwrap();
         Self {
             default_mode: vim.default_mode.unwrap().into(),

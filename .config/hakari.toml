@@ -24,7 +24,7 @@ workspace-members = [
 third-party = [
     { name = "reqwest", version = "0.11.27" },
     # build of remote_server should not include scap / its x11 dependency
-    { name = "scap", git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7" },
+    { name = "zed-scap", git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", version = "0.0.8-zed" },
     # build of remote_server should not need to include on libalsa through rodio
     { name = "rodio", git = "https://github.com/RustAudio/rodio" },
 ]

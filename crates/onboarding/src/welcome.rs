@@ -5,11 +5,11 @@ use gpui::{
 use menu::{SelectNext, SelectPrevious};
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use workspace::{
-    NewFile, Open, WorkspaceId,
+    NewFile, Open,
     item::{Item, ItemEvent},
     with_active_or_new_workspace,
 };
-use zed_actions::{Extensions, OpenSettings, agent, command_palette};
+use zed_actions::{Extensions, OpenSettingsEditor, agent, command_palette};
 
 use crate::{Onboarding, OpenOnboarding};
 
@@ -53,7 +53,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::Settings,
                 title: "Open Settings",
-                action: &OpenSettings,
+                action: &OpenSettingsEditor,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
@@ -151,6 +151,7 @@ impl SectionEntry {
 }
 
 pub struct WelcomePage {
+    first_paint: bool,
     focus_handle: FocusHandle,
 }
 
@@ -168,6 +169,10 @@ impl WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.first_paint {
+            window.request_animation_frame();
+            self.first_paint = false;
+        }
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let last_index = first_section_entries + second_section.entries.len();
@@ -311,7 +316,10 @@ impl WelcomePage {
             cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
                 .detach();
 
-            WelcomePage { focus_handle }
+            WelcomePage {
+                first_paint: true,
+                focus_handle,
+            }
         })
     }
 }
@@ -337,15 +345,6 @@ impl Item for WelcomePage {
 
     fn show_toolbar(&self) -> bool {
         false
-    }
-
-    fn clone_on_split(
-        &self,
-        _workspace_id: Option<WorkspaceId>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Entity<Self>> {
-        None
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

@@ -331,7 +331,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Option<Arc<SanitizedPath>>,
+        new_path: Arc<SanitizedPath>,
     },
 }
 
@@ -1769,21 +1769,19 @@ impl LocalWorktree {
 
     pub fn update_abs_path_and_refresh(
         &mut self,
-        new_path: Option<Arc<SanitizedPath>>,
+        new_path: Arc<SanitizedPath>,
         cx: &Context<Worktree>,
     ) {
-        if let Some(new_path) = new_path {
-            self.snapshot.git_repositories = Default::default();
-            self.snapshot.ignores_by_parent_abs_path = Default::default();
-            let root_name = new_path
-                .as_path()
-                .file_name()
-                .and_then(|f| f.to_str())
-                .map_or(RelPath::empty().into(), |f| {
-                    RelPath::unix(f).unwrap().into()
-                });
-            self.snapshot.update_abs_path(new_path, root_name);
-        }
+        self.snapshot.git_repositories = Default::default();
+        self.snapshot.ignores_by_parent_abs_path = Default::default();
+        let root_name = new_path
+            .as_path()
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map_or(RelPath::empty().into(), |f| {
+                RelPath::unix(f).unwrap().into()
+            });
+        self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
     }
 }
@@ -3156,7 +3154,7 @@ impl File {
         self.worktree.read(cx).id()
     }
 
-    pub fn project_entry_id(&self, _: &App) -> Option<ProjectEntryId> {
+    pub fn project_entry_id(&self) -> Option<ProjectEntryId> {
         match self.disk_state {
             DiskState::Deleted => None,
             _ => self.entry_id,
@@ -3644,8 +3642,14 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(paths.into_iter().map(Into::into).collect())
-                .await;
+            self.process_events(
+                paths
+                    .into_iter()
+                    .filter(|e| e.kind.is_some())
+                    .map(Into::into)
+                    .collect(),
+            )
+            .await;
         }
         if let Some(abs_path) = containing_git_repository {
             self.process_events(vec![abs_path]).await;
@@ -3690,7 +3694,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().map(Into::into).collect()).await;
+                    self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
                 }
 
                 paths = global_gitignore_events.next().fuse() => {
@@ -3769,18 +3773,18 @@ impl BackgroundScanner {
                     .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
-                if let Some(new_path) = new_path.as_ref() {
+                if let Some(new_path) = new_path {
                     log::info!(
                         "root renamed from {} to {}",
                         root_path.as_path().display(),
                         new_path.as_path().display()
-                    )
+                    );
+                    self.status_updates_tx
+                        .unbounded_send(ScanState::RootUpdated { new_path })
+                        .ok();
                 } else {
                     log::warn!("root path could not be canonicalized: {}", err);
                 }
-                self.status_updates_tx
-                    .unbounded_send(ScanState::RootUpdated { new_path })
-                    .ok();
                 return;
             }
         };

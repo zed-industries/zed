@@ -1,12 +1,17 @@
 [package]
 name = "gpui"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
 repository = "https://github.com/zed-industries/zed"
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+homepage = "https://gpui.rs"
+readme = "README.md"
+keywords = ["desktop", "gui", "immediate"]
+categories = ["gui"]
+
 
 [lints]
 workspace = true
@@ -38,7 +43,7 @@ wayland = [
     "blade-macros",
     "blade-util",
     "bytemuck",
-    "ashpd",
+    "ashpd/wayland",
     "cosmic-text",
     "font-kit",
     "calloop-wayland-source",
@@ -139,7 +144,8 @@ core-foundation-sys.workspace = true
 core-graphics = "0.24"
 core-video.workspace = true
 core-text = "21"
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", optional = true }
+# WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
@@ -170,7 +176,8 @@ blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 cosmic-text = { version = "0.14.0", optional = true }
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", features = [
+# WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
 
@@ -210,10 +217,11 @@ xkbcommon = { version = "0.8.0", features = [
     "wayland",
     "x11",
 ], optional = true }
-xim = { git = "https://github.com/zed-industries/xim-rs", rev = "c0a70c1bd2ce197364216e5e818a2cb3adb99a8d" , features = [
+# WARNING: If you change this, you must also publish a new version of zed-xim to crates.io
+xim = { git = "https://github.com/zed-industries/xim-rs.git", rev = "16f35a2c881b815a2b6cdfd6687988e84f8447d8" , features = [
     "x11rb-xcb",
     "x11rb-client",
-], optional = true }
+], package = "zed-xim", version = "0.4.0-zed", optional = true }
 x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]

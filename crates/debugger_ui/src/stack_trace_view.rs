@@ -59,7 +59,7 @@ impl StackTraceView {
 
                     editor
                         .snapshot(window, cx)
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .excerpt_containing(position..position)
                         .map(|excerpt| excerpt.id())
                 });
@@ -259,7 +259,7 @@ impl StackTraceView {
             let mut is_first = true;
 
             for (_, highlight) in self.highlights.iter().skip(active_idx) {
-                let position = highlight.to_point(&snapshot.buffer_snapshot);
+                let position = highlight.to_point(&snapshot.buffer_snapshot());
                 let color = if is_first {
                     is_first = false;
                     first_color
@@ -268,11 +268,11 @@ impl StackTraceView {
                 };
 
                 let start = snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .clip_point(Point::new(position.row, 0), Bias::Left);
                 let end = start + Point::new(1, 0);
-                let start = snapshot.buffer_snapshot.anchor_before(start);
-                let end = snapshot.buffer_snapshot.anchor_before(end);
+                let start = snapshot.buffer_snapshot().anchor_before(start);
+                let end = snapshot.buffer_snapshot().anchor_before(end);
                 editor.highlight_rows::<DebugStackFrameLine>(
                     start..end,
                     color,
@@ -352,10 +352,6 @@ impl Item for StackTraceView {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn set_nav_history(

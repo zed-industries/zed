@@ -30,7 +30,10 @@ use gpui::{
     Subscription, WeakEntity, Window, actions, div,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, WorktreeSettings};
+use project::{
+    Project, WorktreeSettings,
+    git_store::{GitStoreEvent, RepositoryEvent},
+};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::sync::Arc;
@@ -245,6 +248,7 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
+        let git_store = project.read(cx).git_store().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -272,6 +276,17 @@ impl TitleBar {
         subscriptions.push(cx.subscribe(&project, |_, _, _: &project::Event, cx| cx.notify()));
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
+        subscriptions.push(
+            cx.subscribe(&git_store, move |_, _, event, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
+                    cx.notify();
+                }
+                _ => {}
+            }),
+        );
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         let banner = cx.new(|cx| {
@@ -480,24 +495,24 @@ impl TitleBar {
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let settings = TitleBarSettings::get_global(cx);
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = {
-            let repo = repository.read(cx);
-            repo.branch
-                .as_ref()
-                .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
-                .or_else(|| {
-                    repo.head_commit.as_ref().map(|commit| {
-                        commit
-                            .sha
-                            .chars()
-                            .take(MAX_SHORT_SHA_LENGTH)
-                            .collect::<String>()
-                    })
+        let repo = repository.read(cx);
+        let branch_name = repo
+            .branch
+            .as_ref()
+            .map(|branch| branch.name())
+            .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
+            .or_else(|| {
+                repo.head_commit.as_ref().map(|commit| {
+                    commit
+                        .sha
+                        .chars()
+                        .take(MAX_SHORT_SHA_LENGTH)
+                        .collect::<String>()
                 })
-        }?;
+            })?;
 
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -519,16 +534,29 @@ impl TitleBar {
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 })
-                .when(
-                    TitleBarSettings::get_global(cx).show_branch_icon,
-                    |branch_button| {
-                        branch_button
-                            .icon(IconName::GitBranch)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Indicator)
-                    },
-                ),
+                .when(settings.show_branch_icon, |branch_button| {
+                    let (icon, icon_color) = {
+                        let status = repo.status_summary();
+                        let tracked = status.index + status.worktree;
+                        if status.conflict > 0 {
+                            (IconName::Warning, Color::VersionControlConflict)
+                        } else if tracked.modified > 0 {
+                            (IconName::SquareDot, Color::VersionControlModified)
+                        } else if tracked.added > 0 || status.untracked > 0 {
+                            (IconName::SquarePlus, Color::VersionControlAdded)
+                        } else if tracked.deleted > 0 {
+                            (IconName::SquareMinus, Color::VersionControlDeleted)
+                        } else {
+                            (IconName::GitBranch, Color::Muted)
+                        }
+                    };
+
+                    branch_button
+                        .icon(icon)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(icon_color)
+                        .icon_size(IconSize::Indicator)
+                }),
         )
     }
 
@@ -696,11 +724,7 @@ impl TitleBar {
                             },
                         )
                         .separator()
-                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                        .action(
-                            "Settings Profiles",
-                            zed_actions::settings_profile_selector::Toggle.boxed_clone(),
-                        )
+                        .action("Settings", zed_actions::OpenSettingsEditor.boxed_clone())
                         .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",

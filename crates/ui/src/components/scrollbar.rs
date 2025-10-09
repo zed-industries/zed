@@ -7,7 +7,7 @@ use std::{
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
-    Corner, Corners, CursorStyle, Div, Edges, Element, ElementId, Entity, EntityId,
+    Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
     ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
@@ -753,10 +753,12 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         cx: &mut Context<Self>,
     ) {
         self.set_thumb_state(
-            if let Some(&ScrollbarLayout { axis, .. }) = self
-                .last_prepaint_state
-                .as_ref()
-                .and_then(|state| state.thumb_for_position(position))
+            if let Some(&ScrollbarLayout { axis, .. }) =
+                self.last_prepaint_state.as_ref().and_then(|state| {
+                    state
+                        .thumb_for_position(position)
+                        .filter(|thumb| thumb.cursor_hitbox.is_hovered(window))
+                })
             {
                 ThumbState::Hover(axis)
             } else {
@@ -780,9 +782,9 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_parent_hovered(&mut self, position: &Point<Pixels>) -> ParentHoverEvent {
+    fn update_parent_hovered(&mut self, window: &Window) -> ParentHoverEvent {
         let last_parent_hovered = self.mouse_in_parent;
-        self.mouse_in_parent = self.parent_hovered(position);
+        self.mouse_in_parent = self.parent_hovered(window);
         let state_changed = self.mouse_in_parent != last_parent_hovered;
         match (self.mouse_in_parent, state_changed) {
             (true, true) => ParentHoverEvent::Entered,
@@ -792,10 +794,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn parent_hovered(&self, position: &Point<Pixels>) -> bool {
+    fn parent_hovered(&self, window: &Window) -> bool {
         self.last_prepaint_state
             .as_ref()
-            .is_some_and(|state| state.parent_bounds.contains(position))
+            .is_some_and(|state| state.parent_bounds_hitbox.is_hovered(window))
     }
 
     fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
@@ -1028,7 +1030,7 @@ impl PartialEq for ScrollbarLayout {
 }
 
 pub struct ScrollbarPrepaintState {
-    parent_bounds: Bounds<Pixels>,
+    parent_bounds_hitbox: Hitbox,
     thumbs: SmallVec<[ScrollbarLayout; 2]>,
 }
 
@@ -1100,7 +1102,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             .disabled()
             .not()
             .then(|| ScrollbarPrepaintState {
-                parent_bounds: bounds,
+                parent_bounds_hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
                 thumbs: {
                     let thumb_ranges = self.state.read(cx).thumb_ranges().collect::<Vec<_>>();
                     let width = self.state.read(cx).width.to_pixels();
@@ -1230,7 +1232,17 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
 
+            let capture_phase;
+
             if self.state.read(cx).visible() {
+                let thumb_state = &self.state.read(cx).thumb_state;
+
+                if thumb_state.is_dragging() {
+                    capture_phase = DispatchPhase::Capture;
+                } else {
+                    capture_phase = DispatchPhase::Bubble;
+                }
+
                 for ScrollbarLayout {
                     thumb_bounds,
                     cursor_hitbox,
@@ -1241,7 +1253,6 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 } in &prepaint_state.thumbs
                 {
                     const MAXIMUM_OPACITY: f32 = 0.7;
-                    let thumb_state = &self.state.read(cx).thumb_state;
                     let (thumb_base_color, hovered) = match thumb_state {
                         ThumbState::Dragging(dragged_axis, _) if dragged_axis == axis => {
                             (colors.scrollbar_thumb_active_background, false)
@@ -1293,6 +1304,8 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         window.set_cursor_style(CursorStyle::Arrow, cursor_hitbox);
                     }
                 }
+            } else {
+                capture_phase = DispatchPhase::Bubble;
             }
 
             self.state.update(cx, |state, _| {
@@ -1304,7 +1317,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
 
                 move |event: &MouseDownEvent, phase, window, cx| {
                     state.update(cx, |state, cx| {
-                        let Some(scrollbar_layout) = (phase.capture()
+                        let Some(scrollbar_layout) = (phase == capture_phase
                             && event.button == MouseButton::Left)
                             .then(|| state.hit_for_position(&event.position))
                             .flatten()
@@ -1342,11 +1355,11 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 let state = self.state.clone();
 
                 move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if phase.capture() {
-                        state.update(cx, |state, cx| {
+                    state.update(cx, |state, cx| {
+                        if phase.capture() && state.parent_hovered(window) {
                             state.update_hovered_thumb(&event.position, window, cx)
-                        });
-                    }
+                        }
+                    });
                 }
             });
 
@@ -1354,7 +1367,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                 let state = self.state.clone();
 
                 move |event: &MouseMoveEvent, phase, window, cx| {
-                    if !phase.capture() {
+                    if phase != capture_phase {
                         return;
                     }
 
@@ -1375,7 +1388,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             }
                         }
                         _ => state.update(cx, |state, cx| {
-                            match state.update_parent_hovered(&event.position) {
+                            match state.update_parent_hovered(window) {
                                 hover @ ParentHoverEvent::Entered
                                 | hover @ ParentHoverEvent::Within
                                     if event.pressed_button.is_none() =>
@@ -1401,7 +1414,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
             window.on_mouse_event({
                 let state = self.state.clone();
                 move |event: &MouseUpEvent, phase, window, cx| {
-                    if !phase.capture() {
+                    if phase != capture_phase {
                         return;
                     }
 
@@ -1410,7 +1423,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             state.scroll_handle().drag_ended();
                         }
 
-                        if !state.parent_hovered(&event.position) {
+                        if !state.parent_hovered(window) {
                             state.schedule_auto_hide(window, cx);
                             return;
                         }
