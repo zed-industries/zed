@@ -4972,10 +4972,26 @@ impl AcpThreadView {
         })
     }
 
+    /// Inserts the selected text into the message editor or the message being
+    /// edited, if any.
     pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.insert_selections(window, cx);
-        })
+        if let Some(index) = self.editing_message
+            && let Some(editor) = self
+                .entry_view_state
+                .read(cx)
+                .entry(index)
+                .and_then(|e| e.message_editor())
+                .cloned()
+        {
+            editor.update(cx, |editor, cx| {
+                editor.insert_selections(window, cx);
+                editor.focus_handle(cx).focus(window);
+            })
+        } else {
+            self.message_editor.update(cx, |message_editor, cx| {
+                message_editor.insert_selections(window, cx);
+            })
+        }
     }
 
     fn render_thread_retry_status_callout(
