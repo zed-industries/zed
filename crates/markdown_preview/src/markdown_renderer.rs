@@ -464,16 +464,25 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
+    let mut max_lengths: Vec<usize> = vec![0; parsed.header.len()];
 
-    for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = paragraph_len(cell);
-        max_lengths[index] = length;
+    for row in &parsed.header {
+        for (index, cell) in row.columns.iter().enumerate() {
+            let length = paragraph_len(&cell.children) * cell.col_span;
+
+            if index >= max_lengths.len() {
+                max_lengths.resize(index + 1, length);
+            }
+
+            if length > max_lengths[index] {
+                max_lengths[index] = length;
+            }
+        }
     }
 
     for row in &parsed.body {
-        for (index, cell) in row.children.iter().enumerate() {
-            let length = paragraph_len(cell);
+        for (index, cell) in row.columns.iter().enumerate() {
+            let length = paragraph_len(&cell.children) * cell.col_span;
 
             if index >= max_lengths.len() {
                 max_lengths.resize(index + 1, length);
@@ -491,13 +500,13 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
         .map(|&length| length as f32 / total_max_length as f32)
         .collect();
 
-    let header = render_markdown_table_row(
-        &parsed.header,
-        &parsed.column_alignments,
-        &max_column_widths,
-        true,
-        cx,
-    );
+    let header: Vec<AnyElement> = parsed
+        .header
+        .iter()
+        .map(|row| {
+            render_markdown_table_row(row, &parsed.column_alignments, &max_column_widths, true, cx)
+        })
+        .collect();
 
     let body: Vec<AnyElement> = parsed
         .body
@@ -515,7 +524,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
     cx.with_common_p(v_flex())
         .w_full()
-        .child(header)
+        .children(header)
         .children(body)
         .into_any()
 }
@@ -527,16 +536,16 @@ fn render_markdown_table_row(
     is_header: bool,
     cx: &mut RenderContext,
 ) -> AnyElement {
-    let mut items = Vec::with_capacity(parsed.children.len());
-    let count = parsed.children.len();
+    let mut items = Vec::with_capacity(parsed.columns.len());
+    let count = parsed.columns.len();
 
-    for (index, cell) in parsed.children.iter().enumerate() {
+    for (index, cell) in parsed.columns.iter().enumerate() {
         let alignment = alignments
             .get(index)
             .copied()
             .unwrap_or(ParsedMarkdownTableAlignment::None);
 
-        let contents = render_markdown_text(cell, cx);
+        let contents = render_markdown_text(&cell.children, cx);
 
         let container = match alignment {
             ParsedMarkdownTableAlignment::Left | ParsedMarkdownTableAlignment::None => div(),

@@ -104,7 +104,7 @@ pub enum HeadingLevel {
 #[derive(Debug)]
 pub struct ParsedMarkdownTable {
     pub source_range: Range<usize>,
-    pub header: ParsedMarkdownTableRow,
+    pub header: Vec<ParsedMarkdownTableRow>,
     pub body: Vec<ParsedMarkdownTableRow>,
     pub column_alignments: Vec<ParsedMarkdownTableAlignment>,
 }
@@ -121,8 +121,15 @@ pub enum ParsedMarkdownTableAlignment {
 
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
+pub struct ParsedMarkdownTableColumn {
+    pub col_span: usize,
+    pub children: MarkdownParagraph,
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<MarkdownParagraph>,
+    pub columns: Vec<ParsedMarkdownTableColumn>,
 }
 
 impl Default for ParsedMarkdownTableRow {
@@ -134,12 +141,12 @@ impl Default for ParsedMarkdownTableRow {
 impl ParsedMarkdownTableRow {
     pub fn new() -> Self {
         Self {
-            children: Vec::new(),
+            columns: Vec::new(),
         }
     }
 
-    pub fn with_children(children: Vec<MarkdownParagraph>) -> Self {
-        Self { children }
+    pub fn with_columns(columns: Vec<ParsedMarkdownTableColumn>) -> Self {
+        Self { columns }
     }
 }
 
