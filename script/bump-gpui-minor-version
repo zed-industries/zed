@@ -19,10 +19,10 @@ major=$(echo $version | cut -d. -f1)
 minor=$(echo $version | cut -d. -f2)
 next_minor=$(expr $minor + 1)
 
-next_minor_branch_name="gpui-v${major}.${next_minor}.0"
+next_minor_branch_name="bump-gpui-to-v${major}.${next_minor}.0"
 
 git checkout -b ${next_minor_branch_name}
 
-script/lib/bump-version.sh gpui v "-gpui" minor true
+script/lib/bump-version.sh gpui gpui-v "" minor true
 
 git checkout -q main
