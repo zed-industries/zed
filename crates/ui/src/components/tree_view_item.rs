@@ -127,9 +127,9 @@ impl RenderOnce for TreeViewItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let selected_bg = cx.theme().colors().element_active.opacity(0.5);
 
+        let transparent_border = cx.theme().colors().border.opacity(0.);
         let selected_border = cx.theme().colors().border.opacity(0.6);
         let focused_border = cx.theme().colors().border_focused;
-        let transparent_border = cx.theme().colors().border_transparent;
 
         let item_size = rems_from_px(28.);
         let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
@@ -146,10 +146,8 @@ impl RenderOnce for TreeViewItem {
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
-                    .group("tree_view_item")
                     .cursor_pointer()
                     .size_full()
-                    .relative()
                     .map(|this| {
                         let label = self.label;
 
@@ -181,6 +179,33 @@ impl RenderOnce for TreeViewItem {
                                     Label::new(label)
                                         .when(!self.selected, |this| this.color(Color::Muted)),
                                 )
+                                .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
+                                .when_some(
+                                    self.on_click.filter(|_| !self.disabled),
+                                    |this, on_click| {
+                                        if self.root_item
+                                            && let Some(on_toggle) = self.on_toggle.clone()
+                                        {
+                                            this.on_click(move |event, window, cx| {
+                                                if event.is_keyboard() {
+                                                    on_click(event, window, cx);
+                                                    on_toggle(event, window, cx);
+                                                } else {
+                                                    on_click(event, window, cx);
+                                                }
+                                            })
+                                        } else {
+                                            this.on_click(on_click)
+                                        }
+                                    },
+                                )
+                                .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
+                                    this.on_mouse_down(
+                                        MouseButton::Right,
+                                        move |event, window, cx| (on_mouse_down)(event, window, cx),
+                                    )
+                                })
+                                .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
                         } else {
                             this.child(indentation_line).child(
                                 h_flex()
@@ -200,36 +225,29 @@ impl RenderOnce for TreeViewItem {
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),
-                                    ),
+                                    )
+                                    .when_some(self.on_hover, |this, on_hover| {
+                                        this.on_hover(on_hover)
+                                    })
+                                    .when_some(
+                                        self.on_click.filter(|_| !self.disabled),
+                                        |this, on_click| this.on_click(on_click),
+                                    )
+                                    .when_some(
+                                        self.on_secondary_mouse_down,
+                                        |this, on_mouse_down| {
+                                            this.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |event, window, cx| {
+                                                    (on_mouse_down)(event, window, cx)
+                                                },
+                                            )
+                                        },
+                                    )
+                                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
                             )
                         }
-                    })
-                    .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
-                    .when_some(
-                        self.on_click.filter(|_| !self.disabled),
-                        |this, on_click| {
-                            if self.root_item
-                                && let Some(on_toggle) = self.on_toggle.clone()
-                            {
-                                this.on_click(move |event, window, cx| {
-                                    if event.is_keyboard() {
-                                        on_click(event, window, cx);
-                                        on_toggle(event, window, cx);
-                                    } else {
-                                        on_click(event, window, cx);
-                                    }
-                                })
-                            } else {
-                                this.on_click(on_click)
-                            }
-                        },
-                    )
-                    .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                            (on_mouse_down)(event, window, cx)
-                        })
-                    })
-                    .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
+                    }),
             )
     }
 }

@@ -2668,7 +2668,7 @@ impl OutlinePanel {
                     |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
                         let buffer_id = buffer_snapshot.remote_id();
                         let file = File::from_dyn(buffer_snapshot.file());
-                        let entry_id = file.and_then(|file| file.project_entry_id(cx));
+                        let entry_id = file.and_then(|file| file.project_entry_id());
                         let worktree = file.map(|file| file.worktree.read(cx).snapshot());
                         let is_new = new_entries.contains(&excerpt_id)
                             || !outline_panel.excerpts.contains_key(&buffer_id);

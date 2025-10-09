@@ -1814,7 +1814,6 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::{path::Path, rc::Rc};
-    use theme::ThemeSettings;
     use util::path;
 
     #[gpui::test]
@@ -1827,7 +1826,7 @@ mod tests {
             AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
@@ -1979,7 +1978,7 @@ mod tests {
             AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);

@@ -97,11 +97,10 @@ impl CommandPaletteFilter {
 pub struct CommandInterceptResult {
     /// The action produced as a result of the interception.
     pub action: Box<dyn Action>,
-    // TODO: Document this field.
-    #[allow(missing_docs)]
+    /// The display string to show in the command palette for this result.
     pub string: String,
-    // TODO: Document this field.
-    #[allow(missing_docs)]
+    /// The character positions in the string that match the query.
+    /// Used for highlighting matched characters in the command palette UI.
     pub positions: Vec<usize>,
 }
 
