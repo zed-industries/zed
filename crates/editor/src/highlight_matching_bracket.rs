@@ -1,5 +1,5 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{Context, HighlightStyle, Window};
+use gpui::{Context, HighlightStyle};
 use language::CursorShape;
 use multi_buffer::ToOffset;
 use theme::ActiveTheme;
