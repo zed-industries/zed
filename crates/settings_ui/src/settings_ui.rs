@@ -725,6 +725,7 @@ impl SettingsPageItem {
                 .child(
                     Button::new(("sub-page".into(), sub_page_link.title), "Configure")
                         .icon(IconName::ChevronRight)
+                        .tab_index(0_isize)
                         .icon_position(IconPosition::End)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::Small)
@@ -977,24 +978,6 @@ impl SettingsWindow {
     }
 
     fn build_navbar(&mut self, cx: &App) {
-        let mut prev_navbar_state = HashMap::new();
-        let mut root_entry = "";
-        let mut prev_selected_entry = None;
-        for (index, entry) in self.navbar_entries.iter().enumerate() {
-            let sub_entry_title;
-            if entry.is_root {
-                sub_entry_title = None;
-                root_entry = entry.title;
-            } else {
-                sub_entry_title = Some(entry.title);
-            }
-            let key = (root_entry, sub_entry_title);
-            if index == self.navbar_entry {
-                prev_selected_entry = Some(key);
-            }
-            prev_navbar_state.insert(key, entry.expanded);
-        }
-
         let mut navbar_entries = Vec::with_capacity(self.navbar_entries.len());
         for (page_index, page) in self.pages.iter().enumerate() {
             navbar_entries.push(NavBarEntry {
@@ -1021,26 +1004,6 @@ impl SettingsWindow {
             }
         }
 
-        let mut root_entry = "";
-        let mut found_nav_entry = false;
-        for (index, entry) in navbar_entries.iter_mut().enumerate() {
-            let sub_entry_title;
-            if entry.is_root {
-                root_entry = entry.title;
-                sub_entry_title = None;
-            } else {
-                sub_entry_title = Some(entry.title);
-            };
-            let key = (root_entry, sub_entry_title);
-            if Some(key) == prev_selected_entry {
-                self.open_navbar_entry_page(index);
-                found_nav_entry = true;
-            }
-            entry.expanded = *prev_navbar_state.get(&key).unwrap_or(&false);
-        }
-        if !found_nav_entry {
-            self.open_first_nav_page();
-        }
         self.navbar_entries = navbar_entries;
     }
 
@@ -1225,12 +1188,12 @@ impl SettingsWindow {
     fn build_ui(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         if self.pages.is_empty() {
             self.pages = page_data::settings_data();
+            self.build_navbar(cx);
+            self.build_content_handles(window, cx);
         }
         sub_page_stack_mut().clear();
-        self.build_content_handles(window, cx);
+        // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
         self.build_search_matches();
-        self.build_navbar(cx);
-
         self.update_matches(cx);
 
         cx.notify();
@@ -1291,6 +1254,9 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        if !self.is_nav_entry_visible(navbar_entry) {
+            self.open_first_nav_page();
+        }
         self.navbar_entry = navbar_entry;
         sub_page_stack_mut().clear();
     }
@@ -1314,10 +1280,17 @@ impl SettingsWindow {
             return;
         }
         self.current_file = self.files[ix].0.clone();
-        self.open_navbar_entry_page(0);
+
         self.build_ui(window, cx);
 
-        self.open_first_nav_page();
+        if self
+            .visible_navbar_entries()
+            .any(|(index, _)| index == self.navbar_entry)
+        {
+            self.open_and_scroll_to_navbar_entry(self.navbar_entry, window, cx);
+        } else {
+            self.open_first_nav_page();
+        };
     }
 
     fn render_files_header(
@@ -1453,7 +1426,7 @@ impl SettingsWindow {
             .border_r_1()
             .key_context("NavigationMenu")
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
-                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
                 };
                 let focused_entry_parent = this.root_entry_containing(focused_entry);
@@ -1464,7 +1437,7 @@ impl SettingsWindow {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ExpandNavEntry, window, cx| {
-                let Some(focused_entry) = this.focused_nav_entry(window) else {
+                let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
                 };
                 if !this.navbar_entries[focused_entry].is_root {
@@ -1476,8 +1449,10 @@ impl SettingsWindow {
                 cx.notify();
             }))
             .on_action(
-                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, _| {
-                    let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+                cx.listener(|this, _: &FocusPreviousRootNavEntry, window, cx| {
+                    let entry_index = this
+                        .focused_nav_entry(window, cx)
+                        .unwrap_or(this.navbar_entry);
                     let mut root_index = None;
                     for (index, entry) in this.visible_navbar_entries() {
                         if index >= entry_index {
@@ -1493,8 +1468,10 @@ impl SettingsWindow {
                     this.focus_and_scroll_to_nav_entry(previous_root_index, window);
                 }),
             )
-            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, _| {
-                let entry_index = this.focused_nav_entry(window).unwrap_or(this.navbar_entry);
+            .on_action(cx.listener(|this, _: &FocusNextRootNavEntry, window, cx| {
+                let entry_index = this
+                    .focused_nav_entry(window, cx)
+                    .unwrap_or(this.navbar_entry);
                 let mut root_index = None;
                 for (index, entry) in this.visible_navbar_entries() {
                     if index <= entry_index {
@@ -1525,14 +1502,14 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .size_full()
+                    .flex_grow()
                     .track_focus(&self.navbar_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
                     .child(
                         uniform_list(
                             "settings-ui-nav-bar",
-                            visible_count,
+                            visible_count + 1,
                             cx.processor(move |this, range: Range<usize>, _, cx| {
                                 this.visible_navbar_entries()
                                     .skip(range.start.saturating_sub(1))
@@ -1602,8 +1579,11 @@ impl SettingsWindow {
         self.open_navbar_entry_page(navbar_entry_index);
         cx.notify();
 
-        if self.navbar_entries[navbar_entry_index].is_root {
-            let Some(first_item_index) = self.page_items().next().map(|(index, _)| index) else {
+        if self.navbar_entries[navbar_entry_index].is_root
+            || !self.is_nav_entry_visible(navbar_entry_index)
+        {
+            let Some(first_item_index) = self.visible_page_items().next().map(|(index, _)| index)
+            else {
                 return;
             };
             self.focus_content_element(first_item_index, window, cx);
@@ -1613,15 +1593,20 @@ impl SettingsWindow {
                 .item_index
                 .expect("Non-root items should have an item index");
             let Some(selected_item_index) = self
-                .page_items()
+                .visible_page_items()
                 .position(|(index, _)| index == entry_item_index)
             else {
                 return;
             };
             self.scroll_handle
                 .scroll_to_top_of_item(selected_item_index);
-            self.focus_content_element(selected_item_index, window, cx);
+            self.focus_content_element(entry_item_index, window, cx);
         }
+    }
+
+    fn is_nav_entry_visible(&self, nav_entry_index: usize) -> bool {
+        self.visible_navbar_entries()
+            .any(|(index, _)| index == nav_entry_index)
     }
 
     fn focus_and_scroll_to_nav_entry(&self, nav_entry_index: usize, window: &mut Window) {
@@ -1636,7 +1621,7 @@ impl SettingsWindow {
         window.focus(&self.navbar_entries[nav_entry_index].focus_handle);
     }
 
-    fn page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
+    fn visible_page_items(&self) -> impl Iterator<Item = (usize, &SettingsPageItem)> {
         let page_idx = self.current_page_index();
 
         self.current_page()
@@ -1729,6 +1714,7 @@ impl SettingsWindow {
                     v_flex()
                         .w_full()
                         .min_w_0()
+                        .id(("settings-page-item", actual_item_index))
                         .when_some(page_index, |element, page_index| {
                             element.track_focus(
                                 &self.content_handles[page_index][actual_item_index]
@@ -1756,12 +1742,12 @@ impl SettingsWindow {
         let page_header;
         let page_content;
 
-        if sub_page_stack().len() == 0 {
+        if sub_page_stack().is_empty() {
             page_header = self.render_files_header(window, cx).into_any_element();
 
             page_content = self
                 .render_page_items(
-                    self.page_items(),
+                    self.visible_page_items(),
                     Some(self.current_page_index()),
                     window,
                     cx,
@@ -1792,14 +1778,13 @@ impl SettingsWindow {
             .pt_6()
             .pb_8()
             .px_8()
-            .track_focus(&self.content_focus_handle.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
-            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .child(page_header)
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
+            .track_focus(&self.content_focus_handle.focus_handle(cx))
             .child(
                 div()
                     .size_full()
-                    .track_focus(&self.content_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(CONTENT_GROUP_TAB_INDEX)
                     .child(page_content),
@@ -1984,7 +1969,14 @@ impl SettingsWindow {
         window.focus(&self.content_handles[page_index][item_index].focus_handle(cx));
     }
 
-    fn focused_nav_entry(&self, window: &Window) -> Option<usize> {
+    fn focused_nav_entry(&self, window: &Window, cx: &App) -> Option<usize> {
+        if !self
+            .navbar_focus_handle
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            return None;
+        }
         for (index, entry) in self.navbar_entries.iter().enumerate() {
             if entry.focus_handle.is_focused(window) {
                 return Some(index);
@@ -2363,7 +2355,10 @@ mod test {
             );
             assert_eq!(
                 self.current_page().items.iter().collect::<Vec<_>>(),
-                other.page_items().map(|(_, item)| item).collect::<Vec<_>>()
+                other
+                    .visible_page_items()
+                    .map(|(_, item)| item)
+                    .collect::<Vec<_>>()
             );
         }
     }
