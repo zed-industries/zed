@@ -389,4 +389,11 @@ impl ShellKind {
             ShellKind::Posix | ShellKind::Rc => "source",
         }
     }
+
+    pub const fn clear_screen_command(&self) -> &'static str {
+        match self {
+            ShellKind::Cmd => "cls",
+            _ => "clear",
+        }
+    }
 }

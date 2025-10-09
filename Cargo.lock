@@ -3317,6 +3317,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "codestral"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "edit_prediction",
+ "edit_prediction_context",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "language_models",
+ "log",
+ "mistral",
+ "serde",
+ "serde_json",
+ "smol",
+ "text",
+ "workspace-hack",
+ "zed-http-client",
+]
+
+[[package]]
 name = "collab"
 version = "0.44.0"
 dependencies = [
@@ -5115,6 +5136,7 @@ dependencies = [
  "anyhow",
  "client",
  "cloud_llm_client",
+ "codestral",
  "copilot",
  "edit_prediction",
  "editor",
@@ -5167,6 +5189,9 @@ dependencies = [
  "strum 0.27.1",
  "text",
  "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-cpp",
+ "tree-sitter-go",
  "workspace-hack",
  "zed-collections",
  "zed-util",
@@ -8026,6 +8051,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "theme",
+ "title_bar",
  "ui",
  "workspace",
  "workspace-hack",
@@ -10534,20 +10560,15 @@ dependencies = [
 name = "onboarding"
 version = "0.1.0"
 dependencies = [
- "ai_onboarding",
  "anyhow",
  "client",
  "component",
  "db",
  "documented",
- "editor",
  "fs",
  "fuzzy",
  "git",
  "gpui",
- "itertools 0.14.0",
- "language",
- "language_model",
  "menu",
  "notifications",
  "picker",
@@ -16942,8 +16963,7 @@ dependencies = [
 [[package]]
 name = "tree-sitter-typescript"
 version = "0.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5f76ed8d947a75cc446d5fccd8b602ebf0cde64ccf2ffa434d873d7a575eff"
+source = "git+https://github.com/zed-industries/tree-sitter-typescript?rev=e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899#e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -20005,6 +20025,7 @@ dependencies = [
  "clap",
  "cli",
  "client",
+ "codestral",
  "collab_ui",
  "command_palette",
  "component",
@@ -20709,6 +20730,8 @@ dependencies = [
  "indoc",
  "language",
  "log",
+ "multi_buffer",
+ "ordered-float 2.10.1",
  "pretty_assertions",
  "project",
  "serde",
@@ -20762,6 +20785,7 @@ dependencies = [
  "terminal_view",
  "watch",
  "workspace-hack",
+ "zed-collections",
  "zed-util",
  "zeta",
  "zeta2",

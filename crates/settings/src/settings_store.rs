@@ -1201,6 +1201,32 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct ThemeSettings {
+        buffer_font_family: FontFamilyName,
+        buffer_font_fallbacks: Vec<FontFamilyName>,
+    }
+
+    impl Settings for ThemeSettings {
+        fn from_settings(content: &SettingsContent) -> Self {
+            let content = content.theme.clone();
+            ThemeSettings {
+                buffer_font_family: content.buffer_font_family.unwrap(),
+                buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
+            }
+        }
+
+        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
+            let content = &mut content.theme;
+
+            vscode.font_family_setting(
+                "editor.fontFamily",
+                &mut content.buffer_font_family,
+                &mut content.buffer_font_fallbacks,
+            );
+        }
+    }
+
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
@@ -1523,6 +1549,7 @@ mod tests {
         store.register_setting::<DefaultLanguageSettings>();
         store.register_setting::<ItemSettings>();
         store.register_setting::<AutoUpdateSetting>();
+        store.register_setting::<ThemeSettings>();
 
         // create settings that werent present
         check_vscode_import(
@@ -1589,6 +1616,26 @@ mod tests {
                 "tabs": {
                     "git_status": true
                 }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // font-family
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.fontFamily": "Cascadia Code, 'Consolas', Courier New" }"#.to_owned(),
+            r#"{
+                "buffer_font_fallbacks": [
+                    "Consolas",
+                    "Courier New"
+                ],
+                "buffer_font_family": "Cascadia Code"
             }
             "#
             .unindent(),

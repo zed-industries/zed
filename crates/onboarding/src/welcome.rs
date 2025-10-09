@@ -151,6 +151,7 @@ impl SectionEntry {
 }
 
 pub struct WelcomePage {
+    first_paint: bool,
     focus_handle: FocusHandle,
 }
 
@@ -168,6 +169,10 @@ impl WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.first_paint {
+            window.request_animation_frame();
+            self.first_paint = false;
+        }
         let (first_section, second_section) = CONTENT;
         let first_section_entries = first_section.entries.len();
         let last_index = first_section_entries + second_section.entries.len();
@@ -311,7 +316,10 @@ impl WelcomePage {
             cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
                 .detach();
 
-            WelcomePage { focus_handle }
+            WelcomePage {
+                first_paint: true,
+                focus_handle,
+            }
         })
     }
 }
