@@ -6473,7 +6473,7 @@ impl LspStore {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
         let for_server = if let InvalidationStrategy::RefreshRequested(server_id) = invalidate {
-            server_id
+            Some(server_id)
         } else {
             None
         };
@@ -6770,6 +6770,7 @@ impl LspStore {
                     .into_iter()
                     .map(|(server_id, mut new_hints)| {
                         new_hints.retain(|hint| {
+                            // TODO kb multi buffer is eager to hide the hints which is wrong, is this due to this?
                             hint.position.is_valid(&buffer_snapshot)
                                 && range.start.is_valid(&buffer_snapshot)
                                 && range.end.is_valid(&buffer_snapshot)
