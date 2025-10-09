@@ -347,6 +347,10 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
+            workspace.register_action(Editor::new_file_left);
+            workspace.register_action(Editor::new_file_down);
+            workspace.register_action(Editor::new_file_up);
+            workspace.register_action(Editor::new_file_right);
             workspace.register_action(Editor::cancel_language_server_work);
         },
     )
@@ -2137,6 +2141,42 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), window, cx)
+    }
+
+    fn new_file_left(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitLeft,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::Left, window, cx)
+    }
+
+    fn new_file_down(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitDown,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::Down, window, cx)
+    }
+
+    fn new_file_up(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitUp,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::Up, window, cx)
+    }
+
+    fn new_file_right(
+        workspace: &mut Workspace,
+        _: &workspace::NewFileSplitRight,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        Self::new_file_in_direction(workspace, SplitDirection::Right, window, cx)
     }
 
     fn new_file_in_direction(

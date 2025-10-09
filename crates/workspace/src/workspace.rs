@@ -213,6 +213,14 @@ actions!(
         NewFileSplitVertical,
         /// Creates a new file in a horizontal split.
         NewFileSplitHorizontal,
+        /// Creates a new file left in a vertical split.
+        NewFileSplitLeft,
+        /// Creates a new file below in a horizontal split.
+        NewFileSplitDown,
+        /// Creates a new file above in a horizontal split.
+        NewFileSplitUp,
+        /// Creates a new file right in a vertical split.
+        NewFileSplitRight,
         /// Opens a new search.
         NewSearch,
         /// Opens a new terminal.
