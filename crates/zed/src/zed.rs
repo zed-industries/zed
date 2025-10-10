@@ -93,7 +93,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenZedUrl,
+    Quit,
 };
 
 actions!(
@@ -206,7 +207,7 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenSettings, cx| {
+    cx.on_action(|_: &OpenSettingsFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
@@ -1270,57 +1271,60 @@ pub fn handle_settings_file_changes(
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
     // Helper function to process settings content
-    let process_settings =
-        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
-            let id = NotificationId::Named("failed-to-migrate-settings".into());
-            // Apply migrations to both user and global settings
-            let (processed_content, content_migrated) = match migrate_settings(&content) {
-                Ok(result) => {
-                    dismiss_app_notification(&id, cx);
-                    if let Some(migrated_content) = result {
-                        (migrated_content, true)
-                    } else {
-                        (content, false)
-                    }
-                }
-                Err(err) => {
-                    show_app_notification(id, cx, move |cx| {
-                        cx.new(|cx| {
-                            MessageNotification::new(
-                                format!(
-                                    "Failed to migrate settings\n\
-                                    {err}"
-                                ),
-                                cx,
-                            )
-                            .primary_message("Open Settings File")
-                            .primary_icon(IconName::Settings)
-                            .primary_on_click(|window, cx| {
-                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
-                                cx.emit(DismissEvent);
-                            })
-                        })
-                    });
-                    // notify user here
+    let process_settings = move |content: String,
+                                 is_user: bool,
+                                 store: &mut SettingsStore,
+                                 cx: &mut App|
+          -> bool {
+        let id = NotificationId::Named("failed-to-migrate-settings".into());
+        // Apply migrations to both user and global settings
+        let (processed_content, content_migrated) = match migrate_settings(&content) {
+            Ok(result) => {
+                dismiss_app_notification(&id, cx);
+                if let Some(migrated_content) = result {
+                    (migrated_content, true)
+                } else {
                     (content, false)
                 }
-            };
-
-            let result = if is_user {
-                store.set_user_settings(&processed_content, cx)
-            } else {
-                store.set_global_settings(&processed_content, cx)
-            };
-
-            if let Err(err) = &result {
-                let settings_type = if is_user { "user" } else { "global" };
-                log::error!("Failed to load {} settings: {err}", settings_type);
             }
-
-            settings_changed(result.err(), cx);
-
-            content_migrated
+            Err(err) => {
+                show_app_notification(id, cx, move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(
+                            format!(
+                                "Failed to migrate settings\n\
+                                    {err}"
+                            ),
+                            cx,
+                        )
+                        .primary_message("Open Settings File")
+                        .primary_icon(IconName::Settings)
+                        .primary_on_click(|window, cx| {
+                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        })
+                    })
+                });
+                // notify user here
+                (content, false)
+            }
         };
+
+        let result = if is_user {
+            store.set_user_settings(&processed_content, cx)
+        } else {
+            store.set_global_settings(&processed_content, cx)
+        };
+
+        if let Err(err) = &result {
+            let settings_type = if is_user { "user" } else { "global" };
+            log::error!("Failed to load {} settings: {err}", settings_type);
+        }
+
+        settings_changed(result.err(), cx);
+
+        content_migrated
+    };
 
     // Initial load of both settings files
     let global_content = cx
@@ -1635,7 +1639,7 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                         .primary_message("Open Settings File")
                         .primary_icon(IconName::Settings)
                         .primary_on_click(|window, cx| {
-                            window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
                             cx.emit(DismissEvent);
                         })
                 })

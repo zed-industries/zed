@@ -30,10 +30,12 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Opens the settings JSON file.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettingsEditor"])]
         OpenSettings,
+        /// Opens the settings JSON file.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
+        OpenSettingsFile,
         /// Opens the settings editor.
-        OpenSettingsEditor,
         /// Opens the default keymap file.
         OpenDefaultKeymap,
         /// Opens account settings.

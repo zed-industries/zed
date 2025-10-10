@@ -724,7 +724,7 @@ impl TitleBar {
                             },
                         )
                         .separator()
-                        .action("Settings", zed_actions::OpenSettingsEditor.boxed_clone())
+                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",
@@ -768,7 +768,7 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        menu.action("Settings", zed_actions::OpenSettingsFile.boxed_clone())
                             .action(
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),

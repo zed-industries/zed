@@ -63,8 +63,8 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::submenu(Menu {
                     name: "Settings".into(),
                     items: vec![
-                        MenuItem::action("Open Settings", zed_actions::OpenSettingsEditor),
-                        MenuItem::action("Open Settings JSON", super::OpenSettings),
+                        MenuItem::action("Open Settings", zed_actions::OpenSettings),
+                        MenuItem::action("Open Settings JSON", super::OpenSettingsFile),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
