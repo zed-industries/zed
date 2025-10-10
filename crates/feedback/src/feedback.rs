@@ -4,8 +4,6 @@ use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
 
-pub mod feedback_modal;
-
 actions!(
     contribute,
     [
@@ -44,11 +42,7 @@ fn email_body(specs: &SystemSpecs) -> String {
 }
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        feedback_modal::FeedbackModal::register(workspace, window, cx);
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
                 let specs = SystemSpecs::new(window, cx);
