@@ -732,7 +732,7 @@ impl TitleBar {
                         .separator()
                     })
                     .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                    .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
+                    .action("Keymap", Box::new(zed_actions::OpenKeymap))
                     .action(
                         "Themes…",
                         zed_actions::theme_selector::Toggle::default().boxed_clone(),

@@ -38,16 +38,18 @@ actions!(
         /// Opens the settings editor.
         /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Opens the user keymap file.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymap"])]
+        OpenKeymapFile,
+        /// Opens the keymap editor.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymapEditor"])]
+        OpenKeymap,
         /// Opens account settings.
         OpenAccountSettings,
-        /// Opens the keymap editor.
-        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
         Quit,
-        /// Opens the user keymap file.
-        OpenKeymap,
         /// Shows information about Zed.
         About,
         /// Opens the documentation website.

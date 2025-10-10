@@ -197,7 +197,7 @@ pub fn init(cx: &mut App) {
             open_telemetry_log_file(workspace, window, cx);
         });
     });
-    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+    cx.on_action(|&zed_actions::OpenKeymapFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
@@ -1503,7 +1503,7 @@ fn show_keymap_file_json_error(
             MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
                 .primary_on_click(|window, cx| {
-                    window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                    window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                     cx.emit(DismissEvent);
                 })
         })
@@ -1520,7 +1520,7 @@ fn show_keymap_file_load_error(
         error_message,
         "Open Keymap File".into(),
         |window, cx| {
-            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
             cx.emit(DismissEvent);
         },
         cx,

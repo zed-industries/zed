@@ -64,12 +64,12 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     name: "Settings".into(),
                     items: vec![
                         MenuItem::action("Open Settings", zed_actions::OpenSettings),
-                        MenuItem::action("Open Settings JSON", super::OpenSettingsFile),
+                        MenuItem::action("Open Settings File", super::OpenSettingsFile),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::separator(),
-                        MenuItem::action("Open Keymap Editor", zed_actions::OpenKeymapEditor),
-                        MenuItem::action("Open Keymap JSON", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Keymap", zed_actions::OpenKeymap),
+                        MenuItem::action("Open Keymap File", zed_actions::OpenKeymapFile),
                         MenuItem::action(
                             "Open Default Key Bindings",
                             zed_actions::OpenDefaultKeymap,
