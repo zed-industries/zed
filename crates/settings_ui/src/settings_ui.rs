@@ -8,7 +8,7 @@ use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
+    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
     WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size,
     uniform_list,
 };
@@ -633,14 +633,29 @@ impl SettingsPageItem {
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
-                let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
-                let file_set_in = SettingsUiFile::from_settings(found_in_file);
-
-                h_flex()
-                    .id(setting_item.title)
-                    .min_w_0()
-                    .gap_2()
-                    .justify_between()
+                let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
+                let control = if cfg!(debug_assertions) && !found {
+                    Button::new("no-default-field", "NO DEFAULT")
+                        .size(ButtonSize::Medium)
+                        .icon(IconName::XCircle)
+                        .icon_position(IconPosition::Start)
+                        .icon_color(Color::Error)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Outlined)
+                        .tooltip(Tooltip::text(
+                            "This warning is only displayed in dev builds.",
+                        ))
+                        .into_any_element()
+                } else {
+                    renderer.render(
+                        setting_item.field.as_ref(),
+                        file.clone(),
+                        setting_item.metadata.as_deref(),
+                        window,
+                        cx,
+                    )
+                };
+                render_settings_item(settings_window, setting_item, file, control, window, cx)
                     .pt_4()
                     .map(|this| {
                         if is_last {
@@ -650,58 +665,6 @@ impl SettingsPageItem {
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant)
                         }
-                    })
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .max_w_1_2()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .child(Label::new(SharedString::new_static(setting_item.title)))
-                                    .when_some(
-                                        file_set_in.filter(|file_set_in| file_set_in != &file),
-                                        |this, file_set_in| {
-                                            this.child(
-                                                Label::new(format!(
-                                                    "— set in {}",
-                                                    settings_window
-                                                        .display_name(&file_set_in)
-                                                        .expect("File name should exist")
-                                                ))
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                            )
-                                        },
-                                    ),
-                            )
-                            .child(
-                                Label::new(SharedString::new_static(setting_item.description))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(if cfg!(debug_assertions) && !found {
-                        Button::new("no-default-field", "NO DEFAULT")
-                            .size(ButtonSize::Medium)
-                            .icon(IconName::XCircle)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Error)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Outlined)
-                            .tooltip(Tooltip::text(
-                                "This warning is only displayed in dev builds.",
-                            ))
-                            .into_any_element()
-                    } else {
-                        renderer.render(
-                            setting_item.field.as_ref(),
-                            file,
-                            setting_item.metadata.as_deref(),
-                            window,
-                            cx,
-                        )
                     })
                     .into_any_element()
             }
@@ -742,6 +705,55 @@ impl SettingsPageItem {
                 .into_any_element(),
         }
     }
+}
+
+fn render_settings_item(
+    settings_window: &SettingsWindow,
+    setting_item: &SettingItem,
+    file: SettingsUiFile,
+    control: AnyElement,
+    window: &mut Window,
+    cx: &mut Context<'_, SettingsWindow>,
+) -> Stateful<Div> {
+    let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
+    let file_set_in = SettingsUiFile::from_settings(found_in_file);
+
+    h_flex()
+        .id(setting_item.title)
+        .min_w_0()
+        .gap_2()
+        .justify_between()
+        .child(
+            v_flex()
+                .w_1_2()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_1()
+                        .child(Label::new(SharedString::new_static(setting_item.title)))
+                        .when_some(
+                            file_set_in.filter(|file_set_in| file_set_in != &file),
+                            |this, file_set_in| {
+                                this.child(
+                                    Label::new(format!(
+                                        "— set in {}",
+                                        settings_window
+                                            .display_name(&file_set_in)
+                                            .expect("File name should exist")
+                                    ))
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                                )
+                            },
+                        ),
+                )
+                .child(
+                    Label::new(SharedString::new_static(setting_item.description))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+        )
+        .child(control)
 }
 
 struct SettingItem {
