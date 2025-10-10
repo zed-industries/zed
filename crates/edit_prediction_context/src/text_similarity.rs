@@ -1,10 +1,8 @@
 mod identifier_parts;
 mod occurrences;
 
-pub use identifier_parts::IdentifierParts;
-pub use occurrences::{
-    Occurrences, OccurrencesMultiset, Similarity, SmallOccurrences, WeightedSimilarity,
-};
+pub use identifier_parts::*;
+pub use occurrences::*;
 
 // Variants to consider experimenting:
 //

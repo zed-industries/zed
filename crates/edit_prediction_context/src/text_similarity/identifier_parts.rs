@@ -3,6 +3,7 @@ use std::hash::{Hash, Hasher as _};
 
 /// Occurrence source which splits the input into alphanumeric characters, and further splits these
 /// when cases change to handle PascalCase and camelCase.
+#[derive(Debug)]
 pub struct IdentifierParts;
 
 impl IdentifierParts {
@@ -120,7 +121,7 @@ impl<'a> Iterator for IdentifierPartsIterator<'a> {
 mod test {
     use crate::{
         Similarity as _, WeightedSimilarity as _,
-        text_similarity::occurrences::{Occurrences, SmallOccurrences, SmallOccurrencesSet},
+        text_similarity::occurrences::{Occurrences, SmallOccurrences},
     };
 
     use super::*;

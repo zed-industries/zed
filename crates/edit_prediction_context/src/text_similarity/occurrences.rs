@@ -1,8 +1,10 @@
 use arraydeque::ArrayDeque;
 use collections::FxHasher;
 use hashbrown::HashTable;
+use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
+    cmp::Ordering,
     fmt::Debug,
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -21,39 +23,32 @@ pub trait WeightedSimilarity<T> {
     fn weighted_overlap_coefficient(&self, other: &T) -> f32;
 }
 
-/// Occurrence sets that can be constructed from hashes.
-pub trait HashOccurrences {
-    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self;
-}
-
 /// Multiset of hash occurrences used in similarity metrics.
-#[derive(Debug, Clone, Default)]
-pub struct OccurrencesMultiset {
-    table: HashTable<OccurrenceEntry>,
+#[derive(Debug, Clone)]
+pub struct Occurrences<S> {
+    table: HashTable<OccurrenceEntry<S>>,
     total_count: u32,
+    _source: PhantomData<S>,
 }
 
-#[derive(Debug, Clone)]
-struct OccurrenceEntry {
-    hash: u32,
+#[derive(Debug, Copy, Clone)]
+struct OccurrenceEntry<S> {
+    hash: HashFrom<S>,
     count: u32,
 }
 
 /// Small set of hash occurrences. Since this does not track the number of times each has occurred,
 /// this only implements `Similarity` and not `WeightedSimilarity`.
-#[derive(Debug, Default)]
-pub struct SmallOccurrencesSet<const N: usize>(SmallVec<[u32; N]>);
+#[derive(Debug, Clone)]
+pub struct SmallOccurrences<const N: usize, S> {
+    hashes: SmallVec<[HashFrom<S>; N]>,
+    _source: PhantomData<S>,
+}
 
-pub type HashFrom<S> = FromSource<u32, S>;
-pub type Occurrences<S> = FromSource<OccurrencesMultiset, S>;
-pub type SmallOccurrences<const N: usize, S> = FromSource<SmallOccurrencesSet<N>, S>;
-
-/// Indicates that a value comes from a particular source type. This provides safety, as it helps
-/// ensure that the same input preprocessing is used when computing similarity metrics for
-/// occurrences.
-#[derive(Debug, Clone, Default)]
-pub struct FromSource<T, S> {
-    value: T,
+/// Occurrence hash from a particular source type.
+#[derive(Debug)]
+pub struct HashFrom<S> {
+    value: u32,
     _source: PhantomData<S>,
 }
 
@@ -63,19 +58,20 @@ pub struct FromSource<T, S> {
 /// Note that this hashes the hashes it's provided for every output - may be more efficient to use a
 /// proper rolling hash. Unfortunately, I didn't find a rust rolling hash implementation that
 /// operated on updates larger than u8.
-struct NGram<const N: usize, S>(S);
+#[derive(Debug)]
+struct NGram<const N: usize, S> {
+    _source: PhantomData<S>,
+}
 
 impl<S> Occurrences<S> {
     pub fn new(hashes: impl IntoIterator<Item = HashFrom<S>>) -> Self {
-        let mut occurrences = OccurrencesMultiset::default();
+        let mut occurrences = Occurrences::default();
         for hash in hashes {
-            occurrences.add_hash(hash.value);
+            occurrences.add_hash(hash);
         }
         occurrences.into()
     }
-}
 
-impl OccurrencesMultiset {
     pub fn len(&self) -> u32 {
         self.total_count
     }
@@ -84,13 +80,13 @@ impl OccurrencesMultiset {
         self.table.len()
     }
 
-    pub fn add_hash(&mut self, hash: u32) -> u32 {
+    pub fn add_hash(&mut self, hash: HashFrom<S>) -> u32 {
         let new_count = self
             .table
             .entry(
-                hash as u64,
-                |entry: &OccurrenceEntry| entry.hash == hash,
-                |entry| entry.hash as u64,
+                hash.value as u64,
+                |entry| entry.hash == hash,
+                |entry| entry.hash.value as u64,
             )
             .and_modify(|entry| entry.count += 1)
             .or_insert(OccurrenceEntry { hash, count: 1 })
@@ -100,11 +96,11 @@ impl OccurrencesMultiset {
         new_count
     }
 
-    pub fn remove_hash(&mut self, hash: u32) -> u32 {
+    pub fn remove_hash(&mut self, hash: HashFrom<S>) -> u32 {
         let entry = self.table.entry(
-            hash as u64,
-            |entry: &OccurrenceEntry| entry.hash == hash,
-            |entry| entry.hash as u64,
+            hash.value as u64,
+            |entry| entry.hash == hash,
+            |entry| entry.hash.value as u64,
         );
         match entry {
             hashbrown::hash_table::Entry::Occupied(mut entry) => {
@@ -130,13 +126,13 @@ impl OccurrencesMultiset {
         }
     }
 
-    pub fn contains_hash(&self, hash: u32) -> bool {
+    pub fn contains_hash(&self, hash: HashFrom<S>) -> bool {
         self.get_count(hash) != 0
     }
 
-    pub fn get_count(&self, hash: u32) -> u32 {
+    pub fn get_count(&self, hash: HashFrom<S>) -> u32 {
         self.table
-            .find(hash as u64, |entry| entry.hash == hash)
+            .find(hash.value as u64, |entry| entry.hash == hash)
             .map(|entry| entry.count)
             .unwrap_or(0)
     }
@@ -144,24 +140,43 @@ impl OccurrencesMultiset {
 
 impl<const N: usize, S> SmallOccurrences<N, S> {
     pub fn new(hashes: impl IntoIterator<Item = HashFrom<S>>) -> Self {
-        let mut occurrences = SmallOccurrencesSet::default();
-        occurrences
-            .0
-            .extend(hashes.into_iter().map(|hash| hash.value));
-        occurrences.0.sort_unstable();
-        occurrences.0.dedup();
-        occurrences.0.shrink_to_fit();
-        occurrences.into()
+        let mut this = SmallOccurrences::default();
+        this.hashes.extend(hashes);
+        this.hashes.sort_unstable();
+        this.hashes.dedup();
+        this.hashes.shrink_to_fit();
+        this
+    }
+
+    pub fn distinct_len(&self) -> usize {
+        self.hashes.len()
+    }
+
+    fn contains_hash(&self, hash: HashFrom<S>) -> bool {
+        self.hashes.iter().contains(&hash)
     }
 }
 
-impl<const N: usize> SmallOccurrencesSet<N> {
-    fn contains_hash(&self, hash: u32) -> bool {
-        self.0.iter().any(|h| *h == hash)
+impl<S> Default for Occurrences<S> {
+    fn default() -> Self {
+        Occurrences {
+            table: Default::default(),
+            total_count: 0,
+            _source: PhantomData,
+        }
     }
 }
 
-impl Similarity<OccurrencesMultiset> for OccurrencesMultiset {
+impl<const N: usize, S> Default for SmallOccurrences<N, S> {
+    fn default() -> Self {
+        SmallOccurrences {
+            hashes: SmallVec::new(),
+            _source: PhantomData,
+        }
+    }
+}
+
+impl<S> Similarity<Occurrences<S>> for Occurrences<S> {
     fn jaccard_similarity<'a>(&'a self, mut other: &'a Self) -> f32 {
         let mut this = self;
         if this.table.len() > other.table.len() {
@@ -190,49 +205,51 @@ impl Similarity<OccurrencesMultiset> for OccurrencesMultiset {
     }
 }
 
-impl<const N: usize> Similarity<OccurrencesMultiset> for SmallOccurrencesSet<N> {
-    fn jaccard_similarity(&self, other: &OccurrencesMultiset) -> f32 {
+impl<const N: usize, S> Similarity<Occurrences<S>> for SmallOccurrences<N, S> {
+    fn jaccard_similarity(&self, other: &Occurrences<S>) -> f32 {
         let intersection = self
-            .0
+            .hashes
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        let union = self.0.len() + other.table.len() - intersection;
+        let union = self.hashes.len() + other.table.len() - intersection;
         intersection as f32 / union as f32
     }
 
-    fn overlap_coefficient(&self, other: &OccurrencesMultiset) -> f32 {
+    fn overlap_coefficient(&self, other: &Occurrences<S>) -> f32 {
         let intersection = self
-            .0
+            .hashes
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        intersection as f32 / (self.0.len().min(other.table.len())) as f32
+        intersection as f32 / (self.hashes.len().min(other.table.len())) as f32
     }
 }
 
-impl<const N: usize, const O: usize> Similarity<SmallOccurrencesSet<O>> for SmallOccurrencesSet<N> {
-    fn jaccard_similarity(&self, other: &SmallOccurrencesSet<O>) -> f32 {
+impl<const N: usize, const O: usize, S> Similarity<SmallOccurrences<O, S>>
+    for SmallOccurrences<N, S>
+{
+    fn jaccard_similarity(&self, other: &SmallOccurrences<O, S>) -> f32 {
         let intersection = self
-            .0
+            .hashes
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        let union = self.0.len() + other.0.len() - intersection;
+        let union = self.hashes.len() + other.hashes.len() - intersection;
         intersection as f32 / union as f32
     }
 
-    fn overlap_coefficient(&self, other: &SmallOccurrencesSet<O>) -> f32 {
+    fn overlap_coefficient(&self, other: &SmallOccurrences<O, S>) -> f32 {
         let intersection = self
-            .0
+            .hashes
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        intersection as f32 / (self.0.len().min(other.0.len())) as f32
+        intersection as f32 / (self.hashes.len().min(other.hashes.len())) as f32
     }
 }
 
-impl WeightedSimilarity<OccurrencesMultiset> for OccurrencesMultiset {
+impl<S> WeightedSimilarity<Occurrences<S>> for Occurrences<S> {
     fn weighted_jaccard_similarity<'a>(&'a self, mut other: &'a Self) -> f32 {
         let mut this = self;
         if this.table.len() > other.table.len() {
@@ -280,8 +297,8 @@ impl WeightedSimilarity<OccurrencesMultiset> for OccurrencesMultiset {
     }
 }
 
-impl<V, S> From<V> for FromSource<V, S> {
-    fn from(value: V) -> Self {
+impl<S> From<u32> for HashFrom<S> {
+    fn from(value: u32) -> Self {
         Self {
             value,
             _source: PhantomData,
@@ -289,37 +306,40 @@ impl<V, S> From<V> for FromSource<V, S> {
     }
 }
 
-impl<V: Hash, S> Hash for FromSource<V, S> {
-    fn hash<H: Hasher>(&self, hasher: &mut H) {
-        self.value.hash(hasher);
+impl<S> PartialEq for HashFrom<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
     }
 }
 
-impl<LI: Similarity<RI>, RI, S> Similarity<FromSource<RI, S>> for FromSource<LI, S> {
-    fn jaccard_similarity(&self, other: &FromSource<RI, S>) -> f32 {
-        self.value.jaccard_similarity(&other.value)
-    }
-
-    fn overlap_coefficient(&self, other: &FromSource<RI, S>) -> f32 {
-        self.value.overlap_coefficient(&other.value)
+impl<S> PartialOrd for HashFrom<S> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
-impl<LI: WeightedSimilarity<RI>, RI, S> WeightedSimilarity<FromSource<RI, S>>
-    for FromSource<LI, S>
-{
-    fn weighted_jaccard_similarity(&self, other: &FromSource<RI, S>) -> f32 {
-        self.value.weighted_jaccard_similarity(&other.value)
-    }
-
-    fn weighted_overlap_coefficient(&self, other: &FromSource<RI, S>) -> f32 {
-        self.value.weighted_overlap_coefficient(&other.value)
+impl<S> Ord for HashFrom<S> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value.cmp(&other.value)
     }
 }
+
+impl<S> Clone for HashFrom<S> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value,
+            _source: PhantomData,
+        }
+    }
+}
+
+impl<S> Eq for HashFrom<S> {}
+impl<S> Copy for HashFrom<S> {}
 
 struct NGramIterator<const N: usize, S, I> {
     hashes: I,
-    window: ArrayDeque<HashFrom<S>, N, arraydeque::Wrapping>,
+    window: ArrayDeque<u32, N, arraydeque::Wrapping>,
+    _source: PhantomData<S>,
 }
 
 impl<const N: usize, S, I> NGramIterator<N, S, I>
@@ -330,6 +350,7 @@ where
         Self {
             hashes,
             window: ArrayDeque::new(),
+            _source: PhantomData,
         }
     }
 }
@@ -342,7 +363,7 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(hash) = self.hashes.next() {
-            if self.window.push_back(hash).is_some() {
+            if self.window.push_back(hash.value).is_some() {
                 let mut hasher = FxHasher::default();
                 let (window_prefix, window_suffix) = self.window.as_slices();
                 window_prefix.hash(&mut hasher);
