@@ -87,18 +87,18 @@ impl SyntaxTheme {
     
     const fn fallback_rainbow_palette() -> &'static [u32] {
         &[
-            0xFF6B6B, // Red
-            0xFFB946, // Orange  
-            0xF9E076, // Yellow
-            0x6BCF7F, // Green
-            0x4ECDC4, // Cyan
-            0x45B7D1, // Blue
-            0x9B59B6, // Purple
-            0xE91E63, // Magenta
-            0xFF8C94, // Pink
-            0xFFD93D, // Gold
-            0x6BCB77, // Lime
-            0x4D96FF, // Sky Blue
+            0xcba6f7, // Mauve - soft purple
+            0x89b4fa, // Blue - gentle sky blue
+            0x89dceb, // Sapphire - calm cyan
+            0x94e2d5, // Teal - refreshing aqua
+            0xa6e3a1, // Green - soothing mint
+            0xf9e2af, // Yellow - warm cream
+            0xfab387, // Peach - soft orange
+            0xf5c2e7, // Pink - delicate rose
+            0xb4befe, // Lavender - ethereal periwinkle
+            0x74c7ec, // Sky - vibrant light blue
+            0x9be8d5, // Teal alt - seafoam
+            0xeba0d7, // Flamingo - elegant pink-purple
         ]
     }
     
