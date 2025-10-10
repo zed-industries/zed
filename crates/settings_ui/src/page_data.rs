@@ -489,29 +489,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER | LOCAL,
                 }),
-                SettingsPageItem::SectionHeader("Whitespace"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Whitespace",
-                    description: "Whether to show tabs and spaces",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .project
-                                .all_languages
-                                .defaults
-                                .show_whitespaces
-                        },
-                    }),
-                    metadata: None,
-                    files: USER | LOCAL,
-                }),
                 SettingsPageItem::SectionHeader("Layout"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Bottom Dock Layout",
