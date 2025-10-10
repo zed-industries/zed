@@ -7,8 +7,8 @@ use cloud_llm_client::{
 };
 use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use edit_prediction_context::{
-    DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
-    SyntaxIndexState,
+    DeclarationId, EditPredictionContext, EditPredictionContextOptions,
+    EditPredictionExcerptOptions, SimilarSnippetOptions, SyntaxIndex, SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
@@ -43,14 +43,17 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
-pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
-    max_bytes: 512,
-    min_bytes: 128,
-    target_before_cursor_over_total_bytes: 0.5,
+pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPredictionContextOptions {
+    excerpt: EditPredictionExcerptOptions {
+        max_bytes: 512,
+        min_bytes: 128,
+        target_before_cursor_over_total_bytes: 0.5,
+    },
+    similar_snippets: SimilarSnippetOptions::DEFAULT,
 };
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
-    excerpt: DEFAULT_EXCERPT_OPTIONS,
+    context: DEFAULT_CONTEXT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
     prompt_format: PromptFormat::MarkedExcerpt,
@@ -74,7 +77,7 @@ pub struct Zeta {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
-    pub excerpt: EditPredictionExcerptOptions,
+    pub context: EditPredictionContextOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
     pub prompt_format: predict_edits_v3::PromptFormat,
@@ -392,7 +395,7 @@ impl Zeta {
                 let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
-                    &options.excerpt,
+                    &options.context,
                     index_state.as_deref(),
                 ) else {
                     return Ok(None);
@@ -682,7 +685,7 @@ impl Zeta {
             EditPredictionContext::gather_context(
                 cursor_point,
                 &snapshot,
-                &options.excerpt,
+                &options.context,
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")

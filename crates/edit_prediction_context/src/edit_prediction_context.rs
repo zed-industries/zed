@@ -3,7 +3,7 @@ mod declaration_scoring;
 mod excerpt;
 mod outline;
 mod reference;
-// mod similar_snippets;
+mod similar_snippets;
 mod syntax_index;
 mod text_similarity;
 
@@ -15,7 +15,7 @@ pub use declaration::*;
 pub use declaration_scoring::*;
 pub use excerpt::*;
 pub use reference::*;
-// pub use similar_snippets::*;
+pub use similar_snippets::*;
 pub use syntax_index::*;
 pub use text_similarity::*;
 
@@ -25,14 +25,20 @@ pub struct EditPredictionContext {
     pub excerpt_text: EditPredictionExcerptText,
     pub cursor_offset_in_excerpt: usize,
     pub declarations: Vec<ScoredDeclaration>,
-    // pub similar_snippets: Vec<SimilarSnippet>,
+    pub similar_snippets: Vec<SimilarSnippet>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditPredictionContextOptions {
+    pub excerpt: EditPredictionExcerptOptions,
+    pub similar_snippets: SimilarSnippetOptions,
 }
 
 impl EditPredictionContext {
     pub fn gather_context_in_background(
         cursor_point: Point,
         buffer: BufferSnapshot,
-        excerpt_options: EditPredictionExcerptOptions,
+        options: EditPredictionContextOptions,
         syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
@@ -40,11 +46,11 @@ impl EditPredictionContext {
             let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
             cx.background_spawn(async move {
                 let index_state = index_state.lock().await;
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
+                Self::gather_context(cursor_point, &buffer, &options, Some(&index_state))
             })
         } else {
             cx.background_spawn(async move {
-                Self::gather_context(cursor_point, &buffer, &excerpt_options, None)
+                Self::gather_context(cursor_point, &buffer, &options, None)
             })
         }
     }
@@ -52,18 +58,21 @@ impl EditPredictionContext {
     pub fn gather_context(
         cursor_point: Point,
         buffer: &BufferSnapshot,
-        excerpt_options: &EditPredictionExcerptOptions,
+        options: &EditPredictionContextOptions,
         index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
-            excerpt_options,
+            &options.excerpt,
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
         let excerpt_occurrences =
             Occurrences::new(IdentifierParts::within_string(&excerpt_text.body));
+        let excerpt_trigram_occurrences: Occurrences<NGram<3, IdentifierParts>> = Occurrences::new(
+            NGram::iterator(IdentifierParts::within_string(&excerpt_text.body)),
+        );
 
         let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
         let adjacent_end = Point::new(cursor_point.row + 1, 0);
@@ -93,20 +102,22 @@ impl EditPredictionContext {
             vec![]
         };
 
-        // let similar_snippets = similar_snippets(
-        //     &excerpt_occurrences,
-        //     Some(excerpt.range.clone()),
-        //     buffer,
-        //     todo!(),
-        //     todo!(),
-        // );
+        let similar_snippets = similar_snippets(
+            &excerpt_trigram_occurrences,
+            // todo! is this correct?
+            excerpt.range.end..buffer.len(),
+            buffer,
+            &options.similar_snippets,
+        );
+
+        dbg!(&similar_snippets);
 
         Some(Self {
             excerpt,
             excerpt_text,
             cursor_offset_in_excerpt,
             declarations,
-            // similar_snippets,
+            similar_snippets,
         })
     }
 }
@@ -149,10 +160,13 @@ mod tests {
                 EditPredictionContext::gather_context_in_background(
                     cursor_point,
                     buffer_snapshot,
-                    EditPredictionExcerptOptions {
-                        max_bytes: 60,
-                        min_bytes: 10,
-                        target_before_cursor_over_total_bytes: 0.5,
+                    EditPredictionContextOptions {
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: 60,
+                            min_bytes: 10,
+                            target_before_cursor_over_total_bytes: 0.5,
+                        },
+                        similar_snippets: SimilarSnippetOptions::default(),
                     },
                     Some(index),
                     cx,

@@ -5,19 +5,18 @@ use util::debug_panic;
 use crate::{HashFrom, Occurrences};
 
 #[derive(Debug)]
-pub struct SlidingWindow<Id, T, S> {
+pub struct SlidingWindow<D, T, S> {
     target: T,
     intersection: Occurrences<S>,
-    regions: VecDeque<WeightedOverlapRegion<Id, S>>,
+    regions: VecDeque<WeightedOverlapRegion<D, S>>,
     numerator: u32,
     window_count: u32,
     jaccard_denominator_part: u32,
 }
 
 #[derive(Debug)]
-struct WeightedOverlapRegion<Id, S> {
-    #[cfg(debug_assertions)]
-    id: Id,
+struct WeightedOverlapRegion<D, S> {
+    data: D,
     added_hashes: Vec<AddedHash<S>>,
     window_count_delta: u32,
 }
@@ -28,7 +27,7 @@ struct AddedHash<S> {
     target_count: u32,
 }
 
-impl<Id: Debug + PartialEq, T: AsRef<Occurrences<S>>, S> SlidingWindow<Id, T, S> {
+impl<D, T: AsRef<Occurrences<S>>, S> SlidingWindow<D, T, S> {
     pub fn new(target: T) -> Self {
         Self::with_capacity(target, 0)
     }
@@ -45,7 +44,7 @@ impl<Id: Debug + PartialEq, T: AsRef<Occurrences<S>>, S> SlidingWindow<Id, T, S>
         }
     }
 
-    pub fn clear_window(&mut self) {
+    pub fn clear(&mut self) {
         self.intersection.clear();
         self.regions.clear();
         self.numerator = 0;
@@ -53,7 +52,7 @@ impl<Id: Debug + PartialEq, T: AsRef<Occurrences<S>>, S> SlidingWindow<Id, T, S>
         self.jaccard_denominator_part = 0;
     }
 
-    pub fn push_back(&mut self, id: Id, hashes: impl IntoIterator<Item = HashFrom<S>>) {
+    pub fn push_back(&mut self, data: D, hashes: impl IntoIterator<Item = HashFrom<S>>) {
         let mut added_hashes = Vec::new();
         let mut window_count_delta = 0;
         for hash in hashes {
@@ -71,31 +70,17 @@ impl<Id: Debug + PartialEq, T: AsRef<Occurrences<S>>, S> SlidingWindow<Id, T, S>
         }
         self.window_count += window_count_delta;
         self.regions.push_back(WeightedOverlapRegion {
-            #[cfg(debug_assertions)]
-            id,
+            data,
             added_hashes,
             window_count_delta,
         });
     }
 
-    pub fn pop_front(&mut self, id: Id) {
-        let removed;
-        #[cfg(debug_assertions)]
-        {
-            removed = self
-                .regions
-                .pop_front()
-                .expect("No sliding window region to remove");
-            debug_assert_eq!(removed.id, id);
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            removed = self.regions.pop_front();
-            let Some(removed) = removed else {
-                return;
-            };
-        }
+    pub fn pop_front(&mut self) -> D {
+        let removed = self
+            .regions
+            .pop_front()
+            .expect("No sliding window region to remove");
 
         for AddedHash { hash, target_count } in removed.added_hashes {
             let window_hash_count = self.intersection.remove_hash(hash);
@@ -120,6 +105,8 @@ impl<Id: Debug + PartialEq, T: AsRef<Occurrences<S>>, S> SlidingWindow<Id, T, S>
         } else {
             debug_panic!("bug: underflow in sliding window text similarity");
         }
+
+        removed.data
     }
 
     pub fn weighted_overlap_coefficient(&self) -> f32 {
@@ -199,7 +186,7 @@ mod test {
 
         #[track_caller]
         fn pop_front(&mut self) {
-            self.inner.pop_front(self.first_line);
+            assert_eq!(self.inner.pop_front(), self.first_line);
             self.text.drain(0..self.text.find("\n").unwrap() + 1);
             self.first_line += 1;
             self.check_after_mutation();

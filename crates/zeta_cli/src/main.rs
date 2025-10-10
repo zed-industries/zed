@@ -3,7 +3,7 @@ mod headless;
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use cloud_llm_client::predict_edits_v3;
-use edit_prediction_context::EditPredictionExcerptOptions;
+use edit_prediction_context::{EditPredictionExcerptOptions, SimilarSnippetOptions};
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
@@ -252,11 +252,14 @@ async fn get_context(
                 zeta.update(cx, |zeta, cx| {
                     zeta.register_buffer(&buffer, &project, cx);
                     zeta.set_options(zeta2::ZetaOptions {
-                        excerpt: EditPredictionExcerptOptions {
-                            max_bytes: zeta2_args.max_excerpt_bytes,
-                            min_bytes: zeta2_args.min_excerpt_bytes,
-                            target_before_cursor_over_total_bytes: zeta2_args
-                                .target_before_cursor_over_total_bytes,
+                        context: EditPredictionContextOptions {
+                            excerpt: EditPredictionExcerptOptions {
+                                max_bytes: zeta2_args.max_excerpt_bytes,
+                                min_bytes: zeta2_args.min_excerpt_bytes,
+                                target_before_cursor_over_total_bytes: zeta2_args
+                                    .target_before_cursor_over_total_bytes,
+                            },
+                            snippets: SimilarSnippetOptions::default(),
                         },
                         max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
                         max_prompt_bytes: zeta2_args.max_prompt_bytes,
