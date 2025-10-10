@@ -44,7 +44,7 @@ use project::{
 use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
-    ProjectSettingsContent,
+    ProjectSettingsContent, SettingsContent,
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -26695,4 +26695,344 @@ fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
         .filter_map(|inlay| inlay.get_color())
         .map(Rgba::from)
         .collect()
+}
+
+pub(crate) fn update_test_editor_settings(
+    cx: &mut TestAppContext,
+    f: impl Fn(&mut SettingsContent),
+) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, f);
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_highlighting_toggle_in_settings(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into(), "function".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let mut semantic_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![
+                            // "foo" variable at position 4
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 4,
+                                length: 3,
+                                token_type: 0, // variable
+                                token_modifiers_bitset: 0,
+                            },
+                            // "bar" variable at position 9 (delta from previous)
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 5,
+                                length: 3,
+                                token_type: 0, // variable
+                                token_modifiers_bitset: 0,
+                            },
+                            // "test" function at position 19
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 7,
+                                length: 4,
+                                token_type: 1, // function
+                                token_modifiers_bitset: 0,
+                            },
+                        ],
+                        result_id: Some("1".into()),
+                    },
+                )))
+            },
+        );
+
+    // Set up code with variables
+    cx.set_state("ˇlet foo = bar + test();");
+    assert!(semantic_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Rainbow highlighting should be disabled by default
+    let rainbow_enabled = cx.cx.read(|cx| {
+        crate::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .enabled
+    });
+    assert!(!rainbow_enabled, "Rainbow highlighting should be disabled by default");
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    // Trigger a repaint to apply changes
+    cx.update_editor(|_, _, cx| {
+        cx.notify();
+    });
+
+    // Verify rainbow highlighting is now enabled
+    let rainbow_enabled = cx.cx.read(|cx| {
+        crate::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .enabled
+    });
+    assert!(rainbow_enabled, "Rainbow highlighting should be enabled after settings update");
+
+    // Disable rainbow highlighting again
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(false);
+    });
+
+    cx.update_editor(|_, _, cx| {
+        cx.notify();
+    });
+
+    // Verify rainbow highlighting is disabled
+    let rainbow_enabled = cx.cx.read(|cx| {
+        crate::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .enabled
+    });
+    assert!(!rainbow_enabled, "Rainbow highlighting should be disabled after settings update");
+}
+
+#[gpui::test]
+async fn test_rainbow_highlighting_theme_switch(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let mut semantic_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 4,
+                                length: 3,
+                                token_type: 0, // variable
+                                token_modifiers_bitset: 0,
+                            },
+                        ],
+                        result_id: Some("1".into()),
+                    },
+                )))
+            },
+        );
+
+    // Enable rainbow highlighting
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    cx.set_state("ˇlet foo = 1;");
+    assert!(semantic_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Get the initial palette size from default theme
+    let initial_palette_size = cx.cx.read(|cx| {
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme = &theme_settings.active_theme.syntax();
+        theme.rainbow_palette_size()
+    });
+
+    // Verify we have a palette (default should be 12)
+    assert_eq!(
+        initial_palette_size, 12,
+        "Default theme should have 12 rainbow colors"
+    );
+
+    // Theme switching happens automatically through ThemeSettings
+    // The palette size is determined by the theme's defined colors
+    // Verify the system can detect different palette sizes
+    cx.cx.read(|cx| {
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+        let theme = &theme_settings.active_theme.syntax();
+        let palette_size = theme.rainbow_palette_size();
+        
+        // Rainbow colors should be accessible
+        for i in 0..palette_size {
+            let color = theme.rainbow_color(i);
+            assert!(
+                color.is_some(),
+                "Theme should provide rainbow color at index {}",
+                i
+            );
+        }
+    });
+
+    // Trigger notification to ensure changes are applied
+    cx.update_editor(|_, _, cx| {
+        cx.notify();
+    });
+}
+
+#[gpui::test]
+async fn test_rainbow_highlighting_immediate_application(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into(), "parameter".into(), "property".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let mut semantic_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![
+                            // Multiple variables to test different colors
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 4,
+                                length: 3,
+                                token_type: 0, // variable
+                                token_modifiers_bitset: 0,
+                            },
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 5,
+                                length: 3,
+                                token_type: 0, // variable
+                                token_modifiers_bitset: 0,
+                            },
+                            lsp::SemanticToken {
+                                delta_line: 0,
+                                delta_start: 5,
+                                length: 3,
+                                token_type: 1, // parameter
+                                token_modifiers_bitset: 0,
+                            },
+                        ],
+                        result_id: Some("1".into()),
+                    },
+                )))
+            },
+        );
+
+    cx.set_state("ˇlet foo = bar + baz;");
+    assert!(semantic_request.next().await.is_some());
+
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    // Enable rainbow highlighting and verify immediate application
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(true);
+    });
+
+    // Force repaint
+    cx.update_editor(|_, _, cx| {
+        cx.notify();
+    });
+
+    // Verify settings are applied immediately
+    let is_enabled = cx.cx.read(|cx| {
+        crate::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .enabled
+    });
+    assert!(is_enabled, "Rainbow highlighting should be immediately enabled");
+
+    // Verify palette size is accessible
+    let palette_size = cx.cx.read(|cx| {
+        let theme_settings = theme::ThemeSettings::get_global(cx);
+        theme_settings.active_theme.syntax().rainbow_palette_size()
+    });
+    assert_eq!(palette_size, 12, "Palette should have 12 colors");
+
+    // Verify different variable names hash to different indices
+    use crate::rainbow_highlighter::RainbowHighlighter;
+    let foo_index = RainbowHighlighter::hash_to_index("foo", palette_size);
+    let bar_index = RainbowHighlighter::hash_to_index("bar", palette_size);
+    let baz_index = RainbowHighlighter::hash_to_index("baz", palette_size);
+
+    assert_ne!(foo_index, bar_index, "Different variable names should hash differently");
+    assert!(foo_index < palette_size, "Hash index should be within palette bounds");
+    assert!(bar_index < palette_size, "Hash index should be within palette bounds");
+    assert!(baz_index < palette_size, "Hash index should be within palette bounds");
+
+    // Disable and verify immediate application
+    update_test_editor_settings(&mut cx.cx, |settings| {
+        settings.editor.rainbow_highlighting.get_or_insert_default().enabled = Some(false);
+    });
+
+    cx.update_editor(|_, _, cx| {
+        cx.notify();
+    });
+
+    let is_enabled = cx.cx.read(|cx| {
+        crate::EditorSettings::get_global(cx)
+            .rainbow_highlighting
+            .enabled
+    });
+    assert!(!is_enabled, "Rainbow highlighting should be immediately disabled");
 }

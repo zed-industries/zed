@@ -248,6 +248,16 @@
   //
   // This only affects text drawn over highlight backgrounds in the editor.
   "minimum_contrast_for_highlights": 45,
+  // Rainbow highlighting settings for variables.
+  //
+  // When enabled, variables, parameters, and properties get unique colors
+  // based on their names, making it easier to distinguish them visually.
+  // The number and colors are controlled by the theme (default: 12 colors).
+  "rainbow_highlighting": {
+    // Whether to enable rainbow highlighting.
+    // Default: false
+    "enabled": false
+  },
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,

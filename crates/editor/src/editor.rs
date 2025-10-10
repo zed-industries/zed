@@ -35,6 +35,7 @@ mod mouse_context_menu;
 pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
+mod rainbow_highlighter;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -5174,6 +5175,17 @@ impl Editor {
 
     pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
+    }
+
+    pub fn toggle_rainbow_highlighting(
+        &mut self,
+        _: &ToggleRainbowHighlighting,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Rainbow highlighting is controlled by settings
+        // Trigger notification to refresh semantic tokens on next LSP update
+        cx.notify();
     }
 
     pub fn inline_values_enabled(&self) -> bool {

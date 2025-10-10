@@ -57,6 +57,7 @@ pub struct EditorSettings {
     pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
     pub minimum_contrast_for_highlights: f32,
+    pub rainbow_highlighting: RainbowConfig,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -161,6 +162,36 @@ pub struct SearchSettings {
     pub case_sensitive: bool,
     pub include_ignored: bool,
     pub regex: bool,
+}
+
+/// Rainbow highlighting configuration.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub struct RainbowConfig {
+    /// Whether rainbow highlighting is enabled.
+    ///
+    /// Default: false
+    pub enabled: bool,
+}
+
+#[cfg(test)]
+mod rainbow_tests {
+    use super::*;
+
+    #[test]
+    fn test_rainbow_config_defaults() {
+        let config = RainbowConfig::default();
+        
+        assert!(!config.enabled, "Should be disabled by default");
+    }
+    
+    #[test]
+    fn test_rainbow_config_enabled() {
+        let config = RainbowConfig {
+            enabled: true,
+        };
+        
+        assert!(config.enabled);
+    }
 }
 
 impl EditorSettings {
@@ -268,6 +299,9 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap(),
+            rainbow_highlighting: editor.rainbow_highlighting.map(|rh| RainbowConfig {
+                enabled: rh.enabled.unwrap_or(false),
+            }).unwrap_or_default(),
         }
     }
 

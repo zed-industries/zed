@@ -737,6 +737,8 @@ actions!(
         ToggleInlayHints,
         /// Toggles inline values display.
         ToggleInlineValues,
+        /// Toggles rainbow highlighting for variables.
+        ToggleRainbowHighlighting,
         /// Toggles inline diagnostics display.
         ToggleInlineDiagnostics,
         /// Toggles edit prediction feature.

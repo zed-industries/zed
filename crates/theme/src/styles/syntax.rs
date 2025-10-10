@@ -57,6 +57,63 @@ impl SyntaxTheme {
         Some(ix as u32)
     }
 
+    pub fn rainbow_palette_size(&self) -> usize {
+        // Check how many rainbow colors the theme defines
+        let mut count = 0;
+        loop {
+            let key = format!("variable.rainbow.{}", count);
+            if self.get_opt(&key).is_some() {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        
+        // If theme doesn't define any, use fallback palette size
+        if count == 0 {
+            Self::fallback_rainbow_palette().len()
+        } else {
+            count
+        }
+    }
+    
+    pub fn rainbow_color(&self, index: usize) -> Option<HighlightStyle> {
+        let key = format!("variable.rainbow.{}", index);
+        if let Some(style) = self.get_opt(&key) {
+            return Some(style);
+        }
+        
+        Some(Self::generate_fallback_rainbow_color(index))
+    }
+    
+    const fn fallback_rainbow_palette() -> &'static [u32] {
+        &[
+            0xFF6B6B, // Red
+            0xFFB946, // Orange  
+            0xF9E076, // Yellow
+            0x6BCF7F, // Green
+            0x4ECDC4, // Cyan
+            0x45B7D1, // Blue
+            0x9B59B6, // Purple
+            0xE91E63, // Magenta
+            0xFF8C94, // Pink
+            0xFFD93D, // Gold
+            0x6BCB77, // Lime
+            0x4D96FF, // Sky Blue
+        ]
+    }
+    
+    fn generate_fallback_rainbow_color(index: usize) -> HighlightStyle {
+        let palette = Self::fallback_rainbow_palette();
+        let color_value = palette[index % palette.len()];
+        let rgba = gpui::rgb(color_value);
+        
+        HighlightStyle {
+            color: Some(rgba.into()),
+            ..Default::default()
+        }
+    }
+
     /// Returns a new [`Arc<SyntaxTheme>`] with the given syntax styles merged in.
     pub fn merge(base: Arc<Self>, user_syntax_styles: Vec<(String, HighlightStyle)>) -> Arc<Self> {
         if user_syntax_styles.is_empty() {
@@ -199,5 +256,69 @@ mod tests {
                 )
             ]))
         );
+    }
+
+    #[test]
+    fn test_rainbow_color_returns_style() {
+        let theme = SyntaxTheme::default();
+        let palette_size = theme.rainbow_palette_size();
+        
+        assert_eq!(palette_size, 12, "Default palette should have 12 colors");
+        
+        for i in 0..palette_size {
+            let style = theme.rainbow_color(i);
+            assert!(style.is_some(), "Should always return a style (theme or fallback)");
+            
+            if let Some(s) = style {
+                assert!(s.color.is_some(), "Style should have a color");
+            }
+        }
+    }
+    
+    #[test]
+    fn test_fallback_colors_distinct() {
+        let theme = SyntaxTheme::default();
+        let palette_size = theme.rainbow_palette_size();
+        let mut colors = Vec::new();
+        
+        for i in 0..palette_size {
+            if let Some(style) = theme.rainbow_color(i) {
+                if let Some(color) = style.color {
+                    colors.push(format!("{:?}", color));
+                }
+            }
+        }
+        
+        assert_eq!(colors.len(), 12, "Should have 12 colors");
+        let unique_count = colors.iter().collect::<std::collections::HashSet<_>>().len();
+        assert_eq!(unique_count, 12, "All 12 colors should be distinct");
+    }
+    
+    #[test]
+    fn test_rainbow_color_deterministic() {
+        let theme = SyntaxTheme::default();
+        
+        let style1 = theme.rainbow_color(3);
+        let style2 = theme.rainbow_color(3);
+        
+        assert_eq!(style1, style2, "Same index should return same color");
+    }
+    
+    #[test]
+    fn test_rainbow_palette_size_with_theme_colors() {
+        // Test with theme that defines custom rainbow colors
+        let theme = SyntaxTheme::new_test([
+            ("variable.rainbow.0", gpui::red()),
+            ("variable.rainbow.1", gpui::green()),
+            ("variable.rainbow.2", gpui::blue()),
+        ]);
+        
+        assert_eq!(theme.rainbow_palette_size(), 3, "Should detect 3 theme-defined colors");
+    }
+    
+    #[test]
+    fn test_rainbow_palette_size_fallback() {
+        let theme = SyntaxTheme::default();
+        assert_eq!(theme.rainbow_palette_size(), 12, "Should use fallback palette size of 12");
     }
 }

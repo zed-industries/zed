@@ -189,6 +189,19 @@ pub struct EditorSettingsContent {
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
+    
+    /// Rainbow highlighting settings
+    pub rainbow_highlighting: Option<RainbowHighlightingContent>,
+}
+
+/// Rainbow highlighting settings
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct RainbowHighlightingContent {
+    /// Whether rainbow highlighting is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 // Toolbar related settings

@@ -1548,12 +1548,17 @@ impl SemanticTokenView {
         legend: &lsp::SemanticTokensLegend,
         cx: &App,
     ) -> Option<SemanticTokenView> {
+        use crate::editor_settings::EditorSettings;
+        use settings::Settings;
+        
         let Some(buffer) = multibuffer.buffer(buffer_id) else {
             return None;
         };
         let buffer = buffer.read(cx);
 
         let stylizer = SemanticTokenStylizer::new(legend);
+        let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
+        let rainbow_enabled = rainbow_config.enabled;
 
         let mut tokens = lsp
             .tokens()
@@ -1565,12 +1570,26 @@ impl SemanticTokenView {
                     &buffer,
                 );
 
+                // Extract variable name for rainbow highlighting
+                let variable_name = if rainbow_enabled {
+                    let token_type_name = stylizer.token_type(token.token_type);
+                    if matches!(token_type_name, Some("variable" | "parameter" | "property")) {
+                        Some(buffer.text_for_range(start_offset..end_offset).collect::<String>())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
                 Some(MultibufferSemanticToken {
                     range: start_offset..end_offset,
                     style: stylizer.convert(
                         cx.theme().syntax(),
                         token.token_type,
                         token.token_modifiers,
+                        variable_name.as_deref(),
+                        if rainbow_enabled { Some(&rainbow_config) } else { None },
                     )?,
                     lsp_type: token.token_type,
                     lsp_modifiers: token.token_modifiers,
@@ -1651,14 +1670,31 @@ impl<'a> SemanticTokenStylizer<'a> {
         theme: &'a SyntaxTheme,
         token_type: u32,
         modifiers: u32,
+        variable_name: Option<&str>,
+        rainbow_config: Option<&crate::editor_settings::RainbowConfig>,
     ) -> Option<HighlightStyle> {
+        use crate::rainbow_highlighter::RainbowHighlighter;
+        
+        let token_type_name = self.token_type(token_type)?;
+        
+        // 🌈 RAINBOW OVERRIDE for variable-like tokens
+        if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
+            if config.enabled && matches!(token_type_name, "variable" | "parameter" | "property") {
+                let palette_size = theme.rainbow_palette_size();
+                let hash_index = RainbowHighlighter::hash_to_index(name, palette_size);
+                if let Some(rainbow_style) = theme.rainbow_color(hash_index) {
+                    return Some(rainbow_style);
+                }
+            }
+        }
+        
         let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
 
         // See the VSCode docs [1] and the LSP Spec [2]
         //
         // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
         // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
-        let choices: &[&str] = match self.token_type(token_type)? {
+        let choices: &[&str] = match token_type_name {
             // Types
             "namespace" => &["namespace", "module", "type"],
             "class" if has_modifier("declaration") || has_modifier("definition") => &[
