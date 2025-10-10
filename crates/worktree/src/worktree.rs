@@ -4400,8 +4400,20 @@ impl BackgroundScanner {
                     fs_entry.is_external = is_external;
                     fs_entry.is_private = self.is_path_private(path);
                     fs_entry.is_always_included = self.settings.is_path_always_included(path);
-                    fs_entry.is_hidden =
-                        path.file_name().map_or(false, |name| is_path_hidden(name));
+
+                    let parent_is_hidden = path
+                        .parent()
+                        .and_then(|parent| state.snapshot.entry_for_path(parent))
+                        .inspect(|parent_entry| {
+                            debug_assert!(
+                                matches!(parent_entry.kind, EntryKind::Dir),
+                                "parent entry should be a fully scanned directory: {:?}",
+                                parent_entry.path
+                            );
+                        })
+                        .map_or(false, |parent_entry| parent_entry.is_hidden);
+                    fs_entry.is_hidden = parent_is_hidden
+                        || path.file_name().map_or(false, |name| is_path_hidden(name));
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
