@@ -112,6 +112,7 @@ impl ModelInput {
             images,
             parallel_tool_calls,
             prompt_cache_key,
+            ..
         } = ModelCapabilities::default();
         Self {
             name: model_name,
@@ -160,6 +161,7 @@ impl ModelInput {
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
+                tool_choice_none: false,
             },
         })
     }
