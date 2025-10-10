@@ -456,7 +456,11 @@ pub struct SettingsWindow {
     navbar_entry: usize,
     navbar_entries: Vec<NavBarEntry>,
     navbar_scroll_handle: UniformListScrollHandle,
-    search_matches: Vec<Vec<bool>>,
+    /// [page_index][page_item_index] will be false
+    /// when the item is filtered out either by searches
+    /// or by the current file
+    filter_table: Vec<Vec<bool>>,
+    has_query: bool,
     content_handles: Vec<Vec<Entity<NonFocusableHandle>>>,
     page_scroll_handle: ScrollHandle,
     focus_handle: FocusHandle,
@@ -874,7 +878,8 @@ impl SettingsWindow {
             navbar_scroll_handle: UniformListScrollHandle::default(),
             search_bar,
             search_task: None,
-            search_matches: vec![],
+            filter_table: vec![],
+            has_query: false,
             content_handles: vec![],
             page_scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
@@ -961,7 +966,8 @@ impl SettingsWindow {
     fn visible_navbar_entries(&self) -> impl Iterator<Item = (usize, &NavBarEntry)> {
         let mut index = 0;
         let entries = &self.navbar_entries;
-        let search_matches = &self.search_matches;
+        let search_matches = &self.filter_table;
+        let has_query = self.has_query;
         std::iter::from_fn(move || {
             while index < entries.len() {
                 let entry = &entries[index];
@@ -983,7 +989,7 @@ impl SettingsWindow {
             let entry_index = index;
 
             index += 1;
-            if entry.is_root && !entry.expanded {
+            if entry.is_root && !entry.expanded && !has_query {
                 while index < entries.len() {
                     if entries[index].is_root {
                         break;
@@ -998,7 +1004,7 @@ impl SettingsWindow {
 
     fn filter_matches_to_file(&mut self) {
         let current_file = self.current_file.mask();
-        for (page, page_filter) in std::iter::zip(&self.pages, &mut self.search_matches) {
+        for (page, page_filter) in std::iter::zip(&self.pages, &mut self.filter_table) {
             let mut header_index = 0;
             let mut any_found_since_last_header = true;
 
@@ -1039,9 +1045,10 @@ impl SettingsWindow {
         self.search_task.take();
         let query = self.search_bar.read(cx).text(cx);
         if query.is_empty() || self.search_index.is_none() {
-            for page in &mut self.search_matches {
+            for page in &mut self.filter_table {
                 page.fill(true);
             }
+            self.has_query = false;
             self.filter_matches_to_file();
             cx.notify();
             return;
@@ -1055,7 +1062,7 @@ impl SettingsWindow {
             match_indices: impl Iterator<Item = usize>,
             cx: &mut Context<SettingsWindow>,
         ) {
-            for page in &mut this.search_matches {
+            for page in &mut this.filter_table {
                 page.fill(false);
             }
 
@@ -1065,10 +1072,11 @@ impl SettingsWindow {
                     header_index,
                     item_index,
                 } = search_index.key_lut[match_index];
-                let page = &mut this.search_matches[page_index];
+                let page = &mut this.filter_table[page_index];
                 page[header_index] = true;
                 page[item_index] = true;
             }
+            this.has_query = true;
             this.filter_matches_to_file();
             this.open_first_nav_page();
             cx.notify();
@@ -1153,8 +1161,8 @@ impl SettingsWindow {
         }));
     }
 
-    fn build_search_matches(&mut self) {
-        self.search_matches = self
+    fn build_filter_table(&mut self) {
+        self.filter_table = self
             .pages
             .iter()
             .map(|page| vec![true; page.items.len()])
@@ -1254,7 +1262,7 @@ impl SettingsWindow {
         }
         sub_page_stack_mut().clear();
         // PERF: doesn't have to be rebuilt, can just be filled with true. pages is constant once it is built
-        self.build_search_matches();
+        self.build_filter_table();
         self.update_matches(cx);
 
         cx.notify();
@@ -1590,15 +1598,16 @@ impl SettingsWindow {
                                         .root_item(entry.is_root)
                                         .toggle_state(this.is_navbar_entry_selected(ix))
                                         .when(entry.is_root, |item| {
-                                            item.expanded(entry.expanded).on_toggle(cx.listener(
-                                                move |this, _, window, cx| {
-                                                    this.toggle_navbar_entry(ix);
-                                                    window.focus(
-                                                        &this.navbar_entries[ix].focus_handle,
-                                                    );
-                                                    cx.notify();
-                                                },
-                                            ))
+                                            item.expanded(entry.expanded || this.has_query)
+                                                .on_toggle(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.toggle_navbar_entry(ix);
+                                                        window.focus(
+                                                            &this.navbar_entries[ix].focus_handle,
+                                                        );
+                                                        cx.notify();
+                                                    },
+                                                ))
                                         })
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| {
@@ -1715,7 +1724,7 @@ impl SettingsWindow {
             .iter()
             .enumerate()
             .filter_map(move |(item_index, item)| {
-                self.search_matches[page_idx][item_index].then_some((item_index, item))
+                self.filter_table[page_idx][item_index].then_some((item_index, item))
             })
     }
 
@@ -2408,7 +2417,7 @@ mod test {
 
         fn build(mut self, cx: &App) -> Self {
             self.build_navbar(cx);
-            self.build_search_matches();
+            self.build_filter_table();
             self.build_search_index();
             self
         }
@@ -2575,7 +2584,8 @@ mod test {
             navbar_entry: selected_idx.expect("Must have a selected navbar entry"),
             navbar_entries: Vec::default(),
             navbar_scroll_handle: UniformListScrollHandle::default(),
-            search_matches: vec![],
+            filter_table: vec![],
+            has_query: false,
             content_handles: vec![],
             search_task: None,
             page_scroll_handle: ScrollHandle::new(),
@@ -2596,7 +2606,7 @@ mod test {
             search_index: None,
         };
 
-        settings_window.build_search_matches();
+        settings_window.build_filter_table();
         settings_window.build_navbar(cx);
         for expanded_page_index in expanded_pages {
             for entry in &mut settings_window.navbar_entries {
