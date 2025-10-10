@@ -35,6 +35,8 @@ pub struct SelectionsCollection {
     disjoint: Arc<[Selection<Anchor>]>,
     /// A pending selection, such as when the mouse is being dragged
     pending: Option<PendingSelection>,
+    pub select_mode: SelectMode,
+    pub is_extending: bool,
 }
 
 impl SelectionsCollection {
@@ -55,6 +57,8 @@ impl SelectionsCollection {
                 },
                 mode: SelectMode::Character,
             }),
+            select_mode: SelectMode::Character,
+            is_extending: false,
         }
     }
 
