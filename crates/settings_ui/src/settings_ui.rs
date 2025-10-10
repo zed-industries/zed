@@ -1105,21 +1105,35 @@ impl SettingsWindow {
         let mut key_lut: Vec<ItemKey> = vec![];
         let mut candidates = Vec::default();
 
+        fn push_candidates(
+            candidates: &mut Vec<StringMatchCandidate>,
+            key_index: usize,
+            input: &str,
+        ) {
+            for word in input.split_ascii_whitespace() {
+                candidates.push(StringMatchCandidate::new(key_index, word));
+            }
+        }
+
+        // PERF: We are currently searching all items even in project files
+        // where many settings are filtered out, using the logic in filter_matches_to_file
+        // we could only search relevant items based on the current file
         for (page_index, page) in self.pages.iter().enumerate() {
             let mut header_index = 0;
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 match item {
                     SettingsPageItem::SettingItem(item) => {
-                        candidates.push(StringMatchCandidate::new(key_index, item.title));
-                        candidates.push(StringMatchCandidate::new(key_index, item.description));
+                        push_candidates(&mut candidates, key_index, item.title);
+                        push_candidates(&mut candidates, key_index, item.description);
                     }
                     SettingsPageItem::SectionHeader(header) => {
-                        candidates.push(StringMatchCandidate::new(key_index, header));
+                        push_candidates(&mut candidates, key_index, header);
                         header_index = item_index;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
-                        candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
+                        push_candidates(&mut candidates, key_index, sub_page_link.title);
+                        // candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
                     }
                 }
                 key_lut.push(ItemKey {
