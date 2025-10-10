@@ -291,6 +291,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                         url: "https://zed.dev/docs".into(),
                     },
                 ),
+                MenuItem::action("Zed Repository", feedback::OpenZedRepo),
                 MenuItem::action(
                     "Zed Twitter",
                     super::OpenBrowser {
