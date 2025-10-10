@@ -1,5 +1,4 @@
 #![doc = include_str!("../README.md")]
-
 #![deny(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
