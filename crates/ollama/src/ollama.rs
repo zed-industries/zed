@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
@@ -189,10 +191,47 @@ pub struct ModelDetails {
     pub quantization_level: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 pub struct ModelShow {
-    #[serde(default)]
     pub capabilities: Vec<String>,
+    pub context_length: Option<u64>,
+    pub architecture: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ModelShow {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            capabilities: Vec<String>,
+            #[serde(default)]
+            model_info: HashMap<String, serde_json::Value>,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+
+        let architecture = raw
+            .model_info
+            .get("general.architecture")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let context_length = architecture.as_deref().and_then(|arch| {
+            raw.model_info
+                .get(&format!("{}.context_length", arch))
+                .and_then(|v| v.as_f64())
+                .map(|f| f as u64)
+        });
+
+        Ok(ModelShow {
+            capabilities: raw.capabilities,
+            context_length,
+            architecture,
+        })
+    }
 }
 
 impl ModelShow {
@@ -470,6 +509,9 @@ mod tests {
         assert!(result.supports_tools());
         assert!(result.capabilities.contains(&"tools".to_string()));
         assert!(result.capabilities.contains(&"completion".to_string()));
+
+        assert_eq!(result.architecture, Some("llama".to_string()));
+        assert_eq!(result.context_length, Some(131072));
     }
 
     #[test]
