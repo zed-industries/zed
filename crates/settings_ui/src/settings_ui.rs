@@ -1118,6 +1118,9 @@ impl SettingsWindow {
         // PERF: We are currently searching all items even in project files
         // where many settings are filtered out, using the logic in filter_matches_to_file
         // we could only search relevant items based on the current file
+        // PERF: We are reconstructing the string match candidates Vec each time we search.
+        // This is completely unnecessary as now that pages are filtered, the string match candidates Vec
+        // will be constant.
         for (page_index, page) in self.pages.iter().enumerate() {
             let mut header_index = 0;
             for (item_index, item) in page.items.iter().enumerate() {
@@ -1163,6 +1166,10 @@ impl SettingsWindow {
                 }
 
                 for string_match in string_matches {
+                    // todo(settings_ui): process gets killed by SIGKILL (Illegal instruction) when this is uncommented?
+                    // if string_match.score < 0.4 {
+                    //     continue;
+                    // }
                     let ItemKey {
                         page_index,
                         header_index,
