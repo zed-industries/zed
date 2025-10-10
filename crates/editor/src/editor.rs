@@ -9348,6 +9348,7 @@ impl Editor {
     ) -> IconName {
         match provider {
             Some(provider) => match provider.provider.name() {
+                "ollama" => IconName::AiOllama,
                 "copilot" => IconName::Copilot,
                 "supermaven" => IconName::Supermaven,
                 _ => IconName::ZedPredict,

@@ -7,7 +7,7 @@ use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
-mod api_key;
+pub mod api_key;
 pub mod provider;
 mod settings;
 pub mod ui;
@@ -18,7 +18,7 @@ use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
-pub use crate::provider::mistral::MistralLanguageModelProvider;
+use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;

@@ -5135,6 +5135,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
  "cloud_llm_client",
  "codestral",
  "copilot",
@@ -5144,9 +5145,14 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "indoc",
  "language",
+ "language_model",
+ "language_models",
  "lsp",
+ "ollama",
+ "ollama_edit_predictions",
  "paths",
  "project",
  "regex",
@@ -5158,6 +5164,7 @@ dependencies = [
  "ui",
  "workspace",
  "workspace-hack",
+ "zed-http-client",
  "zed_actions",
  "zeta",
 ]
@@ -10554,6 +10561,32 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "workspace-hack",
+ "zed-http-client",
+]
+
+[[package]]
+name = "ollama_edit_predictions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "edit_prediction",
+ "edit_prediction_context",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "language_model",
+ "language_models",
+ "ollama",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "workspace",
  "workspace-hack",
  "zed-http-client",
 ]
@@ -20082,6 +20115,7 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "ollama_edit_predictions",
  "onboarding",
  "outline",
  "outline_panel",

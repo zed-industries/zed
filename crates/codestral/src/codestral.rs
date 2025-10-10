@@ -7,7 +7,7 @@ use http_client::HttpClient;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
-use language_models::MistralLanguageModelProvider;
+use language_models::provider::mistral::MistralLanguageModelProvider;
 use mistral::CODESTRAL_API_URL;
 use serde::{Deserialize, Serialize};
 use std::{

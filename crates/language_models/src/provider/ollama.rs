@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Global, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -38,7 +38,7 @@ const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollam
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
 
 const API_KEY_ENV_VAR_NAME: &str = "OLLAMA_API_KEY";
-static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -46,6 +46,7 @@ pub struct OllamaSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
+#[derive(Clone)]
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
@@ -105,7 +106,14 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let models = match get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await
+            {
+                Ok(models) => models,
+                Err(e) => {
+                    log::error!("Ollama: Failed to fetch models: {}", e);
+                    return Err(e);
+                }
+            };
 
             let tasks = models
                 .into_iter()
@@ -127,7 +135,7 @@ impl State {
                             None,
                             None,
                             Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
+                            Some(capabilities.supports_images()),
                             Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
@@ -159,6 +167,34 @@ impl State {
 }
 
 impl OllamaLanguageModelProvider {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalOllamaLanguageModelProvider>()
+            .map(|provider| provider.0.clone())
+    }
+
+    pub fn set_global(provider: Entity<Self>, cx: &mut App) {
+        cx.set_global(GlobalOllamaLanguageModelProvider(provider));
+    }
+
+    pub fn available_models_for_completion(&self, cx: &App) -> Vec<ollama::Model> {
+        self.state.read(cx).fetched_models.clone()
+    }
+
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    pub fn api_key(&self, cx: &App) -> Option<Arc<str>> {
+        let api_url = Self::api_url(cx);
+        self.state.read(cx).api_key_state.key(&api_url)
+    }
+
+    pub fn refresh_models(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
+    }
+
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let this = Self {
             http_client: http_client.clone(),
@@ -173,22 +209,34 @@ impl OllamaLanguageModelProvider {
                             last_settings = current_settings.clone();
                             if url_changed {
                                 this.fetched_models.clear();
-                                this.authenticate(cx).detach();
                             }
+                            // Trigger authentication when any settings change, not just URL
+                            this.authenticate(cx).detach();
                             cx.notify();
                         }
                     }
                 })
                 .detach();
 
-                State {
+                let mut state = State {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx)),
-                }
+                };
+
+                // Trigger initial authentication to fetch models
+                let auth_task = state.authenticate(cx);
+                auth_task.detach();
+
+                state
             }),
         };
+
+        // Create an entity wrapper and set as global so edit prediction providers can access it
+        let provider_entity = cx.new(|_| this.clone());
+        Self::set_global(provider_entity, cx);
+
         this
     }
 
@@ -196,7 +244,7 @@ impl OllamaLanguageModelProvider {
         &AllLanguageModelSettings::get_global(cx).ollama
     }
 
-    fn api_url(cx: &App) -> SharedString {
+    pub fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             OLLAMA_API_URL.into()
@@ -258,7 +306,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                 model.display_name = setting_model.display_name.clone();
                 model.keep_alive = setting_model.keep_alive.clone();
                 model.supports_tools = setting_model.supports_tools;
-                model.supports_vision = setting_model.supports_images;
+                model.supports_images = setting_model.supports_images;
                 model.supports_thinking = setting_model.supports_thinking;
             } else {
                 models.insert(
@@ -269,7 +317,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                         max_tokens: setting_model.max_tokens,
                         keep_alive: setting_model.keep_alive.clone(),
                         supports_tools: setting_model.supports_tools,
-                        supports_vision: setting_model.supports_images,
+                        supports_images: setting_model.supports_images,
                         supports_thinking: setting_model.supports_thinking,
                     },
                 );
@@ -327,12 +375,12 @@ pub struct OllamaLanguageModel {
 
 impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
-        let supports_vision = self.model.supports_vision.unwrap_or(false);
+        let supports_images = self.model.supports_images.unwrap_or(false);
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
         for mut msg in request.messages.into_iter() {
-            let images = if supports_vision {
+            let images = if supports_images {
                 msg.content
                     .iter()
                     .filter_map(|content| match content {
@@ -451,7 +499,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_vision.unwrap_or(false)
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -926,6 +974,10 @@ impl Render for ConfigurationView {
             )
     }
 }
+
+struct GlobalOllamaLanguageModelProvider(Entity<OllamaLanguageModelProvider>);
+
+impl Global for GlobalOllamaLanguageModelProvider {}
 
 fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
     ollama::OllamaTool::Function {

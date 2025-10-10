@@ -2545,6 +2545,10 @@ mod tests {
     #[gpui::test]
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
+        });
         app_state
             .fs
             .as_fake()

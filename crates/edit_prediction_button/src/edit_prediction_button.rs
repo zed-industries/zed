@@ -16,8 +16,11 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
+use paths;
 use project::DisableAiSettings;
 use regex::Regex;
+use settings::{AllLanguageModelSettingsContent, OllamaSettingsContent};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     sync::{Arc, LazyLock},
@@ -35,13 +38,7 @@ use workspace::{
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
 
-actions!(
-    edit_prediction,
-    [
-        /// Toggles the edit prediction menu.
-        ToggleMenu
-    ]
-);
+actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
@@ -70,7 +67,6 @@ enum SupermavenButtonStatus {
 
 impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
             return div();
         }
@@ -420,6 +416,41 @@ impl Render for EditPredictionButton {
 
                 div().child(popover_menu.into_any_element())
             }
+
+            EditPredictionProvider::Ollama => {
+                let enabled = self.editor_enabled.unwrap_or(false);
+                let icon = if enabled {
+                    IconName::AiOllama
+                } else {
+                    IconName::AiOllama // Could add disabled variant
+                };
+
+                let this = cx.entity();
+
+                div().child(
+                    PopoverMenu::new("ollama")
+                        .menu(move |window, cx| {
+                            Some(
+                                this.update(cx, |this, cx| {
+                                    this.build_ollama_context_menu(window, cx)
+                                }),
+                            )
+                        })
+                        .trigger(
+                            IconButton::new("ollama-completion", icon)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|window, cx| {
+                                    Tooltip::for_action(
+                                        "Ollama Completion",
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
         }
     }
 }
@@ -438,10 +469,14 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
+        if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            cx.observe(&provider, |_, _, cx| cx.notify()).detach();
+        }
+
         Self {
             editor_subscription: None,
             editor_enabled: None,
-            editor_show_predictions: true,
+            editor_show_predictions: false,
             editor_focus_handle: None,
             language: None,
             file: None,
@@ -555,6 +590,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Ollama
                 | EditPredictionProvider::Codestral
         ) {
             menu = menu
@@ -896,6 +932,186 @@ impl EditPredictionButton {
         })
     }
 
+    fn build_ollama_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let fs = self.fs.clone();
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                provider.update(cx, |provider, cx| {
+                    provider.refresh_models(cx);
+                });
+            }
+            let settings = AllLanguageModelSettings::get_global(cx);
+            let ollama_settings = &settings.ollama;
+
+            let mut available_models = ollama_settings.available_models.clone();
+
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
+                for model in discovered_models {
+                    let available_model = language_models::provider::ollama::AvailableModel {
+                        name: model.name.clone(),
+                        display_name: model.display_name.clone(),
+                        max_tokens: model.max_tokens,
+                        keep_alive: model.keep_alive.clone(),
+                        supports_tools: model.supports_tools,
+                        supports_images: model.supports_images,
+                        supports_thinking: model.supports_thinking,
+                    };
+
+                    if !available_models.iter().any(|m| m.name == model.name) {
+                        available_models.push(available_model);
+                    }
+                }
+            }
+
+            let menu = if !available_models.is_empty() {
+                let menu = menu.separator().header("Available Models");
+
+                let menu = available_models.iter().fold(menu, |menu, model| {
+                    let model_name = model.display_name.as_ref().unwrap_or(&model.name);
+                    let is_current = ollama_settings
+                        .available_models
+                        .first()
+                        .map(|current_model| current_model.name == model.name)
+                        .unwrap_or(false);
+
+                    menu.toggleable_entry(
+                        model_name.clone(),
+                        is_current,
+                        IconPosition::Start,
+                        None,
+                        {
+                            let model_name = model.name.clone();
+                            let fs = fs.clone();
+                            move |_window, cx| {
+                                Self::switch_ollama_model(fs.clone(), model_name.clone(), cx);
+                            }
+                        },
+                    )
+                });
+
+                menu
+            } else {
+                menu.separator()
+                    .header("No Models Configured")
+                    .entry("Configure Models", None, {
+                        let fs = fs.clone();
+                        move |window, cx| {
+                            Self::open_ollama_settings(fs.clone(), window, cx);
+                        }
+                    })
+            };
+
+            self.build_language_settings_menu(menu, window, cx)
+        })
+    }
+
+    /// Opens Zed settings and navigates directly to the Ollama models configuration.
+    /// Uses improved regex patterns to locate the exact setting in the JSON structure.
+    fn open_ollama_settings(_fs: Arc<dyn Fs>, window: &mut Window, cx: &mut App) {
+        if let Some(workspace) = window.root::<Workspace>().flatten() {
+            let workspace = workspace.downgrade();
+            window
+                .spawn(cx, async move |cx| {
+                    let settings_editor = workspace
+                        .update_in(cx, |_, window, cx| {
+                            create_and_open_local_file(paths::settings_file(), window, cx, || {
+                                settings::initial_user_settings_content().as_ref().into()
+                            })
+                        })?
+                        .await?
+                        .downcast::<Editor>()
+                        .unwrap();
+
+                    let _ = settings_editor
+                        .downgrade()
+                        .update_in(cx, |item, window, cx| {
+                            let text = item.buffer().read(cx).snapshot(cx).text();
+
+                            // Look for language_models.ollama section with precise pattern
+                            // This matches the full nested structure to avoid false matches
+                            let ollama_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"available_models"\s*:\s*\[\s*\]"#;
+                            let regex = regex::Regex::new(ollama_pattern).unwrap();
+
+                            if let Some(captures) = regex.captures(&text) {
+                                let full_match = captures.get(0).unwrap();
+
+                                let bracket_pos = full_match.as_str().rfind('[').unwrap();
+                                let cursor_pos = full_match.start() + bracket_pos + 1;
+
+                                item.change_selections(
+                                    SelectionEffects::scroll(Autoscroll::newest()),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        selections.select_ranges(vec![cursor_pos..cursor_pos]);
+                                    },
+                                );
+                                return Ok::<(), anyhow::Error>(());
+                            }
+
+                            Ok::<(), anyhow::Error>(())
+                        })?;
+
+                    Ok::<(), anyhow::Error>(())
+                })
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
+        update_settings_file(fs, cx, move |settings, cx| {
+            if settings.language_models.is_none() {
+                settings.language_models = Some(AllLanguageModelSettingsContent::default());
+            }
+
+            let language_models = settings.language_models.as_mut().unwrap();
+
+            if language_models.ollama.is_none() {
+                language_models.ollama = Some(OllamaSettingsContent {
+                    api_url: None,
+                    available_models: Some(Vec::new()),
+                });
+            }
+
+            let ollama_settings = language_models.ollama.as_mut().unwrap();
+
+            if ollama_settings.available_models.is_none() {
+                ollama_settings.available_models = Some(Vec::new());
+            }
+
+            let models = ollama_settings.available_models.as_mut().unwrap();
+
+            if let Some(index) = models.iter().position(|m| m.name == model_name) {
+                let selected_model = models.remove(index);
+                models.insert(0, selected_model);
+            } else {
+                if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                    let discovered_models = provider.read(cx).available_models_for_completion(cx);
+                    if let Some(discovered_model) =
+                        discovered_models.iter().find(|m| m.name == model_name)
+                    {
+                        let available_model = language_models::provider::ollama::AvailableModel {
+                            name: discovered_model.name.clone(),
+                            display_name: discovered_model.display_name.clone(),
+                            max_tokens: discovered_model.max_tokens,
+                            keep_alive: discovered_model.keep_alive.clone(),
+                            supports_tools: discovered_model.supports_tools,
+                            supports_images: discovered_model.supports_images,
+                            supports_thinking: discovered_model.supports_thinking,
+                        };
+
+                        models.insert(0, available_model);
+                    }
+                }
+            }
+        });
+    }
+
     pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -992,7 +1208,6 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let edits = settings.edits_for_update(&text, |file| {
                 file.project
                     .all_languages
@@ -1011,7 +1226,6 @@ async fn open_disabled_globs_setting_in_editor(
             static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
                 Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
             });
-            // Only capture [...]
             let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
                 captures
                     .name("content")

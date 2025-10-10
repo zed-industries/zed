@@ -15,15 +15,12 @@ pub struct Model {
     pub max_tokens: u64,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
-    pub supports_vision: Option<bool>,
+    pub supports_images: Option<bool>,
     pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> u64 {
-    /// Default context length for unknown models.
     const DEFAULT_TOKENS: u64 = 4096;
-    /// Magic number. Lets many Ollama models work with ~16GB of ram.
-    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
     const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
@@ -48,7 +45,7 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
-        supports_vision: Option<bool>,
+        supports_images: Option<bool>,
         supports_thinking: Option<bool>,
     ) -> Self {
         Self {
@@ -59,7 +56,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
-            supports_vision,
+            supports_images,
             supports_thinking,
         }
     }
@@ -201,7 +198,7 @@ impl ModelShow {
         self.capabilities.iter().any(|v| v == "tools")
     }
 
-    pub fn supports_vision(&self) -> bool {
+    pub fn supports_images(&self) -> bool {
         self.capabilities.iter().any(|v| v == "vision")
     }
 
@@ -279,7 +276,6 @@ pub async fn get_models(
     Ok(response.models)
 }
 
-/// Fetch details of a model, used to determine model capabilities
 pub async fn show_model(
     client: &dyn HttpClient,
     api_url: &str,

@@ -4,9 +4,14 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
+
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use language_models::MistralLanguageModelProvider;
-use settings::SettingsStore;
+use language_models::{
+    AllLanguageModelSettings,
+    provider::{mistral::MistralLanguageModelProvider, ollama::OllamaLanguageModelProvider},
+};
+use ollama_edit_predictions::OllamaEditPredictionProvider;
+use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
@@ -259,6 +264,34 @@ fn assign_edit_prediction_provider(
                         editor.set_edit_prediction_provider(Some(provider), window, cx);
                     }
                 }
+            }
+        }
+        EditPredictionProvider::Ollama => {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+
+            let model = if let Some(first_model) = settings.available_models.first() {
+                Some(first_model.name.clone())
+            } else if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                // If no models are available yet, trigger refresh and try again
+                let available_models = provider.read(cx).available_models_for_completion(cx);
+                if available_models.is_empty() {
+                    provider.update(cx, |provider, cx| {
+                        provider.refresh_models(cx);
+                    });
+                }
+                available_models.first().map(|m| m.name.clone())
+            } else {
+                None
+            };
+
+            if let Some(model) = model {
+                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, cx));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            } else {
+                // If no model is available, still create the provider but it will be inactive
+                // This allows the UI to show that Ollama is selected but not ready
+                editor
+                    .set_edit_prediction_provider::<OllamaEditPredictionProvider>(None, window, cx);
             }
         }
     }
