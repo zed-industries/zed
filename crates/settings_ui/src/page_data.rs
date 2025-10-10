@@ -1615,6 +1615,267 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
+            title: "Search & Files",
+            items: vec![
+                SettingsPageItem::SectionHeader("Search"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Whole Word",
+                    description: "Search for whole words by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.whole_word
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .whole_word
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Case Sensitive",
+                    description: "Search case-sensitively by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.case_sensitive
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .case_sensitive
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored",
+                    description: "Include ignored files in search results by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.include_ignored
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .include_ignored
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Regex",
+                    description: "Use regex search by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.regex
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.search.get_or_insert_default().regex
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // todo: null by default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored in Search",
+                    description: "Use gitignored files when searching",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(file_finder) = &settings_content.file_finder {
+                                    &file_finder.include_ignored
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .file_finder
+                                    .get_or_insert_default()
+                                    .include_ignored
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Wrap",
+                    description: "Whether the editor search results will loop",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.search_wrap,
+                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Seed Search Query From Cursor",
+                    description: "When to populate a new search's query based on the text under the cursor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.seed_search_query_from_cursor
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.seed_search_query_from_cursor
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Smartcase Search",
+                    description: "Use smartcase (i.e., case-sensitive) search",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.use_smartcase_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                 SettingsPageItem::SectionHeader("File Management"),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "File Icons",
+                     description: "Show file icons in the file finder",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.file_icons
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .file_icons
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Modal Max Width",
+                     description: "Determines how much space the file finder can take up in relation to the available window width",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.modal_max_width
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .modal_max_width
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Restore File State",
+                     description: "Whether to restore previous file state when reopening",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                         pick_mut: |settings_content| {
+                             &mut settings_content.workspace.restore_on_file_reopen
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Close on File Delete",
+                     description: "Whether to automatically close files that have been deleted",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                         pick_mut: |settings_content| {
+                             &mut settings_content.workspace.close_on_file_delete
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Skip Focus For Active In Search",
+                     description: "Whether the file finder should skip focus for the active file in search results",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.skip_focus_for_active_in_search
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .skip_focus_for_active_in_search
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Git Status",
+                     description: "Whether to show the git status in the file finder",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.git_status
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .git_status
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SectionHeader("File Scan"),
+            ],
+        },
+        SettingsPage {
             title: "Workbench & Window",
             items: vec![
                 SettingsPageItem::SectionHeader("Status Bar"),
@@ -2896,790 +3157,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
-            title: "Search & Files",
-            items: vec![
-                SettingsPageItem::SectionHeader("Search"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Whole Word",
-                    description: "Search for whole words by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.whole_word
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .whole_word
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Case Sensitive",
-                    description: "Search case-sensitively by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.case_sensitive
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .case_sensitive
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored",
-                    description: "Include ignored files in search results by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.include_ignored
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .include_ignored
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Regex",
-                    description: "Use regex search by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.regex
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.search.get_or_insert_default().regex
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo: null by default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored in Search",
-                    description: "Use gitignored files when searching",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| {
-                                if let Some(file_finder) = &settings_content.file_finder {
-                                    &file_finder.include_ignored
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content
-                                    .file_finder
-                                    .get_or_insert_default()
-                                    .include_ignored
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Search Wrap",
-                    description: "Whether the editor search results will loop",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.search_wrap,
-                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Seed Search Query From Cursor",
-                    description: "When to populate a new search's query based on the text under the cursor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            &settings_content.editor.seed_search_query_from_cursor
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.seed_search_query_from_cursor
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Use Smartcase Search",
-                    description: "Use smartcase (i.e., case-sensitive) search",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.use_smartcase_search
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                 SettingsPageItem::SectionHeader("File Management"),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "File Icons",
-                     description: "Show file icons in the file finder",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.file_icons
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .file_icons
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Modal Max Width",
-                     description: "Determines how much space the file finder can take up in relation to the available window width",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.modal_max_width
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .modal_max_width
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Restore File State",
-                     description: "Whether to restore previous file state when reopening",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
-                         pick_mut: |settings_content| {
-                             &mut settings_content.workspace.restore_on_file_reopen
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Close on File Delete",
-                     description: "Whether to automatically close files that have been deleted",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| &settings_content.workspace.close_on_file_delete,
-                         pick_mut: |settings_content| {
-                             &mut settings_content.workspace.close_on_file_delete
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Skip Focus For Active In Search",
-                     description: "Whether the file finder should skip focus for the active file in search results",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.skip_focus_for_active_in_search
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .skip_focus_for_active_in_search
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Git Status",
-                     description: "Whether to show the git status in the file finder",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.git_status
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .git_status
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SectionHeader("File Scan"),
-            ],
-        },
-        SettingsPage{
-            title: "Language Servers",
-            items: vec![
-                SettingsPageItem::SectionHeader("Git"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Gutter",
-                    description: "Control whether git status is shown in the editor's gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                &git.git_gutter
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.git.get_or_insert_default().git_gutter
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Version Control",
-            items: vec![
-                SettingsPageItem::SectionHeader("Git"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Gutter",
-                    description: "Control whether git status is shown in the editor's gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                &git.git_gutter
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.git.get_or_insert_default().git_gutter
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo(settings_ui): Figure out the right default for this value in default.json
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Gutter Debounce",
-                    description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                &git.gutter_debounce
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.git.get_or_insert_default().gutter_debounce
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Git Blame",
-                    description: "Whether or not to show git blame data inline in the currently focused line",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(inline_blame) = &git.inline_blame {
-                                    &inline_blame.enabled
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .inline_blame
-                                .get_or_insert_default()
-                                .enabled
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Git Blame Delay",
-                    description: "The delay after which the inline blame information is shown",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(inline_blame) = &git.inline_blame {
-                                    &inline_blame.delay_ms
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .inline_blame
-                                .get_or_insert_default()
-                                .delay_ms
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Git Blame Padding",
-                    description: "Padding between the end of the source line and the start of the inline blame in columns",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(inline_blame) = &git.inline_blame {
-                                    &inline_blame.padding
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .inline_blame
-                                .get_or_insert_default()
-                                .padding
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Git Blame Min Column",
-                    description: "The minimum column number to show the inline blame information at",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(inline_blame) = &git.inline_blame {
-                                    &inline_blame.min_column
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .inline_blame
-                                .get_or_insert_default()
-                                .min_column
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Commit Summary",
-                    description: "Whether to show commit summary as part of the inline blame",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(inline_blame) = &git.inline_blame {
-                                    &inline_blame.show_commit_summary
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .inline_blame
-                                .get_or_insert_default()
-                                .show_commit_summary
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Avatar",
-                    description: "Whether to show the avatar of the author of the commit",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(blame) = &git.blame {
-                                    &blame.show_avatar
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .blame
-                                .get_or_insert_default()
-                                .show_avatar
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Author Name In Branch Picker",
-                    description: "Whether to show author name as part of the commit information in branch picker",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                if let Some(branch_picker) = &git.branch_picker {
-                                    &branch_picker.show_author_name
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .git
-                                .get_or_insert_default()
-                                .branch_picker
-                                .get_or_insert_default()
-                                .show_author_name
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Hunk Style",
-                    description: "How git hunks are displayed visually in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(git) = &settings_content.git {
-                                &git.hunk_style
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.git.get_or_insert_default().hunk_style
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "System & Network",
-            items: vec![
-                SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Proxy",
-                    description: "The proxy to use for network requests",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.proxy,
-                            pick_mut: |settings_content| &mut settings_content.proxy,
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("socks5h://localhost:10808"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Server URL",
-                    description: "The URL of the Zed server to connect to",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.server_url,
-                        pick_mut: |settings_content| &mut settings_content.server_url,
-                    }),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("https://zed.dev"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("System"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Whether or not to automatically check for updates",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.auto_update,
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Diagnostics & Errors",
-            items: vec![
-                SettingsPageItem::SectionHeader("Filtering"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Max Severity",
-                    description: "Which level to use to filter out diagnostics displayed in the editor",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.editor.diagnostics_max_severity,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.diagnostics_max_severity
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Warnings",
-                    description: "Whether to show warnings or not by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                &diagnostics.include_warnings
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .include_warnings
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Inline"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Diagnostics Enabled",
-                    description: "Whether to show diagnostics inline or not",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(inline) = &diagnostics.inline {
-                                    &inline.enabled
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .inline
-                                .get_or_insert_default()
-                                .enabled
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Update Debounce",
-                    description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(inline) = &diagnostics.inline {
-                                    &inline.update_debounce_ms
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .inline
-                                .get_or_insert_default()
-                                .update_debounce_ms
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Padding",
-                    description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(inline) = &diagnostics.inline {
-                                    &inline.padding
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .inline
-                                .get_or_insert_default()
-                                .padding
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Inline Min Column",
-                    description: "The minimum column to display inline diagnostics",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(inline) = &diagnostics.inline {
-                                    &inline.min_column
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .inline
-                                .get_or_insert_default()
-                                .min_column
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Performance"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "LSP Pull Diagnostics Enabled",
-                    description: "Whether to pull for language server-powered diagnostics or not",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
-                                    &lsp_pull.enabled
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .lsp_pull_diagnostics
-                                .get_or_insert_default()
-                                .enabled
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo(settings_ui): Needs unit
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "LSP Pull Debounce",
-                    description: "Minimum time to wait before pulling diagnostics from the language server(s)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(diagnostics) = &settings_content.diagnostics {
-                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
-                                    &lsp_pull.debounce_ms
-                                } else {
-                                    &None
-                                }
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .diagnostics
-                                .get_or_insert_default()
-                                .lsp_pull_diagnostics
-                                .get_or_insert_default()
-                                .debounce_ms
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
             title: "Debugger",
             items: vec![
                 SettingsPageItem::SectionHeader("General"),
@@ -3781,164 +3258,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .get_or_insert_default()
                                 .format_dap_log_messages
                         },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Collaboration",
-            items: vec![
-                SettingsPageItem::SectionHeader("Calls"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Mute On Join",
-                    description: "Whether the microphone should be muted when joining a channel or a call",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(calls) = &settings_content.calls {
-                                &calls.mute_on_join
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.calls.get_or_insert_default().mute_on_join
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Share On Join",
-                    description: "Whether your current project should be shared when joining an empty channel",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(calls) = &settings_content.calls {
-                                &calls.share_on_join
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.calls.get_or_insert_default().share_on_join
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("Experimental"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Rodio Audio",
-                    description: "Opt into the new audio system",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(audio) = &settings_content.audio {
-                                &audio.rodio_audio
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.audio.get_or_insert_default().rodio_audio
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Microphone Volume",
-                    description: "Automatically adjust microphone volume (requires Rodio Audio)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(audio) = &settings_content.audio {
-                                &audio.auto_microphone_volume
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .audio
-                                .get_or_insert_default()
-                                .auto_microphone_volume
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Speaker Volume",
-                    description: "Automatically adjust volume of other call members (requires Rodio Audio)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(audio) = &settings_content.audio {
-                                &audio.auto_speaker_volume
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .audio
-                                .get_or_insert_default()
-                                .auto_speaker_volume
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Denoise",
-                    description: "Remove background noises (requires Rodio Audio)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(audio) = &settings_content.audio {
-                                &audio.denoise
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.audio.get_or_insert_default().denoise
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Legacy Audio Compatible",
-                    description: "Use audio parameters compatible with previous versions (requires Rodio Audio)",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(audio) = &settings_content.audio {
-                                &audio.legacy_audio_compatible
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .audio
-                                .get_or_insert_default()
-                                .legacy_audio_compatible
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "AI",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Disable AI",
-                    description: "Whether to disable all AI features in Zed",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.disable_ai,
-                        pick_mut: |settings_content| &mut settings_content.disable_ai,
                     }),
                     metadata: None,
                     files: USER,
@@ -4452,6 +3771,663 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                                 .get_or_insert_default()
                                 .show
                         },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Version Control",
+            items: vec![
+                SettingsPageItem::SectionHeader("Git"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Gutter",
+                    description: "Control whether git status is shown in the editor's gutter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.git_gutter
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().git_gutter
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // todo(settings_ui): Figure out the right default for this value in default.json
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Gutter Debounce",
+                    description: "Debounce threshold in milliseconds after which changes are reflected in the git gutter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.gutter_debounce
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().gutter_debounce
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Git Blame",
+                    description: "Whether or not to show git blame data inline in the currently focused line",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Git Blame Delay",
+                    description: "The delay after which the inline blame information is shown",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.delay_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .delay_ms
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Git Blame Padding",
+                    description: "Padding between the end of the source line and the start of the inline blame in columns",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.padding
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .padding
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Git Blame Min Column",
+                    description: "The minimum column number to show the inline blame information at",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.min_column
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .min_column
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Commit Summary",
+                    description: "Whether to show commit summary as part of the inline blame",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(inline_blame) = &git.inline_blame {
+                                    &inline_blame.show_commit_summary
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .show_commit_summary
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Avatar",
+                    description: "Whether to show the avatar of the author of the commit",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(blame) = &git.blame {
+                                    &blame.show_avatar
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .blame
+                                .get_or_insert_default()
+                                .show_avatar
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Author Name In Branch Picker",
+                    description: "Whether to show author name as part of the commit information in branch picker",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                if let Some(branch_picker) = &git.branch_picker {
+                                    &branch_picker.show_author_name
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .git
+                                .get_or_insert_default()
+                                .branch_picker
+                                .get_or_insert_default()
+                                .show_author_name
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Hunk Style",
+                    description: "How git hunks are displayed visually in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.hunk_style
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().hunk_style
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "System & Network",
+            items: vec![
+                SettingsPageItem::SectionHeader("Network"),
+                // todo(settings_ui): Proxy needs a default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Proxy",
+                    description: "The proxy to use for network requests",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.proxy,
+                            pick_mut: |settings_content| &mut settings_content.proxy,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("socks5h://localhost:10808"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Server URL",
+                    description: "The URL of the Zed server to connect to",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.server_url,
+                        pick_mut: |settings_content| &mut settings_content.server_url,
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("https://zed.dev"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("System"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Whether or not to automatically check for updates",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Diagnostics & Errors",
+            items: vec![
+                SettingsPageItem::SectionHeader("Filtering"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Max Severity",
+                    description: "Which level to use to filter out diagnostics displayed in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.diagnostics_max_severity,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.diagnostics_max_severity
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Warnings",
+                    description: "Whether to show warnings or not by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                &diagnostics.include_warnings
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .include_warnings
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Inline"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Diagnostics Enabled",
+                    description: "Whether to show diagnostics inline or not",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Update Debounce",
+                    description: "The delay in milliseconds to show inline diagnostics after the last diagnostic update",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.update_debounce_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .update_debounce_ms
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Padding",
+                    description: "The amount of padding between the end of the source line and the start of the inline diagnostic",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.padding
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .padding
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Inline Min Column",
+                    description: "The minimum column to display inline diagnostics",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(inline) = &diagnostics.inline {
+                                    &inline.min_column
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .inline
+                                .get_or_insert_default()
+                                .min_column
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Performance"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "LSP Pull Diagnostics Enabled",
+                    description: "Whether to pull for language server-powered diagnostics or not",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
+                                    &lsp_pull.enabled
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .lsp_pull_diagnostics
+                                .get_or_insert_default()
+                                .enabled
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // todo(settings_ui): Needs unit
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "LSP Pull Debounce",
+                    description: "Minimum time to wait before pulling diagnostics from the language server(s)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(diagnostics) = &settings_content.diagnostics {
+                                if let Some(lsp_pull) = &diagnostics.lsp_pull_diagnostics {
+                                    &lsp_pull.debounce_ms
+                                } else {
+                                    &None
+                                }
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .diagnostics
+                                .get_or_insert_default()
+                                .lsp_pull_diagnostics
+                                .get_or_insert_default()
+                                .debounce_ms
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Collaboration",
+            items: vec![
+                SettingsPageItem::SectionHeader("Calls"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Mute On Join",
+                    description: "Whether the microphone should be muted when joining a channel or a call",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(calls) = &settings_content.calls {
+                                &calls.mute_on_join
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.calls.get_or_insert_default().mute_on_join
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Share On Join",
+                    description: "Whether your current project should be shared when joining an empty channel",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(calls) = &settings_content.calls {
+                                &calls.share_on_join
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.calls.get_or_insert_default().share_on_join
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Experimental"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Rodio Audio",
+                    description: "Opt into the new audio system",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.rodio_audio
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.audio.get_or_insert_default().rodio_audio
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Microphone Volume",
+                    description: "Automatically adjust microphone volume (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_microphone_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_microphone_volume
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Speaker Volume",
+                    description: "Automatically adjust volume of other call members (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.auto_speaker_volume
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .auto_speaker_volume
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Denoise",
+                    description: "Remove background noises (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.denoise
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.audio.get_or_insert_default().denoise
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Legacy Audio Compatible",
+                    description: "Use audio parameters compatible with previous versions (requires Rodio Audio)",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(audio) = &settings_content.audio {
+                                &audio.legacy_audio_compatible
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .audio
+                                .get_or_insert_default()
+                                .legacy_audio_compatible
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "AI",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Disable AI",
+                    description: "Whether to disable all AI features in Zed",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.disable_ai,
+                        pick_mut: |settings_content| &mut settings_content.disable_ai,
                     }),
                     metadata: None,
                     files: USER,
