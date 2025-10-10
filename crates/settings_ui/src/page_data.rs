@@ -15,7 +15,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("General Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
-                    description: "Whether to confirm before quitting Zed",
+                    description: "Confirm before quitting Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.confirm_quit,
                         pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
@@ -25,7 +25,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Restore On Startup",
-                    description: "Whether to restore previous session when opening Zed",
+                    description: "Restore previous session when opening Zed",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.restore_on_startup,
                         pick_mut: |settings_content| {
@@ -63,7 +63,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Path Prompts",
-                    description: "Whether to use native OS dialogs for 'Open' and 'Save As'",
+                    description: "Use native OS dialogs for 'Open' and 'Save As'",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content.workspace.use_system_path_prompts
@@ -77,7 +77,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use System Prompts",
-                    description: "Whether to use native OS dialogs for confirmations",
+                    description: "Use native OS dialogs for confirmations",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.use_system_prompts,
                         pick_mut: |settings_content| {
@@ -326,7 +326,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 // behavior to have them both enabled at the same time
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Vim Mode",
-                    description: "Whether to enable vim modes and key bindings",
+                    description: "Enable vim modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.vim_mode,
                         pick_mut: |settings_content| &mut settings_content.vim_mode,
@@ -336,7 +336,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Helix Mode",
-                    description: "Whether to enable helix modes and key bindings",
+                    description: "Enable helix modes and key bindings",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.helix_mode,
                         pick_mut: |settings_content| &mut settings_content.helix_mode,
@@ -804,7 +804,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Drag And Drop Selection",
-                        description: "Whether to enable drag and drop selection",
+                        description: "Enable drag and drop selection",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(drag_and_drop) =
@@ -853,7 +853,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Gutter"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Line Numbers",
-                        description: "Whether to show line numbers in the gutter",
+                        description: "Show line numbers in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -887,7 +887,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Runnables",
-                        description: "Whether to show runnable buttons in the gutter",
+                        description: "Show runnable buttons in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -909,7 +909,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Breakpoints",
-                        description: "Whether to show breakpoints in the gutter",
+                        description: "Show breakpoints in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -931,7 +931,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Folds",
-                        description: "Whether to show code folding controls in the gutter",
+                        description: "Show code folding controls in the gutter",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(gutter) = &settings_content.editor.gutter {
@@ -994,7 +994,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Cursors",
-                        description: "Whether to show cursor positions in the scrollbar",
+                        description: "Show cursor positions in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1016,7 +1016,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Git Diff",
-                        description: "Whether to show git diff indicators in the scrollbar",
+                        description: "Show git diff indicators in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1038,7 +1038,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Search Results",
-                        description: "Whether to show buffer search result indicators in the scrollbar",
+                        description: "Show buffer search result indicators in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1060,7 +1060,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Text",
-                        description: "Whether to show selected text occurrences in the scrollbar",
+                        description: "Show selected text occurrences in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1082,7 +1082,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selected Symbol",
-                        description: "Whether to show selected symbol occurrences in the scrollbar",
+                        description: "Show selected symbol occurrences in the scrollbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(scrollbar) = &settings_content.editor.scrollbar {
@@ -1314,7 +1314,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Toolbar"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Breadcrumbs",
-                        description: "Whether to show breadcrumbs",
+                        description: "Show breadcrumbs",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1336,7 +1336,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Quick Actions",
-                        description: "Whether to show quick action buttons (e.g., search, selection, editor controls, etc.)",
+                        description: "Show quick action buttons (e.g., search, selection, editor controls, etc.)",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1358,7 +1358,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Selections Menu",
-                        description: "Whether to show the selections menu in the editor toolbar",
+                        description: "Show the selections menu in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1380,7 +1380,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Agent Review",
-                        description: "Whether to show agent review buttons in the editor toolbar",
+                        description: "Show agent review buttons in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
