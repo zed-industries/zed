@@ -1,6 +1,7 @@
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
-h
+use ui::{IntoElement, SharedString};
+
 use crate::{
     LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
     SubPageLink, USER, sub_page_stack,
@@ -29,30 +30,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         pick: |settings_content| &settings_content.workspace.restore_on_startup,
                         pick_mut: |settings_content| {
                             &mut settings_content.workspace.restore_on_startup
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Restore File State",
-                    description: "Whether to restore previous file state when reopening",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.restore_on_file_reopen
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Close on File Delete",
-                    description: "Whether to automatically close files that have been deleted",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.close_on_file_delete
                         },
                     }),
                     metadata: None,
@@ -2096,201 +2073,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Search Settings"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Whole Word",
-                    description: "Whether to search for whole words by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.whole_word
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .whole_word
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Case Sensitive",
-                    description: "Whether to search case-sensitively by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.case_sensitive
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .case_sensitive
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored",
-                    description: "Whether to include ignored files in search results by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.include_ignored
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .editor
-                                .search
-                                .get_or_insert_default()
-                                .include_ignored
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Regex",
-                    description: "Whether to use regex search by default",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(search) = &settings_content.editor.search {
-                                &search.regex
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.editor.search.get_or_insert_default().regex
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("File Finder"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "File Icons",
-                    description: "Whether to show file icons in the file finder",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.file_icons
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .file_icons
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Modal Max Width",
-                    description: "Determines how much space the file finder can take up in relation to the available window width",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.modal_max_width
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .modal_max_width
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Skip Focus For Active In Search",
-                    description: "Whether the file finder should skip focus for the active file in search results",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.skip_focus_for_active_in_search
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .skip_focus_for_active_in_search
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Git Status",
-                    description: "Whether to show the git status in the file finder",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| {
-                            if let Some(file_finder) = &settings_content.file_finder {
-                                &file_finder.git_status
-                            } else {
-                                &None
-                            }
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content
-                                .file_finder
-                                .get_or_insert_default()
-                                .git_status
-                        },
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-                // todo: null by default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Include Ignored",
-                    description: "Whether to use gitignored files when searching",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| {
-                                if let Some(file_finder) = &settings_content.file_finder {
-                                    &file_finder.include_ignored
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content
-                                    .file_finder
-                                    .get_or_insert_default()
-                                    .include_ignored
-                            },
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: None,
-                    files: USER,
-                }),
             ],
         },
         SettingsPage {
@@ -3118,6 +2900,115 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             items: vec![
                 SettingsPageItem::SectionHeader("Search"),
                 SettingsPageItem::SettingItem(SettingItem {
+                    title: "Whole Word",
+                    description: "Whether to search for whole words by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.whole_word
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .whole_word
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Case Sensitive",
+                    description: "Whether to search case-sensitively by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.case_sensitive
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .case_sensitive
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored",
+                    description: "Whether to include ignored files in search results by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.include_ignored
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .editor
+                                .search
+                                .get_or_insert_default()
+                                .include_ignored
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Regex",
+                    description: "Whether to use regex search by default",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(search) = &settings_content.editor.search {
+                                &search.regex
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.search.get_or_insert_default().regex
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // todo: null by default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Include Ignored in Search",
+                    description: "Use gitignored files when searching",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| {
+                                if let Some(file_finder) = &settings_content.file_finder {
+                                    &file_finder.include_ignored
+                                } else {
+                                    &None
+                                }
+                            },
+                            pick_mut: |settings_content| {
+                                &mut settings_content
+                                    .file_finder
+                                    .get_or_insert_default()
+                                    .include_ignored
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
                     title: "Search Wrap",
                     description: "Whether the editor search results will loop",
                     field: Box::new(SettingField {
@@ -3154,6 +3045,114 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                  SettingsPageItem::SectionHeader("Files"),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "File Icons",
+                     description: "Whether to show file icons in the file finder",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.file_icons
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .file_icons
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Modal Max Width",
+                     description: "Determines how much space the file finder can take up in relation to the available window width",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.modal_max_width
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .modal_max_width
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Restore File State",
+                     description: "Whether to restore previous file state when reopening",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                         pick_mut: |settings_content| {
+                             &mut settings_content.workspace.restore_on_file_reopen
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Close on File Delete",
+                     description: "Whether to automatically close files that have been deleted",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                         pick_mut: |settings_content| {
+                             &mut settings_content.workspace.close_on_file_delete
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Skip Focus For Active In Search",
+                     description: "Whether the file finder should skip focus for the active file in search results",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.skip_focus_for_active_in_search
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .skip_focus_for_active_in_search
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
+                 SettingsPageItem::SettingItem(SettingItem {
+                     title: "Git Status",
+                     description: "Whether to show the git status in the file finder",
+                     field: Box::new(SettingField {
+                         pick: |settings_content| {
+                             if let Some(file_finder) = &settings_content.file_finder {
+                                 &file_finder.git_status
+                             } else {
+                                 &None
+                             }
+                         },
+                         pick_mut: |settings_content| {
+                             &mut settings_content
+                                 .file_finder
+                                 .get_or_insert_default()
+                                 .git_status
+                         },
+                     }),
+                     metadata: None,
+                     files: USER,
+                 }),
                  SettingsPageItem::SectionHeader("File Scan"),
             ],
         },
