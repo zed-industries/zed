@@ -88,17 +88,17 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     files: USER,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
-                                       title: "Redact Private Values",
-                                       description: "Hide the values of variables in private files",
-                                       field: Box::new(SettingField {
-                                           pick: |settings_content| &settings_content.editor.redact_private_values,
-                                           pick_mut: |settings_content| {
-                                               &mut settings_content.editor.redact_private_values
-                                           },
-                                       }),
-                                       metadata: None,
-                                       files: USER,
-                                   }),
+                    title: "Redact Private Values",
+                    description: "Hide the values of variables in private files",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.redact_private_values,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.redact_private_values
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
@@ -1646,116 +1646,116 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                 SettingsPageItem::SectionHeader("File Management"),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "File Icons",
-                     description: "Show file icons in the file finder",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.file_icons
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .file_icons
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Modal Max Width",
-                     description: "Determines how much space the file finder can take up in relation to the available window width",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.modal_max_width
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .modal_max_width
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Restore File State",
-                     description: "Restore previous file state when reopening",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
-                         pick_mut: |settings_content| {
-                             &mut settings_content.workspace.restore_on_file_reopen
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Close on File Delete",
-                     description: "Automatically close files that have been deleted",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| &settings_content.workspace.close_on_file_delete,
-                         pick_mut: |settings_content| {
-                             &mut settings_content.workspace.close_on_file_delete
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Skip Focus For Active In Search",
-                     description: "Whether the file finder should skip focus for the active file in search results",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.skip_focus_for_active_in_search
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .skip_focus_for_active_in_search
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SettingItem(SettingItem {
-                     title: "Git Status",
-                     description: "Show the git status in the file finder",
-                     field: Box::new(SettingField {
-                         pick: |settings_content| {
-                             if let Some(file_finder) = &settings_content.file_finder {
-                                 &file_finder.git_status
-                             } else {
-                                 &None
-                             }
-                         },
-                         pick_mut: |settings_content| {
-                             &mut settings_content
-                                 .file_finder
-                                 .get_or_insert_default()
-                                 .git_status
-                         },
-                     }),
-                     metadata: None,
-                     files: USER,
-                 }),
-                 SettingsPageItem::SectionHeader("File Scan"),
+                SettingsPageItem::SectionHeader("File Management"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "File Icons",
+                    description: "Show file icons in the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Modal Max Width",
+                    description: "Determines how much space the file finder can take up in relation to the available window width",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.modal_max_width
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .modal_max_width
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Restore File State",
+                    description: "Restore previous file state when reopening",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.restore_on_file_reopen
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Close on File Delete",
+                    description: "Automatically close files that have been deleted",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.workspace.close_on_file_delete,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.workspace.close_on_file_delete
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Skip Focus For Active In Search",
+                    description: "Whether the file finder should skip focus for the active file in search results",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.skip_focus_for_active_in_search
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .skip_focus_for_active_in_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Status",
+                    description: "Show the git status in the file finder",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(file_finder) = &settings_content.file_finder {
+                                &file_finder.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content
+                                .file_finder
+                                .get_or_insert_default()
+                                .git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("File Scan"),
             ],
         },
         SettingsPage {
@@ -2149,9 +2149,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| &settings_content.workspace.max_tabs,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.workspace.max_tabs
-                            },
+                            pick_mut: |settings_content| &mut settings_content.workspace.max_tabs,
                         }
                         .unimplemented(),
                     ),
@@ -5068,12 +5066,8 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             title: "Go To Definition Fallback",
             description: "Whether to follow-up empty go to definition responses from the language server",
             field: Box::new(SettingField {
-                pick: |settings_content| {
-                    &settings_content.editor.go_to_definition_fallback
-                },
-                pick_mut: |settings_content| {
-                    &mut settings_content.editor.go_to_definition_fallback
-                },
+                pick: |settings_content| &settings_content.editor.go_to_definition_fallback,
+                pick_mut: |settings_content| &mut settings_content.editor.go_to_definition_fallback,
             }),
             metadata: None,
             files: USER,
@@ -5653,9 +5647,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             description: "Enable middle-click paste on Linux",
             field: Box::new(SettingField {
                 pick: |settings_content| &settings_content.editor.middle_click_paste,
-                pick_mut: |settings_content| {
-                    &mut settings_content.editor.middle_click_paste
-                },
+                pick_mut: |settings_content| &mut settings_content.editor.middle_click_paste,
             }),
             metadata: None,
             files: USER,
