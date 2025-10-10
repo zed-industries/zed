@@ -6367,12 +6367,14 @@ impl Editor {
     ) {
         if let Some(sema) = self.semantics_provider.as_ref() {
             let buffer_id = buffer.read(cx).remote_id();
+            let is_multibuffer = self.buffer.read(cx).as_singleton().is_none();
+            
             log::info!("Requesting semantic tokens for buffer_id={:?}", buffer_id);
             let task = sema
                 .semantic_tokens(buffer.clone(), cx)
                 .map(move |task| task.map(move |tokens| (tokens, buffer_id)));
 
-            self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
+            let spawned_task = cx.spawn_in(window, async move |this, cx| {
                 if let Some(t) = task {
                     let (tokens, buffer_id) = t.await;
 
@@ -6419,6 +6421,14 @@ impl Editor {
                     }).log_err();
                 }
             });
+            
+            if is_multibuffer {
+                // Multibuffer: detach to allow concurrent requests for all buffers
+                spawned_task.detach();
+            } else {
+                // Singleton: keep reference so tests can wait for completion
+                self.update_semantic_tokens_task = spawned_task;
+            }
         }
     }
 
@@ -6436,7 +6446,15 @@ impl Editor {
             return;
         }
         
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+        // Handle both singleton and multibuffer editors
+        let buffers_to_request: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            vec![buffer]
+        } else {
+            // Multibuffer: get all buffers
+            self.buffer.read(cx).all_buffers().into_iter().collect()
+        };
+        
+        for buffer in buffers_to_request {
             let buffer_snapshot = buffer.read(cx);
             let buffer_id = buffer_snapshot.remote_id();
             
@@ -6470,7 +6488,15 @@ impl Editor {
             return;
         }
         
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+        // Handle both singleton and multibuffer editors
+        let buffers_to_request: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            vec![buffer]
+        } else {
+            // Multibuffer: get all buffers
+            self.buffer.read(cx).all_buffers().into_iter().collect()
+        };
+        
+        for buffer in buffers_to_request {
             let buffer_snapshot = buffer.read(cx);
             let buffer_id = buffer_snapshot.remote_id();
             
