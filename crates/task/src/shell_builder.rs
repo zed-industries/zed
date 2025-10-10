@@ -86,9 +86,12 @@ impl ShellBuilder {
             });
             if self.redirect_stdin {
                 match self.kind {
+                    ShellKind::Fish => {
+                        combined_command.insert_str(0, "begin; ");
+                        combined_command.push_str("; end </dev/null");
+                    }
                     ShellKind::Posix
                     | ShellKind::Nushell
-                    | ShellKind::Fish
                     | ShellKind::Csh
                     | ShellKind::Tcsh
                     | ShellKind::Rc => {
