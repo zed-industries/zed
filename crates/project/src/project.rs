@@ -3968,18 +3968,7 @@ impl Project {
                 for buffer in matching_buffer_chunk {
                     let query = query.clone();
                     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                    chunk_results.push(cx.background_spawn(async move {
-                        let ranges = query
-                            .search(&snapshot, None)
-                            .await
-                            .iter()
-                            .map(|range| {
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_after(range.end)
-                            })
-                            .collect::<Vec<_>>();
-                        anyhow::Ok((buffer, ranges))
-                    }));
+                    chunk_results.push(cx.background_spawn(async move {}));
                 }
 
                 let chunk_results = futures::future::join_all(chunk_results).await;
