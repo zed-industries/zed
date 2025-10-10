@@ -463,7 +463,7 @@ fn paragraph_len(paragraphs: &MarkdownParagraph) -> usize {
         .sum()
 }
 
-fn calculate_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
+fn calculate_table_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     let mut actual_column_count = 0;
     for row in rows {
         actual_column_count = actual_column_count.max(
@@ -476,13 +476,16 @@ fn calculate_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     actual_column_count
 }
 
-fn calculate_column_lengths(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkdownTableRow>) {
+fn calculate_table_column_lengths(
+    max_lengths: &mut Vec<usize>,
+    rows: &Vec<ParsedMarkdownTableRow>,
+) {
     for row in rows {
         let mut col_index = 0;
         for cell in row.columns.iter() {
             let length = paragraph_len(&cell.children);
 
-            let length_per_col = length / cell.col_span.max(1);
+            let length_per_col = length / cell.col_span;
             for i in 0..cell.col_span {
                 if col_index + i < max_lengths.len() {
                     max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
@@ -494,15 +497,15 @@ fn calculate_column_lengths(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkd
 }
 
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
-    let actual_header_column_count = calculate_columns_count(&parsed.header);
-    let actual_body_column_count = calculate_columns_count(&parsed.body);
+    let actual_header_column_count = calculate_table_columns_count(&parsed.header);
+    let actual_body_column_count = calculate_table_columns_count(&parsed.body);
 
     let max_column_count = std::cmp::max(actual_header_column_count, actual_body_column_count);
 
     let mut max_lengths: Vec<usize> = vec![0; max_column_count];
 
-    calculate_column_lengths(&mut max_lengths, &parsed.header);
-    calculate_column_lengths(&mut max_lengths, &parsed.body);
+    calculate_table_column_lengths(&mut max_lengths, &parsed.header);
+    calculate_table_column_lengths(&mut max_lengths, &parsed.body);
 
     let total_max_length: usize = max_lengths.iter().sum::<usize>().max(1);
     let max_column_widths: Vec<f32> = max_lengths
@@ -881,5 +884,90 @@ impl Render for InteractiveMarkdownElementTooltip {
                     ),
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown_elements::ParsedMarkdownTableColumn;
+    use crate::markdown_elements::ParsedMarkdownText;
+
+    fn text(text: &str) -> MarkdownParagraphChunk {
+        MarkdownParagraphChunk::Text(ParsedMarkdownText {
+            source_range: 0..text.len(),
+            contents: SharedString::new(text),
+            highlights: Default::default(),
+            region_ranges: Default::default(),
+            regions: Default::default(),
+        })
+    }
+
+    fn column(col_span: usize, children: Vec<MarkdownParagraphChunk>) -> ParsedMarkdownTableColumn {
+        ParsedMarkdownTableColumn {
+            col_span,
+            is_header: false,
+            children,
+        }
+    }
+
+    #[test]
+    fn test_calculate_table_columns_count() {
+        assert_eq!(0, calculate_table_columns_count(&vec![]));
+
+        // single column
+        assert_eq!(
+            1,
+            calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
+                column(1, vec![text("column1")])
+            ])])
+        );
+
+        assert_eq!(
+            2,
+            calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
+                column(1, vec![text("column1")]),
+                column(1, vec![text("column2")]),
+            ])])
+        );
+
+        assert_eq!(
+            2,
+            calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
+                column(2, vec![text("column1")])
+            ])])
+        );
+
+        assert_eq!(
+            3,
+            calculate_table_columns_count(&vec![ParsedMarkdownTableRow::with_columns(vec![
+                column(1, vec![text("column1")]),
+                column(2, vec![text("column2")]),
+            ])])
+        );
+
+        // two rows, oneven columns
+        assert_eq!(
+            2,
+            calculate_table_columns_count(&vec![
+                ParsedMarkdownTableRow::with_columns(vec![
+                    column(1, vec![text("column1")]),
+                    column(1, vec![text("column2")]),
+                ]),
+                ParsedMarkdownTableRow::with_columns(vec![column(1, vec![text("column1")]),])
+            ])
+        );
+
+        // two rows, oneven columns with colspan
+        assert_eq!(
+            3,
+            calculate_table_columns_count(&vec![
+                ParsedMarkdownTableRow::with_columns(vec![
+                    column(1, vec![text("column1")]),
+                    column(1, vec![text("column2")]),
+                ]),
+                ParsedMarkdownTableRow::with_columns(vec![column(3, vec![text("column1")]),])
+            ])
+        );
     }
 }
