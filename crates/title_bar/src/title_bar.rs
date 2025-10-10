@@ -68,6 +68,11 @@ actions!(
     ]
 );
 
+pub(crate) enum WindowControlsPosition {
+    Left,
+    Right,
+}
+
 pub fn init(cx: &mut App) {
     TitleBarSettings::register(cx);
     SystemWindowTabs::init(cx);

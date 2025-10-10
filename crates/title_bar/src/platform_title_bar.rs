@@ -1,3 +1,4 @@
+use crate::WindowControlsPosition;
 use gpui::{
     AnyElement, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, WindowControlArea, div, px,
@@ -17,12 +18,32 @@ pub struct PlatformTitleBar {
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
     system_window_tabs: Entity<SystemWindowTabs>,
+    window_controls_position: WindowControlsPosition,
 }
 
 impl PlatformTitleBar {
     pub fn new(id: impl Into<ElementId>, cx: &mut Context<Self>) -> Self {
         let platform_style = PlatformStyle::platform();
         let system_window_tabs = cx.new(|_cx| SystemWindowTabs::new());
+        let window_controls_position = if cfg!(target_os = "linux") {
+            if let Ok(Some(value)) =
+                dconf::read_string("/org/gnome/desktop/wm/preferences/button-layout")
+            {
+                // GNOME Tweaks has settings to put the window buttons on left or right,
+                // as well as hide minimize/maximize buttons. Regardless of the state of
+                // the minimize/maximize toggles, whenever the buttons are on the left,
+                // the dconf value string ends with ":icon".
+                if value.ends_with(":icon") {
+                    WindowControlsPosition::Left
+                } else {
+                    WindowControlsPosition::Right
+                }
+            } else {
+                WindowControlsPosition::Right
+            }
+        } else {
+            WindowControlsPosition::Right
+        };
 
         Self {
             id: id.into(),
@@ -30,6 +51,7 @@ impl PlatformTitleBar {
             children: SmallVec::new(),
             should_move: false,
             system_window_tabs,
+            window_controls_position,
         }
     }
 
@@ -110,6 +132,16 @@ impl Render for PlatformTitleBar {
                     .items_center()
                     .justify_between()
                     .overflow_x_hidden()
+                    .map(|this| {
+                        if self.platform_style == PlatformStyle::Linux {
+                            match self.window_controls_position {
+                                WindowControlsPosition::Left => this.justify_start(),
+                                WindowControlsPosition::Right => this.justify_between(),
+                            }
+                        } else {
+                            this.justify_between()
+                        }
+                    })
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style == PlatformStyle::Mac, |this| {
@@ -133,35 +165,89 @@ impl Render for PlatformTitleBar {
                     PlatformStyle::Mac => title_bar,
                     PlatformStyle::Linux => {
                         if matches!(decorations, Decorations::Client { .. }) {
-                            title_bar
-                                .child(platform_linux::LinuxWindowControls::new(close_action))
-                                .when(supported_controls.window_menu, |titlebar| {
-                                    titlebar
-                                        .on_mouse_down(MouseButton::Right, move |ev, window, _| {
-                                            window.show_window_menu(ev.position)
+                            match self.window_controls_position {
+                                WindowControlsPosition::Left => {
+                                    // macOS style: controls at the beginning of the title bar
+                                    h_flex()
+                                        .w_full()
+                                        .bg(titlebar_color)
+                                        .child(platform_linux::LinuxWindowControls::new(
+                                            close_action,
+                                            WindowControlsPosition::Left,
+                                        ))
+                                        .child(title_bar)
+                                        .when(supported_controls.window_menu, |titlebar| {
+                                            titlebar.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |ev, window, _| {
+                                                    window.show_window_menu(ev.position)
+                                                },
+                                            )
                                         })
-                                })
-                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
-                                    if this.should_move {
-                                        this.should_move = false;
-                                        window.start_window_move();
-                                    }
-                                }))
-                                .on_mouse_down_out(cx.listener(move |this, _ev, _window, _cx| {
-                                    this.should_move = false;
-                                }))
-                                .on_mouse_up(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = false;
-                                    }),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, _ev, _window, _cx| {
-                                        this.should_move = true;
-                                    }),
-                                )
+                                        .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                                            if this.should_move {
+                                                this.should_move = false;
+                                                window.start_window_move();
+                                            }
+                                        }))
+                                        .on_mouse_down_out(cx.listener(
+                                            move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            },
+                                        ))
+                                        .on_mouse_up(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _ev, _window, _cx| {
+                                                this.should_move = true;
+                                            }),
+                                        )
+                                }
+                                WindowControlsPosition::Right => {
+                                    // Windows style: controls at the end of the titlebar
+                                    title_bar
+                                        .child(platform_linux::LinuxWindowControls::new(
+                                            close_action,
+                                            WindowControlsPosition::Right,
+                                        ))
+                                        .when(supported_controls.window_menu, |titlebar| {
+                                            titlebar.on_mouse_down(
+                                                MouseButton::Right,
+                                                move |ev, window, _| {
+                                                    window.show_window_menu(ev.position)
+                                                },
+                                            )
+                                        })
+                                        .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                                            if this.should_move {
+                                                this.should_move = false;
+                                                window.start_window_move();
+                                            }
+                                        }))
+                                        .on_mouse_down_out(cx.listener(
+                                            move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            },
+                                        ))
+                                        .on_mouse_up(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _ev, _window, _cx| {
+                                                this.should_move = false;
+                                            }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _ev, _window, _cx| {
+                                                this.should_move = true;
+                                            }),
+                                        )
+                                }
+                            }
                         } else {
                             title_bar
                         }
