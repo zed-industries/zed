@@ -108,7 +108,7 @@ impl<T: 'static> SettingField<T> {
     #[allow(unused)]
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
-            pick: |_| &None,
+            pick: |_| &Some(UnimplementedSettingField),
             pick_mut: |_| unreachable!(),
         }
     }
@@ -136,10 +136,6 @@ impl<T> AnySettingField for SettingField<T> {
     }
 
     fn file_set_in(&self, file: SettingsUiFile, cx: &App) -> (settings::SettingsFile, bool) {
-        if AnySettingField::type_id(self) == TypeId::of::<UnimplementedSettingField>() {
-            return (file.to_settings(), true);
-        }
-
         let (file, value) = cx
             .global::<SettingsStore>()
             .get_value_from_file(file.to_settings(), self.pick);
