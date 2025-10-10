@@ -7,6 +7,7 @@ use std::convert::TryFrom;
 use strum::EnumIter;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
+pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]

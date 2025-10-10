@@ -186,7 +186,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
         match block {
             Block::Custom(custom_block) => {
                 if let BlockPlacement::Near(x) = &custom_block.placement
-                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot))
+                    && snapshot.intersects_fold(x.to_point(&snapshot.buffer_snapshot()))
                 {
                     continue;
                 };

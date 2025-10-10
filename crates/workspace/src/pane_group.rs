@@ -1259,11 +1259,11 @@ mod element {
                         origin: child
                             .bounds
                             .origin
-                            .apply_along(Axis::Horizontal, |val| val + Pixels(1.)),
+                            .apply_along(Axis::Horizontal, |val| val + px(1.)),
                         size: child
                             .bounds
                             .size
-                            .apply_along(Axis::Horizontal, |val| val - Pixels(1.)),
+                            .apply_along(Axis::Horizontal, |val| val - px(1.)),
                     };
 
                     if overlay_opacity.is_some()

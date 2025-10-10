@@ -2,7 +2,7 @@ use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
+    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
 use gpui::{Context, Point, Window};
 
@@ -25,7 +25,7 @@ impl Editor {
 
     pub fn scroll(
         &mut self,
-        scroll_position: Point<f32>,
+        scroll_position: Point<ScrollOffset>,
         axis: Option<Axis>,
         window: &mut Window,
         cx: &mut Context<Self>,

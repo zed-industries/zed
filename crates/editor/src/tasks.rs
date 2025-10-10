@@ -28,12 +28,12 @@ impl Editor {
         let selection_range = selection.range();
         let start = editor_snapshot
             .display_snapshot
-            .buffer_snapshot
+            .buffer_snapshot()
             .anchor_after(selection_range.start)
             .text_anchor;
         let end = editor_snapshot
             .display_snapshot
-            .buffer_snapshot
+            .buffer_snapshot()
             .anchor_after(selection_range.end)
             .text_anchor;
         let location = Location {

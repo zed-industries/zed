@@ -181,6 +181,27 @@ impl SelectionsCollection {
         selections
     }
 
+    /// Returns all of the selections, adjusted to take into account the selection line_mode. Uses a provided snapshot to resolve selections.
+    pub fn all_adjusted_with_snapshot(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<Selection<Point>> {
+        let mut selections = self
+            .disjoint
+            .iter()
+            .chain(self.pending_anchor())
+            .map(|anchor| anchor.map(|anchor| anchor.to_point(&snapshot)))
+            .collect::<Vec<_>>();
+        if self.line_mode {
+            for selection in &mut selections {
+                let new_range = snapshot.expand_to_line(selection.range());
+                selection.start = new_range.start;
+                selection.end = new_range.end;
+            }
+        }
+        selections
+    }
+
     /// Returns the newest selection, adjusted to take into account the selection line_mode
     pub fn newest_adjusted(&self, snapshot: &DisplaySnapshot) -> Selection<Point> {
         let mut selection = self.newest::<Point>(&snapshot);
@@ -223,13 +244,13 @@ impl SelectionsCollection {
     {
         let start_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.end.cmp(&range.start, &snapshot.buffer_snapshot))
+            .binary_search_by(|probe| probe.end.cmp(&range.start, snapshot.buffer_snapshot()))
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.start.cmp(&range.end, &snapshot.buffer_snapshot))
+            .binary_search_by(|probe| probe.start.cmp(&range.end, snapshot.buffer_snapshot()))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
@@ -329,6 +350,9 @@ impl SelectionsCollection {
         self.all(snapshot).last().unwrap().clone()
     }
 
+    /// Returns a list of (potentially backwards!) ranges representing the selections.
+    /// Useful for test assertions, but prefer `.all()` instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         snapshot: &DisplaySnapshot,
@@ -950,7 +974,7 @@ fn resolve_selections_point<'a>(
 ) -> impl 'a + Iterator<Item = Selection<Point>> {
     let (to_summarize, selections) = selections.into_iter().tee();
     let mut summaries = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .summaries_for_anchors::<Point, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
         .into_iter();
     selections.map(move |s| {
@@ -1010,7 +1034,7 @@ where
 {
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
     let mut converted_endpoints =
-        map.buffer_snapshot
+        map.buffer_snapshot()
             .dimensions_from_points::<D>(to_convert.flat_map(|s| {
                 let start = map.display_point_to_point(s.start, Bias::Left);
                 let end = map.display_point_to_point(s.end, Bias::Right);

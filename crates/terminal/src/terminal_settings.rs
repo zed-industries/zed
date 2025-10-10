@@ -2,7 +2,7 @@ use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use collections::HashMap;
-use gpui::{App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,7 @@ pub use settings::AlternateScroll;
 use settings::{
     CursorShapeContent, SettingsContent, ShowScrollbar, TerminalBlink, TerminalDockPosition,
     TerminalLineHeight, TerminalSettingsContent, VenvSettings, WorkingDirectory,
+    merge_from::MergeFrom,
 };
 use task::Shell;
 use theme::FontFamilyName;
@@ -30,7 +31,7 @@ pub struct TerminalSettings {
     pub font_weight: Option<FontWeight>,
     pub line_height: TerminalLineHeight,
     pub env: HashMap<String, String>,
-    pub cursor_shape: Option<CursorShape>,
+    pub cursor_shape: CursorShape,
     pub blinking: TerminalBlink,
     pub alternate_scroll: AlternateScroll,
     pub option_as_meta: bool,
@@ -72,14 +73,17 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 impl settings::Settings for TerminalSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
-        let content = content.terminal.clone().unwrap();
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let user_content = content.terminal.clone().unwrap();
+        // Note: we allow a subset of "terminal" settings in the project files.
+        let mut project_content = user_content.project.clone();
+        project_content.merge_from_option(content.project.terminal.as_ref());
         TerminalSettings {
-            shell: settings_shell_to_task_shell(content.shell.unwrap()),
-            working_directory: content.working_directory.unwrap(),
-            font_size: content.font_size.map(px),
-            font_family: content.font_family,
-            font_fallbacks: content.font_fallbacks.map(|fallbacks| {
+            shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
+            working_directory: project_content.working_directory.unwrap(),
+            font_size: user_content.font_size.map(px),
+            font_family: user_content.font_family,
+            font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
                     fallbacks
                         .into_iter()
@@ -87,29 +91,29 @@ impl settings::Settings for TerminalSettings {
                         .collect(),
                 )
             }),
-            font_features: content.font_features,
-            font_weight: content.font_weight.map(FontWeight),
-            line_height: content.line_height.unwrap(),
-            env: content.env.unwrap(),
-            cursor_shape: content.cursor_shape.map(Into::into),
-            blinking: content.blinking.unwrap(),
-            alternate_scroll: content.alternate_scroll.unwrap(),
-            option_as_meta: content.option_as_meta.unwrap(),
-            copy_on_select: content.copy_on_select.unwrap(),
-            keep_selection_on_copy: content.keep_selection_on_copy.unwrap(),
-            button: content.button.unwrap(),
-            dock: content.dock.unwrap(),
-            default_width: px(content.default_width.unwrap()),
-            default_height: px(content.default_height.unwrap()),
-            detect_venv: content.detect_venv.unwrap(),
-            max_scroll_history_lines: content.max_scroll_history_lines,
+            font_features: user_content.font_features,
+            font_weight: user_content.font_weight.map(FontWeight),
+            line_height: user_content.line_height.unwrap(),
+            env: project_content.env.unwrap(),
+            cursor_shape: user_content.cursor_shape.unwrap().into(),
+            blinking: user_content.blinking.unwrap(),
+            alternate_scroll: user_content.alternate_scroll.unwrap(),
+            option_as_meta: user_content.option_as_meta.unwrap(),
+            copy_on_select: user_content.copy_on_select.unwrap(),
+            keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
+            button: user_content.button.unwrap(),
+            dock: user_content.dock.unwrap(),
+            default_width: px(user_content.default_width.unwrap()),
+            default_height: px(user_content.default_height.unwrap()),
+            detect_venv: project_content.detect_venv.unwrap(),
+            max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
-                breadcrumbs: content.toolbar.unwrap().breadcrumbs.unwrap(),
+                breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
             },
             scrollbar: ScrollbarSettings {
-                show: content.scrollbar.unwrap().show,
+                show: user_content.scrollbar.unwrap().show,
             },
-            minimum_contrast: content.minimum_contrast.unwrap(),
+            minimum_contrast: user_content.minimum_contrast.unwrap(),
         }
     }
 
@@ -119,9 +123,11 @@ impl settings::Settings for TerminalSettings {
         let name = |s| format!("terminal.integrated.{s}");
 
         vscode.f32_setting(&name("fontSize"), &mut current.font_size);
-        if let Some(font_family) = vscode.read_string(&name("fontFamily")) {
-            current.font_family = Some(FontFamilyName(font_family.into()));
-        }
+        vscode.font_family_setting(
+            &name("fontFamily"),
+            &mut current.font_family,
+            &mut current.font_fallbacks,
+        );
         vscode.bool_setting(&name("copyOnSelection"), &mut current.copy_on_select);
         vscode.bool_setting("macOptionIsMeta", &mut current.option_as_meta);
         vscode.usize_setting("scrollback", &mut current.max_scroll_history_lines);
@@ -160,7 +166,7 @@ impl settings::Settings for TerminalSettings {
         // TODO: handle arguments
         let shell_name = format!("{platform}Exec");
         if let Some(s) = vscode.read_string(&name(&shell_name)) {
-            current.shell = Some(settings::Shell::Program(s.to_owned()))
+            current.project.shell = Some(settings::Shell::Program(s.to_owned()))
         }
 
         if let Some(env) = vscode
@@ -169,15 +175,15 @@ impl settings::Settings for TerminalSettings {
         {
             for (k, v) in env {
                 if v.is_null()
-                    && let Some(zed_env) = current.env.as_mut()
+                    && let Some(zed_env) = current.project.env.as_mut()
                 {
                     zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
-                if let Some(zed_env) = current.env.as_mut() {
+                if let Some(zed_env) = current.project.env.as_mut() {
                     zed_env.insert(k.clone(), v.to_owned());
                 } else {
-                    current.env = Some([(k.clone(), v.to_owned())].into_iter().collect())
+                    current.project.env = Some([(k.clone(), v.to_owned())].into_iter().collect())
                 }
             }
         }

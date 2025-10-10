@@ -132,11 +132,11 @@ impl RenderOnce for Specimen {
         let mut line_height = global_style.line_height;
 
         if let Some(style_override) = style_override {
-            font_size = style_override.font_size.to_pixels(rem_size).0;
+            font_size = style_override.font_size.to_pixels(rem_size).into();
             line_height = match style_override.line_height {
                 DefiniteLength::Absolute(absolute_len) => match absolute_len {
-                    AbsoluteLength::Rems(absolute_len) => absolute_len.to_pixels(rem_size).0,
-                    AbsoluteLength::Pixels(absolute_len) => absolute_len.0,
+                    AbsoluteLength::Rems(absolute_len) => absolute_len.to_pixels(rem_size).into(),
+                    AbsoluteLength::Pixels(absolute_len) => absolute_len.into(),
                 },
                 DefiniteLength::Fraction(value) => value,
             };

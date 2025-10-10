@@ -2,7 +2,6 @@ use std::num::NonZeroUsize;
 
 use crate::DockPosition;
 use collections::HashMap;
-use gpui::App;
 use serde::Deserialize;
 pub use settings::AutosaveSetting;
 use settings::Settings;
@@ -62,7 +61,7 @@ pub struct TabBarSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let workspace = &content.workspace;
         Self {
             active_pane_modifiers: ActivePanelModifiers {
@@ -197,7 +196,7 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let tab_bar = content.tab_bar.clone().unwrap();
         TabBarSettings {
             show: tab_bar.show.unwrap(),
@@ -219,6 +218,33 @@ impl Settings for TabBarSettings {
         }
         if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
             current.tab_bar.get_or_insert_default().show_tab_bar_buttons = Some(false)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct StatusBarSettings {
+    pub show: bool,
+    pub active_language_button: bool,
+    pub cursor_position_button: bool,
+}
+
+impl Settings for StatusBarSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let status_bar = content.status_bar.clone().unwrap();
+        StatusBarSettings {
+            show: status_bar.show.unwrap(),
+            active_language_button: status_bar.active_language_button.unwrap(),
+            cursor_position_button: status_bar.cursor_position_button.unwrap(),
+        }
+    }
+
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
+        if let Some(show) = vscode.read_bool("workbench.statusBar.visible") {
+            current.status_bar.get_or_insert_default().show = Some(show);
         }
     }
 }

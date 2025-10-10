@@ -430,6 +430,8 @@ impl MacTextSystemState {
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         // Construct the attributed string, converting UTF8 ranges to UTF16 ranges.
         let mut string = CFMutableAttributedString::new();
+        let mut max_ascent = 0.0f32;
+        let mut max_descent = 0.0f32;
         {
             string.replace_str(&CFString::new(text), CFRange::init(0, 0));
             let utf16_line_len = string.char_len() as usize;
@@ -450,6 +452,11 @@ impl MacTextSystemState {
                     CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
 
                 let font: &FontKitFont = &self.fonts[run.font_id.0];
+
+                let font_metrics = font.metrics();
+                let font_scale = font_size.0 / font_metrics.units_per_em as f32;
+                max_ascent = max_ascent.max(font_metrics.ascent * font_scale);
+                max_descent = max_descent.max(-font_metrics.descent * font_scale);
 
                 unsafe {
                     string.set_attribute(
@@ -508,8 +515,8 @@ impl MacTextSystemState {
             runs,
             font_size,
             width: typographic_bounds.width.into(),
-            ascent: typographic_bounds.ascent.into(),
-            descent: typographic_bounds.descent.into(),
+            ascent: max_ascent.into(),
+            descent: max_descent.into(),
             len: text.len(),
         }
     }

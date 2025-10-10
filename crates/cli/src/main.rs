@@ -731,15 +731,15 @@ mod windows {
             Storage::FileSystem::{
                 CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
-            System::Threading::{CREATE_NEW_PROCESS_GROUP, CreateMutexW},
+            System::Threading::CreateMutexW,
         },
         core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::{io, os::windows::process::CommandExt};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -778,7 +778,6 @@ mod windows {
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
             if check_single_instance() {
                 std::process::Command::new(self.0.clone())
-                    .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
                     .arg(ipc_url)
                     .spawn()?;
             } else {

@@ -30,8 +30,6 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 buffer_diff.workspace = true
@@ -92,7 +90,6 @@ which.workspace = true
 worktree.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
-feature_flags.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

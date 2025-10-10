@@ -585,7 +585,7 @@ impl RenderOnce for Switch {
 ///
 /// let switch_field = SwitchField::new(
 ///     "feature-toggle",
-///     "Enable feature",
+///     Some("Enable feature"),
 ///     Some("This feature adds new functionality to the app.".into()),
 ///     ToggleState::Unselected,
 ///     |state, window, cx| {
@@ -596,7 +596,7 @@ impl RenderOnce for Switch {
 #[derive(IntoElement, RegisterComponent)]
 pub struct SwitchField {
     id: ElementId,
-    label: SharedString,
+    label: Option<SharedString>,
     description: Option<SharedString>,
     toggle_state: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
@@ -609,14 +609,14 @@ pub struct SwitchField {
 impl SwitchField {
     pub fn new(
         id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
+        label: Option<impl Into<SharedString>>,
         description: Option<SharedString>,
         toggle_state: impl Into<ToggleState>,
         on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
-            label: label.into(),
+            label: label.map(Into::into),
             description,
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
@@ -657,11 +657,11 @@ impl SwitchField {
 
 impl RenderOnce for SwitchField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let tooltip = self.tooltip.map(|tooltip_fn| {
-            h_flex()
-                .gap_0p5()
-                .child(Label::new(self.label.clone()))
-                .child(
+        let tooltip = self
+            .tooltip
+            .zip(self.label.clone())
+            .map(|(tooltip_fn, label)| {
+                h_flex().gap_0p5().child(Label::new(label)).child(
                     IconButton::new("tooltip_button", IconName::Info)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
@@ -673,7 +673,7 @@ impl RenderOnce for SwitchField {
                         })
                         .on_click(|_, _, _| {}), // Intentional empty on click handler so that clicking on the info tooltip icon doesn't trigger the switch toggle
                 )
-        });
+            });
 
         h_flex()
             .id((self.id.clone(), "container"))
@@ -694,11 +694,17 @@ impl RenderOnce for SwitchField {
                 (Some(description), None) => v_flex()
                     .gap_0p5()
                     .max_w_5_6()
-                    .child(Label::new(self.label.clone()))
+                    .when_some(self.label, |this, label| this.child(Label::new(label)))
                     .child(Label::new(description.clone()).color(Color::Muted))
                     .into_any_element(),
                 (None, Some(tooltip)) => tooltip.into_any_element(),
-                (None, None) => Label::new(self.label.clone()).into_any_element(),
+                (None, None) => {
+                    if let Some(label) = self.label.clone() {
+                        Label::new(label).into_any_element()
+                    } else {
+                        gpui::Empty.into_any_element()
+                    }
+                }
             })
             .child(
                 Switch::new((self.id.clone(), "switch"), self.toggle_state)
@@ -748,7 +754,7 @@ impl Component for SwitchField {
                                 "Unselected",
                                 SwitchField::new(
                                     "switch_field_unselected",
-                                    "Enable notifications",
+                                    Some("Enable notifications"),
                                     Some("Receive notifications when new messages arrive.".into()),
                                     ToggleState::Unselected,
                                     |_, _, _| {},
@@ -759,7 +765,7 @@ impl Component for SwitchField {
                                 "Selected",
                                 SwitchField::new(
                                     "switch_field_selected",
-                                    "Enable notifications",
+                                    Some("Enable notifications"),
                                     Some("Receive notifications when new messages arrive.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
@@ -775,7 +781,7 @@ impl Component for SwitchField {
                                 "Default",
                                 SwitchField::new(
                                     "switch_field_default",
-                                    "Default color",
+                                    Some("Default color"),
                                     Some("This uses the default switch color.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
@@ -786,7 +792,7 @@ impl Component for SwitchField {
                                 "Accent",
                                 SwitchField::new(
                                     "switch_field_accent",
-                                    "Accent color",
+                                    Some("Accent color"),
                                     Some("This uses the accent color scheme.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
@@ -802,7 +808,7 @@ impl Component for SwitchField {
                             "Disabled",
                             SwitchField::new(
                                 "switch_field_disabled",
-                                "Disabled field",
+                                Some("Disabled field"),
                                 Some("This field is disabled and cannot be toggled.".into()),
                                 ToggleState::Selected,
                                 |_, _, _| {},
@@ -817,7 +823,7 @@ impl Component for SwitchField {
                             "No Description",
                             SwitchField::new(
                                 "switch_field_disabled",
-                                "Disabled field",
+                                Some("Disabled field"),
                                 None,
                                 ToggleState::Selected,
                                 |_, _, _| {},
@@ -832,7 +838,7 @@ impl Component for SwitchField {
                                 "Tooltip with Description",
                                 SwitchField::new(
                                     "switch_field_tooltip_with_desc",
-                                    "Nice Feature",
+                                    Some("Nice Feature"),
                                     Some("Enable advanced configuration options.".into()),
                                     ToggleState::Unselected,
                                     |_, _, _| {},
@@ -844,7 +850,7 @@ impl Component for SwitchField {
                                 "Tooltip without Description",
                                 SwitchField::new(
                                     "switch_field_tooltip_no_desc",
-                                    "Nice Feature",
+                                    Some("Nice Feature"),
                                     None,
                                     ToggleState::Selected,
                                     |_, _, _| {},

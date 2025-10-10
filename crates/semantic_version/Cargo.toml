@@ -1,9 +1,10 @@
 [package]
-name = "semantic_version"
+name = "zed-semantic-version"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "A library for working with semantic versioning in gpui and Zed"
 
 [lints]
 workspace = true

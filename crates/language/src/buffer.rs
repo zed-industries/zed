@@ -581,7 +581,7 @@ pub struct HighlightedText {
 #[derive(Default, Debug)]
 struct HighlightedTextBuilder {
     pub text: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl HighlightedText {
@@ -624,10 +624,11 @@ impl HighlightedText {
         let preview_highlights = self
             .highlights
             .into_iter()
+            .skip_while(|(range, _)| range.end <= preview_start_ix)
             .take_while(|(range, _)| range.start < newline_ix)
             .filter_map(|(mut range, highlight)| {
                 range.start = range.start.saturating_sub(preview_start_ix);
-                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                range.end = range.end.min(newline_ix).saturating_sub(preview_start_ix);
                 if range.is_empty() {
                     None
                 } else {
@@ -1312,9 +1313,8 @@ impl Buffer {
         mtime: Option<MTime>,
         cx: &mut Context<Self>,
     ) {
-        self.saved_version = version;
-        self.has_unsaved_edits
-            .set((self.saved_version().clone(), false));
+        self.saved_version = version.clone();
+        self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();

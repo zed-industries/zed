@@ -158,6 +158,7 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
+    /// The absolute path of the worktree root.
     abs_path: Arc<SanitizedPath>,
     path_style: PathStyle,
     root_name: Arc<RelPath>,
@@ -235,7 +236,7 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
-    /// The file handle of the root dir
+    /// The file handle of the worktree root. `None` if the worktree is a directory.
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
 }
@@ -330,7 +331,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Option<Arc<SanitizedPath>>,
+        new_path: Arc<SanitizedPath>,
     },
 }
 
@@ -370,11 +371,19 @@ impl Worktree {
             true
         });
 
-        let root_file_handle = fs
-            .open_handle(&abs_path)
-            .await
-            .context("failed to open local worktree root")
-            .log_err();
+        let root_file_handle = if metadata.as_ref().is_some() {
+            fs.open_handle(&abs_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to open local worktree root at {}",
+                        abs_path.display()
+                    )
+                })
+                .log_err()
+        } else {
+            None
+        };
 
         cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -1760,21 +1769,19 @@ impl LocalWorktree {
 
     pub fn update_abs_path_and_refresh(
         &mut self,
-        new_path: Option<Arc<SanitizedPath>>,
+        new_path: Arc<SanitizedPath>,
         cx: &Context<Worktree>,
     ) {
-        if let Some(new_path) = new_path {
-            self.snapshot.git_repositories = Default::default();
-            self.snapshot.ignores_by_parent_abs_path = Default::default();
-            let root_name = new_path
-                .as_path()
-                .file_name()
-                .and_then(|f| f.to_str())
-                .map_or(RelPath::empty().into(), |f| {
-                    RelPath::unix(f).unwrap().into()
-                });
-            self.snapshot.update_abs_path(new_path, root_name);
-        }
+        self.snapshot.git_repositories = Default::default();
+        self.snapshot.ignores_by_parent_abs_path = Default::default();
+        let root_name = new_path
+            .as_path()
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map_or(RelPath::empty().into(), |f| {
+                RelPath::unix(f).unwrap().into()
+            });
+        self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
     }
 }
@@ -3147,7 +3154,7 @@ impl File {
         self.worktree.read(cx).id()
     }
 
-    pub fn project_entry_id(&self, _: &App) -> Option<ProjectEntryId> {
+    pub fn project_entry_id(&self) -> Option<ProjectEntryId> {
         match self.disk_state {
             DiskState::Deleted => None,
             _ => self.entry_id,
@@ -3572,25 +3579,25 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
-        let global_gitignore_path = paths::global_gitignore_path();
-        self.state.lock().snapshot.global_gitignore =
-            if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
-                build_gitignore(global_gitignore_path, self.fs.as_ref())
+        let mut global_gitignore_events =
+            if let Some(global_gitignore_path) = &paths::global_gitignore_path() {
+                self.state.lock().snapshot.global_gitignore =
+                    if self.fs.is_file(&global_gitignore_path).await {
+                        build_gitignore(global_gitignore_path, self.fs.as_ref())
+                            .await
+                            .ok()
+                            .map(Arc::new)
+                    } else {
+                        None
+                    };
+                self.fs
+                    .watch(global_gitignore_path, FS_WATCH_LATENCY)
                     .await
-                    .ok()
-                    .map(Arc::new)
+                    .0
             } else {
-                None
+                self.state.lock().snapshot.global_gitignore = None;
+                Box::pin(futures::stream::empty())
             };
-        let mut global_gitignore_events = if let Some(global_gitignore_path) = global_gitignore_path
-        {
-            self.fs
-                .watch(&global_gitignore_path, FS_WATCH_LATENCY)
-                .await
-                .0
-        } else {
-            Box::pin(futures::stream::empty())
-        };
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -3606,12 +3613,14 @@ impl BackgroundScanner {
                     root_entry.is_ignored = true;
                     state.insert_entry(root_entry.clone(), self.fs.as_ref(), self.watcher.as_ref());
                 }
-                state.enqueue_scan_dir(
-                    root_abs_path.as_path().into(),
-                    &root_entry,
-                    &scan_job_tx,
-                    self.fs.as_ref(),
-                );
+                if root_entry.is_dir() {
+                    state.enqueue_scan_dir(
+                        root_abs_path.as_path().into(),
+                        &root_entry,
+                        &scan_job_tx,
+                        self.fs.as_ref(),
+                    );
+                }
             }
         };
 
@@ -3633,8 +3642,14 @@ impl BackgroundScanner {
             while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                 paths.extend(more_paths);
             }
-            self.process_events(paths.into_iter().map(Into::into).collect())
-                .await;
+            self.process_events(
+                paths
+                    .into_iter()
+                    .filter(|e| e.kind.is_some())
+                    .map(Into::into)
+                    .collect(),
+            )
+            .await;
         }
         if let Some(abs_path) = containing_git_repository {
             self.process_events(vec![abs_path]).await;
@@ -3679,7 +3694,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().map(Into::into).collect()).await;
+                    self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
                 }
 
                 paths = global_gitignore_events.next().fuse() => {
@@ -3758,18 +3773,18 @@ impl BackgroundScanner {
                     .map(|path| SanitizedPath::new_arc(&path))
                     .filter(|new_path| *new_path != root_path);
 
-                if let Some(new_path) = new_path.as_ref() {
+                if let Some(new_path) = new_path {
                     log::info!(
                         "root renamed from {} to {}",
                         root_path.as_path().display(),
                         new_path.as_path().display()
-                    )
+                    );
+                    self.status_updates_tx
+                        .unbounded_send(ScanState::RootUpdated { new_path })
+                        .ok();
                 } else {
                     log::warn!("root path could not be canonicalized: {}", err);
                 }
-                self.status_updates_tx
-                    .unbounded_send(ScanState::RootUpdated { new_path })
-                    .ok();
                 return;
             }
         };

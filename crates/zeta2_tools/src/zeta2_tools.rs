@@ -1,22 +1,26 @@
-use std::{collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    cmp::Reverse, collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
+};
 
 use chrono::TimeDelta;
 use client::{Client, UserStore};
-use cloud_llm_client::predict_edits_v3::PromptFormat;
+use cloud_llm_client::predict_edits_v3::{DeclarationScoreComponents, PromptFormat};
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
-use futures::StreamExt as _;
+use futures::{StreamExt as _, channel::oneshot};
 use gpui::{
-    Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity, actions,
-    prelude::*,
+    CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    actions, prelude::*,
 };
 use language::{Buffer, DiskState};
+use ordered_float::OrderedFloat;
 use project::{Project, WorktreeId};
 use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, prelude::*};
 use ui_input::SingleLineInput;
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::{Zeta, ZetaOptions};
+use zeta2::{DEFAULT_CONTEXT_OPTIONS, PredictionDebugInfo, Zeta, ZetaOptions};
 
 use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
@@ -56,7 +60,7 @@ pub fn init(cx: &mut App) {
 pub struct Zeta2Inspector {
     focus_handle: FocusHandle,
     project: Entity<Project>,
-    last_prediction: Option<LastPredictionState>,
+    last_prediction: Option<LastPrediction>,
     max_excerpt_bytes_input: Entity<SingleLineInput>,
     min_excerpt_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
@@ -74,25 +78,27 @@ enum ActiveView {
     Inference,
 }
 
-enum LastPredictionState {
-    Failed(SharedString),
-    Success(LastPrediction),
-    Replaying {
-        prediction: LastPrediction,
-        _task: Task<()>,
-    },
-}
-
 struct LastPrediction {
     context_editor: Entity<Editor>,
-    retrieval_time: TimeDelta,
-    prompt_planning_time: TimeDelta,
-    inference_time: TimeDelta,
-    parsing_time: TimeDelta,
     prompt_editor: Entity<Editor>,
-    model_response_editor: Entity<Editor>,
+    retrieval_time: TimeDelta,
     buffer: WeakEntity<Buffer>,
     position: language::Anchor,
+    state: LastPredictionState,
+    _task: Option<Task<()>>,
+}
+
+enum LastPredictionState {
+    Requested,
+    Success {
+        inference_time: TimeDelta,
+        parsing_time: TimeDelta,
+        prompt_planning_time: TimeDelta,
+        model_response_editor: Entity<Editor>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 impl Zeta2Inspector {
@@ -107,15 +113,9 @@ impl Zeta2Inspector {
         let mut request_rx = zeta.update(cx, |zeta, _cx| zeta.debug_info());
 
         let receive_task = cx.spawn_in(window, async move |this, cx| {
-            while let Some(prediction_result) = request_rx.next().await {
-                this.update_in(cx, |this, window, cx| match prediction_result {
-                    Ok(prediction) => {
-                        this.update_last_prediction(prediction, window, cx);
-                    }
-                    Err(err) => {
-                        this.last_prediction = Some(LastPredictionState::Failed(err.into()));
-                        cx.notify();
-                    }
+            while let Some(prediction) = request_rx.next().await {
+                this.update_in(cx, |this, window, cx| {
+                    this.update_last_prediction(prediction, window, cx)
                 })
                 .ok();
             }
@@ -146,16 +146,19 @@ impl Zeta2Inspector {
         cx: &mut Context<Self>,
     ) {
         self.max_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.excerpt.max_bytes.to_string(), window, cx);
+            input.set_text(options.context.excerpt.max_bytes.to_string(), window, cx);
         });
         self.min_excerpt_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.excerpt.min_bytes.to_string(), window, cx);
+            input.set_text(options.context.excerpt.min_bytes.to_string(), window, cx);
         });
         self.cursor_context_ratio_input.update(cx, |input, cx| {
             input.set_text(
                 format!(
                     "{:.2}",
-                    options.excerpt.target_before_cursor_over_total_bytes
+                    options
+                        .context
+                        .excerpt
+                        .target_before_cursor_over_total_bytes
                 ),
                 window,
                 cx,
@@ -172,16 +175,12 @@ impl Zeta2Inspector {
 
         const THROTTLE_TIME: Duration = Duration::from_millis(100);
 
-        if let Some(
-            LastPredictionState::Success(prediction)
-            | LastPredictionState::Replaying { prediction, .. },
-        ) = self.last_prediction.take()
-        {
+        if let Some(prediction) = self.last_prediction.as_mut() {
             if let Some(buffer) = prediction.buffer.upgrade() {
                 let position = prediction.position;
                 let zeta = self.zeta.clone();
                 let project = self.project.clone();
-                let task = cx.spawn(async move |_this, cx| {
+                prediction._task = Some(cx.spawn(async move |_this, cx| {
                     cx.background_executor().timer(THROTTLE_TIME).await;
                     if let Some(task) = zeta
                         .update(cx, |zeta, cx| {
@@ -191,13 +190,10 @@ impl Zeta2Inspector {
                     {
                         task.await.log_err();
                     }
-                });
-                self.last_prediction = Some(LastPredictionState::Replaying {
-                    prediction,
-                    _task: task,
-                });
+                }));
+                prediction.state = LastPredictionState::Requested;
             } else {
-                self.last_prediction = Some(LastPredictionState::Failed("Buffer dropped".into()));
+                self.last_prediction.take();
             }
         }
 
@@ -236,7 +232,8 @@ impl Zeta2Inspector {
                         .unwrap_or_default()
                 }
 
-                let excerpt_options = EditPredictionExcerptOptions {
+                let mut context_options = DEFAULT_CONTEXT_OPTIONS.clone();
+                context_options.excerpt = EditPredictionExcerptOptions {
                     max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
                     min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
                     target_before_cursor_over_total_bytes: number_input_value(
@@ -248,7 +245,7 @@ impl Zeta2Inspector {
                 let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
-                        excerpt: excerpt_options,
+                        context: context_options,
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
                         max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
                         prompt_format: zeta_options.prompt_format,
@@ -305,6 +302,8 @@ impl Zeta2Inspector {
 
                 this.update_in(cx, |this, window, cx| {
                     let context_editor = cx.new(|cx| {
+                        let mut excerpt_score_components = HashMap::default();
+
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
@@ -335,7 +334,14 @@ impl Zeta2Inspector {
                                 cx,
                             );
 
-                            for snippet in &prediction.context.declarations {
+                            let mut declarations = prediction.context.declarations.clone();
+                            declarations.sort_unstable_by_key(|declaration| {
+                                Reverse(OrderedFloat(
+                                    declaration.score(DeclarationStyle::Declaration),
+                                ))
+                            });
+
+                            for snippet in &declarations {
                                 let path = this
                                     .project
                                     .read(cx)
@@ -343,10 +349,10 @@ impl Zeta2Inspector {
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
                                     title: RelPath::unix(&format!(
-                                        "{} (Score density: {})",
+                                        "{} (Score: {})",
                                         path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
-                                        snippet.score_density(DeclarationStyle::Declaration)
+                                        snippet.score(DeclarationStyle::Declaration)
                                     ))
                                     .unwrap()
                                     .into(),
@@ -366,24 +372,107 @@ impl Zeta2Inspector {
                                     buffer
                                 });
 
-                                multibuffer.push_excerpts(
+                                let excerpt_ids = multibuffer.push_excerpts(
                                     excerpt_buffer,
                                     [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
                                     cx,
                                 );
+                                let excerpt_id = excerpt_ids.first().unwrap();
+
+                                excerpt_score_components
+                                    .insert(*excerpt_id, snippet.components.clone());
                             }
 
                             multibuffer
                         });
 
-                        Editor::new(EditorMode::full(), multibuffer, None, window, cx)
+                        let mut editor =
+                            Editor::new(EditorMode::full(), multibuffer, None, window, cx);
+                        editor.register_addon(ZetaContextAddon {
+                            excerpt_score_components,
+                        });
+                        editor
                     });
 
-                    let last_prediction = LastPrediction {
+                    let PredictionDebugInfo {
+                        response_rx,
+                        position,
+                        buffer,
+                        retrieval_time,
+                        local_prompt,
+                        ..
+                    } = prediction;
+
+                    let task = cx.spawn_in(window, {
+                        let markdown_language = markdown_language.clone();
+                        async move |this, cx| {
+                            let response = response_rx.await;
+
+                            this.update_in(cx, |this, window, cx| {
+                                if let Some(prediction) = this.last_prediction.as_mut() {
+                                    prediction.state = match response {
+                                        Ok(Ok(response)) => {
+                                            prediction.prompt_editor.update(
+                                                cx,
+                                                |prompt_editor, cx| {
+                                                    prompt_editor.set_text(
+                                                        response.prompt,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            );
+
+                                            LastPredictionState::Success {
+                                                prompt_planning_time: response.prompt_planning_time,
+                                                inference_time: response.inference_time,
+                                                parsing_time: response.parsing_time,
+                                                model_response_editor: cx.new(|cx| {
+                                                    let buffer = cx.new(|cx| {
+                                                        let mut buffer = Buffer::local(
+                                                            response.model_response,
+                                                            cx,
+                                                        );
+                                                        buffer.set_language(markdown_language, cx);
+                                                        buffer
+                                                    });
+                                                    let buffer = cx.new(|cx| {
+                                                        MultiBuffer::singleton(buffer, cx)
+                                                    });
+                                                    let mut editor = Editor::new(
+                                                        EditorMode::full(),
+                                                        buffer,
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    editor.set_read_only(true);
+                                                    editor.set_show_line_numbers(false, cx);
+                                                    editor.set_show_gutter(false, cx);
+                                                    editor.set_show_scrollbars(false, cx);
+                                                    editor
+                                                }),
+                                            }
+                                        }
+                                        Ok(Err(err)) => {
+                                            LastPredictionState::Failed { message: err }
+                                        }
+                                        Err(oneshot::Canceled) => LastPredictionState::Failed {
+                                            message: "Canceled".to_string(),
+                                        },
+                                    };
+                                }
+                            })
+                            .ok();
+                        }
+                    });
+
+                    this.last_prediction = Some(LastPrediction {
                         context_editor,
                         prompt_editor: cx.new(|cx| {
                             let buffer = cx.new(|cx| {
-                                let mut buffer = Buffer::local(prediction.request.prompt, cx);
+                                let mut buffer =
+                                    Buffer::local(local_prompt.unwrap_or_else(|err| err), cx);
                                 buffer.set_language(markdown_language.clone(), cx);
                                 buffer
                             });
@@ -396,30 +485,12 @@ impl Zeta2Inspector {
                             editor.set_show_scrollbars(false, cx);
                             editor
                         }),
-                        model_response_editor: cx.new(|cx| {
-                            let buffer = cx.new(|cx| {
-                                let mut buffer =
-                                    Buffer::local(prediction.request.model_response, cx);
-                                buffer.set_language(markdown_language, cx);
-                                buffer
-                            });
-                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-                            let mut editor =
-                                Editor::new(EditorMode::full(), buffer, None, window, cx);
-                            editor.set_read_only(true);
-                            editor.set_show_line_numbers(false, cx);
-                            editor.set_show_gutter(false, cx);
-                            editor.set_show_scrollbars(false, cx);
-                            editor
-                        }),
-                        retrieval_time: prediction.retrieval_time,
-                        prompt_planning_time: prediction.request.prompt_planning_time,
-                        inference_time: prediction.request.inference_time,
-                        parsing_time: prediction.request.parsing_time,
-                        buffer: prediction.buffer,
-                        position: prediction.position,
-                    };
-                    this.last_prediction = Some(LastPredictionState::Success(last_prediction));
+                        retrieval_time,
+                        buffer,
+                        position,
+                        state: LastPredictionState::Requested,
+                        _task: Some(task),
+                    });
                     cx.notify();
                 })
                 .ok();
@@ -510,9 +581,7 @@ impl Zeta2Inspector {
     }
 
     fn render_tabs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let Some(LastPredictionState::Success { .. } | LastPredictionState::Replaying { .. }) =
-            self.last_prediction.as_ref()
-        else {
+        if self.last_prediction.is_none() {
             return None;
         };
 
@@ -547,12 +616,24 @@ impl Zeta2Inspector {
     }
 
     fn render_stats(&self) -> Option<Div> {
-        let Some(
-            LastPredictionState::Success(prediction)
-            | LastPredictionState::Replaying { prediction, .. },
-        ) = self.last_prediction.as_ref()
-        else {
+        let Some(prediction) = self.last_prediction.as_ref() else {
             return None;
+        };
+
+        let (prompt_planning_time, inference_time, parsing_time) = match &prediction.state {
+            LastPredictionState::Success {
+                inference_time,
+                parsing_time,
+                prompt_planning_time,
+                ..
+            } => (
+                Some(*prompt_planning_time),
+                Some(*inference_time),
+                Some(*parsing_time),
+            ),
+            LastPredictionState::Requested | LastPredictionState::Failed { .. } => {
+                (None, None, None)
+            }
         };
 
         Some(
@@ -563,32 +644,30 @@ impl Zeta2Inspector {
                 .child(Headline::new("Stats").size(HeadlineSize::Small))
                 .child(Self::render_duration(
                     "Context retrieval",
-                    prediction.retrieval_time,
+                    Some(prediction.retrieval_time),
                 ))
                 .child(Self::render_duration(
                     "Prompt planning",
-                    prediction.prompt_planning_time,
+                    prompt_planning_time,
                 ))
-                .child(Self::render_duration(
-                    "Inference",
-                    prediction.inference_time,
-                ))
-                .child(Self::render_duration("Parsing", prediction.parsing_time)),
+                .child(Self::render_duration("Inference", inference_time))
+                .child(Self::render_duration("Parsing", parsing_time)),
         )
     }
 
-    fn render_duration(name: &'static str, time: chrono::TimeDelta) -> Div {
+    fn render_duration(name: &'static str, time: Option<chrono::TimeDelta>) -> Div {
         h_flex()
             .gap_1()
             .child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
-            .child(
-                Label::new(if time.num_microseconds().unwrap_or(0) >= 1000 {
+            .child(match time {
+                Some(time) => Label::new(if time.num_microseconds().unwrap_or(0) >= 1000 {
                     format!("{} ms", time.num_milliseconds())
                 } else {
                     format!("{} µs", time.num_microseconds().unwrap_or(0))
                 })
                 .size(LabelSize::Small),
-            )
+                None => Label::new("...").size(LabelSize::Small),
+            })
     }
 
     fn render_content(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -599,18 +678,7 @@ impl Zeta2Inspector {
                 .items_center()
                 .child(Label::new("No prediction").size(LabelSize::Large))
                 .into_any(),
-            Some(LastPredictionState::Success(prediction)) => {
-                self.render_last_prediction(prediction, cx).into_any()
-            }
-            Some(LastPredictionState::Replaying { prediction, _task }) => self
-                .render_last_prediction(prediction, cx)
-                .opacity(0.6)
-                .into_any(),
-            Some(LastPredictionState::Failed(err)) => v_flex()
-                .p_4()
-                .gap_2()
-                .child(Label::new(err.clone()).buffer_font(cx))
-                .into_any(),
+            Some(prediction) => self.render_last_prediction(prediction, cx).into_any(),
         }
     }
 
@@ -630,7 +698,20 @@ impl Zeta2Inspector {
                         .gap_2()
                         .p_4()
                         .h_full()
-                        .child(ui::Headline::new("Prompt").size(ui::HeadlineSize::XSmall))
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(ui::Headline::new("Prompt").size(ui::HeadlineSize::XSmall))
+                                .child(match prediction.state {
+                                    LastPredictionState::Requested
+                                    | LastPredictionState::Failed { .. } => ui::Chip::new("Local")
+                                        .bg_color(cx.theme().status().warning_background)
+                                        .label_color(Color::Success),
+                                    LastPredictionState::Success { .. } => ui::Chip::new("Cloud")
+                                        .bg_color(cx.theme().status().success_background)
+                                        .label_color(Color::Success),
+                                }),
+                        )
                         .child(prediction.prompt_editor.clone()),
                 )
                 .child(ui::vertical_divider())
@@ -641,7 +722,22 @@ impl Zeta2Inspector {
                         .h_full()
                         .p_4()
                         .child(ui::Headline::new("Model Response").size(ui::HeadlineSize::XSmall))
-                        .child(prediction.model_response_editor.clone()),
+                        .child(match &prediction.state {
+                            LastPredictionState::Success {
+                                model_response_editor,
+                                ..
+                            } => model_response_editor.clone().into_any_element(),
+                            LastPredictionState::Requested => v_flex()
+                                .p_4()
+                                .gap_2()
+                                .child(Label::new("Loading...").buffer_font(cx))
+                                .into_any(),
+                            LastPredictionState::Failed { message } => v_flex()
+                                .p_4()
+                                .gap_2()
+                                .child(Label::new(message.clone()).buffer_font(cx))
+                                .into_any(),
+                        }),
                 ),
         }
     }
@@ -731,5 +827,60 @@ impl language::File for ExcerptMetadataFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+struct ZetaContextAddon {
+    excerpt_score_components: HashMap<editor::ExcerptId, DeclarationScoreComponents>,
+}
+
+impl editor::Addon for ZetaContextAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn render_buffer_header_controls(
+        &self,
+        excerpt_info: &multi_buffer::ExcerptInfo,
+        _window: &Window,
+        _cx: &App,
+    ) -> Option<AnyElement> {
+        let score_components = self.excerpt_score_components.get(&excerpt_info.id)?.clone();
+
+        Some(
+            div()
+                .id(excerpt_info.id.to_proto() as usize)
+                .child(ui::Icon::new(IconName::Info))
+                .cursor(CursorStyle::PointingHand)
+                .tooltip(move |_, cx| {
+                    cx.new(|_| ScoreComponentsTooltip::new(&score_components))
+                        .into()
+                })
+                .into_any(),
+        )
+    }
+}
+
+struct ScoreComponentsTooltip {
+    text: SharedString,
+}
+
+impl ScoreComponentsTooltip {
+    fn new(components: &DeclarationScoreComponents) -> Self {
+        Self {
+            text: format!("{:#?}", components).into(),
+        }
+    }
+}
+
+impl Render for ScoreComponentsTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().pl_2().pt_2p5().child(
+            div()
+                .elevation_2(cx)
+                .py_1()
+                .px_2()
+                .child(ui::Label::new(self.text.clone()).buffer_font(cx)),
+        )
     }
 }

@@ -26,6 +26,7 @@ use std::env::consts;
 use util::fs::{make_file_executable, remove_matching};
 use util::rel_path::RelPath;
 
+use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -36,8 +37,6 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
-
-use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -272,7 +271,7 @@ impl LspInstaller for TyLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,
@@ -1181,26 +1180,20 @@ impl ToolchainLister for PythonToolchainProvider {
             }
             Some(PythonEnvironmentKind::Venv | PythonEnvironmentKind::VirtualEnv) => {
                 if let Some(prefix) = &toolchain.prefix {
-                    let activate_keyword = match shell {
-                        ShellKind::Cmd => ".",
-                        ShellKind::Nushell => "overlay use",
-                        ShellKind::PowerShell => ".",
-                        ShellKind::Fish => "source",
-                        ShellKind::Csh => "source",
-                        ShellKind::Posix => "source",
-                    };
+                    let activate_keyword = shell.activate_keyword();
                     let activate_script_name = match shell {
-                        ShellKind::Posix => "activate",
+                        ShellKind::Posix | ShellKind::Rc => "activate",
                         ShellKind::Csh => "activate.csh",
+                        ShellKind::Tcsh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
                         ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
+                        ShellKind::Xonsh => "activate.xsh",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
 
-                    if let Ok(quoted) =
-                        shlex::try_quote(&path.to_string_lossy()).map(Cow::into_owned)
+                    if let Some(quoted) = shell.try_quote(&path.to_string_lossy())
                         && fs.is_file(&path).await
                     {
                         activation_script.push(format!("{activate_keyword} {quoted}"));
@@ -1220,7 +1213,10 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
                     ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
+                    ShellKind::Tcsh => None,
                     ShellKind::Cmd => None,
+                    ShellKind::Rc => None,
+                    ShellKind::Xonsh => None,
                 })
             }
             _ => {}
@@ -2112,7 +2108,7 @@ impl LspInstaller for RuffLspAdapter {
         }
 
         download_server_binary(
-            delegate,
+            &*delegate.http_client(),
             &url,
             expected_digest.as_deref(),
             &destination_path,

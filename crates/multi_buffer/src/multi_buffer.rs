@@ -49,7 +49,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
-use util::post_inc;
+use util::{post_inc, rel_path::RelPath};
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -161,24 +161,34 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: u32,
-    path: Arc<str>,
+    // Used by the derived PartialOrd & Ord
+    sort_prefix: Option<u64>,
+    path: Arc<RelPath>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u32, path: Arc<str>) -> Self {
-        Self { namespace, path }
+    pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
+        Self {
+            sort_prefix: Some(sort_prefix),
+            path,
+        }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
+            Self::with_sort_prefix(file.worktree_id(cx).to_proto(), file.path().clone())
         } else {
-            Self::namespaced(0, buffer.entity_id().to_string().into())
+            Self {
+                sort_prefix: None,
+                path: RelPath::unix(&buffer.entity_id().to_string())
+                    .unwrap()
+                    .into_arc(),
+            }
         }
     }
 
-    pub fn path(&self) -> &Arc<str> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 }
@@ -4959,24 +4969,20 @@ impl MultiBufferSnapshot {
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
             let excerpt_id = self.latest_excerpt_id(anchor.excerpt_id);
-            let excerpt_anchors = iter::from_fn(|| {
-                let anchor = anchors.peek()?;
-                if self.latest_excerpt_id(anchor.excerpt_id) == excerpt_id {
-                    Some(anchors.next().unwrap())
-                } else {
-                    None
-                }
+
+            let excerpt_anchors = anchors.peeking_take_while(|anchor| {
+                self.latest_excerpt_id(anchor.excerpt_id) == excerpt_id
             });
 
             let locator = self.excerpt_locator_for_id(excerpt_id);
             cursor.seek_forward(locator, Bias::Left);
-            if cursor.item().is_none() {
-                cursor.next();
+            if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
+                cursor.prev();
             }
 
             let excerpt_start_position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
-                if excerpt.id != excerpt_id {
+                if excerpt.id != excerpt_id && excerpt_id != ExcerptId::max() {
                     let position = self.resolve_summary_for_anchor(
                         &Anchor::min(),
                         excerpt_start_position,
@@ -6203,7 +6209,7 @@ impl MultiBufferSnapshot {
             .cursor::<Dimensions<Option<&Locator>, ExcerptDimension<Point>>>(());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         let mut sought_exact = cursor.seek(&Some(locator), Bias::Left);
-        if excerpt_id == ExcerptId::max() {
+        if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
             sought_exact = true;
             cursor.prev();
         } else if excerpt_id == ExcerptId::min() {
@@ -6235,7 +6241,7 @@ impl MultiBufferSnapshot {
             && excerpt.id == excerpt_id
         {
             return Some(excerpt);
-        } else if excerpt_id == ExcerptId::max() {
+        } else if cursor.item().is_none() && excerpt_id == ExcerptId::max() {
             cursor.prev();
             return cursor.item();
         }
@@ -6379,6 +6385,17 @@ impl MultiBufferSnapshot {
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
+    }
+
+    // used by line_mode selections and tries to match vim behavior
+    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(range.end.row, self.line_len(MultiBufferRow(range.end.row)))
+        } else {
+            range.end
+        };
+        new_start..new_end
     }
 }
 

@@ -127,7 +127,7 @@ struct AutoUpdateSetting(bool);
 ///
 /// Default: true
 impl Settings for AutoUpdateSetting {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         Self(content.auto_update.unwrap())
     }
 }
@@ -658,7 +658,7 @@ impl AutoUpdater {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("zed_editor_installer.exe"),
+            "windows" => Ok("Zed.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 

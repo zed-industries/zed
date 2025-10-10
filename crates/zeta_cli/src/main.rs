@@ -1,33 +1,40 @@
 mod headless;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
-use cloud_llm_client::predict_edits_v3;
+use cloud_llm_client::predict_edits_v3::{self, DeclarationScoreComponents};
 use edit_prediction_context::{
-    Declaration, EditPredictionContext, EditPredictionExcerptOptions, Identifier, ReferenceRegion,
-    SyntaxIndex, references_in_range,
+    Declaration, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, Identifier, Imports, Reference,
+    ReferenceRegion, SyntaxIndex, SyntaxIndexState, references_in_range,
 };
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
 use gpui::{Entity, Task};
-use language::{Bias, LanguageServerId};
+use language::{Bias, BufferSnapshot, LanguageServerId, Point};
 use language::{Buffer, OffsetRangeExt};
-use language::{LanguageId, Point};
+use language::{LanguageId, ParseStatus};
 use language_model::LlmApiToken;
 use ordered_float::OrderedFloat;
-use project::{Project, ProjectPath, Worktree};
+use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::json;
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Display};
+use std::fs::File;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::Write as _;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, atomic};
 use std::time::Duration;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -59,10 +66,16 @@ enum Commands {
         context_args: Option<ContextArgs>,
     },
     RetrievalStats {
+        #[clap(flatten)]
+        zeta2_args: Zeta2Args,
         #[arg(long)]
         worktree: PathBuf,
-        #[arg(long, default_value_t = 42)]
-        file_indexing_parallelism: usize,
+        #[arg(long)]
+        extension: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        skip: Option<usize>,
     },
 }
 
@@ -72,7 +85,7 @@ struct ContextArgs {
     #[arg(long)]
     worktree: PathBuf,
     #[arg(long)]
-    cursor: CursorPosition,
+    cursor: SourceLocation,
     #[arg(long)]
     use_language_server: bool,
     #[arg(long)]
@@ -97,6 +110,8 @@ struct Zeta2Args {
     output_format: OutputFormat,
     #[arg(long, default_value_t = 42)]
     file_indexing_parallelism: usize,
+    #[arg(long, default_value_t = false)]
+    disable_imports_gathering: bool,
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
@@ -151,20 +166,51 @@ impl FromStr for FileOrStdin {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CursorPosition {
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+struct SourceLocation {
     path: Arc<RelPath>,
     point: Point,
 }
 
-impl FromStr for CursorPosition {
+impl Serialize for SourceLocation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SourceLocation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.path.display(PathStyle::Posix),
+            self.point.row + 1,
+            self.point.column + 1
+        )
+    }
+}
+
+impl FromStr for SourceLocation {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() != 3 {
             return Err(anyhow!(
-                "Invalid cursor format. Expected 'file.rs:line:column', got '{}'",
+                "Invalid source location. Expected 'file.rs:line:column', got '{}'",
                 s
             ));
         }
@@ -180,7 +226,7 @@ impl FromStr for CursorPosition {
         // Convert from 1-based to 0-based indexing
         let point = Point::new(line.saturating_sub(1), column.saturating_sub(1));
 
-        Ok(CursorPosition { path, point })
+        Ok(SourceLocation { path, point })
     }
 }
 
@@ -225,16 +271,17 @@ async fn get_context(
     let mut ready_languages = HashSet::default();
     let (_lsp_open_handle, buffer) = if use_language_server {
         let (lsp_open_handle, _, buffer) = open_buffer_with_language_server(
-            &project,
-            &worktree,
-            &cursor.path,
+            project.clone(),
+            worktree.clone(),
+            cursor.path.clone(),
             &mut ready_languages,
             cx,
         )
         .await?;
         (Some(lsp_open_handle), buffer)
     } else {
-        let buffer = open_buffer(&project, &worktree, &cursor.path, cx).await?;
+        let buffer =
+            open_buffer(project.clone(), worktree.clone(), cursor.path.clone(), cx).await?;
         (None, buffer)
     };
 
@@ -281,18 +328,7 @@ async fn get_context(
                     zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
                 });
                 let indexing_done_task = zeta.update(cx, |zeta, cx| {
-                    zeta.set_options(zeta2::ZetaOptions {
-                        excerpt: EditPredictionExcerptOptions {
-                            max_bytes: zeta2_args.max_excerpt_bytes,
-                            min_bytes: zeta2_args.min_excerpt_bytes,
-                            target_before_cursor_over_total_bytes: zeta2_args
-                                .target_before_cursor_over_total_bytes,
-                        },
-                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
-                        max_prompt_bytes: zeta2_args.max_prompt_bytes,
-                        prompt_format: zeta2_args.prompt_format.into(),
-                        file_indexing_parallelism: zeta2_args.file_indexing_parallelism,
-                    });
+                    zeta.set_options(zeta2_args.to_options(true));
                     zeta.register_buffer(&buffer, &project, cx);
                     zeta.wait_for_initial_indexing(&project, cx)
                 });
@@ -340,12 +376,39 @@ async fn get_context(
     }
 }
 
+impl Zeta2Args {
+    fn to_options(&self, omit_excerpt_overlaps: bool) -> zeta2::ZetaOptions {
+        zeta2::ZetaOptions {
+            context: EditPredictionContextOptions {
+                use_imports: !self.disable_imports_gathering,
+                excerpt: EditPredictionExcerptOptions {
+                    max_bytes: self.max_excerpt_bytes,
+                    min_bytes: self.min_excerpt_bytes,
+                    target_before_cursor_over_total_bytes: self
+                        .target_before_cursor_over_total_bytes,
+                },
+                score: EditPredictionScoreOptions {
+                    omit_excerpt_overlaps,
+                },
+            },
+            max_diagnostic_bytes: self.max_diagnostic_bytes,
+            max_prompt_bytes: self.max_prompt_bytes,
+            prompt_format: self.prompt_format.clone().into(),
+            file_indexing_parallelism: self.file_indexing_parallelism,
+        }
+    }
+}
+
 pub async fn retrieval_stats(
     worktree: PathBuf,
-    file_indexing_parallelism: usize,
     app_state: Arc<ZetaCliAppState>,
+    only_extension: Option<String>,
+    file_limit: Option<usize>,
+    skip_files: Option<usize>,
+    options: zeta2::ZetaOptions,
     cx: &mut AsyncApp,
 ) -> Result<String> {
+    let options = Arc::new(options);
     let worktree_path = worktree.canonicalize()?;
 
     let project = cx.update(|cx| {
@@ -365,7 +428,6 @@ pub async fn retrieval_stats(
             project.create_worktree(&worktree_path, true, cx)
         })?
         .await?;
-    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id())?;
 
     // wait for worktree scan so that wait_for_initial_file_indexing waits for the whole worktree.
     worktree
@@ -374,21 +436,492 @@ pub async fn retrieval_stats(
         })?
         .await;
 
-    let index = cx.new(|cx| SyntaxIndex::new(&project, file_indexing_parallelism, cx))?;
+    let index = cx.new(|cx| SyntaxIndex::new(&project, options.file_indexing_parallelism, cx))?;
     index
         .read_with(cx, |index, cx| index.wait_for_initial_file_indexing(cx))?
         .await?;
-    let files = index
+    let indexed_files = index
         .read_with(cx, |index, cx| index.indexed_file_paths(cx))?
-        .await
+        .await;
+    let mut filtered_files = indexed_files
         .into_iter()
         .filter(|project_path| {
-            project_path
-                .path
-                .extension()
-                .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
+            let file_extension = project_path.path.extension();
+            if let Some(only_extension) = only_extension.as_ref() {
+                file_extension.is_some_and(|extension| extension == only_extension)
+            } else {
+                file_extension
+                    .is_some_and(|extension| !["md", "json", "sh", "diff"].contains(&extension))
+            }
         })
         .collect::<Vec<_>>();
+    filtered_files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let index_state = index.read_with(cx, |index, _cx| index.state().clone())?;
+    cx.update(|_| {
+        drop(index);
+    })?;
+    let index_state = Arc::new(
+        Arc::into_inner(index_state)
+            .context("Index state had more than 1 reference")?
+            .into_inner(),
+    );
+
+    struct FileSnapshot {
+        project_entry_id: ProjectEntryId,
+        snapshot: BufferSnapshot,
+        hash: u64,
+        parent_abs_path: Arc<Path>,
+    }
+
+    let files: Vec<FileSnapshot> = futures::future::try_join_all({
+        filtered_files
+            .iter()
+            .map(|file| {
+                let buffer_task =
+                    open_buffer(project.clone(), worktree.clone(), file.path.clone(), cx);
+                cx.spawn(async move |cx| {
+                    let buffer = buffer_task.await?;
+                    let (project_entry_id, parent_abs_path, snapshot) =
+                        buffer.read_with(cx, |buffer, cx| {
+                            let file = project::File::from_dyn(buffer.file()).unwrap();
+                            let project_entry_id = file.project_entry_id().unwrap();
+                            let mut parent_abs_path = file.worktree.read(cx).absolutize(&file.path);
+                            if !parent_abs_path.pop() {
+                                panic!("Invalid worktree path");
+                            }
+
+                            (project_entry_id, parent_abs_path, buffer.snapshot())
+                        })?;
+
+                    anyhow::Ok(
+                        cx.background_spawn(async move {
+                            let mut hasher = collections::FxHasher::default();
+                            snapshot.text().hash(&mut hasher);
+                            FileSnapshot {
+                                project_entry_id,
+                                snapshot,
+                                hash: hasher.finish(),
+                                parent_abs_path: parent_abs_path.into(),
+                            }
+                        })
+                        .await,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    })
+    .await?;
+
+    let mut file_snapshots = HashMap::default();
+    let mut hasher = collections::FxHasher::default();
+    for FileSnapshot {
+        project_entry_id,
+        snapshot,
+        hash,
+        ..
+    } in &files
+    {
+        file_snapshots.insert(*project_entry_id, snapshot.clone());
+        hash.hash(&mut hasher);
+    }
+    let files_hash = hasher.finish();
+    let file_snapshots = Arc::new(file_snapshots);
+
+    let lsp_definitions_path = std::env::current_dir()?.join(format!(
+        "target/zeta2-lsp-definitions-{:x}.json",
+        files_hash
+    ));
+
+    let lsp_definitions: Arc<_> = if std::fs::exists(&lsp_definitions_path)? {
+        log::info!(
+            "Using cached LSP definitions from {}",
+            lsp_definitions_path.display()
+        );
+        serde_json::from_reader(File::open(&lsp_definitions_path)?)?
+    } else {
+        log::warn!(
+            "No LSP definitions found populating {}",
+            lsp_definitions_path.display()
+        );
+        let lsp_definitions =
+            gather_lsp_definitions(&filtered_files, &worktree, &project, cx).await?;
+        serde_json::to_writer_pretty(File::create(&lsp_definitions_path)?, &lsp_definitions)?;
+        lsp_definitions
+    }
+    .into();
+
+    let files_len = files.len().min(file_limit.unwrap_or(usize::MAX));
+    let done_count = Arc::new(AtomicUsize::new(0));
+
+    let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
+    let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
+
+    let tasks = files
+        .into_iter()
+        .skip(skip_files.unwrap_or(0))
+        .take(file_limit.unwrap_or(usize::MAX))
+        .map(|project_file| {
+            let index_state = index_state.clone();
+            let lsp_definitions = lsp_definitions.clone();
+            let options = options.clone();
+            let output_tx = output_tx.clone();
+            let done_count = done_count.clone();
+            let file_snapshots = file_snapshots.clone();
+            cx.background_spawn(async move {
+                let snapshot = project_file.snapshot;
+
+                let full_range = 0..snapshot.len();
+                let references = references_in_range(
+                    full_range,
+                    &snapshot.text(),
+                    ReferenceRegion::Nearby,
+                    &snapshot,
+                );
+
+                println!("references: {}", references.len(),);
+
+                let imports = if options.context.use_imports {
+                    Imports::gather(&snapshot, Some(&project_file.parent_abs_path))
+                } else {
+                    Imports::default()
+                };
+
+                let path = snapshot.file().unwrap().path();
+
+                for reference in references {
+                    let query_point = snapshot.offset_to_point(reference.range.start);
+                    let source_location = SourceLocation {
+                        path: path.clone(),
+                        point: query_point,
+                    };
+                    let lsp_definitions = lsp_definitions
+                        .definitions
+                        .get(&source_location)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            log::warn!(
+                                "No definitions found for source location: {:?}",
+                                source_location
+                            );
+                            Vec::new()
+                        });
+
+                    let retrieve_result = retrieve_definitions(
+                        &reference,
+                        &imports,
+                        query_point,
+                        &snapshot,
+                        &index_state,
+                        &file_snapshots,
+                        &options,
+                    )
+                    .await?;
+
+                    // TODO: LSP returns things like locals, this filters out some of those, but potentially
+                    // hides some retrieval issues.
+                    if retrieve_result.definitions.is_empty() {
+                        continue;
+                    }
+
+                    let mut best_match = None;
+                    let mut has_external_definition = false;
+                    let mut in_excerpt = false;
+                    for (index, retrieved_definition) in
+                        retrieve_result.definitions.iter().enumerate()
+                    {
+                        for lsp_definition in &lsp_definitions {
+                            let SourceRange {
+                                path,
+                                point_range,
+                                offset_range,
+                            } = lsp_definition;
+                            let lsp_point_range =
+                                SerializablePoint::into_language_point_range(point_range.clone());
+                            has_external_definition = has_external_definition
+                                || path.is_absolute()
+                                || path
+                                    .components()
+                                    .any(|component| component.as_os_str() == "node_modules");
+                            let is_match = path.as_path()
+                                == retrieved_definition.path.as_std_path()
+                                && retrieved_definition
+                                    .range
+                                    .contains_inclusive(&lsp_point_range);
+                            if is_match {
+                                if best_match.is_none() {
+                                    best_match = Some(index);
+                                }
+                            }
+                            in_excerpt = in_excerpt
+                                || retrieve_result.excerpt_range.as_ref().is_some_and(
+                                    |excerpt_range| excerpt_range.contains_inclusive(&offset_range),
+                                );
+                        }
+                    }
+
+                    let outcome = if let Some(best_match) = best_match {
+                        RetrievalOutcome::Match { best_match }
+                    } else if has_external_definition {
+                        RetrievalOutcome::NoMatchDueToExternalLspDefinitions
+                    } else if in_excerpt {
+                        RetrievalOutcome::ProbablyLocal
+                    } else {
+                        RetrievalOutcome::NoMatch
+                    };
+
+                    let result = RetrievalStatsResult {
+                        outcome,
+                        path: path.clone(),
+                        identifier: reference.identifier,
+                        point: query_point,
+                        lsp_definitions,
+                        retrieved_definitions: retrieve_result.definitions,
+                    };
+
+                    output_tx.unbounded_send(result).ok();
+                }
+
+                println!(
+                    "{:02}/{:02} done",
+                    done_count.fetch_add(1, atomic::Ordering::Relaxed) + 1,
+                    files_len,
+                );
+
+                anyhow::Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    drop(output_tx);
+
+    let results_task = cx.background_spawn(async move {
+        let mut results = Vec::new();
+        while let Some(result) = output_rx.next().await {
+            output
+                .write_all(format!("{:#?}\n", result).as_bytes())
+                .log_err();
+            results.push(result)
+        }
+        results
+    });
+
+    futures::future::try_join_all(tasks).await?;
+    println!("Tasks completed");
+    let results = results_task.await;
+    println!("Results received");
+
+    let mut references_count = 0;
+
+    let mut included_count = 0;
+    let mut both_absent_count = 0;
+
+    let mut retrieved_count = 0;
+    let mut top_match_count = 0;
+    let mut non_top_match_count = 0;
+    let mut ranking_involved_top_match_count = 0;
+
+    let mut no_match_count = 0;
+    let mut no_match_none_retrieved = 0;
+    let mut no_match_wrong_retrieval = 0;
+
+    let mut expected_no_match_count = 0;
+    let mut in_excerpt_count = 0;
+    let mut external_definition_count = 0;
+
+    for result in results {
+        references_count += 1;
+        match &result.outcome {
+            RetrievalOutcome::Match { best_match } => {
+                included_count += 1;
+                retrieved_count += 1;
+                let multiple = result.retrieved_definitions.len() > 1;
+                if *best_match == 0 {
+                    top_match_count += 1;
+                    if multiple {
+                        ranking_involved_top_match_count += 1;
+                    }
+                } else {
+                    non_top_match_count += 1;
+                }
+            }
+            RetrievalOutcome::NoMatch => {
+                if result.lsp_definitions.is_empty() {
+                    included_count += 1;
+                    both_absent_count += 1;
+                } else {
+                    no_match_count += 1;
+                    if result.retrieved_definitions.is_empty() {
+                        no_match_none_retrieved += 1;
+                    } else {
+                        no_match_wrong_retrieval += 1;
+                    }
+                }
+            }
+            RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
+                expected_no_match_count += 1;
+                external_definition_count += 1;
+            }
+            RetrievalOutcome::ProbablyLocal => {
+                included_count += 1;
+                in_excerpt_count += 1;
+            }
+        }
+    }
+
+    fn count_and_percentage(part: usize, total: usize) -> String {
+        format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
+    }
+
+    println!("");
+    println!("╮ references: {}", references_count);
+    println!(
+        "├─╮ included: {}",
+        count_and_percentage(included_count, references_count),
+    );
+    println!(
+        "│ ├─╮ retrieved: {}",
+        count_and_percentage(retrieved_count, references_count)
+    );
+    println!(
+        "│ │ ├─╮ top match : {}",
+        count_and_percentage(top_match_count, retrieved_count)
+    );
+    println!(
+        "│ │ │ ╰─╴ involving ranking: {}",
+        count_and_percentage(ranking_involved_top_match_count, top_match_count)
+    );
+    println!(
+        "│ │ ╰─╴ non-top match: {}",
+        count_and_percentage(non_top_match_count, retrieved_count)
+    );
+    println!(
+        "│ ├─╴ both absent: {}",
+        count_and_percentage(both_absent_count, included_count)
+    );
+    println!(
+        "│ ╰─╴ in excerpt: {}",
+        count_and_percentage(in_excerpt_count, included_count)
+    );
+    println!(
+        "├─╮ no match: {}",
+        count_and_percentage(no_match_count, references_count)
+    );
+    println!(
+        "│ ├─╴ none retrieved: {}",
+        count_and_percentage(no_match_none_retrieved, no_match_count)
+    );
+    println!(
+        "│ ╰─╴ wrong retrieval: {}",
+        count_and_percentage(no_match_wrong_retrieval, no_match_count)
+    );
+    println!(
+        "╰─╮ expected no match: {}",
+        count_and_percentage(expected_no_match_count, references_count)
+    );
+    println!(
+        "  ╰─╴ external definition: {}",
+        count_and_percentage(external_definition_count, expected_no_match_count)
+    );
+
+    println!("");
+    println!("LSP definition cache at {}", lsp_definitions_path.display());
+
+    Ok("".to_string())
+}
+
+struct RetrieveResult {
+    definitions: Vec<RetrievedDefinition>,
+    excerpt_range: Option<Range<usize>>,
+}
+
+async fn retrieve_definitions(
+    reference: &Reference,
+    imports: &Imports,
+    query_point: Point,
+    snapshot: &BufferSnapshot,
+    index: &Arc<SyntaxIndexState>,
+    file_snapshots: &Arc<HashMap<ProjectEntryId, BufferSnapshot>>,
+    options: &Arc<zeta2::ZetaOptions>,
+) -> Result<RetrieveResult> {
+    let mut single_reference_map = HashMap::default();
+    single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
+    let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
+        query_point,
+        snapshot,
+        imports,
+        &options.context,
+        Some(&index),
+        |_, _, _| single_reference_map,
+    );
+
+    let Some(edit_prediction_context) = edit_prediction_context else {
+        return Ok(RetrieveResult {
+            definitions: Vec::new(),
+            excerpt_range: None,
+        });
+    };
+
+    let mut retrieved_definitions = Vec::new();
+    for scored_declaration in edit_prediction_context.declarations {
+        match &scored_declaration.declaration {
+            Declaration::File {
+                project_entry_id,
+                declaration,
+                ..
+            } => {
+                let Some(snapshot) = file_snapshots.get(&project_entry_id) else {
+                    log::error!("bug: file project entry not found");
+                    continue;
+                };
+                let path = snapshot.file().unwrap().path().clone();
+                retrieved_definitions.push(RetrievedDefinition {
+                    path,
+                    range: snapshot.offset_to_point(declaration.item_range.start)
+                        ..snapshot.offset_to_point(declaration.item_range.end),
+                    score: scored_declaration.score(DeclarationStyle::Declaration),
+                    retrieval_score: scored_declaration.retrieval_score(),
+                    components: scored_declaration.components,
+                });
+            }
+            Declaration::Buffer {
+                project_entry_id,
+                rope,
+                declaration,
+                ..
+            } => {
+                let Some(snapshot) = file_snapshots.get(&project_entry_id) else {
+                    // This case happens when dependency buffers have been opened by
+                    // go-to-definition, resulting in single-file worktrees.
+                    continue;
+                };
+                let path = snapshot.file().unwrap().path().clone();
+                retrieved_definitions.push(RetrievedDefinition {
+                    path,
+                    range: rope.offset_to_point(declaration.item_range.start)
+                        ..rope.offset_to_point(declaration.item_range.end),
+                    score: scored_declaration.score(DeclarationStyle::Declaration),
+                    retrieval_score: scored_declaration.retrieval_score(),
+                    components: scored_declaration.components,
+                });
+            }
+        }
+    }
+    retrieved_definitions.sort_by_key(|definition| Reverse(OrderedFloat(definition.score)));
+
+    Ok(RetrieveResult {
+        definitions: retrieved_definitions,
+        excerpt_range: Some(edit_prediction_context.excerpt.range),
+    })
+}
+
+async fn gather_lsp_definitions(
+    files: &[ProjectPath],
+    worktree: &Entity<Worktree>,
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<LspResults> {
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id())?;
 
     let lsp_store = project.read_with(cx, |project, _cx| project.lsp_store())?;
     cx.subscribe(&lsp_store, {
@@ -410,24 +943,22 @@ pub async fn retrieval_stats(
     })?
     .detach();
 
+    let mut definitions = HashMap::default();
+    let mut error_count = 0;
     let mut lsp_open_handles = Vec::new();
-    let mut output = std::fs::File::create("retrieval-stats.txt")?;
-    let mut results = Vec::new();
     let mut ready_languages = HashSet::default();
     for (file_index, project_path) in files.iter().enumerate() {
-        let processing_file_message = format!(
+        println!(
             "Processing file {} of {}: {}",
             file_index + 1,
             files.len(),
             project_path.path.display(PathStyle::Posix)
         );
-        println!("{}", processing_file_message);
-        write!(output, "{processing_file_message}\n\n").ok();
 
         let Some((lsp_open_handle, language_server_id, buffer)) = open_buffer_with_language_server(
-            &project,
-            &worktree,
-            &project_path.path,
+            project.clone(),
+            worktree.clone(),
+            project_path.path.clone(),
             &mut ready_languages,
             cx,
         )
@@ -463,273 +994,182 @@ pub async fn retrieval_stats(
                 .await;
         }
 
-        let index = index.read_with(cx, |index, _cx| index.state().clone())?;
-        let index = index.lock().await;
         for reference in references {
-            let query_point = snapshot.offset_to_point(reference.range.start);
-            let mut single_reference_map = HashMap::default();
-            single_reference_map.insert(reference.identifier.clone(), vec![reference.clone()]);
-            let edit_prediction_context = EditPredictionContext::gather_context_with_references_fn(
-                query_point,
-                &snapshot,
-                &zeta2::DEFAULT_EXCERPT_OPTIONS,
-                Some(&index),
-                |_, _, _| single_reference_map,
-            );
-
-            let Some(edit_prediction_context) = edit_prediction_context else {
-                let result = RetrievalStatsResult {
-                    identifier: reference.identifier,
-                    point: query_point,
-                    outcome: RetrievalStatsOutcome::NoExcerpt,
-                };
-                write!(output, "{:?}\n\n", result)?;
-                results.push(result);
-                continue;
-            };
-
-            let mut retrieved_definitions = Vec::new();
-            for scored_declaration in edit_prediction_context.declarations {
-                match &scored_declaration.declaration {
-                    Declaration::File {
-                        project_entry_id,
-                        declaration,
-                    } => {
-                        let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                            worktree
-                                .entry_for_id(*project_entry_id)
-                                .map(|entry| entry.path.clone())
-                        })?
-                        else {
-                            log::error!("bug: file project entry not found");
-                            continue;
-                        };
-                        let project_path = ProjectPath {
-                            worktree_id,
-                            path: path.clone(),
-                        };
-                        let buffer = project
-                            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                            .await?;
-                        let rope = buffer.read_with(cx, |buffer, _cx| buffer.as_rope().clone())?;
-                        retrieved_definitions.push((
-                            path,
-                            rope.offset_to_point(declaration.item_range.start)
-                                ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.scores.declaration,
-                            scored_declaration.scores.retrieval,
-                        ));
-                    }
-                    Declaration::Buffer {
-                        project_entry_id,
-                        rope,
-                        declaration,
-                        ..
-                    } => {
-                        let Some(path) = worktree.read_with(cx, |worktree, _cx| {
-                            worktree
-                                .entry_for_id(*project_entry_id)
-                                .map(|entry| entry.path.clone())
-                        })?
-                        else {
-                            // This case happens when dependency buffers have been opened by
-                            // go-to-definition, resulting in single-file worktrees.
-                            continue;
-                        };
-                        retrieved_definitions.push((
-                            path,
-                            rope.offset_to_point(declaration.item_range.start)
-                                ..rope.offset_to_point(declaration.item_range.end),
-                            scored_declaration.scores.declaration,
-                            scored_declaration.scores.retrieval,
-                        ));
-                    }
-                }
-            }
-            retrieved_definitions
-                .sort_by_key(|(_, _, _, retrieval_score)| Reverse(OrderedFloat(*retrieval_score)));
-
-            // TODO: Consider still checking language server in this case, or having a mode for
-            // this. For now assuming that the purpose of this is to refine the ranking rather than
-            // refining whether the definition is present at all.
-            if retrieved_definitions.is_empty() {
-                continue;
-            }
-
             // TODO: Rename declaration to definition in edit_prediction_context?
             let lsp_result = project
                 .update(cx, |project, cx| {
                     project.definitions(&buffer, reference.range.start, cx)
                 })?
                 .await;
+
             match lsp_result {
                 Ok(lsp_definitions) => {
-                    let lsp_definitions = lsp_definitions
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter_map(|definition| {
-                            definition
-                                .target
-                                .buffer
-                                .read_with(cx, |buffer, _cx| {
-                                    let path = buffer.file()?.path();
-                                    // filter out definitions from single-file worktrees
-                                    if path.is_empty() {
-                                        None
-                                    } else {
-                                        Some((
-                                            path.clone(),
-                                            definition.target.range.to_point(&buffer),
-                                        ))
-                                    }
-                                })
-                                .ok()?
-                        })
-                        .collect::<Vec<_>>();
+                    let mut targets = Vec::new();
+                    for target in lsp_definitions.unwrap_or_default() {
+                        let buffer = target.target.buffer;
+                        let anchor_range = target.target.range;
+                        buffer.read_with(cx, |buffer, cx| {
+                            let Some(file) = project::File::from_dyn(buffer.file()) else {
+                                return;
+                            };
+                            let file_worktree = file.worktree.read(cx);
+                            let file_worktree_id = file_worktree.id();
+                            // Relative paths for worktree files, absolute for all others
+                            let path = if worktree_id != file_worktree_id {
+                                file.worktree.read(cx).absolutize(&file.path)
+                            } else {
+                                file.path.as_std_path().to_path_buf()
+                            };
+                            let offset_range = anchor_range.to_offset(&buffer);
+                            let point_range = SerializablePoint::from_language_point_range(
+                                offset_range.to_point(&buffer),
+                            );
+                            targets.push(SourceRange {
+                                path,
+                                offset_range,
+                                point_range,
+                            });
+                        })?;
+                    }
 
-                    let result = RetrievalStatsResult {
-                        identifier: reference.identifier,
-                        point: query_point,
-                        outcome: RetrievalStatsOutcome::Success {
-                            matches: lsp_definitions
-                                .iter()
-                                .map(|(path, range)| {
-                                    retrieved_definitions.iter().position(
-                                        |(retrieved_path, retrieved_range, _, _)| {
-                                            path == retrieved_path
-                                                && retrieved_range.contains_inclusive(&range)
-                                        },
-                                    )
-                                })
-                                .collect(),
-                            lsp_definitions,
-                            retrieved_definitions,
+                    definitions.insert(
+                        SourceLocation {
+                            path: project_path.path.clone(),
+                            point: snapshot.offset_to_point(reference.range.start),
                         },
-                    };
-                    write!(output, "{:?}\n\n", result)?;
-                    results.push(result);
+                        targets,
+                    );
                 }
                 Err(err) => {
-                    let result = RetrievalStatsResult {
-                        identifier: reference.identifier,
-                        point: query_point,
-                        outcome: RetrievalStatsOutcome::LanguageServerError {
-                            message: err.to_string(),
-                        },
-                    };
-                    write!(output, "{:?}\n\n", result)?;
-                    results.push(result);
+                    log::error!("Language server error: {err}");
+                    error_count += 1;
                 }
             }
         }
     }
 
-    let mut no_excerpt_count = 0;
-    let mut error_count = 0;
-    let mut definitions_count = 0;
-    let mut top_match_count = 0;
-    let mut non_top_match_count = 0;
-    let mut ranking_involved_count = 0;
-    let mut ranking_involved_top_match_count = 0;
-    let mut ranking_involved_non_top_match_count = 0;
-    for result in &results {
-        match &result.outcome {
-            RetrievalStatsOutcome::NoExcerpt => no_excerpt_count += 1,
-            RetrievalStatsOutcome::LanguageServerError { .. } => error_count += 1,
-            RetrievalStatsOutcome::Success {
-                matches,
-                retrieved_definitions,
-                ..
-            } => {
-                definitions_count += 1;
-                let top_matches = matches.contains(&Some(0));
-                if top_matches {
-                    top_match_count += 1;
-                }
-                let non_top_matches = !top_matches && matches.iter().any(|index| *index != Some(0));
-                if non_top_matches {
-                    non_top_match_count += 1;
-                }
-                if retrieved_definitions.len() > 1 {
-                    ranking_involved_count += 1;
-                    if top_matches {
-                        ranking_involved_top_match_count += 1;
-                    }
-                    if non_top_matches {
-                        ranking_involved_non_top_match_count += 1;
-                    }
-                }
-            }
-        }
+    log::error!("Encountered {} language server errors", error_count);
+
+    Ok(LspResults { definitions })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+struct LspResults {
+    definitions: HashMap<SourceLocation, Vec<SourceRange>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceRange {
+    path: PathBuf,
+    point_range: Range<SerializablePoint>,
+    offset_range: Range<usize>,
+}
+
+/// Serializes to 1-based row and column indices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializablePoint {
+    pub row: u32,
+    pub column: u32,
+}
+
+impl SerializablePoint {
+    pub fn into_language_point_range(range: Range<Self>) -> Range<Point> {
+        range.start.into()..range.end.into()
     }
 
-    println!("\nStats:\n");
-    println!("No Excerpt: {}", no_excerpt_count);
-    println!("Language Server Error: {}", error_count);
-    println!("Definitions: {}", definitions_count);
-    println!("Top Match: {}", top_match_count);
-    println!("Non-Top Match: {}", non_top_match_count);
-    println!("Ranking Involved: {}", ranking_involved_count);
-    println!(
-        "Ranking Involved Top Match: {}",
-        ranking_involved_top_match_count
-    );
-    println!(
-        "Ranking Involved Non-Top Match: {}",
-        ranking_involved_non_top_match_count
-    );
+    pub fn from_language_point_range(range: Range<Point>) -> Range<Self> {
+        range.start.into()..range.end.into()
+    }
+}
 
-    Ok("".to_string())
+impl From<Point> for SerializablePoint {
+    fn from(point: Point) -> Self {
+        SerializablePoint {
+            row: point.row + 1,
+            column: point.column + 1,
+        }
+    }
+}
+
+impl From<SerializablePoint> for Point {
+    fn from(serializable: SerializablePoint) -> Self {
+        Point {
+            row: serializable.row.saturating_sub(1),
+            column: serializable.column.saturating_sub(1),
+        }
+    }
 }
 
 #[derive(Debug)]
 struct RetrievalStatsResult {
+    outcome: RetrievalOutcome,
+    #[allow(dead_code)]
+    path: Arc<RelPath>,
     #[allow(dead_code)]
     identifier: Identifier,
     #[allow(dead_code)]
     point: Point,
-    outcome: RetrievalStatsOutcome,
+    #[allow(dead_code)]
+    lsp_definitions: Vec<SourceRange>,
+    retrieved_definitions: Vec<RetrievedDefinition>,
 }
 
 #[derive(Debug)]
-enum RetrievalStatsOutcome {
-    NoExcerpt,
-    LanguageServerError {
-        #[allow(dead_code)]
-        message: String,
+enum RetrievalOutcome {
+    Match {
+        /// Lowest index within retrieved_definitions that matches an LSP definition.
+        best_match: usize,
     },
-    Success {
-        matches: Vec<Option<usize>>,
-        #[allow(dead_code)]
-        lsp_definitions: Vec<(Arc<RelPath>, Range<Point>)>,
-        retrieved_definitions: Vec<(Arc<RelPath>, Range<Point>, f32, f32)>,
-    },
+    ProbablyLocal,
+    NoMatch,
+    NoMatchDueToExternalLspDefinitions,
 }
 
-pub async fn open_buffer(
-    project: &Entity<Project>,
-    worktree: &Entity<Worktree>,
-    path: &RelPath,
-    cx: &mut AsyncApp,
-) -> Result<Entity<Buffer>> {
-    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-        worktree_id: worktree.id(),
-        path: path.into(),
-    })?;
+#[derive(Debug)]
+struct RetrievedDefinition {
+    path: Arc<RelPath>,
+    range: Range<Point>,
+    score: f32,
+    #[allow(dead_code)]
+    retrieval_score: f32,
+    #[allow(dead_code)]
+    components: DeclarationScoreComponents,
+}
 
-    project
-        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-        .await
+pub fn open_buffer(
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<RelPath>,
+    cx: &AsyncApp,
+) -> Task<Result<Entity<Buffer>>> {
+    cx.spawn(async move |cx| {
+        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+            worktree_id: worktree.id(),
+            path,
+        })?;
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?;
+
+        let mut parse_status = buffer.read_with(cx, |buffer, _cx| buffer.parse_status())?;
+        while *parse_status.borrow() != ParseStatus::Idle {
+            parse_status.changed().await?;
+        }
+
+        Ok(buffer)
+    })
 }
 
 pub async fn open_buffer_with_language_server(
-    project: &Entity<Project>,
-    worktree: &Entity<Worktree>,
-    path: &RelPath,
+    project: Entity<Project>,
+    worktree: Entity<Worktree>,
+    path: Arc<RelPath>,
     ready_languages: &mut HashSet<LanguageId>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Entity<Buffer>>, LanguageServerId, Entity<Buffer>)> {
-    let buffer = open_buffer(project, worktree, path, cx).await?;
+    let buffer = open_buffer(project.clone(), worktree, path.clone(), cx).await?;
 
     let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
         (
@@ -940,9 +1380,23 @@ fn main() {
                     .await
                 }
                 Commands::RetrievalStats {
+                    zeta2_args,
                     worktree,
-                    file_indexing_parallelism,
-                } => retrieval_stats(worktree, file_indexing_parallelism, app_state, cx).await,
+                    extension,
+                    limit,
+                    skip,
+                } => {
+                    retrieval_stats(
+                        worktree,
+                        app_state,
+                        extension,
+                        limit,
+                        skip,
+                        (&zeta2_args).to_options(false),
+                        cx,
+                    )
+                    .await
+                }
             };
             match result {
                 Ok(output) => {

@@ -8,19 +8,19 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use client::Client;
 use collections::HashMap;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::StreamExt as _;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
 };
+use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use remote::RemoteClient;
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsContent, SettingsStore};
+use settings::SettingsStore;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -112,6 +112,7 @@ enum AgentServerStoreState {
         project_environment: Entity<ProjectEnvironment>,
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
+        http_client: Arc<dyn HttpClient>,
         _subscriptions: [Subscription; 1],
     },
     Remote {
@@ -143,10 +144,6 @@ impl AgentServerStore {
 
     fn agent_servers_settings_changed(&mut self, cx: &mut Context<Self>) {
         let AgentServerStoreState::Local {
-            node_runtime,
-            fs,
-            project_environment,
-            downstream_client,
             settings: old_settings,
             ..
         } = &mut self.state
@@ -164,6 +161,30 @@ impl AgentServerStore {
         if Some(&new_settings) == old_settings.as_ref() {
             return;
         }
+
+        self.reregister_agents(cx);
+    }
+
+    fn reregister_agents(&mut self, cx: &mut Context<Self>) {
+        let AgentServerStoreState::Local {
+            node_runtime,
+            fs,
+            project_environment,
+            downstream_client,
+            settings: old_settings,
+            http_client,
+            ..
+        } = &mut self.state
+        else {
+            debug_panic!("Non-local projects should never attempt to reregister. This is a bug!");
+
+            return;
+        };
+
+        let new_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
 
         self.external_agents.clear();
         self.external_agents.insert(
@@ -183,32 +204,19 @@ impl AgentServerStore {
                     .unwrap_or(true),
             }),
         );
-        self.external_agents
-            .extend(new_settings.custom.iter().map(|(name, settings)| {
-                (
-                    ExternalAgentServerName(name.clone()),
-                    Box::new(LocalCustomAgent {
-                        command: settings.command.clone(),
-                        project_environment: project_environment.clone(),
-                    }) as Box<dyn ExternalAgentServer>,
-                )
-            }));
-
-        use feature_flags::FeatureFlagAppExt as _;
-        if cx.has_flag::<feature_flags::CodexAcpFeatureFlag>() || new_settings.codex.is_some() {
-            self.external_agents.insert(
-                CODEX_NAME.into(),
-                Box::new(LocalCodex {
-                    fs: fs.clone(),
-                    project_environment: project_environment.clone(),
-                    custom_command: new_settings
-                        .codex
-                        .clone()
-                        .and_then(|settings| settings.custom_command()),
-                }),
-            );
-        }
-
+        self.external_agents.insert(
+            CODEX_NAME.into(),
+            Box::new(LocalCodex {
+                fs: fs.clone(),
+                project_environment: project_environment.clone(),
+                custom_command: new_settings
+                    .codex
+                    .clone()
+                    .and_then(|settings| settings.custom_command()),
+                http_client: http_client.clone(),
+                is_remote: downstream_client.is_some(),
+            }),
+        );
         self.external_agents.insert(
             CLAUDE_CODE_NAME.into(),
             Box::new(LocalClaudeCode {
@@ -221,6 +229,16 @@ impl AgentServerStore {
                     .and_then(|settings| settings.custom_command()),
             }),
         );
+        self.external_agents
+            .extend(new_settings.custom.iter().map(|(name, settings)| {
+                (
+                    ExternalAgentServerName(name.clone()),
+                    Box::new(LocalCustomAgent {
+                        command: settings.command.clone(),
+                        project_environment: project_environment.clone(),
+                    }) as Box<dyn ExternalAgentServer>,
+                )
+            }));
 
         *old_settings = Some(new_settings.clone());
 
@@ -231,7 +249,6 @@ impl AgentServerStore {
                     names: self
                         .external_agents
                         .keys()
-                        .filter(|name| name.0 != CODEX_NAME)
                         .map(|name| name.to_string())
                         .collect(),
                 })
@@ -244,6 +261,7 @@ impl AgentServerStore {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         project_environment: Entity<ProjectEnvironment>,
+        http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
@@ -254,6 +272,7 @@ impl AgentServerStore {
                 node_runtime,
                 fs,
                 project_environment,
+                http_client,
                 downstream_client: None,
                 settings: None,
                 _subscriptions: [subscription],
@@ -264,31 +283,37 @@ impl AgentServerStore {
         this
     }
 
-    pub(crate) fn remote(
-        project_id: u64,
-        upstream_client: Entity<RemoteClient>,
-        _cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn remote(project_id: u64, upstream_client: Entity<RemoteClient>) -> Self {
         // Set up the builtin agents here so they're immediately available in
         // remote projects--we know that the HeadlessProject on the other end
         // will have them.
         let external_agents = [
-            (
-                GEMINI_NAME.into(),
-                Box::new(RemoteExternalAgentServer {
-                    project_id,
-                    upstream_client: upstream_client.clone(),
-                    name: GEMINI_NAME.into(),
-                    status_tx: None,
-                    new_version_available_tx: None,
-                }) as Box<dyn ExternalAgentServer>,
-            ),
             (
                 CLAUDE_CODE_NAME.into(),
                 Box::new(RemoteExternalAgentServer {
                     project_id,
                     upstream_client: upstream_client.clone(),
                     name: CLAUDE_CODE_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
+            (
+                CODEX_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: CODEX_NAME.into(),
+                    status_tx: None,
+                    new_version_available_tx: None,
+                }) as Box<dyn ExternalAgentServer>,
+            ),
+            (
+                GEMINI_NAME.into(),
+                Box::new(RemoteExternalAgentServer {
+                    project_id,
+                    upstream_client: upstream_client.clone(),
+                    name: GEMINI_NAME.into(),
                     status_tx: None,
                     new_version_available_tx: None,
                 }) as Box<dyn ExternalAgentServer>,
@@ -971,7 +996,9 @@ impl ExternalAgentServer for LocalClaudeCode {
 struct LocalCodex {
     fs: Arc<dyn Fs>,
     project_environment: Entity<ProjectEnvironment>,
+    http_client: Arc<dyn HttpClient>,
     custom_command: Option<AgentServerCommand>,
+    is_remote: bool,
 }
 
 impl ExternalAgentServer for LocalCodex {
@@ -985,11 +1012,13 @@ impl ExternalAgentServer for LocalCodex {
     ) -> Task<Result<(AgentServerCommand, String, Option<task::SpawnInTerminal>)>> {
         let fs = self.fs.clone();
         let project_environment = self.project_environment.downgrade();
+        let http = self.http_client.clone();
         let custom_command = self.custom_command.clone();
         let root_dir: Arc<Path> = root_dir
             .map(|root_dir| Path::new(root_dir))
             .unwrap_or(paths::home_dir())
             .into();
+        let is_remote = self.is_remote;
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -998,6 +1027,9 @@ impl ExternalAgentServer for LocalCodex {
                 })?
                 .await
                 .unwrap_or_default();
+            if is_remote {
+                env.insert("NO_BROWSER".to_owned(), "1".to_owned());
+            }
 
             let mut command = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
@@ -1008,9 +1040,8 @@ impl ExternalAgentServer for LocalCodex {
                 fs.create_dir(&dir).await?;
 
                 // Find or install the latest Codex release (no update checks for now).
-                let http = cx.update(|cx| Client::global(cx).http_client())?;
                 let release = ::http_client::github::latest_github_release(
-                    "zed-industries/codex-acp",
+                    CODEX_ACP_REPO,
                     true,
                     false,
                     http.clone(),
@@ -1020,42 +1051,27 @@ impl ExternalAgentServer for LocalCodex {
 
                 let version_dir = dir.join(&release.tag_name);
                 if !fs.is_dir(&version_dir).await {
-                    // Assemble release download URL from prefix, tag, and filename based on target triple.
-                    // If unsupported, silently skip download.
-                    let tag = release.tag_name.clone(); // e.g. "v0.1.0"
+                    let tag = release.tag_name.clone();
                     let version_number = tag.trim_start_matches('v');
-                    if let Some(asset_url) = codex_release_url(version_number) {
-                        let http = http.clone();
-                        let mut response = http
-                            .get(&asset_url, Default::default(), true)
-                            .await
-                            .with_context(|| {
-                                format!("downloading Codex binary from {}", asset_url)
-                            })?;
-                        anyhow::ensure!(
-                            response.status().is_success(),
-                            "failed to download Codex release: {}",
-                            response.status()
-                        );
-
-                        // Extract archive into the version directory.
-                        if asset_url.ends_with(".zip") {
-                            let reader = futures::io::BufReader::new(response.body_mut());
-                            util::archive::extract_zip(&version_dir, reader)
-                                .await
-                                .context("extracting Codex binary from zip")?;
+                    let asset_name = asset_name(version_number)
+                        .context("codex acp is not supported for this architecture")?;
+                    let asset = release
+                        .assets
+                        .into_iter()
+                        .find(|asset| asset.name == asset_name)
+                        .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+                    ::http_client::github_download::download_server_binary(
+                        &*http,
+                        &asset.browser_download_url,
+                        asset.digest.as_deref(),
+                        &version_dir,
+                        if cfg!(target_os = "windows") && cfg!(target_arch = "x86_64") {
+                            AssetKind::Zip
                         } else {
-                            // Decompress and extract the tar.gz into the version directory.
-                            let reader = futures::io::BufReader::new(response.body_mut());
-                            let decoder =
-                                async_compression::futures::bufread::GzipDecoder::new(reader);
-                            let archive = async_tar::Archive::new(decoder);
-                            archive
-                                .unpack(&version_dir)
-                                .await
-                                .context("extracting Codex binary from tar.gz")?;
-                        }
-                    }
+                            AssetKind::TarGz
+                        },
+                    )
+                    .await?;
                 }
 
                 let bin_name = if cfg!(windows) {
@@ -1089,11 +1105,13 @@ impl ExternalAgentServer for LocalCodex {
     }
 }
 
+pub const CODEX_ACP_REPO: &str = "zed-industries/codex-acp";
+
 /// Assemble Codex release URL for the current OS/arch and the given version number.
 /// Returns None if the current target is unsupported.
 /// Example output:
 /// https://github.com/zed-industries/codex-acp/releases/download/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}
-fn codex_release_url(version: &str) -> Option<String> {
+fn asset_name(version: &str) -> Option<String> {
     let arch = if cfg!(target_arch = "x86_64") {
         "x86_64"
     } else if cfg!(target_arch = "aarch64") {
@@ -1119,11 +1137,7 @@ fn codex_release_url(version: &str) -> Option<String> {
         "tar.gz"
     };
 
-    let prefix = "https://github.com/zed-industries/codex-acp/releases/download";
-
-    Some(format!(
-        "{prefix}/v{version}/codex-acp-{version}-{arch}-{platform}.{ext}"
-    ))
+    Some(format!("codex-acp-{version}-{arch}-{platform}.{ext}"))
 }
 
 struct LocalCustomAgent {
@@ -1179,18 +1193,18 @@ mod tests {
         // Additionally, it verifies that our logic for assembling URLs
         // correctly resolves to a known-good URL on each of our targets.
         let allowed = [
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-apple-darwin.tar.gz",
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-pc-windows-msvc.tar.gz",
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-aarch64-unknown-linux-gnu.tar.gz",
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-apple-darwin.tar.gz",
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-pc-windows-msvc.zip",
-            "https://github.com/zed-industries/codex-acp/releases/download/v0.1.0/codex-acp-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+            "codex-acp-0.1.0-aarch64-apple-darwin.tar.gz",
+            "codex-acp-0.1.0-aarch64-pc-windows-msvc.tar.gz",
+            "codex-acp-0.1.0-aarch64-unknown-linux-gnu.tar.gz",
+            "codex-acp-0.1.0-x86_64-apple-darwin.tar.gz",
+            "codex-acp-0.1.0-x86_64-pc-windows-msvc.zip",
+            "codex-acp-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
         ];
 
-        if let Some(url) = super::codex_release_url(version_number) {
+        if let Some(url) = super::asset_name(version_number) {
             assert!(
                 allowed.contains(&url.as_str()),
-                "Assembled URL {} not in allowed list",
+                "Assembled asset name {} not in allowed list",
                 url
             );
         } else {
@@ -1279,7 +1293,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),
@@ -1292,6 +1306,4 @@ impl settings::Settings for AllAgentServersSettings {
                 .collect(),
         }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }
