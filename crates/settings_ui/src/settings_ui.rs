@@ -29,6 +29,7 @@ use std::{
     rc::Rc,
     sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
 };
+use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
     ContextMenu, Divider, DividerColor, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Switch, SwitchColor, Tooltip, TreeViewItem, WithScrollbar,
@@ -36,7 +37,7 @@ use ui::{
 };
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
 use zed_actions::OpenSettingsEditor;
 
 use crate::components::SettingsEditor;
@@ -409,6 +410,7 @@ pub fn open_settings_editor(
                 }),
                 focus: true,
                 show: true,
+                is_movable: true,
                 kind: gpui::WindowKind::Floating,
                 window_background: cx.theme().window_background_appearance(),
                 window_min_size: Some(size(px(900.), px(750.))), // 4:3 Aspect Ratio
@@ -442,6 +444,7 @@ fn sub_page_stack_mut() -> std::sync::RwLockWriteGuard<'static, Vec<SubPage>> {
 }
 
 pub struct SettingsWindow {
+    title_bar: Option<Entity<PlatformTitleBar>>,
     original_window: Option<WindowHandle<Workspace>>,
     files: Vec<(SettingsUiFile, FocusHandle)>,
     worktree_root_dirs: HashMap<WorktreeId, String>,
@@ -840,7 +843,14 @@ impl SettingsWindow {
         })
         .detach();
 
+        let title_bar = if !cfg!(target_os = "macos") {
+            Some(cx.new(|cx| PlatformTitleBar::new("settings-title-bar", cx)))
+        } else {
+            None
+        };
+
         let mut this = Self {
+            title_bar,
             original_window,
             worktree_root_dirs: HashMap::default(),
             files: vec![],
@@ -1372,7 +1382,8 @@ impl SettingsWindow {
         v_flex()
             .w_64()
             .p_2p5()
-            .pt_10()
+            .when(cfg!(target_os = "macos"), |c| c.pt_10())
+            .h_full()
             .flex_none()
             .border_r_1()
             .key_context("NavigationMenu")
@@ -1453,7 +1464,8 @@ impl SettingsWindow {
             .child(self.render_search(window, cx))
             .child(
                 v_flex()
-                    .flex_grow()
+                    .flex_1()
+                    .overflow_hidden()
                     .track_focus(&self.navbar_focus_handle.focus_handle(cx))
                     .tab_group()
                     .tab_index(NAVBAR_GROUP_TAB_INDEX)
@@ -1503,9 +1515,10 @@ impl SettingsWindow {
             .child(
                 h_flex()
                     .w_full()
+                    .h_8()
                     .p_2()
                     .pb_0p5()
-                    .flex_none()
+                    .flex_shrink_0()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .children(
@@ -1969,60 +1982,71 @@ impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
 
-        div()
-            .id("settings-window")
-            .key_context("SettingsWindow")
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
-                this.open_current_settings_file(cx);
-            }))
-            .on_action(|_: &Minimize, window, _cx| {
-                window.minimize_window();
-            })
-            .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
-                this.search_bar.focus_handle(cx).focus(window);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
-                if this
-                    .navbar_focus_handle
-                    .focus_handle(cx)
-                    .contains_focused(window, cx)
-                {
-                    this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
-                } else {
-                    this.focus_and_scroll_to_nav_entry(this.navbar_entry, window, cx);
-                }
-            }))
-            .on_action(
-                cx.listener(|this, FocusFile(file_index): &FocusFile, window, _| {
-                    this.focus_file_at_index(*file_index as usize, window);
-                }),
-            )
-            .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
-                let next_index = usize::min(
-                    this.focused_file_index(window, cx) + 1,
-                    this.files.len().saturating_sub(1),
-                );
-                this.focus_file_at_index(next_index, window);
-            }))
-            .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
-                let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
-                this.focus_file_at_index(prev_index, window);
-            }))
-            .on_action(|_: &menu::SelectNext, window, _| {
-                window.focus_next();
-            })
-            .on_action(|_: &menu::SelectPrevious, window, _| {
-                window.focus_prev();
-            })
-            .flex()
-            .flex_row()
-            .size_full()
-            .font(ui_font)
-            .bg(cx.theme().colors().background)
-            .text_color(cx.theme().colors().text)
-            .child(self.render_nav(window, cx))
-            .child(self.render_page(window, cx))
+        client_side_decorations(
+            v_flex()
+                .text_color(cx.theme().colors().text)
+                .size_full()
+                .children(self.title_bar.clone())
+                .child(
+                    div()
+                        .id("settings-window")
+                        .key_context("SettingsWindow")
+                        .track_focus(&self.focus_handle)
+                        .on_action(cx.listener(|this, _: &OpenCurrentFile, _, cx| {
+                            this.open_current_settings_file(cx);
+                        }))
+                        .on_action(|_: &Minimize, window, _cx| {
+                            window.minimize_window();
+                        })
+                        .on_action(cx.listener(|this, _: &search::FocusSearch, window, cx| {
+                            this.search_bar.focus_handle(cx).focus(window);
+                        }))
+                        .on_action(cx.listener(|this, _: &ToggleFocusNav, window, cx| {
+                            if this
+                                .navbar_focus_handle
+                                .focus_handle(cx)
+                                .contains_focused(window, cx)
+                            {
+                                this.open_and_scroll_to_navbar_entry(this.navbar_entry, window, cx);
+                            } else {
+                                this.focus_and_scroll_to_nav_entry(this.navbar_entry, window, cx);
+                            }
+                        }))
+                        .on_action(cx.listener(
+                            |this, FocusFile(file_index): &FocusFile, window, _| {
+                                this.focus_file_at_index(*file_index as usize, window);
+                            },
+                        ))
+                        .on_action(cx.listener(|this, _: &FocusNextFile, window, cx| {
+                            let next_index = usize::min(
+                                this.focused_file_index(window, cx) + 1,
+                                this.files.len().saturating_sub(1),
+                            );
+                            this.focus_file_at_index(next_index, window);
+                        }))
+                        .on_action(cx.listener(|this, _: &FocusPreviousFile, window, cx| {
+                            let prev_index = this.focused_file_index(window, cx).saturating_sub(1);
+                            this.focus_file_at_index(prev_index, window);
+                        }))
+                        .on_action(|_: &menu::SelectNext, window, _| {
+                            window.focus_next();
+                        })
+                        .on_action(|_: &menu::SelectPrevious, window, _| {
+                            window.focus_prev();
+                        })
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_h_0()
+                        .font(ui_font)
+                        .bg(cx.theme().colors().background)
+                        .text_color(cx.theme().colors().text)
+                        .child(self.render_nav(window, cx))
+                        .child(self.render_page(window, cx)),
+                ),
+            window,
+            cx,
+        )
     }
 }
 
@@ -2436,6 +2460,7 @@ mod test {
         }
 
         let mut settings_window = SettingsWindow {
+            title_bar: None,
             original_window: None,
             worktree_root_dirs: HashMap::default(),
             files: Vec::default(),
