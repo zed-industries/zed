@@ -114,11 +114,9 @@ impl Rope {
             chunks.next();
             chunks.next();
             self.chunks.append(chunks.suffix(), ());
-            self.check_invariants();
-            return;
+        } else {
+            self.chunks.append(rope.chunks, ());
         }
-
-        self.chunks.append(rope.chunks.clone(), ());
         self.check_invariants();
     }
 
