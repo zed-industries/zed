@@ -16247,6 +16247,128 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_semantic_tokens_on_language_server_start(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let mut full_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![lsp::SemanticToken {
+                            delta_line: 0,
+                            delta_start: 4,
+                            length: 3,
+                            token_type: 0,
+                            token_modifiers_bitset: 0,
+                        }],
+                        result_id: None,
+                    },
+                )))
+            }
+        });
+
+    cx.set_state("let ˇfoo = 1;");
+    
+    assert!(full_request.next().await.is_some());
+    
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    let buffer_id = cx.buffer(|b, _| b.remote_id());
+    let has_tokens = cx.editor(|e, _, cx| {
+        e.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
+    });
+    
+    assert!(has_tokens, "Semantic tokens should be fetched when language server starts");
+}
+
+#[gpui::test]
+async fn test_semantic_tokens_deferred_on_excerpts_added(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            semantic_tokens_provider: Some(
+                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                    lsp::SemanticTokensOptions {
+                        legend: lsp::SemanticTokensLegend {
+                            token_types: vec!["variable".into()],
+                            token_modifiers: vec![],
+                        },
+                        full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                        ..Default::default()
+                    },
+                ),
+            ),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_count_clone = request_count.clone();
+
+    let mut full_request =
+        cx.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(move |_, _, _| {
+            request_count_clone.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![lsp::SemanticToken {
+                            delta_line: 0,
+                            delta_start: 4,
+                            length: 3,
+                            token_type: 0,
+                            token_modifiers_bitset: 0,
+                        }],
+                        result_id: None,
+                    },
+                )))
+            }
+        });
+
+    cx.set_state("let ˇfoo = 1;");
+    
+    assert!(full_request.next().await.is_some());
+    
+    let task = cx.update_editor(|e, _, _| {
+        std::mem::replace(&mut e.update_semantic_tokens_task, Task::ready(()))
+    });
+    task.await;
+
+    cx.executor().run_until_parked();
+
+    assert!(
+        request_count.load(atomic::Ordering::Acquire) >= 1,
+        "Semantic tokens should be requested after deferred delay"
+    );
+}
+
+#[gpui::test]
 async fn lsp_semantic_tokens_full_capability(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

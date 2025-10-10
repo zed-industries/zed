@@ -294,18 +294,20 @@ use settings::{ GitGutterSetting, Settings, SettingsLocation, SettingsStore, upd
 use smallvec::{ SmallVec, smallvec };
 use snippet::Snippet;
 use std::{
-    any::{ Any, TypeId },
+    any::{Any, TypeId},
     borrow::Cow,
-    cell::{ OnceCell, RefCell },
-    cmp::{ self, Ordering, Reverse },
-    iter::{ self, Peekable },
+    cell::{OnceCell, RefCell},
+    cmp::{self, Ordering, Reverse},
+    collections::hash_map,
+    fmt::Write,
+    iter::{self, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{ ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive },
-    path::{ Path, PathBuf },
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
+    path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::{ Duration, Instant },
+    time::{Duration, Instant},
 };
 use task::{ ResolvedTask, RunnableTag, TaskTemplate, TaskVariables };
 use text::{ BufferId, FromAnchor, OffsetUtf16, Rope };
@@ -1933,7 +1935,13 @@ impl Editor {
                         project::Event::RefreshInlayHints => {
                             editor.refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded(..) | project::Event::LanguageServerRemoved(..) => {
+                        project::Event::LanguageServerAdded(server_id, ..) => {
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+                            }
+                            editor.request_semantic_tokens_if_capable(*server_id, window, cx);
+                        }
+                        project::Event::LanguageServerRemoved(..) => {
                             if editor.tasks_update_task.is_none() {
                                 editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                             }
@@ -2304,6 +2312,8 @@ impl Editor {
         }
         editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
         editor._subscriptions.extend(project_subscriptions);
+        
+        editor.request_initial_semantic_tokens(window, cx);
 
         editor._subscriptions.push(
             cx.subscribe_in(&cx.entity(), window, |editor, _, e: &EditorEvent, window, cx| {
@@ -6410,6 +6420,90 @@ impl Editor {
                 }
             });
         }
+    }
+
+    fn request_initial_semantic_tokens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.project.as_ref() else { return };
+        
+        let has_any_semantic_capable_server = project.read(cx)
+            .lsp_store()
+            .read(cx)
+            .lsp_server_capabilities
+            .values()
+            .any(|caps| caps.semantic_tokens_provider.is_some());
+        
+        if !has_any_semantic_capable_server {
+            return;
+        }
+        
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let buffer_snapshot = buffer.read(cx);
+            let buffer_id = buffer_snapshot.remote_id();
+            
+            // Only request if buffer has content and we don't already have tokens
+            if buffer_snapshot.len() > 0 
+                && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
+                log::debug!("Requesting initial semantic tokens for buffer {:?}", buffer_id);
+                drop(buffer_snapshot);
+                self.update_semantic_tokens(&buffer, window, cx);
+            }
+        }
+    }
+
+    fn request_semantic_tokens_if_capable(
+        &mut self,
+        server_id: LanguageServerId,
+        window: &mut Window,
+        cx: &mut Context<Self>
+    ) {
+        let Some(project) = self.project.as_ref() else { return };
+        
+        let has_semantic_tokens = project.read(cx)
+            .lsp_store()
+            .read(cx)
+            .lsp_server_capabilities
+            .get(&server_id)
+            .and_then(|caps| caps.semantic_tokens_provider.as_ref())
+            .is_some();
+        
+        if !has_semantic_tokens {
+            return;
+        }
+        
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let buffer_snapshot = buffer.read(cx);
+            let buffer_id = buffer_snapshot.remote_id();
+            
+            // Only request if buffer has content and we don't already have tokens
+            if buffer_snapshot.len() > 0 
+                && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
+                log::debug!("Language server {} started with semantic tokens support, fetching tokens for buffer {:?}", server_id.0, buffer_id);
+                drop(buffer_snapshot);
+                self.update_semantic_tokens(&buffer, window, cx);
+            }
+        }
+    }
+
+    fn schedule_deferred_semantic_tokens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>
+    ) {
+        let buffer_id = buffer.read(cx).remote_id();
+        
+        if self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
+            return;
+        }
+        
+        let buffer = buffer.clone();
+        cx.spawn_in(window, async move |editor, cx| {
+            cx.background_executor().timer(Duration::from_millis(200)).await;
+            
+            editor.update_in(cx, |editor, window, cx| {
+                editor.update_semantic_tokens(&buffer, window, cx);
+            }).log_err();
+        }).detach();
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -18712,6 +18806,7 @@ impl Editor {
                 if self.active_diagnostics != ActiveDiagnostic::All {
                     self.update_lsp_data(false, Some(buffer_id), window, cx);
                 }
+                self.schedule_deferred_semantic_tokens(buffer, window, cx);
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
