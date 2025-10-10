@@ -3,7 +3,7 @@ mod declaration_scoring;
 mod excerpt;
 mod outline;
 mod reference;
-mod similar_snippets;
+// mod similar_snippets;
 mod syntax_index;
 mod text_similarity;
 
@@ -15,7 +15,7 @@ pub use declaration::*;
 pub use declaration_scoring::*;
 pub use excerpt::*;
 pub use reference::*;
-pub use similar_snippets::*;
+// pub use similar_snippets::*;
 pub use syntax_index::*;
 pub use text_similarity::*;
 
@@ -25,7 +25,7 @@ pub struct EditPredictionContext {
     pub excerpt_text: EditPredictionExcerptText,
     pub cursor_offset_in_excerpt: usize,
     pub declarations: Vec<ScoredDeclaration>,
-    pub similar_snippets: Vec<SimilarSnippet>,
+    // pub similar_snippets: Vec<SimilarSnippet>,
 }
 
 impl EditPredictionContext {
@@ -93,20 +93,20 @@ impl EditPredictionContext {
             vec![]
         };
 
-        let similar_snippets = similar_snippets(
-            &excerpt_occurrences,
-            Some(excerpt.range.clone()),
-            buffer,
-            todo!(),
-            todo!(),
-        );
+        // let similar_snippets = similar_snippets(
+        //     &excerpt_occurrences,
+        //     Some(excerpt.range.clone()),
+        //     buffer,
+        //     todo!(),
+        //     todo!(),
+        // );
 
         Some(Self {
             excerpt,
             excerpt_text,
             cursor_offset_in_excerpt,
             declarations,
-            similar_snippets,
+            // similar_snippets,
         })
     }
 }
