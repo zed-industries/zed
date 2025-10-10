@@ -82,11 +82,21 @@ actions!(
 #[action(namespace = settings_editor)]
 struct FocusFile(pub u32);
 
-#[derive(Clone, Copy)]
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> &Option<T>,
     pick_mut: fn(&mut SettingsContent) -> &mut Option<T>,
 }
+
+impl<T: 'static> Clone for SettingField<T> {
+    fn clone(&self) -> Self {
+        SettingField {
+            pick: self.pick,
+            pick_mut: self.pick_mut,
+        }
+    }
+}
+
+impl<T: 'static> Copy for SettingField<T> {}
 
 /// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
 /// to keep the setting around in the UI with valid pick and pick_mut implementations, but don't actually try to render it.
@@ -145,12 +155,13 @@ struct SettingFieldRenderer {
                 TypeId,
                 Box<
                     dyn Fn(
-                        &dyn AnySettingField,
+                        &SettingsWindow,
+                        &SettingItem,
                         SettingsUiFile,
                         Option<&SettingsFieldMetadata>,
                         &mut Window,
-                        &mut App,
-                    ) -> AnyElement,
+                        &mut Context<SettingsWindow>,
+                    ) -> Stateful<Div>,
                 >,
             >,
         >,
@@ -160,10 +171,10 @@ struct SettingFieldRenderer {
 impl Global for SettingFieldRenderer {}
 
 impl SettingFieldRenderer {
-    fn add_renderer<T: 'static>(
+    fn add_basic_renderer<T: 'static>(
         &mut self,
-        renderer: impl Fn(
-            &SettingField<T>,
+        render_control: impl Fn(
+            SettingField<T>,
             SettingsUiFile,
             Option<&SettingsFieldMetadata>,
             &mut Window,
@@ -171,50 +182,66 @@ impl SettingFieldRenderer {
         ) -> AnyElement
         + 'static,
     ) -> &mut Self {
-        let key = TypeId::of::<T>();
-        let renderer = Box::new(
-            move |any_setting_field: &dyn AnySettingField,
+        self.add_renderer(
+            move |settings_window: &SettingsWindow,
+                  item: &SettingItem,
+                  field: SettingField<T>,
                   settings_file: SettingsUiFile,
                   metadata: Option<&SettingsFieldMetadata>,
                   window: &mut Window,
-                  cx: &mut App| {
-                let field = any_setting_field
+                  cx: &mut Context<SettingsWindow>| {
+                render_settings_item(
+                    settings_window,
+                    item,
+                    settings_file.clone(),
+                    render_control(field, settings_file, metadata, window, cx),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn add_renderer<T: 'static>(
+        &mut self,
+        renderer: impl Fn(
+            &SettingsWindow,
+            &SettingItem,
+            SettingField<T>,
+            SettingsUiFile,
+            Option<&SettingsFieldMetadata>,
+            &mut Window,
+            &mut Context<SettingsWindow>,
+        ) -> Stateful<Div>
+        + 'static,
+    ) -> &mut Self {
+        let key = TypeId::of::<T>();
+        let renderer = Box::new(
+            move |settings_window: &SettingsWindow,
+                  item: &SettingItem,
+                  settings_file: SettingsUiFile,
+                  metadata: Option<&SettingsFieldMetadata>,
+                  window: &mut Window,
+                  cx: &mut Context<SettingsWindow>| {
+                let field = *item
+                    .field
+                    .as_ref()
                     .as_any()
                     .downcast_ref::<SettingField<T>>()
                     .unwrap();
-                renderer(field, settings_file, metadata, window, cx)
+                renderer(
+                    settings_window,
+                    item,
+                    field,
+                    settings_file,
+                    metadata,
+                    window,
+                    cx,
+                )
             },
         );
         self.renderers.borrow_mut().insert(key, renderer);
         self
-    }
-
-    fn render(
-        &self,
-        any_setting_field: &dyn AnySettingField,
-        settings_file: SettingsUiFile,
-        metadata: Option<&SettingsFieldMetadata>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyElement {
-        let key = any_setting_field.type_id();
-        if let Some(renderer) = self.renderers.borrow().get(&key) {
-            renderer(any_setting_field, settings_file, metadata, window, cx)
-        } else {
-            Button::new("no-renderer", "NO RENDERER")
-                .style(ButtonStyle::Outlined)
-                .size(ButtonSize::Medium)
-                .icon(Some(IconName::XCircle))
-                .icon_position(IconPosition::Start)
-                .icon_color(Color::Error)
-                .tab_index(0_isize)
-                .tooltip(Tooltip::text(any_setting_field.type_name()))
-                .into_any_element()
-            // panic!(
-            //     "No renderer found for type: {}",
-            //     any_setting_field.type_name()
-            // )
-        }
     }
 }
 
@@ -277,7 +304,7 @@ pub fn init(cx: &mut App) {
 
 fn init_renderers(cx: &mut App) {
     cx.default_global::<SettingFieldRenderer>()
-        .add_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
+        .add_basic_renderer::<UnimplementedSettingField>(|_, _, _, _, _| {
             Button::new("open-in-settings-file", "Edit in settings.json")
                 .style(ButtonStyle::Outlined)
                 .size(ButtonSize::Medium)
@@ -287,32 +314,15 @@ fn init_renderers(cx: &mut App) {
                 })
                 .into_any_element()
         })
-        .add_renderer::<bool>(|settings_field, file, _, _, cx| {
-            render_toggle_button(*settings_field, file, cx).into_any_element()
-        })
-        .add_renderer::<String>(|settings_field, file, metadata, _, cx| {
-            render_text_field(settings_field.clone(), file, metadata, cx)
-        })
-        .add_renderer::<SaturatingBool>(|settings_field, file, _, _, cx| {
-            render_toggle_button(*settings_field, file, cx)
-        })
-        .add_renderer::<CursorShape>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<RestoreOnStartupBehavior>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<BottomDockLayout>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<OnLastWindowClosed>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<CloseWindowWhenNoItems>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::FontFamilyName>(|settings_field, file, _, window, cx| {
-            // todo(settings_ui): We need to pass in a validator for this to ensure that users that type in invalid font names
+        .add_basic_renderer::<bool>(render_toggle_button)
+        .add_basic_renderer::<String>(render_text_field)
+        .add_basic_renderer::<SaturatingBool>(render_toggle_button)
+        .add_basic_renderer::<CursorShape>(render_dropdown)
+        .add_basic_renderer::<RestoreOnStartupBehavior>(render_dropdown)
+        .add_basic_renderer::<BottomDockLayout>(render_dropdown)
+        .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
+        .add_basic_renderer::<settings::FontFamilyName>(|settings_field, file, _, window, cx| {
             render_font_picker(settings_field.clone(), file, window, cx)
         })
         // todo(settings_ui): This needs custom ui
@@ -321,163 +331,55 @@ fn init_renderers(cx: &mut App) {
         //     // right now there's a manual impl of strum::VariantArray
         //     render_dropdown(*settings_field, file, window, cx)
         // })
-        .add_renderer::<settings::BaseKeymapContent>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::MultiCursorModifier>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::HideMouseMode>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::CurrentLineHighlight>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowWhitespaceSetting>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::SoftWrap>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ScrollBeyondLastLine>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::SnippetSortOrder>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ClosePosition>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::DockSide>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::TerminalDockPosition>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::DockPosition>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::GitGutterSetting>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::GitHunkStyleSetting>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::DiagnosticSeverityContent>(
-            |settings_field, file, _, window, cx| {
-                render_dropdown(*settings_field, file, window, cx)
-            },
-        )
-        .add_renderer::<settings::SeedQuerySetting>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::DoubleClickInMultibuffer>(
-            |settings_field, file, _, window, cx| {
-                render_dropdown(*settings_field, file, window, cx)
-            },
-        )
-        .add_renderer::<settings::GoToDefinitionFallback>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ActivateOnClose>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowDiagnostics>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowCloseButton>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ProjectPanelEntrySpacing>(
-            |settings_field, file, _, window, cx| {
-                render_dropdown(*settings_field, file, window, cx)
-            },
-        )
-        .add_renderer::<settings::RewrapBehavior>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::FormatOnSave>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::IndentGuideColoring>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::IndentGuideBackgroundColoring>(
-            |settings_field, file, _, window, cx| {
-                render_dropdown(*settings_field, file, window, cx)
-            },
-        )
-        .add_renderer::<settings::FileFinderWidthContent>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowDiagnostics>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::WordsCompletionMode>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::LspInsertMode>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::AlternateScroll>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::TerminalBlink>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::CursorShapeContent>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<f32>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<u32>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<u64>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<usize>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<NonZero<usize>>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<NonZeroU32>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<CodeFade>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<FontWeight>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::MinimumContrast>(|settings_field, file, _, window, cx| {
-            render_number_field(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowScrollbar>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ScrollbarDiagnostics>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::ShowMinimap>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::DisplayIn>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::MinimapThumb>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::MinimapThumbBorder>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        })
-        .add_renderer::<settings::SteppingGranularity>(|settings_field, file, _, window, cx| {
-            render_dropdown(*settings_field, file, window, cx)
-        });
-
-    // todo(settings_ui): Figure out how we want to handle discriminant unions
+        .add_basic_renderer::<settings::BaseKeymapContent>(render_dropdown)
+        .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
+        .add_basic_renderer::<settings::HideMouseMode>(render_dropdown)
+        .add_basic_renderer::<settings::CurrentLineHighlight>(render_dropdown)
+        .add_basic_renderer::<settings::ShowWhitespaceSetting>(render_dropdown)
+        .add_basic_renderer::<settings::SoftWrap>(render_dropdown)
+        .add_basic_renderer::<settings::ScrollBeyondLastLine>(render_dropdown)
+        .add_basic_renderer::<settings::SnippetSortOrder>(render_dropdown)
+        .add_basic_renderer::<settings::ClosePosition>(render_dropdown)
+        .add_basic_renderer::<settings::DockSide>(render_dropdown)
+        .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::DockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
+        .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
+        .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
+        .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
+        .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
+        .add_basic_renderer::<settings::GoToDefinitionFallback>(render_dropdown)
+        .add_basic_renderer::<settings::ActivateOnClose>(render_dropdown)
+        .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
+        .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
+        .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
+        .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
+        .add_basic_renderer::<settings::IndentGuideBackgroundColoring>(render_dropdown)
+        .add_basic_renderer::<settings::FileFinderWidthContent>(render_dropdown)
+        .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
+        .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
+        .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
+        .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
+        .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
+        .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
+        .add_basic_renderer::<f32>(render_number_field)
+        .add_basic_renderer::<u32>(render_number_field)
+        .add_basic_renderer::<u64>(render_number_field)
+        .add_basic_renderer::<usize>(render_number_field)
+        .add_basic_renderer::<NonZero<usize>>(render_number_field)
+        .add_basic_renderer::<NonZeroU32>(render_number_field)
+        .add_basic_renderer::<CodeFade>(render_number_field)
+        .add_basic_renderer::<FontWeight>(render_number_field)
+        .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
+        .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
+        .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
+        .add_basic_renderer::<settings::ShowMinimap>(render_dropdown)
+        .add_basic_renderer::<settings::DisplayIn>(render_dropdown)
+        .add_basic_renderer::<settings::MinimapThumb>(render_dropdown)
+        .add_basic_renderer::<settings::MinimapThumbBorder>(render_dropdown)
+        .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown);
     // .add_renderer::<ThemeSelection>(|settings_field, file, _, window, cx| {
     //     render_dropdown(*settings_field, file, window, cx)
     // });
@@ -634,28 +536,54 @@ impl SettingsPageItem {
             SettingsPageItem::SettingItem(setting_item) => {
                 let renderer = cx.default_global::<SettingFieldRenderer>().clone();
                 let (_, found) = setting_item.field.file_set_in(file.clone(), cx);
-                let control = if cfg!(debug_assertions) && !found {
-                    Button::new("no-default-field", "NO DEFAULT")
-                        .size(ButtonSize::Medium)
-                        .icon(IconName::XCircle)
-                        .icon_position(IconPosition::Start)
-                        .icon_color(Color::Error)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .tooltip(Tooltip::text(
-                            "This warning is only displayed in dev builds.",
-                        ))
-                        .into_any_element()
+
+                let renderers = renderer.renderers.borrow();
+                let field_renderer =
+                    renderers.get(&AnySettingField::type_id(setting_item.field.as_ref()));
+
+                let mut warning = None;
+                if cfg!(debug_assertions) && !found {
+                    warning = Some(
+                        Button::new("no-default-field", "NO DEFAULT")
+                            .size(ButtonSize::Medium)
+                            .icon(IconName::XCircle)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(
+                                "This warning is only displayed in dev builds.",
+                            ))
+                            .into_any_element(),
+                    );
+                } else if field_renderer.is_none() {
+                    warning = Some(
+                        Button::new("no-renderer", "NO RENDERER")
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .icon(Some(IconName::XCircle))
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Error)
+                            .tab_index(0_isize)
+                            .tooltip(Tooltip::text(setting_item.field.type_name()))
+                            .into_any_element(),
+                    );
+                }
+
+                let field = if let Some(warning) = warning {
+                    render_settings_item(settings_window, setting_item, file, warning, window, cx)
                 } else {
-                    renderer.render(
-                        setting_item.field.as_ref(),
+                    field_renderer.unwrap()(
+                        settings_window,
+                        setting_item,
                         file.clone(),
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
                     )
                 };
-                render_settings_item(settings_window, setting_item, file, control, window, cx)
+
+                field
                     .pt_4()
                     .map(|this| {
                         if is_last {
@@ -712,9 +640,10 @@ fn render_settings_item(
     setting_item: &SettingItem,
     file: SettingsUiFile,
     control: AnyElement,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
+    // todo! split file_set_in
     let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
@@ -2145,6 +2074,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
     field: SettingField<T>,
     file: SettingsUiFile,
     metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, initial_text) =
@@ -2174,6 +2104,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
 fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
     field: SettingField<B>,
     file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
@@ -2250,6 +2182,7 @@ fn render_font_picker(
 fn render_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -2271,6 +2204,7 @@ fn render_number_field<T: NumberFieldType + Send + Sync>(
 fn render_dropdown<T>(
     field: SettingField<T>,
     file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement
