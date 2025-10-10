@@ -5,6 +5,7 @@ mod test;
 
 mod change_list;
 mod command;
+mod command_line;
 mod digraph;
 mod helix;
 mod indent;
@@ -20,6 +21,7 @@ mod surrounds;
 mod visual;
 
 use collections::HashMap;
+pub use command_line::VimCommandLine;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
     ToPoint,
@@ -491,7 +493,7 @@ impl Vim {
             (initial_vim_mode, Mode::Normal)
         };
 
-        cx.new(|cx| Vim {
+        let vim = cx.new(|cx| Vim {
             mode,
             last_mode,
             temp_mode: false,
@@ -519,7 +521,9 @@ impl Vim {
                     this.handle_editor_event(event, window, cx)
                 }),
             ],
-        })
+        });
+
+        vim
     }
 
     fn register(editor: &mut Editor, window: Option<&mut Window>, cx: &mut Context<Editor>) {

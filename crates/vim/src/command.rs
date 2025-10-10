@@ -580,19 +580,30 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
-            return;
-        };
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
-        let n = if count > 1 {
-            format!(".,.+{}", count.saturating_sub(1))
+        let prefix = if count > 1 {
+            format!(".,.+{}:", count.saturating_sub(1))
         } else {
-            ".".to_string()
+            ":".to_string()
         };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, &n, window, cx);
-        })
+
+        if let Some(command_line) = Vim::globals(cx)
+            .command_line
+            .as_ref()
+            .and_then(|cl| cl.upgrade())
+        {
+            command_line.update(cx, |command_line, cx| {
+                command_line.activate(prefix, window, cx);
+            });
+        } else {
+            // Fallback to command palette if VimCommandLine isn't available
+            if let Some(workspace) = vim.workspace(window) {
+                workspace.update(cx, |workspace, cx| {
+                    command_palette::CommandPalette::toggle(workspace, &prefix, window, cx);
+                });
+            }
+        }
     });
 
     Vim::action(editor, cx, |vim, action: &GoToLine, window, cx| {
