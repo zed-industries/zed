@@ -32,7 +32,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-#[cfg(not(windows))]
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
 
@@ -1444,8 +1443,6 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     });
 }
 
-// TODO: this test fails on Windows.
-#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx: &mut TestAppContext,
@@ -1468,7 +1465,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 "src": {
@@ -1483,7 +1480,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -1506,7 +1503,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     // Remote server will send proto::UpdateRepository after the instance of Editor create.
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1516,11 +1513,11 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     .await;
 
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(path!("/code/project1/.git")),
         &[("src/lib.rs", text_1.clone())],
     );
     fs.set_head_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(path!("/code/project1/.git")),
         &[("src/lib.rs", text_1.clone())],
         "sha",
     );
@@ -1548,7 +1545,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     // stage the current buffer's contents
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(path!("/code/project1/.git")),
         &[("src/lib.rs", text_2.clone())],
     );
 
@@ -1567,7 +1564,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     // commit the current buffer's contents
     fs.set_head_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(path!("/code/project1/.git")),
         &[("src/lib.rs", text_2.clone())],
         "sha",
     );
@@ -1792,7 +1789,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "claude"]);
+    pretty_assertions::assert_eq!(names, ["codex", "gemini", "claude"]);
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
             .set_server_settings(
@@ -1822,7 +1819,7 @@ async fn test_remote_external_agent_server(
             .map(|name| name.to_string())
             .collect::<Vec<_>>()
     });
-    pretty_assertions::assert_eq!(names, ["gemini", "foo", "claude"]);
+    pretty_assertions::assert_eq!(names, ["gemini", "codex", "claude", "foo"]);
     let (command, root, login) = project
         .update(cx, |project, cx| {
             project.agent_server_store().update(cx, |store, cx| {

@@ -476,7 +476,7 @@ fn calculate_columns_count(rows: &Vec<ParsedMarkdownTableRow>) -> usize {
     actual_column_count
 }
 
-fn calculate_column_length(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkdownTableRow>) {
+fn calculate_column_lengths(max_lengths: &mut Vec<usize>, rows: &Vec<ParsedMarkdownTableRow>) {
     for row in rows {
         let mut col_index = 0;
         for cell in row.columns.iter() {
@@ -501,8 +501,8 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
 
     let mut max_lengths: Vec<usize> = vec![0; max_column_count];
 
-    calculate_column_length(&mut max_lengths, &parsed.header);
-    calculate_column_length(&mut max_lengths, &parsed.body);
+    calculate_column_lengths(&mut max_lengths, &parsed.header);
+    calculate_column_lengths(&mut max_lengths, &parsed.body);
 
     let total_max_length: usize = max_lengths.iter().sum::<usize>().max(1);
     let max_column_widths: Vec<f32> = max_lengths
