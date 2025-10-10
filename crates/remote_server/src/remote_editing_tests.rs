@@ -32,7 +32,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-#[cfg(not(windows))]
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
 
@@ -1328,8 +1327,6 @@ async fn test_copy_file_into_remote_project(
     );
 }
 
-// TODO: this test fails on Windows.
-#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "
@@ -1444,8 +1441,6 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     });
 }
 
-// TODO: this test fails on Windows.
-#[cfg(not(windows))]
 #[gpui::test]
 async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx: &mut TestAppContext,
