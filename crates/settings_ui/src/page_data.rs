@@ -2901,7 +2901,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Search"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Whole Word",
-                    description: "Whether to search for whole words by default",
+                    description: "Search for whole words by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -2923,7 +2923,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Case Sensitive",
-                    description: "Whether to search case-sensitively by default",
+                    description: "Search case-sensitively by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -2945,7 +2945,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Include Ignored",
-                    description: "Whether to include ignored files in search results by default",
+                    description: "Include ignored files in search results by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -2967,7 +2967,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Regex",
-                    description: "Whether to use regex search by default",
+                    description: "Use regex search by default",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -3034,7 +3034,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Use Smartcase Search",
-                    description: "Whether to use smartcase (i.e., case-sensitive) search",
+                    description: "Use smartcase (i.e., case-sensitive) search",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.editor.use_smartcase_search,
                         pick_mut: |settings_content| {
@@ -3044,10 +3044,10 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                 SettingsPageItem::SectionHeader("Files"),
+                 SettingsPageItem::SectionHeader("File Management"),
                  SettingsPageItem::SettingItem(SettingItem {
                      title: "File Icons",
-                     description: "Whether to show file icons in the file finder",
+                     description: "Show file icons in the file finder",
                      field: Box::new(SettingField {
                          pick: |settings_content| {
                              if let Some(file_finder) = &settings_content.file_finder {
@@ -3154,6 +3154,30 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                      files: USER,
                  }),
                  SettingsPageItem::SectionHeader("File Scan"),
+            ],
+        },
+        SettingsPage{
+            title: "Language Servers",
+            items: vec![
+                SettingsPageItem::SectionHeader("Git"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Git Gutter",
+                    description: "Control whether git status is shown in the editor's gutter",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(git) = &settings_content.git {
+                                &git.git_gutter
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.git.get_or_insert_default().git_gutter
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
             ],
         },
         SettingsPage {
