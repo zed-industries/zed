@@ -36,6 +36,7 @@ pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
 mod rainbow_highlighter;
+mod rainbow_identifier;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
@@ -298,8 +299,6 @@ use std::{
     borrow::Cow,
     cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
-    collections::hash_map,
-    fmt::Write,
     iter::{self, Peekable},
     mem,
     num::NonZeroU32,
@@ -6472,14 +6471,16 @@ impl Editor {
         }
         
         for buffer in buffers_to_request {
-            let buffer_snapshot = buffer.read(cx);
-            let buffer_id = buffer_snapshot.remote_id();
+            let should_request = {
+                let buffer_snapshot = buffer.read(cx);
+                let buffer_id = buffer_snapshot.remote_id();
+                buffer_snapshot.len() > 0 
+                    && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
+            };
             
-            // Only request if buffer has content and we don't already have tokens
-            if buffer_snapshot.len() > 0 
-                && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
+            if should_request {
+                let buffer_id = buffer.read(cx).remote_id();
                 log::debug!("Requesting initial semantic tokens for buffer {:?}", buffer_id);
-                drop(buffer_snapshot);
                 self.update_semantic_tokens(&buffer, window, cx);
             }
         }
@@ -6530,14 +6531,16 @@ impl Editor {
         }
         
         for buffer in buffers_to_request {
-            let buffer_snapshot = buffer.read(cx);
-            let buffer_id = buffer_snapshot.remote_id();
+            let should_request = {
+                let buffer_snapshot = buffer.read(cx);
+                let buffer_id = buffer_snapshot.remote_id();
+                buffer_snapshot.len() > 0 
+                    && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id)
+            };
             
-            // Only request if buffer has content and we don't already have tokens
-            if buffer_snapshot.len() > 0 
-                && !self.display_map.read(cx).semantic_tokens.contains_key(&buffer_id) {
+            if should_request {
+                let buffer_id = buffer.read(cx).remote_id();
                 log::debug!("Language server {} started with semantic tokens support, fetching tokens for buffer {:?}", server_id.0, buffer_id);
-                drop(buffer_snapshot);
                 self.update_semantic_tokens(&buffer, window, cx);
             }
         }
@@ -7375,7 +7378,7 @@ impl Editor {
                         partial_completion = text
                             .chars()
                             .by_ref()
-                            .take_while(|c| (c.is_whitespace() || !c.is_alphabetic()))
+                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
                             .collect::<String>();
                     }
 

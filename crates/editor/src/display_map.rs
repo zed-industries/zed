@@ -813,60 +813,10 @@ impl DisplaySnapshot {
     }
 
     /// Validates if a string is a valid identifier for rainbow highlighting.
-    /// Filters out incomplete identifiers, keywords, and invalid patterns.
+    /// Does NOT include language-specific keyword filtering - that should be done by Language layer.
     #[inline]
     fn is_valid_rainbow_identifier(text: &str) -> bool {
-        // Skip empty strings only - allow short identifiers like "cx", "id", "a", etc.
-        if text.is_empty() {
-            return false;
-        }
-        
-        // Skip if contains whitespace or control characters
-        if text.contains(char::is_whitespace) || text.contains(|c: char| c.is_control()) {
-            return false;
-        }
-        
-        // Skip single underscore or underscore-only strings (chunking artifacts)
-        if text.chars().all(|c| c == '_') {
-            return false;
-        }
-        
-        // Skip if starts or ends with underscore (likely incomplete chunk)
-        // Exception: allow names like `_value` or `value_` if they're complete
-        let trimmed = text.trim_matches('_');
-        if trimmed.is_empty() || trimmed.len() < 2 {
-            return false;
-        }
-        
-        // Skip common keywords across languages (lowercase for case-insensitive check)
-        let lowercase = text.to_lowercase();
-        const KEYWORDS: &[&str] = &[
-            // Rust keywords
-            "self", "super", "crate", "true", "false", "none", "some", "ok", "err",
-            "let", "mut", "fn", "pub", "impl", "struct", "enum", "trait", "type",
-            "if", "else", "match", "for", "while", "loop", "break", "continue", "return",
-            // Python keywords
-            "def", "class", "import", "from", "as", "pass", "with", "async", "await",
-            "lambda", "yield", "raise", "try", "except", "finally", "assert", "del",
-            // Common builtins
-            "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
-            "range", "map", "filter", "sum", "min", "max", "abs", "all", "any",
-            // Common short words that are often partial chunks (excluding "id" which is a common variable name)
-            "fn", "to", "is", "in", "or", "on", "at", "by", "do", "if", "it",
-        ];
-        
-        if KEYWORDS.contains(&lowercase.as_str()) {
-            return false;
-        }
-        
-        // Must be valid identifier: starts with letter/_, rest alphanumeric/_
-        let mut chars = text.chars();
-        match chars.next() {
-            Some(first) if first.is_alphabetic() || first == '_' => {
-                chars.all(|c| c.is_alphanumeric() || c == '_')
-            }
-            _ => false,
-        }
+        crate::rainbow_identifier::is_valid_identifier(text)
     }
 
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
@@ -1043,7 +993,7 @@ impl DisplaySnapshot {
         let display_row_start = display_rows.start;
         let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
         let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
-        let mut current_buffer_offset = start_buffer_offset;
+        let current_buffer_offset = start_buffer_offset;
         
         self.chunks(
             display_rows,
@@ -1076,61 +1026,31 @@ impl DisplaySnapshot {
                 let rainbow_style = if rainbow_config.enabled && is_variable_like {
                     if let Some((cached_start, cached_end, cached_style)) = cached_identifier {
                         if chunk_start >= *cached_start && chunk_end <= *cached_end {
-                            cached_style.clone()
+                            *cached_style
                         } else {
                             None
                         }
                     } else {
                         None
                     }.or_else(|| {
-                        // Extract complete identifier from buffer
-                        let rope = buffer_snapshot.text();
-                        let rope_len = rope.len();
-                        
-                        if chunk_start >= rope_len {
-                            None
-                        } else {
-                            let mut start = chunk_start;
-                            while start > 0 {
-                                if let Some(ch) = rope.chars().nth(start.saturating_sub(1)) {
-                                    if !ch.is_alphanumeric() && ch != '_' {
-                                        break;
-                                    }
-                                    start -= 1;
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            let mut end = chunk_end.min(rope_len);
-                            while end < rope_len {
-                                if let Some(ch) = rope.chars().nth(end) {
-                                    if !ch.is_alphanumeric() && ch != '_' {
-                                        break;
-                                    }
-                                    end += 1;
-                                } else {
-                                    break;
-                                }
-                            }
-                            
-                            if start < end && end <= rope_len {
-                                let complete_identifier: String = rope.chars().skip(start).take(end - start).collect();
+                        // Extract complete identifier from buffer using optimized O(n) algorithm
+                        if let Some((range, identifier)) = crate::rainbow_identifier::extract_complete_identifier(
+                            buffer_snapshot,
+                            chunk_start..chunk_end,
+                        ) {
+                            if Self::is_valid_rainbow_identifier(&identifier) {
+                                use crate::rainbow_highlighter::RainbowHighlighter;
+                                let palette_size = theme.rainbow_palette_size();
+                                let hash_index = RainbowHighlighter::hash_to_index(&identifier, palette_size);
+                                let style = theme.rainbow_color(hash_index);
                                 
-                                if Self::is_valid_rainbow_identifier(&complete_identifier) {
-                                    use crate::rainbow_highlighter::RainbowHighlighter;
-                                    let palette_size = theme.rainbow_palette_size();
-                                    let hash_index = RainbowHighlighter::hash_to_index(&complete_identifier, palette_size);
-                                    let style = theme.rainbow_color(hash_index);
-                                    
-                                    *cached_identifier = Some((start, end, style.clone()));
-                                    style
-                                } else {
-                                    None
-                                }
+                                *cached_identifier = Some((range.start, range.end, style));
+                                style
                             } else {
                                 None
                             }
+                        } else {
+                            None
                         }
                     })
                 } else {

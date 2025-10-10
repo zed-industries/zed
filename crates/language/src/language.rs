@@ -14,6 +14,7 @@ pub mod language_settings;
 mod manifest;
 mod outline;
 pub mod proto;
+pub mod rainbow_config;
 mod syntax_map;
 mod task_context;
 mod text_diff;
