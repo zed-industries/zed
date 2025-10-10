@@ -89,13 +89,11 @@ struct SettingField<T: 'static> {
 
 impl<T: 'static> Clone for SettingField<T> {
     fn clone(&self) -> Self {
-        SettingField {
-            pick: self.pick,
-            pick_mut: self.pick_mut,
-        }
+        *self
     }
 }
 
+// manual impl because derive puts a Copy bound on T, which is inaccurate in our case
 impl<T: 'static> Copy for SettingField<T> {}
 
 /// Helper for unimplemented settings, used in combination with `SettingField::unimplemented`
@@ -318,9 +316,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<OnLastWindowClosed>(render_dropdown)
         .add_basic_renderer::<CloseWindowWhenNoItems>(render_dropdown)
-        .add_basic_renderer::<settings::FontFamilyName>(|settings_field, file, _, window, cx| {
-            render_font_picker(settings_field.clone(), file, window, cx)
-        })
+        .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
         // todo(settings_ui): This needs custom ui
         // .add_renderer::<settings::BufferLineHeight>(|settings_field, file, _, window, cx| {
         //     // todo(settings_ui): Do we want to expose the custom variant of buffer line height?
@@ -549,7 +545,7 @@ impl SettingsPageItem {
                     Ok(field_renderer) => field_renderer(
                         settings_window,
                         setting_item,
-                        file.clone(),
+                        file,
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
@@ -2123,6 +2119,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 fn render_font_picker(
     field: SettingField<settings::FontFamilyName>,
     file: SettingsUiFile,
+    _metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
