@@ -536,47 +536,40 @@ impl SettingsPageItem {
                 let renderers = renderer.renderers.borrow();
                 let field_renderer =
                     renderers.get(&AnySettingField::type_id(setting_item.field.as_ref()));
+                let field_renderer_or_warning =
+                    field_renderer.ok_or("NO RENDERER").and_then(|renderer| {
+                        if cfg!(debug_assertions) && !found {
+                            Err("NO DEFAULT")
+                        } else {
+                            Ok(renderer)
+                        }
+                    });
 
-                let mut warning = None;
-                if cfg!(debug_assertions) && !found {
-                    warning = Some(
-                        Button::new("no-default-field", "NO DEFAULT")
-                            .size(ButtonSize::Medium)
-                            .icon(IconName::XCircle)
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Error)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Outlined)
-                            .tooltip(Tooltip::text(
-                                "This warning is only displayed in dev builds.",
-                            ))
-                            .into_any_element(),
-                    );
-                } else if field_renderer.is_none() {
-                    warning = Some(
-                        Button::new("no-renderer", "NO RENDERER")
-                            .style(ButtonStyle::Outlined)
-                            .size(ButtonSize::Medium)
-                            .icon(Some(IconName::XCircle))
-                            .icon_position(IconPosition::Start)
-                            .icon_color(Color::Error)
-                            .tab_index(0_isize)
-                            .tooltip(Tooltip::text(setting_item.field.type_name()))
-                            .into_any_element(),
-                    );
-                }
-
-                let field = if let Some(warning) = warning {
-                    render_settings_item(settings_window, setting_item, file, warning, window, cx)
-                } else {
-                    field_renderer.unwrap()(
+                let field = match field_renderer_or_warning {
+                    Ok(field_renderer) => field_renderer(
                         settings_window,
                         setting_item,
                         file.clone(),
                         setting_item.metadata.as_deref(),
                         window,
                         cx,
-                    )
+                    ),
+                    Err(warning) => render_settings_item(
+                        settings_window,
+                        setting_item,
+                        file,
+                        Button::new("error-warning", warning)
+                            .style(ButtonStyle::Outlined)
+                            .size(ButtonSize::Medium)
+                            .icon(Some(IconName::Debug))
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Error)
+                            .tab_index(0_isize)
+                            .tooltip(Tooltip::text(setting_item.field.type_name()))
+                            .into_any_element(),
+                        window,
+                        cx,
+                    ),
                 };
 
                 field
@@ -639,8 +632,7 @@ fn render_settings_item(
     _window: &mut Window,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> Stateful<Div> {
-    // todo! split file_set_in
-    let (found_in_file, found) = setting_item.field.file_set_in(file.clone(), cx);
+    let (found_in_file, _) = setting_item.field.file_set_in(file.clone(), cx);
     let file_set_in = SettingsUiFile::from_settings(found_in_file);
 
     h_flex()
