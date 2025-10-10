@@ -414,7 +414,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Selection Highlight",
-                    description: "Whether to highlight all occurrences of selected text",
+                    description: "Highlight all occurrences of selected text",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.editor.selection_highlight,
                         pick_mut: |settings_content| {
@@ -451,7 +451,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Wrap Guides",
-                    description: "Whether to show wrap guides (vertical rulers)",
+                    description: "Show wrap guides (vertical rulers)",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             &settings_content
@@ -575,7 +575,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Zoomed Padding",
-                    description: "Whether to show padding for zoomed panels",
+                    description: "Show padding for zoomed panels",
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.workspace.zoomed_padding,
                         pick_mut: |settings_content| &mut settings_content.workspace.zoomed_padding,
@@ -726,7 +726,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Auto Signature Help",
-                        description: "Whether to automatically show a signature help pop-up or not",
+                        description: "Automatically show a signature help pop-up or not",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.auto_signature_help,
                             pick_mut: |settings_content| {
@@ -738,7 +738,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Signature Help After Edits",
-                        description: "Whether to show the signature help pop-up after completions or bracket pairs inserted",
+                        description: "Show the signature help pop-up after completions or bracket pairs inserted",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 &settings_content.editor.show_signature_help_after_edits
@@ -765,7 +765,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Hover"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Hover Popover Enabled",
-                        description: "Whether to show the informational hover box when moving the mouse over symbols in the editor",
+                        description: "Show the informational hover box when moving the mouse over symbols in the editor",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.hover_popover_enabled,
                             pick_mut: |settings_content| {
@@ -791,7 +791,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Code Actions"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Inline Code Actions",
-                        description: "Whether to show code action button at start of buffer line",
+                        description: "Show code action button at start of buffer line",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.inline_code_actions,
                             pick_mut: |settings_content| {
@@ -1402,7 +1402,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Code Actions",
-                        description: "Whether to show code action buttons in the editor toolbar",
+                        description: "Show code action buttons in the editor toolbar",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 if let Some(toolbar) = &settings_content.editor.toolbar {
@@ -1692,7 +1692,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                  }),
                  SettingsPageItem::SettingItem(SettingItem {
                      title: "Restore File State",
-                     description: "Whether to restore previous file state when reopening",
+                     description: "Restore previous file state when reopening",
                      field: Box::new(SettingField {
                          pick: |settings_content| &settings_content.workspace.restore_on_file_reopen,
                          pick_mut: |settings_content| {
@@ -1704,7 +1704,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                  }),
                  SettingsPageItem::SettingItem(SettingItem {
                      title: "Close on File Delete",
-                     description: "Whether to automatically close files that have been deleted",
+                     description: "Automatically close files that have been deleted",
                      field: Box::new(SettingField {
                          pick: |settings_content| &settings_content.workspace.close_on_file_delete,
                          pick_mut: |settings_content| {
@@ -1737,7 +1737,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                  }),
                  SettingsPageItem::SettingItem(SettingItem {
                      title: "Git Status",
-                     description: "Whether to show the git status in the file finder",
+                     description: "Show the git status in the file finder",
                      field: Box::new(SettingField {
                          pick: |settings_content| {
                              if let Some(file_finder) = &settings_content.file_finder {
@@ -1765,7 +1765,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Status Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Panel Button",
-                    description: "Whether to show the project panel button in the status bar",
+                    description: "Show the project panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -1786,7 +1786,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Active Language Button",
-                    description: "Whether to show the active language button in the status bar",
+                    description: "Show the active language button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
@@ -1807,7 +1807,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Cursor Position Button",
-                    description: "Whether to show the cursor position button in the status bar",
+                    description: "Show the cursor position button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(status_bar) = &settings_content.status_bar {
@@ -1828,7 +1828,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Terminal Button",
-                    description: "Whether to show the terminal button in the status bar",
+                    description: "Show the terminal button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
@@ -1846,7 +1846,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Diagnostics Button",
-                    description: "Whether to show the project diagnostics button in the status bar",
+                    description: "Show the project diagnostics button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(diagnostics) = &settings_content.diagnostics {
@@ -1864,7 +1864,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Search Button",
-                    description: "Whether to show the project search button in the status bar",
+                    description: "Show the project search button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(search) = &settings_content.editor.search {
@@ -1886,7 +1886,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Debugger Button",
-                    description: "Whether to show the debugger button in the status bar",
+                    description: "Show the debugger button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(debugger) = &settings_content.debugger {
@@ -1905,7 +1905,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Tab Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Editor Tabs",
-                    description: "Whether or not to show the tab bar in the editor",
+                    description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(tab_bar) = &settings_content.tab_bar {
@@ -1924,7 +1924,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Tab Bar",
-                    description: "Whether or not to show the tab bar in the editor",
+                    description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(tab_bar) = &settings_content.tab_bar {
@@ -1942,7 +1942,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Git Status In Tabs",
-                    description: "Whether to show the Git file status on a tab item",
+                    description: "Show the Git file status on a tab item",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
@@ -1960,7 +1960,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show File Icons In Tabs",
-                    description: "Whether to show the file icon for a tab",
+                    description: "Show the file icon for a tab",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(tabs) = &settings_content.tabs {
@@ -2013,7 +2013,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Navigation History Buttons",
-                    description: "Whether or not to show the navigation history buttons in the tab bar",
+                    description: "Show the navigation history buttons in the tab bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(tab_bar) = &settings_content.tab_bar {
@@ -2035,7 +2035,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Title Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Icon",
-                    description: "Whether to show the branch icon beside branch switcher in the titlebar",
+                    description: "Show the branch icon beside branch switcher in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2056,7 +2056,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Branch Name",
-                    description: "Whether to show the branch name button in the titlebar",
+                    description: "Show the branch name button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2077,7 +2077,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Project Items",
-                    description: "Whether to show the project host and name in the titlebar",
+                    description: "Show the project host and name in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2098,7 +2098,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Onboarding Banner",
-                    description: "Whether to show banners announcing new features in the titlebar",
+                    description: "Show banners announcing new features in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2119,7 +2119,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show User Picture",
-                    description: "Whether to show user picture in the titlebar",
+                    description: "Show user picture in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2140,7 +2140,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Sign In",
-                    description: "Whether to show the sign in button in the titlebar",
+                    description: "Show the sign in button in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2161,7 +2161,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Menus",
-                    description: "Whether to show the menus in the titlebar",
+                    description: "Show the menus in the titlebar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(title_bar) = &settings_content.title_bar {
@@ -2247,7 +2247,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Preview Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Preview Tabs Enabled",
-                    description: "Whether to show opened editors as preview tabs",
+                    description: "Show opened editors as preview tabs",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(preview_tabs) = &settings_content.preview_tabs {
@@ -2397,7 +2397,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show file icons in the project panel",
+                    description: "Show file icons in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2439,7 +2439,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
-                    description: "Whether to show the git status in the project panel",
+                    description: "Show the git status in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2544,7 +2544,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Scrollbar Show",
-                    description: "When to show the scrollbar in the project panel",
+                    description: "Show the scrollbar in the project panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel
@@ -2615,7 +2615,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     files: USER,
                     title: "Indent Guides Show",
-                    description: "When to show indent guides in the project panel",
+                    description: "Show indent guides in the project panel",
                     field: Box::new(
                         SettingField {
                             pick: |settings_content| {
@@ -2706,7 +2706,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Outline Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Outline Panel Button",
-                    description: "Whether to show the outline panel button in the status bar",
+                    description: "Show the outline panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2766,7 +2766,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "File Icons",
-                    description: "Whether to show file icons in the outline panel",
+                    description: "Show file icons in the outline panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2808,7 +2808,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Status",
-                    description: "Whether to show the git status in the outline panel",
+                    description: "Show the git status in the outline panel",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
@@ -2923,7 +2923,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Git Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Git Panel Button",
-                    description: "Whether to show the Git panel button in the status bar",
+                    description: "Show the Git panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git_panel) = &settings_content.git_panel {
@@ -3000,7 +3000,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Notification Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Notification Panel Button",
-                    description: "Whether to show the notification panel button in the status bar",
+                    description: "Show the notification panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(notification_panel) = &settings_content.notification_panel {
@@ -3064,7 +3064,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Collaboration Panel"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Collaboration Panel Button",
-                    description: "Whether to show the collaboration panel button in the status bar",
+                    description: "Show the collaboration panel button in the status bar",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(collaboration_panel) = &settings_content.collaboration_panel
@@ -3695,7 +3695,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SectionHeader("Toolbar"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Breadcrumbs",
-                    description: "Whether to display the terminal title in breadcrumbs inside the terminal pane",
+                    description: "Display the terminal title in breadcrumbs inside the terminal pane",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(terminal) = &settings_content.terminal {
@@ -3902,7 +3902,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Commit Summary",
-                    description: "Whether to show commit summary as part of the inline blame",
+                    description: "Show commit summary as part of the inline blame",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -3929,7 +3929,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Avatar",
-                    description: "Whether to show the avatar of the author of the commit",
+                    description: "Show the avatar of the author of the commit",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -3956,7 +3956,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Author Name In Branch Picker",
-                    description: "Whether to show author name as part of the commit information in branch picker",
+                    description: "Show author name as part of the commit information in branch picker",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(git) = &settings_content.git {
@@ -4540,7 +4540,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Wrap Guides",
-            description: "Whether to show wrap guides in the editor",
+            description: "Show wrap guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| &language.show_wrap_guides)
@@ -4610,7 +4610,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         SettingsPageItem::SectionHeader("Indent Guides"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Enabled",
-            description: "Whether to display indent guides in the editor",
+            description: "Display indent guides in the editor",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -5462,7 +5462,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Background",
-            description: "Whether to show a background for inlay hints",
+            description: "Show a background for inlay hints",
             field: Box::new(SettingField {
                 pick: |settings_content| {
                     language_settings_field(settings_content, |language| {
@@ -5652,7 +5652,7 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Middle Click Paste",
-            description: "Whether to enable middle-click paste on Linux",
+            description: "Enable middle-click paste on Linux",
             field: Box::new(SettingField {
                 pick: |settings_content| &settings_content.editor.middle_click_paste,
                 pick_mut: |settings_content| {
