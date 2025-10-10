@@ -1101,7 +1101,7 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
+  // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
@@ -1515,7 +1515,6 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
-  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1685,9 +1684,7 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      },
+      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
       "debuggers": ["Delve"]
     },
     "GraphQL": {
