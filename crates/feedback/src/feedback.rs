@@ -2,19 +2,15 @@ use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::{CopySystemSpecsIntoClipboard, SystemSpecs};
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::feedback::FileBugReport;
+use zed_actions::feedback::{EmailZed, FileBugReport, RequestFeature};
 
 pub mod feedback_modal;
 
 actions!(
-    zed,
+    contribute,
     [
-        /// Opens email client to send feedback to Zed support.
-        EmailZed,
         /// Opens the Zed repository on GitHub.
         OpenZedRepo,
-        /// Opens the feature request form.
-        RequestFeature,
     ]
 );
 

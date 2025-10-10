@@ -219,10 +219,14 @@ pub mod feedback {
     actions!(
         feedback,
         [
+            /// Opens email client to send feedback to Zed support.
+            EmailZed,
             /// Opens the bug report form.
             FileBugReport,
             /// Opens the feedback form.
-            GiveFeedback
+            GiveFeedback,
+            /// Opens the feature request form.
+            RequestFeature
         ]
     );
 }

@@ -44,6 +44,7 @@ impl Render for FeedbackModal {
 
         v_flex()
             .key_context("GiveFeedback")
+            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
             .elevation_3(cx)
             .w_96()
