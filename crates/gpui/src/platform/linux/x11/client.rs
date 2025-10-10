@@ -1021,9 +1021,11 @@ impl X11Client {
                                     .or(crate::Keystroke::underlying_dead_key(keysym));
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
+                                state.compose_state = Some(compose_state);
                                 drop(state);
                                 window.handle_ime_preedit(pre_edit);
-                                state = self.0.borrow_mut();
+                                // Don't dispatch KeyDown event when composing IME text
+                                return Some(());
                             }
                             xkbc::Status::Cancelled => {
                                 let pre_edit = state.pre_edit_text.take();
