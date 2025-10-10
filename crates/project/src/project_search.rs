@@ -1,4 +1,5 @@
 use std::{
+    io::{BufRead, BufReader},
     ops::{ControlFlow, Range},
     path::Path,
     pin::{Pin, pin},
@@ -8,14 +9,16 @@ use std::{
     },
 };
 
-use futures::{FutureExt, StreamExt, future::BoxFuture, select_biased};
+use collections::HashSet;
+use fs::Fs;
+use futures::{FutureExt, SinkExt, StreamExt, future::BoxFuture, select_biased};
 use gpui::{App, AsyncApp, Entity, WeakEntity};
 use language::{Buffer, BufferSnapshot};
 use postage::oneshot;
 use smol::channel::{Receiver, Sender, bounded, unbounded};
 use text::Anchor;
 use util::{ResultExt, maybe};
-use worktree::{Entry, Snapshot, WorktreeSettings};
+use worktree::{Entry, ProjectEntryId, Snapshot, WorktreeSettings};
 
 use crate::{
     ProjectPath,
@@ -24,6 +27,7 @@ use crate::{
 };
 
 pub(crate) struct ProjectSearcher {
+    fs: Arc<dyn Fs>,
     buffer_store: WeakEntity<BufferStore>,
     pub(crate) snapshots: Vec<(Snapshot, WorktreeSettings)>,
 }
@@ -51,6 +55,7 @@ impl ProjectSearcher {
                         query: &query,
                         matched_buffer_count: &matched_buffer_count,
                         matches_count: &matches_count,
+                        fs: &*self.fs,
                         input_paths_rx: input_paths_rx.clone(),
                         find_first_match_rx: find_first_match_rx.clone(),
                         find_first_match_tx: find_first_match_tx.clone(),
@@ -75,14 +80,21 @@ impl ProjectSearcher {
         rx
     }
 
-    async fn provide_search_paths<'a>(
-        &'a self,
+    async fn provide_search_paths<'this>(
+        &'this self,
         query: &SearchQuery,
-        tx: Sender<(&'a Entry, &'a WorktreeSettings)>,
+        tx: Sender<InputPath<'this>>,
     ) {
         for (snapshot, worktree_settings) in &self.snapshots {
             for entry in snapshot.entries(query.include_ignored(), 0) {
-                let Ok(_) = tx.send((entry, worktree_settings)).await else {
+                let Ok(_) = tx
+                    .send(InputPath {
+                        entry,
+                        settings: worktree_settings,
+                        snapshot: snapshot,
+                    })
+                    .await
+                else {
                     return;
                 };
             }
@@ -119,6 +131,7 @@ struct Worker<'search> {
     query: &'search SearchQuery,
     matched_buffer_count: &'search AtomicUsize,
     matches_count: &'search AtomicUsize,
+    fs: &'search dyn Fs,
     /// Start off with all paths in project and filter them based on:
     /// - Include filters
     /// - Exclude filters
@@ -145,6 +158,7 @@ impl Worker<'_> {
         let mut scan_path = pin!(self.input_paths_rx.fuse());
         let handler = RequestHandler {
             query: self.query,
+            fs: self.fs,
             matched_buffer_count: self.matched_buffer_count,
             matches_count: self.matches_count,
             find_first_match_tx: &self.find_first_match_tx,
@@ -160,10 +174,16 @@ impl Worker<'_> {
                     }
                 },
                 find_first_match = find_first_match.next() => {
+                    if let Some(buffer_with_at_least_one_match) = find_first_match {
+                        handler.handle_find_first_match(buffer_with_at_least_one_match);
+                    }
 
                 },
                 scan_path = scan_path.next() => {
-                    handler.handle_scan_path(scan_path).await;
+                    if let Some(path_to_scan) = scan_path {
+                        handler.handle_scan_path(path_to_scan).await;
+                    }
+
                  }
                  complete => break,
             }
@@ -173,6 +193,8 @@ impl Worker<'_> {
 
 struct RequestHandler<'worker> {
     query: &'worker SearchQuery,
+    fs: &'worker dyn Fs,
+    open_entries: &'worker HashSet<ProjectEntryId>,
     matched_buffer_count: &'worker AtomicUsize,
     matches_count: &'worker AtomicUsize,
 
@@ -214,6 +236,34 @@ impl RequestHandler<'_> {
             None
         }
     }
+    async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
+        _=maybe!(async move {
+            let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
+            let Some(file) = self.fs.open_sync(&abs_path).await.log_err() else {
+                return anyhow::Ok(());
+            };
+
+            let mut file = BufReader::new(file);
+            let file_start = file.fill_buf()?;
+
+            if let Err(Some(starting_position)) =
+            std::str::from_utf8(file_start).map_err(|e| e.error_len())
+            {
+                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
+                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
+                log::debug!(
+                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
+                );
+                return Ok(());
+            }
+
+            if self.query.detect(file).unwrap_or(false) {
+                entry.respond.send(entry.path).await?;
+            }
+            Ok(())
+        }).await;
+    }
+
     async fn handle_scan_path(&self, req: InputPath<'_>) {
         let InputPath {
             entry,
@@ -222,15 +272,21 @@ impl RequestHandler<'_> {
         } = req;
         if entry.is_dir() && entry.is_ignored {
             if !settings.is_path_excluded(&entry.path) {
-                Self::scan_ignored_dir(&fs, &snapshot, &entry.path, &query, &filter_tx, &output_tx)
-                    .await?;
+                Self::scan_ignored_dir(
+                    self.fs,
+                    &snapshot,
+                    &entry.path,
+                    self.query,
+                    &filter_tx,
+                    &output_tx,
+                )
+                .await?;
             }
-            return None;
-            // continue;
+            return;
         }
 
         if entry.is_fifo || !entry.is_file() {
-            return None;
+            return;
         }
 
         if self.query.filters_path() {
@@ -242,21 +298,23 @@ impl RequestHandler<'_> {
                 self.query.match_path(entry.path.as_std_path())
             };
             if !matched_path {
-                return None;
-                // continue;
+                return;
             }
         }
 
         let (mut tx, rx) = oneshot::channel();
 
-        if open_entries.contains(&entry.id) {
-            tx.send(ProjectPath {
-                worktree_id: snapshot.id(),
-                path: entry.path.clone(),
-            })
-            .await?;
+        if self.open_entries.contains(&entry.id) {
+            // The buffer is already in memory and that's the version we want to scan;
+            // hence skip the dilly-dally and look for all matches straight away.
+            self.get_buffer_for_full_scan_tx
+                .send(ProjectPath {
+                    worktree_id: snapshot.id(),
+                    path: entry.path.clone(),
+                })
+                .await?;
         } else {
-            filter_tx
+            self.find_first_match_tx
                 .send(MatchingEntry {
                     respond: tx,
                     worktree_root: snapshot.abs_path().clone(),
