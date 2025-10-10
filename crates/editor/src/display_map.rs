@@ -1559,6 +1559,8 @@ impl SemanticTokenView {
         let stylizer = SemanticTokenStylizer::new(legend);
         let rainbow_config = EditorSettings::get_global(cx).rainbow_highlighting;
         let rainbow_enabled = rainbow_config.enabled;
+        
+        log::debug!("Rainbow highlighting status: enabled={}", rainbow_enabled);
 
         let mut tokens = lsp
             .tokens()
@@ -1574,7 +1576,20 @@ impl SemanticTokenView {
                 let variable_name = if rainbow_enabled {
                     let token_type_name = stylizer.token_type(token.token_type);
                     if matches!(token_type_name, Some("variable" | "parameter" | "property")) {
-                        Some(buffer.text_for_range(start_offset..end_offset).collect::<String>())
+                        let token_len = end_offset.saturating_sub(start_offset);
+                        
+                        // Early exit: skip very short (<2) or very long (>32) identifiers
+                        if token_len < 2 || token_len > 32 {
+                            None
+                        } else {
+                            let name = buffer.text_for_range(start_offset..end_offset).collect::<String>();
+                            // Skip purely numeric identifiers
+                            if name.chars().all(|c| c.is_numeric()) {
+                                None
+                            } else {
+                                Some(name)
+                            }
+                        }
                     } else {
                         None
                     }

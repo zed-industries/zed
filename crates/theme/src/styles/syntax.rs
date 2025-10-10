@@ -58,18 +58,17 @@ impl SyntaxTheme {
     }
 
     pub fn rainbow_palette_size(&self) -> usize {
-        // Check how many rainbow colors the theme defines
+        const MAX_RAINBOW_COLORS: usize = 32;
+        
         let mut count = 0;
-        loop {
-            let key = format!("variable.rainbow.{}", count);
-            if self.get_opt(&key).is_some() {
-                count += 1;
-            } else {
+        for i in 0..MAX_RAINBOW_COLORS {
+            let key = format!("variable.rainbow.{}", i);
+            if self.get_opt(&key).is_none() {
                 break;
             }
+            count = i + 1;
         }
         
-        // If theme doesn't define any, use fallback palette size
         if count == 0 {
             Self::fallback_rainbow_palette().len()
         } else {

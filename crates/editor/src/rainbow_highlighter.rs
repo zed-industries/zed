@@ -91,4 +91,24 @@ mod tests {
         let var1_again = RainbowHighlighter::hash_to_index("foo", palette_size);
         assert_eq!(var1_index, var1_again, "Same variable should hash to same index");
     }
+    
+    #[test]
+    fn test_identifier_length_boundaries() {
+        let palette_size = 12;
+        
+        let very_long_name = "a".repeat(33);
+        let max_valid_name = "a".repeat(32);
+        let min_valid_name = "ab";
+        let too_short = "a";
+        
+        let long_index = RainbowHighlighter::hash_to_index(&very_long_name, palette_size);
+        let max_index = RainbowHighlighter::hash_to_index(&max_valid_name, palette_size);
+        let min_index = RainbowHighlighter::hash_to_index(&min_valid_name, palette_size);
+        let short_index = RainbowHighlighter::hash_to_index(&too_short, palette_size);
+        
+        assert!(long_index < palette_size, "Even long names should hash correctly");
+        assert!(max_index < palette_size, "32-char names should hash correctly");
+        assert!(min_index < palette_size, "2-char names should hash correctly");
+        assert!(short_index < palette_size, "1-char names should hash correctly");
+    }
 }
