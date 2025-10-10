@@ -1096,11 +1096,37 @@ impl SettingsWindow {
 
             _ = this
                 .update(cx, |this, cx| {
+                    // For tuning the score threshold
+                    // for fuzzy_match in &fuzzy_matches {
+                    //     let SearchItemKey {
+                    //         page_index,
+                    //         header_index,
+                    //         item_index,
+                    //     } = search_index.key_lut[fuzzy_match.candidate_id];
+                    //     let SettingsPageItem::SectionHeader(header) =
+                    //         this.pages[page_index].items[header_index]
+                    //     else {
+                    //         continue;
+                    //     };
+                    //     let SettingsPageItem::SettingItem(SettingItem {
+                    //         title, description, ..
+                    //     }) = this.pages[page_index].items[item_index]
+                    //     else {
+                    //         continue;
+                    //     };
+                    //     let score = fuzzy_match.score;
+                    //     eprint!("# {header} :: QUERY = {query} :: SCORE = {score}\n{title}\n{description}\n\n");
+                    // }
                     update_matches_inner(
                         this,
                         search_index.as_ref(),
                         fuzzy_matches
                             .into_iter()
+                            // MAGIC NUMBER: Was found to have right balance between not too many weird matches, but also
+                            // flexible enough to catch misspellings and <4 letter queries
+                            // More flexible is good for us here because fuzzy matches will only be used for things that don't
+                            // match using bm25
+                            .take_while(|fuzzy_match| fuzzy_match.score >= 0.3)
                             .map(|fuzzy_match| fuzzy_match.candidate_id),
                         cx,
                     );
