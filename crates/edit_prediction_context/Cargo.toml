@@ -27,6 +27,7 @@ project.workspace = true
 regex.workspace = true
 serde.workspace = true
 slotmap.workspace = true
+smallvec.workspace = true
 strum.workspace = true
 text.workspace = true
 tree-sitter.workspace = true

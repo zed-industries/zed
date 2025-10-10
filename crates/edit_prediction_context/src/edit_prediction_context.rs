@@ -62,11 +62,11 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let excerpt_occurrences = Occurrences::within_string(&excerpt_text.body);
+        let excerpt_occurrences = IdentifierParts::within_string(&excerpt_text.body);
 
         let adjacent_start = Point::new(cursor_point.row.saturating_sub(2), 0);
         let adjacent_end = Point::new(cursor_point.row + 1, 0);
-        let adjacent_occurrences = Occurrences::within_string(
+        let adjacent_occurrences = IdentifierParts::within_string(
             &buffer
                 .text_for_range(adjacent_start..adjacent_end)
                 .collect::<String>(),

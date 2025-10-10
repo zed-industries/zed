@@ -5185,6 +5185,7 @@ dependencies = [
  "serde_json",
  "settings",
  "slotmap",
+ "smallvec",
  "strum 0.27.1",
  "text",
  "tree-sitter",

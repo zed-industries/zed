@@ -11,7 +11,9 @@ use crate::{
     Declaration, EditPredictionExcerpt, Identifier,
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
-    text_similarity::{Occurrences, jaccard_similarity, weighted_overlap_coefficient},
+    text_similarity::{
+        IdentifierParts, OccurrenceMultiset, Similarity as _, WeightedSimilarity as _,
+    },
 };
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
@@ -60,8 +62,8 @@ impl ScoredDeclaration {
 pub fn scored_declarations(
     index: &SyntaxIndexState,
     excerpt: &EditPredictionExcerpt,
-    excerpt_occurrences: &Occurrences,
-    adjacent_occurrences: &Occurrences,
+    excerpt_occurrences: &IdentifierParts<OccurrenceMultiset>,
+    adjacent_occurrences: &IdentifierParts<OccurrenceMultiset>,
     identifier_to_references: HashMap<Identifier, Vec<Reference>>,
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
@@ -178,8 +180,8 @@ fn score_declaration(
     declaration_line_distance_rank: usize,
     same_file_declaration_count: usize,
     declaration_count: usize,
-    excerpt_occurrences: &Occurrences,
-    adjacent_occurrences: &Occurrences,
+    excerpt_occurrences: &IdentifierParts<OccurrenceMultiset>,
+    adjacent_occurrences: &IdentifierParts<OccurrenceMultiset>,
     cursor: Point,
     current_buffer: &BufferSnapshot,
 ) -> Option<ScoredDeclaration> {
@@ -199,24 +201,25 @@ fn score_declaration(
         .min()
         .unwrap();
 
-    let item_source_occurrences = Occurrences::within_string(&declaration.item_text().0);
-    let item_signature_occurrences = Occurrences::within_string(&declaration.signature_text().0);
-    let excerpt_vs_item_jaccard = jaccard_similarity(excerpt_occurrences, &item_source_occurrences);
+    let item_source_occurrences = IdentifierParts::within_string(&declaration.item_text().0);
+    let item_signature_occurrences =
+        IdentifierParts::within_string(&declaration.signature_text().0);
+    let excerpt_vs_item_jaccard = excerpt_occurrences.jaccard_similarity(&item_source_occurrences);
     let excerpt_vs_signature_jaccard =
-        jaccard_similarity(excerpt_occurrences, &item_signature_occurrences);
+        excerpt_occurrences.jaccard_similarity(&item_signature_occurrences);
     let adjacent_vs_item_jaccard =
-        jaccard_similarity(adjacent_occurrences, &item_source_occurrences);
+        adjacent_occurrences.jaccard_similarity(&item_source_occurrences);
     let adjacent_vs_signature_jaccard =
-        jaccard_similarity(adjacent_occurrences, &item_signature_occurrences);
+        adjacent_occurrences.jaccard_similarity(&item_signature_occurrences);
 
     let excerpt_vs_item_weighted_overlap =
-        weighted_overlap_coefficient(excerpt_occurrences, &item_source_occurrences);
+        excerpt_occurrences.weighted_overlap_coefficient(&item_source_occurrences);
     let excerpt_vs_signature_weighted_overlap =
-        weighted_overlap_coefficient(excerpt_occurrences, &item_signature_occurrences);
+        excerpt_occurrences.weighted_overlap_coefficient(&item_signature_occurrences);
     let adjacent_vs_item_weighted_overlap =
-        weighted_overlap_coefficient(adjacent_occurrences, &item_source_occurrences);
+        adjacent_occurrences.weighted_overlap_coefficient(&item_source_occurrences);
     let adjacent_vs_signature_weighted_overlap =
-        weighted_overlap_coefficient(adjacent_occurrences, &item_signature_occurrences);
+        adjacent_occurrences.weighted_overlap_coefficient(&item_signature_occurrences);
 
     // TODO: Consider adding declaration_file_count
     let score_components = DeclarationScoreComponents {
