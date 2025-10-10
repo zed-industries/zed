@@ -205,6 +205,7 @@ impl BufferInlayHints {
                 }
             },
         ));
+        *self.fetched_hints(&chunk) = None;
     }
 
     pub fn hint_for_id(&mut self, id: InlayId) -> Option<&mut InlayHint> {

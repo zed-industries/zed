@@ -1,18 +1,18 @@
-/// The logic, responsible for managing [`Inlay`]s in the editor.
-///
-/// Inlays are "not real" text that gets mixed into the "real" buffer's text.
-/// They are attached to a certain [`Anchor`], and display certain contents (usually, strings)
-/// between real text around that anchor.
-///
-/// Inlay examples in Zed:
-/// * inlay hints, received from LSP
-/// * inline values, shown in the debugger
-/// * inline predictions, showing the Zeta/Copilot/etc. predictions
-/// * document color values, if configured to be displayed as inlays
-/// * ... anything else, potentially.
-///
-/// Editor uses [`crate::DisplayMap`] and [`crate::display_map::InlayMap`] to manage what's rendered inside the editor, using
-/// [`InlaySplice`] to update this state.
+//! The logic, responsible for managing [`Inlay`]s in the editor.
+//!
+//! Inlays are "not real" text that gets mixed into the "real" buffer's text.
+//! They are attached to a certain [`Anchor`], and display certain contents (usually, strings)
+//! between real text around that anchor.
+//!
+//! Inlay examples in Zed:
+//! * inlay hints, received from LSP
+//! * inline values, shown in the debugger
+//! * inline predictions, showing the Zeta/Copilot/etc. predictions
+//! * document color values, if configured to be displayed as inlays
+//! * ... anything else, potentially.
+//!
+//! Editor uses [`crate::DisplayMap`] and [`crate::display_map::InlayMap`] to manage what's rendered inside the editor, using
+//! [`InlaySplice`] to update this state.
 
 /// Logic, related to managing LSP inlay hint inlays.
 pub mod inlay_hints;
@@ -147,7 +147,7 @@ impl Editor {
     ) {
         if let Some(inlay_hints) = &mut self.inlay_hints {
             for id_to_remove in to_remove {
-                inlay_hints.hint_kinds.remove(id_to_remove);
+                inlay_hints.added_hints.remove(id_to_remove);
             }
         }
         self.display_map.update(cx, |display_map, cx| {
