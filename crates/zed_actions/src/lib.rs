@@ -223,8 +223,6 @@ pub mod feedback {
             EmailZed,
             /// Opens the bug report form.
             FileBugReport,
-            /// Opens the feedback form.
-            GiveFeedback,
             /// Opens the feature request form.
             RequestFeature
         ]
