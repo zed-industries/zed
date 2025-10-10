@@ -158,8 +158,8 @@ use project::{
     },
     git_store::{GitStoreEvent, RepositoryEvent},
     lsp_store::{
-        CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle,
-        RowChunkCachedHints,
+        CacheInlayHints, CompletionDocumentation, FormatTrigger, LspFormatTarget,
+        OpenLspBufferHandle,
     },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
@@ -22450,7 +22450,7 @@ pub trait SemanticsProvider {
         _buffer: Entity<Buffer>,
         _range: Range<text::Anchor>,
         _cx: &mut App,
-    ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, CacheInlayHints>>>> {
         None
     }
 
@@ -22955,7 +22955,7 @@ impl SemanticsProvider for Entity<Project> {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut App,
-    ) -> Option<Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>>> {
+    ) -> Option<Task<Result<HashMap<Range<BufferRow>, CacheInlayHints>>>> {
         Some(self.read(cx).lsp_store().update(cx, |lsp_store, cx| {
             lsp_store.inlay_hints(invalidate, buffer, range, cx)
         }))
