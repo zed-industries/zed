@@ -311,7 +311,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .filter(|(_, (id, _, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, _, paths))| {
                 let combined_string = paths
-                    .paths()
+                    .ordered_paths()
                     .iter()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
@@ -462,7 +462,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         let mut path_start_offset = 0;
 
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
-            .paths()
+            .ordered_paths()
             .iter()
             .map(|p| p.compact())
             .map(|path| {
