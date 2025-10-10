@@ -58,7 +58,7 @@ pub struct HashFrom<S> {
 /// proper rolling hash. Unfortunately, I didn't find a rust rolling hash implementation that
 /// operated on updates larger than u8.
 #[derive(Debug)]
-struct NGram<const N: usize, S> {
+pub struct NGram<const N: usize, S> {
     _source: PhantomData<S>,
 }
 
@@ -379,13 +379,12 @@ struct NGramIterator<const N: usize, S, I> {
     _source: PhantomData<S>,
 }
 
-impl<const N: usize, S, I> NGramIterator<N, S, I>
-where
-    I: Iterator<Item = HashFrom<S>>,
-{
-    fn new<V: Hash>(hashes: I) -> Self {
-        Self {
-            hashes,
+impl<const N: usize, S> NGram<N, S> {
+    pub fn iterator<I: IntoIterator<Item = HashFrom<S>>>(
+        hashes: I,
+    ) -> impl Iterator<Item = HashFrom<NGram<N, S>>> {
+        NGramIterator {
+            hashes: hashes.into_iter(),
             window: ArrayDeque::new(),
             _source: PhantomData,
         }

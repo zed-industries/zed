@@ -6,7 +6,7 @@ pub use identifier_parts::*;
 pub use occurrences::*;
 pub use sliding_window::*;
 
-// Variants to consider experimenting:
+// Variants to consider trying:
 //
 // * Also include unsplit identifier (or a hash of its hashes), so that full identifier matches get
 // a higher score.
