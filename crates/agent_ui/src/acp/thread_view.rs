@@ -6747,13 +6747,7 @@ pub(crate) mod tests {
 
                     editor
                 });
-                workspace.add_item_to_active_pane(
-                    Box::new(editor.clone()),
-                    None,
-                    false,
-                    window,
-                    cx,
-                );
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
             })
             .unwrap();
 
@@ -6812,13 +6806,7 @@ pub(crate) mod tests {
 
                     editor
                 });
-                workspace.add_item_to_active_pane(
-                    Box::new(editor.clone()),
-                    None,
-                    false,
-                    window,
-                    cx,
-                );
+                workspace.add_item_to_active_pane(Box::new(editor), None, false, window, cx);
             })
             .unwrap();
 
