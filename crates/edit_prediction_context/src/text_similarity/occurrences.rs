@@ -374,3 +374,9 @@ where
         return None;
     }
 }
+
+impl<S> AsRef<Occurrences<S>> for Occurrences<S> {
+    fn as_ref(&self) -> &Occurrences<S> {
+        self
+    }
+}

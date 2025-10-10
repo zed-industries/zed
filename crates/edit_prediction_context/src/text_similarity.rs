@@ -1,8 +1,10 @@
 mod identifier_parts;
 mod occurrences;
+mod sliding_window;
 
 pub use identifier_parts::*;
 pub use occurrences::*;
+pub use sliding_window::*;
 
 // Variants to consider experimenting:
 //
