@@ -34,21 +34,6 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 |                   | Google    | Output              | $10.00                       | $11.00                  |
 | Gemini 2.5 Flash  | Google    | Input               | $0.30                        | $0.33                   |
 |                   | Google    | Output              | $2.50                        | $2.75                   |
-| Grok 4            | X.ai      | Input               | $3.00                        | $3.30                   |
-|                   | X.ai      | Output              | $15.00                       | $16.5                   |
-|                   | X.ai      | Cached Input        | $0.75                        | $0.825                  |
-| Grok 4 Fast       | X.ai      | Input               | $0.20                        | $0.22                   |
-|                   | X.ai      | Output              | $0.50                        | $0.55                   |
-|                   | X.ai      | Cached Input        | $0.05                        | $0.055                  |
-| Grok 4 Fast       | X.ai      | Input               | $0.20                        | $0.22                   |
-|                   | X.ai      | Output              | $0.50                        | $0.55                   |
-|                   | X.ai      | Cached Input        | $0.05                        | $0.055                  |
-| Grok 4 (Non-Reasoning) | X.ai | Input               | $0.20                        | $0.22                   |
-|                   | X.ai      | Output              | $0.50                        | $0.55                   |
-|                   | X.ai      | Cached Input        | $0.05                        | $0.055                  |
-| Grok Code Fast 1  | X.ai      | Input               | $0.20                        | $0.22                   |
-|                   | X.ai      | Output              | $1.50                        | $1.65                   |
-|                   | X.ai      | Cached Input        | $0.02                        | $0.022                  |
 
 ## Usage {#usage}
 
