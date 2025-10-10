@@ -2410,8 +2410,9 @@ mod test {
         }
 
         fn build(mut self, cx: &App) -> Self {
-            self.build_search_matches();
             self.build_navbar(cx);
+            self.build_search_matches();
+            self.build_search_index();
             self
         }
 
