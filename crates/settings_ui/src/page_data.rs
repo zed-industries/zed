@@ -4028,51 +4028,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             ],
         },
         SettingsPage {
-            title: "System & Network",
-            items: vec![
-                SettingsPageItem::SectionHeader("Network"),
-                // todo(settings_ui): Proxy needs a default
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Proxy",
-                    description: "The proxy to use for network requests",
-                    field: Box::new(
-                        SettingField {
-                            pick: |settings_content| &settings_content.proxy,
-                            pick_mut: |settings_content| &mut settings_content.proxy,
-                        }
-                        .unimplemented(),
-                    ),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("socks5h://localhost:10808"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Server URL",
-                    description: "The URL of the Zed server to connect to",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.server_url,
-                        pick_mut: |settings_content| &mut settings_content.server_url,
-                    }),
-                    metadata: Some(Box::new(SettingsFieldMetadata {
-                        placeholder: Some("https://zed.dev"),
-                    })),
-                    files: USER,
-                }),
-                SettingsPageItem::SectionHeader("System"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Whether or not to automatically check for updates",
-                    field: Box::new(SettingField {
-                        pick: |settings_content| &settings_content.auto_update,
-                        pick_mut: |settings_content| &mut settings_content.auto_update,
-                    }),
-                    metadata: None,
-                    files: USER,
-                }),
-            ],
-        },
-        SettingsPage {
             title: "Diagnostics & Errors",
             items: vec![
                 SettingsPageItem::SectionHeader("Filtering"),
@@ -4428,6 +4383,51 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     field: Box::new(SettingField {
                         pick: |settings_content| &settings_content.disable_ai,
                         pick_mut: |settings_content| &mut settings_content.disable_ai,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "System & Network",
+            items: vec![
+                SettingsPageItem::SectionHeader("Network"),
+                // todo(settings_ui): Proxy needs a default
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Proxy",
+                    description: "The proxy to use for network requests",
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.proxy,
+                            pick_mut: |settings_content| &mut settings_content.proxy,
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("socks5h://localhost:10808"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Server URL",
+                    description: "The URL of the Zed server to connect to",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.server_url,
+                        pick_mut: |settings_content| &mut settings_content.server_url,
+                    }),
+                    metadata: Some(Box::new(SettingsFieldMetadata {
+                        placeholder: Some("https://zed.dev"),
+                    })),
+                    files: USER,
+                }),
+                SettingsPageItem::SectionHeader("System"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Whether or not to automatically check for updates",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.auto_update,
+                        pick_mut: |settings_content| &mut settings_content.auto_update,
                     }),
                     metadata: None,
                     files: USER,
