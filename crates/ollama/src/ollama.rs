@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
@@ -203,34 +201,61 @@ impl<'de> Deserialize<'de> for ModelShow {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        struct Raw {
-            #[serde(default)]
-            capabilities: Vec<String>,
-            #[serde(default)]
-            model_info: HashMap<String, serde_json::Value>,
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ModelShowVisitor;
+
+        impl<'de> Visitor<'de> for ModelShowVisitor {
+            type Value = ModelShow;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a ModelShow object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut capabilities: Vec<String> = Vec::new();
+                let mut architecture: Option<String> = None;
+                let mut context_length: Option<u64> = None;
+
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "capabilities" => {
+                            capabilities = map.next_value()?;
+                        }
+                        "model_info" => {
+                            let model_info: Value = map.next_value()?;
+                            if let Value::Object(obj) = model_info {
+                                architecture = obj
+                                    .get("general.architecture")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from);
+
+                                if let Some(arch) = &architecture {
+                                    context_length = obj
+                                        .get(&format!("{}.context_length", arch))
+                                        .and_then(|v| v.as_u64());
+                                }
+                            }
+                        }
+                        _ => {
+                            let _: de::IgnoredAny = map.next_value()?;
+                        }
+                    }
+                }
+
+                Ok(ModelShow {
+                    capabilities,
+                    context_length,
+                    architecture,
+                })
+            }
         }
 
-        let raw = Raw::deserialize(deserializer)?;
-
-        let architecture = raw
-            .model_info
-            .get("general.architecture")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let context_length = architecture.as_deref().and_then(|arch| {
-            raw.model_info
-                .get(&format!("{}.context_length", arch))
-                .and_then(|v| v.as_f64())
-                .map(|f| f as u64)
-        });
-
-        Ok(ModelShow {
-            capabilities: raw.capabilities,
-            context_length,
-            architecture,
-        })
+        deserializer.deserialize_map(ModelShowVisitor)
     }
 }
 
