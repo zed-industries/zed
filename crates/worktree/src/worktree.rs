@@ -4404,13 +4404,6 @@ impl BackgroundScanner {
                     let parent_is_hidden = path
                         .parent()
                         .and_then(|parent| state.snapshot.entry_for_path(parent))
-                        .inspect(|parent_entry| {
-                            debug_assert!(
-                                matches!(parent_entry.kind, EntryKind::Dir),
-                                "parent entry should be a fully scanned directory: {:?}",
-                                parent_entry.path
-                            );
-                        })
                         .map_or(false, |parent_entry| parent_entry.is_hidden);
                     fs_entry.is_hidden = parent_is_hidden
                         || path.file_name().map_or(false, |name| is_path_hidden(name));
