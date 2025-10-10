@@ -78,6 +78,9 @@ fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<Str
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
             MigrationType::Json(callback) => {
+                if current_text.trim().is_empty() {
+                    return Ok(None);
+                }
                 let old_content: serde_json_lenient::Value =
                     settings::parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
