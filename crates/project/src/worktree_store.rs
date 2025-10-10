@@ -1084,62 +1084,7 @@ impl WorktreeStore {
         output_tx: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> Result<()> {
         for (snapshot, settings) in snapshots {
-            for entry in snapshot.entries(query.include_ignored(), 0) {
-                if entry.is_dir() && entry.is_ignored {
-                    if !settings.is_path_excluded(&entry.path) {
-                        Self::scan_ignored_dir(
-                            &fs,
-                            &snapshot,
-                            &entry.path,
-                            &query,
-                            &filter_tx,
-                            &output_tx,
-                        )
-                        .await?;
-                    }
-                    continue;
-                }
-
-                if entry.is_fifo || !entry.is_file() {
-                    continue;
-                }
-
-                if query.filters_path() {
-                    let matched_path = if query.match_full_paths() {
-                        let mut full_path = snapshot.root_name().as_std_path().to_owned();
-                        full_path.push(entry.path.as_std_path());
-                        query.match_path(&full_path)
-                    } else {
-                        query.match_path(entry.path.as_std_path())
-                    };
-                    if !matched_path {
-                        continue;
-                    }
-                }
-
-                let (mut tx, rx) = oneshot::channel();
-
-                if open_entries.contains(&entry.id) {
-                    tx.send(ProjectPath {
-                        worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
-                    })
-                    .await?;
-                } else {
-                    filter_tx
-                        .send(MatchingEntry {
-                            respond: tx,
-                            worktree_root: snapshot.abs_path().clone(),
-                            path: ProjectPath {
-                                worktree_id: snapshot.id(),
-                                path: entry.path.clone(),
-                            },
-                        })
-                        .await?;
-                }
-
-                output_tx.send(rx).await?;
-            }
+            for entry in snapshot.entries(query.include_ignored(), 0) {}
         }
         Ok(())
     }
