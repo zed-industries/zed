@@ -3,10 +3,8 @@ mod components;
 mod page_data;
 
 use anyhow::Result;
-use bm25::Document;
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
-use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
     ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
@@ -28,7 +26,7 @@ use std::{
     num::{NonZero, NonZeroU32},
     ops::Range,
     rc::Rc,
-    sync::{Arc, LazyLock, RwLock, atomic::AtomicBool},
+    sync::{Arc, LazyLock, RwLock},
 };
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
@@ -464,8 +462,18 @@ pub struct SettingsWindow {
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
-    search_engine: bm25::SearchEngine<usize>,
-    search_engine_key_lut: Vec<SearchItemKey>,
+    search_state: Option<Arc<SearchState>>,
+}
+
+struct SearchState {
+    engine: bm25::SearchEngine<usize>,
+    key_lut: Vec<SearchItemKey>,
+}
+
+struct SearchItemKey {
+    page_index: usize,
+    header_index: usize,
+    item_index: usize,
 }
 
 struct SubPage {
@@ -808,12 +816,6 @@ impl SettingsUiFile {
     }
 }
 
-struct SearchItemKey {
-    page_index: usize,
-    header_index: usize,
-    item_index: usize,
-}
-
 impl SettingsWindow {
     pub fn new(
         original_window: Option<WindowHandle<Workspace>>,
@@ -890,13 +892,7 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
-            // todo! remove
-            search_engine: bm25::SearchEngineBuilder::with_documents(
-                bm25::Language::English,
-                Vec::<bm25::Document<usize>>::new(),
-            )
-            .build(),
-            search_engine_key_lut: vec![],
+            search_state: None,
         };
 
         this.fetch_files(window, cx);
@@ -1040,7 +1036,7 @@ impl SettingsWindow {
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
         let query = self.search_bar.read(cx).text(cx);
-        if query.is_empty() {
+        if query.is_empty() || self.search_state.is_none() {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
@@ -1049,11 +1045,16 @@ impl SettingsWindow {
             return;
         }
 
+        let search_state = self.search_state.as_ref().unwrap().clone();
         self.search_task = Some(cx.spawn(async move |this, cx| {
+            let string_matches = cx
+                .background_spawn({
+                    let search_state = search_state.clone();
+                    let max_results = search_state.key_lut.len();
+                    async move { search_state.engine.search(&query, max_results) }
+                })
+                .await;
             this.update(cx, |this, cx| {
-                let string_matches = this
-                    .search_engine
-                    .search(&query, this.search_engine_key_lut.len());
                 for page in &mut this.search_matches {
                     page.fill(false);
                 }
@@ -1067,7 +1068,7 @@ impl SettingsWindow {
                         page_index,
                         header_index,
                         item_index,
-                    } = this.search_engine_key_lut[string_match.document.id];
+                    } = search_state.key_lut[string_match.document.id];
                     let page = &mut this.search_matches[page_index];
                     page[header_index] = true;
                     page[item_index] = true;
@@ -1131,9 +1132,9 @@ impl SettingsWindow {
                 });
             }
         }
-        self.search_engine_key_lut = key_lut;
-        self.search_engine =
+        let engine =
             bm25::SearchEngineBuilder::with_documents(bm25::Language::English, documents).build();
+        self.search_state = Some(Arc::new(SearchState { engine, key_lut }));
     }
 
     fn build_content_handles(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
@@ -2494,6 +2495,7 @@ mod test {
                 cx,
             ),
             files_focus_handle: cx.focus_handle(),
+            search_state: None,
         };
 
         settings_window.build_search_matches();
