@@ -138,7 +138,11 @@ impl UniformListScrollHandle {
         })))
     }
 
-    /// Scroll the list so that the given item index is onscreen.
+    /// Scroll the list so that the given item index is visible.
+    ///
+    /// This uses non-strict scrolling: if the item is already fully visible, no scrolling occurs.
+    /// If the item is out of view, it scrolls the minimum amount to bring it into view according
+    /// to the strategy.
     pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
@@ -149,6 +153,9 @@ impl UniformListScrollHandle {
     }
 
     /// Scroll the list so that the given item index is at scroll strategy position.
+    ///
+    /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
+    /// even if it's already visible. Use this when you need precise positioning.
     pub fn scroll_to_item_strict(&self, ix: usize, strategy: ScrollStrategy) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
@@ -158,17 +165,46 @@ impl UniformListScrollHandle {
         });
     }
 
-    /// Scroll the list to the given item index with an offset.
+    /// Scroll the list to the given item index with an offset in number of items.
     ///
-    /// For ScrollStrategy::Top, the item will be placed at the offset position from the top.
+    /// This uses non-strict scrolling: if the item is already visible within the offset region,
+    /// no scrolling occurs.
     ///
-    /// For ScrollStrategy::Center, the item will be centered between offset and the last visible item.
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
     pub fn scroll_to_item_with_offset(&self, ix: usize, strategy: ScrollStrategy, offset: usize) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
             strategy,
             offset,
             scroll_strict: false,
+        });
+    }
+
+    /// Scroll the list so that the given item index is at the exact scroll strategy position with an offset.
+    ///
+    /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
+    /// even if it's already visible.
+    ///
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
+    pub fn scroll_to_item_strict_with_offset(
+        &self,
+        ix: usize,
+        strategy: ScrollStrategy,
+        offset: usize,
+    ) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
+            item_index: ix,
+            strategy,
+            offset,
+            scroll_strict: true,
         });
     }
 
@@ -392,7 +428,7 @@ impl Element for UniformList {
                         {
                             match deferred_scroll.strategy {
                                 ScrollStrategy::Top => {
-                                    updated_scroll_offset.y = -item_top
+                                    updated_scroll_offset.y = -(item_top - offset_pixels)
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
                                         .max(Pixels::ZERO);
@@ -410,7 +446,8 @@ impl Element for UniformList {
                                         .max(Pixels::ZERO);
                                 }
                                 ScrollStrategy::Bottom => {
-                                    updated_scroll_offset.y = -(item_bottom - list_height)
+                                    updated_scroll_offset.y = -(item_bottom - list_height
+                                        + offset_pixels)
                                         .max(Pixels::ZERO)
                                         .min(content_height - list_height)
                                         .max(Pixels::ZERO);
