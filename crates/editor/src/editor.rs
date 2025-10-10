@@ -6447,12 +6447,27 @@ impl Editor {
         }
         
         // Handle both singleton and multibuffer editors
-        let buffers_to_request: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+        let all_buffers: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             vec![buffer]
         } else {
             // Multibuffer: get all buffers
             self.buffer.read(cx).all_buffers().into_iter().collect()
         };
+        
+        // Deduplicate buffers by buffer_id to avoid redundant LSP requests
+        let mut seen = HashSet::default();
+        let buffers_to_request: Vec<_> = all_buffers
+            .into_iter()
+            .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
+            .collect();
+        
+        if buffers_to_request.len() != seen.len() {
+            log::debug!(
+                "Deduplicated {} buffers to {} unique buffers for semantic tokens",
+                seen.len(),
+                buffers_to_request.len()
+            );
+        }
         
         for buffer in buffers_to_request {
             let buffer_snapshot = buffer.read(cx);
@@ -6489,12 +6504,28 @@ impl Editor {
         }
         
         // Handle both singleton and multibuffer editors
-        let buffers_to_request: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+        let all_buffers: Vec<Entity<Buffer>> = if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             vec![buffer]
         } else {
             // Multibuffer: get all buffers
             self.buffer.read(cx).all_buffers().into_iter().collect()
         };
+        
+        // Deduplicate buffers by buffer_id to avoid redundant LSP requests
+        let mut seen = HashSet::default();
+        let buffers_to_request: Vec<_> = all_buffers
+            .into_iter()
+            .filter(|buffer| seen.insert(buffer.read(cx).remote_id()))
+            .collect();
+        
+        if buffers_to_request.len() != seen.len() {
+            log::debug!(
+                "Deduplicated {} buffers to {} unique buffers for semantic tokens (LSP server {})",
+                seen.len(),
+                buffers_to_request.len(),
+                server_id.0
+            );
+        }
         
         for buffer in buffers_to_request {
             let buffer_snapshot = buffer.read(cx);
