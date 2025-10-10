@@ -1,7 +1,6 @@
 use settings::{LanguageSettingsContent, SettingsContent};
 use std::sync::Arc;
-use ui::{IntoElement, SharedString};
-
+h
 use crate::{
     LOCAL, SettingField, SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem,
     SubPageLink, USER, sub_page_stack,
@@ -601,43 +600,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             title: "Editor",
             items: {
                 let mut items = vec![
-                    SettingsPageItem::SectionHeader("Search"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Search Wrap",
-                        description: "Whether the editor search results will loop",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.search_wrap,
-                            pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Seed Search Query From Cursor",
-                        description: "When to populate a new search's query based on the text under the cursor",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.seed_search_query_from_cursor
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.seed_search_query_from_cursor
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Use Smartcase Search",
-                        description: "Whether to use smartcase (i.e., case-sensitive) search",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.use_smartcase_search,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.use_smartcase_search
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
                     SettingsPageItem::SectionHeader("Editor Behavior"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Redact Private Values",
@@ -3149,6 +3111,50 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+            ],
+        },
+        SettingsPage {
+            title: "Search & Files",
+            items: vec![
+                SettingsPageItem::SectionHeader("Search"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Search Wrap",
+                    description: "Whether the editor search results will loop",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.search_wrap,
+                        pick_mut: |settings_content| &mut settings_content.editor.search_wrap,
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Seed Search Query From Cursor",
+                    description: "When to populate a new search's query based on the text under the cursor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.seed_search_query_from_cursor
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.seed_search_query_from_cursor
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Use Smartcase Search",
+                    description: "Whether to use smartcase (i.e., case-sensitive) search",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| &settings_content.editor.use_smartcase_search,
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.use_smartcase_search
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                 SettingsPageItem::SectionHeader("Files"),
+                 SettingsPageItem::SectionHeader("File Scan"),
             ],
         },
         SettingsPage {
