@@ -816,8 +816,8 @@ impl DisplaySnapshot {
     /// Filters out incomplete identifiers, keywords, and invalid patterns.
     #[inline]
     fn is_valid_rainbow_identifier(text: &str) -> bool {
-        // Skip empty or very short identifiers (prevents chunked parts like "_", "id")
-        if text.is_empty() || text.len() < 3 {
+        // Skip empty strings only - allow short identifiers like "cx", "id", "a", etc.
+        if text.is_empty() {
             return false;
         }
         
@@ -851,8 +851,8 @@ impl DisplaySnapshot {
             // Common builtins
             "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
             "range", "map", "filter", "sum", "min", "max", "abs", "all", "any",
-            // Common short words that are often partial chunks
-            "id", "fn", "to", "is", "in", "or", "on", "at", "by", "do", "if", "it",
+            // Common short words that are often partial chunks (excluding "id" which is a common variable name)
+            "fn", "to", "is", "in", "or", "on", "at", "by", "do", "if", "it",
         ];
         
         if KEYWORDS.contains(&lowercase.as_str()) {
@@ -1073,10 +1073,6 @@ impl DisplaySnapshot {
                     })
                     .unwrap_or(false);
 
-                if !is_variable_like {
-                    *cached_identifier = None;
-                }
-
                 let rainbow_style = if rainbow_config.enabled && is_variable_like {
                     if let Some((cached_start, cached_end, cached_style)) = cached_identifier {
                         if chunk_start >= *cached_start && chunk_end <= *cached_end {
@@ -1087,51 +1083,55 @@ impl DisplaySnapshot {
                     } else {
                         None
                     }.or_else(|| {
-                    
-                    let rope = buffer_snapshot.text();
-                    let rope_len = rope.len();
-                    
-                    let mut start = chunk_start.min(rope_len);
-                    while start > 0 {
-                        if let Some(ch) = rope.chars().nth(start.saturating_sub(1)) {
-                            if !ch.is_alphanumeric() && ch != '_' {
-                                break;
-                            }
-                            start -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    let mut end = chunk_end.min(rope_len);
-                    while end < rope_len {
-                        if let Some(ch) = rope.chars().nth(end) {
-                            if !ch.is_alphanumeric() && ch != '_' {
-                                break;
-                            }
-                            end += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    
-                    if start < end && end <= rope_len {
-                        let complete_identifier: String = rope.chars().skip(start).take(end - start).collect();
+                        // Extract complete identifier from buffer
+                        let rope = buffer_snapshot.text();
+                        let rope_len = rope.len();
                         
-                        if Self::is_valid_rainbow_identifier(&complete_identifier) {
-                            use crate::rainbow_highlighter::RainbowHighlighter;
-                            let palette_size = theme.rainbow_palette_size();
-                            let hash_index = RainbowHighlighter::hash_to_index(&complete_identifier, palette_size);
-                            let style = theme.rainbow_color(hash_index);
-                            
-                            *cached_identifier = Some((start, end, style.clone()));
-                            style
-                        } else {
+                        if chunk_start >= rope_len {
                             None
+                        } else {
+                            let mut start = chunk_start;
+                            while start > 0 {
+                                if let Some(ch) = rope.chars().nth(start.saturating_sub(1)) {
+                                    if !ch.is_alphanumeric() && ch != '_' {
+                                        break;
+                                    }
+                                    start -= 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            let mut end = chunk_end.min(rope_len);
+                            while end < rope_len {
+                                if let Some(ch) = rope.chars().nth(end) {
+                                    if !ch.is_alphanumeric() && ch != '_' {
+                                        break;
+                                    }
+                                    end += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                            
+                            if start < end && end <= rope_len {
+                                let complete_identifier: String = rope.chars().skip(start).take(end - start).collect();
+                                
+                                if Self::is_valid_rainbow_identifier(&complete_identifier) {
+                                    use crate::rainbow_highlighter::RainbowHighlighter;
+                                    let palette_size = theme.rainbow_palette_size();
+                                    let hash_index = RainbowHighlighter::hash_to_index(&complete_identifier, palette_size);
+                                    let style = theme.rainbow_color(hash_index);
+                                    
+                                    *cached_identifier = Some((start, end, style.clone()));
+                                    style
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
                         }
-                    } else {
-                        None
-                    }
                     })
                 } else {
                     None
