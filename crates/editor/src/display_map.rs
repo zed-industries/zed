@@ -816,13 +816,25 @@ impl DisplaySnapshot {
     /// Filters out incomplete identifiers, keywords, and invalid patterns.
     #[inline]
     fn is_valid_rainbow_identifier(text: &str) -> bool {
-        // Skip empty or very short identifiers
-        if text.is_empty() || text.len() < 2 {
+        // Skip empty or very short identifiers (prevents chunked parts like "_", "id")
+        if text.is_empty() || text.len() < 3 {
             return false;
         }
         
         // Skip if contains whitespace or control characters
         if text.contains(char::is_whitespace) || text.contains(|c: char| c.is_control()) {
+            return false;
+        }
+        
+        // Skip single underscore or underscore-only strings (chunking artifacts)
+        if text.chars().all(|c| c == '_') {
+            return false;
+        }
+        
+        // Skip if starts or ends with underscore (likely incomplete chunk)
+        // Exception: allow names like `_value` or `value_` if they're complete
+        let trimmed = text.trim_matches('_');
+        if trimmed.is_empty() || trimmed.len() < 2 {
             return false;
         }
         
@@ -839,6 +851,8 @@ impl DisplaySnapshot {
             // Common builtins
             "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
             "range", "map", "filter", "sum", "min", "max", "abs", "all", "any",
+            // Common short words that are often partial chunks
+            "id", "fn", "to", "is", "in", "or", "on", "at", "by", "do", "if", "it",
         ];
         
         if KEYWORDS.contains(&lowercase.as_str()) {
@@ -1024,6 +1038,12 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         let rainbow_config = &editor_style.rainbow_highlighting;
         let theme = &editor_style.syntax;
+        let buffer_snapshot = &self.buffer_snapshot;
+        
+        let display_row_start = display_rows.start;
+        let start_point = self.display_point_to_point(DisplayPoint::new(display_row_start, 0), Bias::Left);
+        let start_buffer_offset = self.buffer_snapshot.point_to_offset(start_point);
+        let mut current_buffer_offset = start_buffer_offset;
         
         self.chunks(
             display_rows,
@@ -1033,40 +1053,91 @@ impl DisplaySnapshot {
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
-        .flat_map(move |chunk| {
-            // Get tree-sitter highlight style and capture name
-            let (highlight_style, capture_name) = chunk
-                .syntax_highlight_id
-                .map(|id| (id.style(theme), id.name(theme)))
-                .unwrap_or((None, None));
+        .scan(
+            (current_buffer_offset, None::<(usize, usize, Option<HighlightStyle>)>),
+            move |(offset, cached_identifier), chunk| {
+                let (highlight_style, capture_name) = chunk
+                    .syntax_highlight_id
+                    .map(|id| (id.style(theme), id.name(theme)))
+                    .unwrap_or((None, None));
 
-            // Apply rainbow highlighting for tree-sitter variables
-            let rainbow_style = if rainbow_config.enabled {
-                capture_name
-                    .filter(|name| {
-                        // Include variable/property, but exclude variable.special (keywords like self, None)
+                let chunk_start = *offset;
+                let chunk_end = chunk_start + chunk.text.len();
+                *offset = chunk_end;
+
+                let is_variable_like = capture_name
+                    .as_ref()
+                    .map(|name| {
                         (name.starts_with("variable") && !name.contains("special")) 
                             || name.starts_with("property")
                     })
-                    .and_then(|_| {
-                        let text = chunk.text.trim();
-                        
-                        // Only apply rainbow to valid identifiers
-                        if Self::is_valid_rainbow_identifier(text) {
-                            use crate::rainbow_highlighter::RainbowHighlighter;
-                            let palette_size = theme.rainbow_palette_size();
-                            let hash_index = RainbowHighlighter::hash_to_index(text, palette_size);
-                            theme.rainbow_color(hash_index)
+                    .unwrap_or(false);
+
+                if !is_variable_like {
+                    *cached_identifier = None;
+                }
+
+                let rainbow_style = if rainbow_config.enabled && is_variable_like {
+                    if let Some((cached_start, cached_end, cached_style)) = cached_identifier {
+                        if chunk_start >= *cached_start && chunk_end <= *cached_end {
+                            cached_style.clone()
                         } else {
                             None
                         }
+                    } else {
+                        None
+                    }.or_else(|| {
+                    
+                    let rope = buffer_snapshot.text();
+                    let rope_len = rope.len();
+                    
+                    let mut start = chunk_start.min(rope_len);
+                    while start > 0 {
+                        if let Some(ch) = rope.chars().nth(start.saturating_sub(1)) {
+                            if !ch.is_alphanumeric() && ch != '_' {
+                                break;
+                            }
+                            start -= 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    let mut end = chunk_end.min(rope_len);
+                    while end < rope_len {
+                        if let Some(ch) = rope.chars().nth(end) {
+                            if !ch.is_alphanumeric() && ch != '_' {
+                                break;
+                            }
+                            end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    if start < end && end <= rope_len {
+                        let complete_identifier: String = rope.chars().skip(start).take(end - start).collect();
+                        
+                        if Self::is_valid_rainbow_identifier(&complete_identifier) {
+                            use crate::rainbow_highlighter::RainbowHighlighter;
+                            let palette_size = theme.rainbow_palette_size();
+                            let hash_index = RainbowHighlighter::hash_to_index(&complete_identifier, palette_size);
+                            let style = theme.rainbow_color(hash_index);
+                            
+                            *cached_identifier = Some((start, end, style.clone()));
+                            style
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                     })
-            } else {
-                None
-            };
+                } else {
+                    None
+                };
 
-            // If rainbow highlighting applies, use it; otherwise use tree-sitter style
-            let final_highlight_style = rainbow_style.or(highlight_style);
+                let final_highlight_style = rainbow_style.or(highlight_style);
 
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
@@ -1114,16 +1185,18 @@ impl DisplaySnapshot {
                 .flatten()
                 .reduce(|acc, highlight| acc.highlight(highlight));
 
-            HighlightedChunk {
-                text: chunk.text,
-                style,
-                is_tab: chunk.is_tab,
-                is_inlay: chunk.is_inlay,
-                replacement: chunk.renderer.map(ChunkReplacement::Renderer),
-            }
-            .highlight_invisibles(editor_style)
-        })
+                Some(HighlightedChunk {
+                    text: chunk.text,
+                    style,
+                    is_tab: chunk.is_tab,
+                    is_inlay: chunk.is_inlay,
+                    replacement: chunk.renderer.map(ChunkReplacement::Renderer),
+                })
+            },
+        )
+        .flat_map(|chunk| chunk.highlight_invisibles(editor_style))
     }
+    
 
     pub fn layout_row(
         &self,
