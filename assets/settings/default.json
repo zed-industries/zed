@@ -1,4 +1,5 @@
 {
+  "$schema": "zed://schemas/settings",
   /// The displayed name of this project. If not set or empty, the root directory name
   /// will be displayed.
   "project_name": "",
@@ -2051,7 +2052,7 @@
   //     }
   //   }
   // }
-  "profiles": [],
+  "profiles": {},
 
   // A map of log scopes to the desired log level.
   // Useful for filtering out noisy logs or enabling more verbose logging.
