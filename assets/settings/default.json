@@ -1687,9 +1687,7 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      },
+      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
       "debuggers": ["Delve"]
     },
     "GraphQL": {
