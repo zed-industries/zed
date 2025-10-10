@@ -26,17 +26,17 @@ use crate::{
 };
 
 pub(crate) struct ProjectSearcher {
-    fs: Arc<dyn Fs>,
-    buffer_store: WeakEntity<BufferStore>,
+    pub(crate) fs: Arc<dyn Fs>,
+    pub(crate) buffer_store: WeakEntity<BufferStore>,
     pub(crate) snapshots: Vec<(Snapshot, WorktreeSettings)>,
-    open_buffers: HashSet<ProjectEntryId>,
+    pub(crate) open_buffers: HashSet<ProjectEntryId>,
 }
 
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
 
 impl ProjectSearcher {
-    pub(crate) fn search(self, query: SearchQuery, cx: &mut App) -> Receiver<SearchResult> {
+    pub(crate) fn run(self, query: SearchQuery, cx: &mut App) -> Receiver<SearchResult> {
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
         cx.spawn(async move |cx| {
@@ -48,7 +48,7 @@ impl ProjectSearcher {
             let matched_buffer_count = AtomicUsize::new(0);
             let worker_pool = executor.scoped(|scope| {
                 let (input_paths_tx, input_paths_rx) = bounded(64);
-                let (find_first_match_tx, find_first_match_rx) = bounded(64);
+                let (confirm_contents_will_match_tx, confirm_contents_will_match_rx) = bounded(64);
                 let (sorted_search_results_tx, sorted_search_results_rx) = bounded(64);
                 for _ in 0..executor.num_cpus() {
                     let worker = Worker {
@@ -58,8 +58,8 @@ impl ProjectSearcher {
                         matches_count: &matches_count,
                         fs: &*self.fs,
                         input_paths_rx: input_paths_rx.clone(),
-                        find_first_match_rx: find_first_match_rx.clone(),
-                        find_first_match_tx: find_first_match_tx.clone(),
+                        confirm_contents_will_match_rx: confirm_contents_will_match_rx.clone(),
+                        confirm_contents_will_match_tx: confirm_contents_will_match_tx.clone(),
                         get_buffer_for_full_scan_tx: get_buffer_for_full_scan_tx.clone(),
                         find_all_matches_rx: find_all_matches_rx.clone(),
                         publish_matches: tx.clone(),
@@ -71,13 +71,16 @@ impl ProjectSearcher {
                     input_paths_tx,
                     sorted_search_results_tx,
                 ));
-                scope.spawn(self.maintain_sorted_search_results())
+                scope.spawn(self.maintain_sorted_search_results(
+                    sorted_search_results_rx,
+                    get_buffer_for_full_scan_tx,
+                ))
             });
             self.open_buffers(get_buffer_for_full_scan_rx, find_all_matches_tx, cx)
                 .await;
             worker_pool.await;
-            let limit_reached = matches_count.load(Ordering::Release) > MAX_SEARCH_RESULT_RANGES
-                || matched_buffer_count.load(Ordering::Release) > MAX_SEARCH_RESULT_FILES;
+            let limit_reached = matches_count.load(Ordering::Acquire) > MAX_SEARCH_RESULT_RANGES
+                || matched_buffer_count.load(Ordering::Acquire) > MAX_SEARCH_RESULT_FILES;
             if limit_reached {
                 _ = tx.send(SearchResult::LimitReached).await;
             }
@@ -165,10 +168,12 @@ struct Worker<'search> {
     /// - Scan ignored files
     /// Put another way: filter out files that can't match (without looking at file contents)
     input_paths_rx: Receiver<InputPath<'search>>,
-    /// After that, figure out which paths contain at least one match (look at file contents). That's called "partial scan".
-    find_first_match_tx: Sender<MatchingEntry>,
-    find_first_match_rx: Receiver<MatchingEntry>,
-    /// Of those that contain at least one match, look for rest of matches (and figure out their ranges).
+
+    /// After that, if the buffer is not yet loaded, we'll figure out if it contains at least one match
+    /// based on disk contents of a buffer. This step is not performed for buffers we already have in memory.
+    confirm_contents_will_match_tx: Sender<MatchingEntry>,
+    confirm_contents_will_match_rx: Receiver<MatchingEntry>,
+    /// Of those that contain at least one match (or are already in memory), look for rest of matches (and figure out their ranges).
     /// But wait - first, we need to go back to the main thread to open a buffer (& create an entity for it).
     get_buffer_for_full_scan_tx: Sender<ProjectPath>,
     /// Ok, we're back in background: run full scan & find all matches in a given buffer snapshot.
@@ -180,7 +185,7 @@ struct Worker<'search> {
 impl Worker<'_> {
     async fn run(self) {
         let mut find_all_matches = pin!(self.find_all_matches_rx.fuse());
-        let mut find_first_match = pin!(self.find_first_match_rx.fuse());
+        let mut find_first_match = pin!(self.confirm_contents_will_match_rx.fuse());
         let mut scan_path = pin!(self.input_paths_rx.fuse());
         let handler = RequestHandler {
             query: self.query,
@@ -188,7 +193,7 @@ impl Worker<'_> {
             fs: self.fs,
             matched_buffer_count: self.matched_buffer_count,
             matches_count: self.matches_count,
-            find_first_match_tx: &self.find_first_match_tx,
+            confirm_contents_will_match_tx: &self.confirm_contents_will_match_tx,
             get_buffer_for_full_scan_tx: &self.get_buffer_for_full_scan_tx,
             publish_matches: &self.publish_matches,
         };
@@ -225,7 +230,7 @@ struct RequestHandler<'worker> {
     matched_buffer_count: &'worker AtomicUsize,
     matches_count: &'worker AtomicUsize,
 
-    find_first_match_tx: &'worker Sender<MatchingEntry>,
+    confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
     get_buffer_for_full_scan_tx: &'worker Sender<ProjectPath>,
     publish_matches: &'worker Sender<SearchResult>,
 }
@@ -302,15 +307,15 @@ impl RequestHandler<'_> {
             } = req;
             if entry.is_dir() && entry.is_ignored {
                 if !settings.is_path_excluded(&entry.path) {
-                    Self::scan_ignored_dir(
-                        self.fs,
-                        &snapshot,
-                        &entry.path,
-                        self.query,
-                        &filter_tx,
-                        &output_tx,
-                    )
-                    .await?;
+                    // Self::scan_ignored_dir(
+                    //     self.fs,
+                    //     &snapshot,
+                    //     &entry.path,
+                    //     self.query,
+                    //     &filter_tx,
+                    //     &output_tx,
+                    // )
+                    // .await?;
                 }
                 return Ok(());
             }
@@ -332,8 +337,6 @@ impl RequestHandler<'_> {
                 }
             }
 
-            let (mut tx, rx) = oneshot::channel();
-
             if self.open_entries.contains(&entry.id) {
                 // The buffer is already in memory and that's the version we want to scan;
                 // hence skip the dilly-dally and look for all matches straight away.
@@ -344,7 +347,7 @@ impl RequestHandler<'_> {
                     })
                     .await?;
             } else {
-                self.find_first_match_tx
+                self.confirm_contents_will_match_tx
                     .send(MatchingEntry {
                         should_scan_tx: should_scan_tx,
                         worktree_root: snapshot.abs_path().clone(),
@@ -356,7 +359,6 @@ impl RequestHandler<'_> {
                     .await?;
             }
 
-            output_tx.send(rx).await?;
             anyhow::Ok(())
         })
         .await;

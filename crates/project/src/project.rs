@@ -40,6 +40,7 @@ use crate::{
     agent_server_store::AllAgentServersSettings,
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
+    project_search::ProjectSearcher,
 };
 pub use agent_server_store::{AgentServerStore, AgentServersUpdated};
 pub use git_store::{
@@ -3943,61 +3944,20 @@ impl Project {
     }
 
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
-        let (result_tx, result_rx) = smol::channel::unbounded();
-
-        let matching_buffers_rx = if query.is_opened_only() {
-            self.sort_search_candidates(&query, cx)
-        } else {
-            self.find_search_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+        let snapshots = self
+            .visible_worktrees(cx)
+            .filter_map(|tree| {
+                let tree = tree.read(cx);
+                Some((tree.snapshot(), tree.as_local()?.settings()))
+            })
+            .collect::<Vec<_>>();
+        let searcher = ProjectSearcher {
+            fs: self.fs.clone(),
+            buffer_store: self.buffer_store.downgrade(),
+            snapshots,
+            open_buffers: Default::default(),
         };
-
-        cx.spawn(async move |_, cx| {
-            let mut range_count = 0;
-            let mut buffer_count = 0;
-            let mut limit_reached = false;
-            let query = Arc::new(query);
-            let chunks = matching_buffers_rx.ready_chunks(64);
-
-            // Now that we know what paths match the query, we will load at most
-            // 64 buffers at a time to avoid overwhelming the main thread. For each
-            // opened buffer, we will spawn a background task that retrieves all the
-            // ranges in the buffer matched by the query.
-            let mut chunks = pin!(chunks);
-            'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
-                let mut chunk_results = Vec::with_capacity(matching_buffer_chunk.len());
-                for buffer in matching_buffer_chunk {
-                    let query = query.clone();
-                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-                    chunk_results.push(cx.background_spawn(async move {}));
-                }
-
-                let chunk_results = futures::future::join_all(chunk_results).await;
-                for result in chunk_results {
-                    if let Some((buffer, ranges)) = result.log_err() {
-                        range_count += ranges.len();
-                        buffer_count += 1;
-                        result_tx
-                            .send(SearchResult::Buffer { buffer, ranges })
-                            .await?;
-                        if buffer_count > MAX_SEARCH_RESULT_FILES
-                            || range_count > MAX_SEARCH_RESULT_RANGES
-                        {
-                            limit_reached = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-
-            if limit_reached {
-                result_tx.send(SearchResult::LimitReached).await?;
-            }
-
-            anyhow::Ok(())
-        })
-        .detach();
-
-        result_rx
+        searcher.run(query, cx)
     }
 
     fn find_search_candidate_buffers(
