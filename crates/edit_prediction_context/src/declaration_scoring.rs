@@ -12,7 +12,7 @@ use crate::{
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
     text_similarity::{
-        IdentifierParts, OccurrenceMultiset, Similarity as _, WeightedSimilarity as _,
+        IdentifierParts, OccurrencesMultiset, Similarity as _, WeightedSimilarity as _,
     },
 };
 
@@ -62,8 +62,8 @@ impl ScoredDeclaration {
 pub fn scored_declarations(
     index: &SyntaxIndexState,
     excerpt: &EditPredictionExcerpt,
-    excerpt_occurrences: &IdentifierParts<OccurrenceMultiset>,
-    adjacent_occurrences: &IdentifierParts<OccurrenceMultiset>,
+    excerpt_occurrences: &IdentifierParts<OccurrencesMultiset>,
+    adjacent_occurrences: &IdentifierParts<OccurrencesMultiset>,
     identifier_to_references: HashMap<Identifier, Vec<Reference>>,
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
@@ -180,8 +180,8 @@ fn score_declaration(
     declaration_line_distance_rank: usize,
     same_file_declaration_count: usize,
     declaration_count: usize,
-    excerpt_occurrences: &IdentifierParts<OccurrenceMultiset>,
-    adjacent_occurrences: &IdentifierParts<OccurrenceMultiset>,
+    excerpt_occurrences: &IdentifierParts<OccurrencesMultiset>,
+    adjacent_occurrences: &IdentifierParts<OccurrencesMultiset>,
     cursor: Point,
     current_buffer: &BufferSnapshot,
 ) -> Option<ScoredDeclaration> {

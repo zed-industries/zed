@@ -142,7 +142,7 @@ impl<'a> Iterator for IdentifierPartIterator<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::{OccurrenceMultiset, text_similarity::occurrences::SmallOccurrenceSet};
+    use crate::{OccurrencesMultiset, text_similarity::occurrences::SmallOccurrencesSet};
 
     use super::*;
 
@@ -207,15 +207,15 @@ mod test {
     fn test_similarity_functions() {
         // 10 identifier parts, 8 unique
         // Repeats: 2 "outline", 2 "items"
-        let multiset_a: IdentifierParts<OccurrenceMultiset> = IdentifierParts::within_string(
+        let multiset_a: IdentifierParts<OccurrencesMultiset> = IdentifierParts::within_string(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         );
-        let set_a: IdentifierParts<SmallOccurrenceSet<8>> = IdentifierParts::within_string(
+        let set_a: IdentifierParts<SmallOccurrencesSet<8>> = IdentifierParts::within_string(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         );
         // 14 identifier parts, 11 unique
         // Repeats: 2 "outline", 2 "language", 2 "tree"
-        let set_b: IdentifierParts<OccurrenceMultiset> = IdentifierParts::within_string(
+        let set_b: IdentifierParts<OccurrencesMultiset> = IdentifierParts::within_string(
             "pub fn query_outline_items(language: &Language, tree: &Tree, source: &str) -> Vec<OutlineItem> {",
         );
 

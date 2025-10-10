@@ -27,7 +27,7 @@ pub trait HashOccurrences {
 
 /// Multiset of hash occurrences used in similarity metrics.
 #[derive(Debug, Default)]
-pub struct OccurrenceMultiset {
+pub struct OccurrencesMultiset {
     table: HashTable<OccurrenceEntry>,
     total_count: u32,
 }
@@ -41,7 +41,7 @@ struct OccurrenceEntry {
 /// Small set of hash occurrences. Since this does not track the number of times each has occurred,
 /// this only implements `Similarity` and not `WeightedSimilarity`.
 #[derive(Debug, Default)]
-pub struct SmallOccurrenceSet<const N: usize>(SmallVec<[u32; N]>);
+pub struct SmallOccurrencesSet<const N: usize>(SmallVec<[u32; N]>);
 
 /// Wraps a hash occurrences set to implement n-grams, aka w-shingling. Each N length interval of
 /// the input will be treated as one occurrence.
@@ -52,7 +52,7 @@ pub struct SmallOccurrenceSet<const N: usize>(SmallVec<[u32; N]>);
 #[derive(Debug, Default)]
 struct NGram<const N: usize, T>(T);
 
-impl HashOccurrences for OccurrenceMultiset {
+impl HashOccurrences for OccurrencesMultiset {
     fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
         let mut this = Self::default();
         for hash in hashes {
@@ -62,7 +62,7 @@ impl HashOccurrences for OccurrenceMultiset {
     }
 }
 
-impl<const N: usize> HashOccurrences for SmallOccurrenceSet<N> {
+impl<const N: usize> HashOccurrences for SmallOccurrencesSet<N> {
     fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
         let mut this = Self::default();
         this.0.extend(hashes);
@@ -91,8 +91,16 @@ impl<const N: usize, T: HashOccurrences> HashOccurrences for NGram<N, T> {
     }
 }
 
-impl OccurrenceMultiset {
-    fn add_hash(&mut self, hash: u32) -> u32 {
+impl OccurrencesMultiset {
+    pub fn len(&self) -> u32 {
+        self.total_count
+    }
+
+    pub fn distinct_len(&self) -> usize {
+        self.table.len()
+    }
+
+    pub fn add_hash(&mut self, hash: u32) -> u32 {
         let new_count = self
             .table
             .entry(
@@ -108,7 +116,7 @@ impl OccurrenceMultiset {
         new_count
     }
 
-    fn remove_hash(&mut self, hash: u32) -> u32 {
+    pub fn remove_hash(&mut self, hash: u32) -> u32 {
         let entry = self.table.entry(
             hash as u64,
             |entry: &OccurrenceEntry| entry.hash == hash,
@@ -138,11 +146,11 @@ impl OccurrenceMultiset {
         }
     }
 
-    fn contains_hash(&self, hash: u32) -> bool {
+    pub fn contains_hash(&self, hash: u32) -> bool {
         self.get_count(hash) != 0
     }
 
-    fn get_count(&self, hash: u32) -> u32 {
+    pub fn get_count(&self, hash: u32) -> u32 {
         self.table
             .find(hash as u64, |entry| entry.hash == hash)
             .map(|entry| entry.count)
@@ -150,13 +158,13 @@ impl OccurrenceMultiset {
     }
 }
 
-impl<const N: usize> SmallOccurrenceSet<N> {
+impl<const N: usize> SmallOccurrencesSet<N> {
     fn contains_hash(&self, hash: u32) -> bool {
         self.0.iter().any(|h| *h == hash)
     }
 }
 
-impl Similarity<OccurrenceMultiset> for OccurrenceMultiset {
+impl Similarity<OccurrencesMultiset> for OccurrencesMultiset {
     fn jaccard_similarity<'a>(&'a self, mut other: &'a Self) -> f32 {
         let mut this = self;
         if this.table.len() > other.table.len() {
@@ -185,8 +193,8 @@ impl Similarity<OccurrenceMultiset> for OccurrenceMultiset {
     }
 }
 
-impl<const N: usize> Similarity<OccurrenceMultiset> for SmallOccurrenceSet<N> {
-    fn jaccard_similarity(&self, other: &OccurrenceMultiset) -> f32 {
+impl<const N: usize> Similarity<OccurrencesMultiset> for SmallOccurrencesSet<N> {
+    fn jaccard_similarity(&self, other: &OccurrencesMultiset) -> f32 {
         let intersection = self
             .0
             .iter()
@@ -196,7 +204,7 @@ impl<const N: usize> Similarity<OccurrenceMultiset> for SmallOccurrenceSet<N> {
         intersection as f32 / union as f32
     }
 
-    fn overlap_coefficient(&self, other: &OccurrenceMultiset) -> f32 {
+    fn overlap_coefficient(&self, other: &OccurrencesMultiset) -> f32 {
         let intersection = self
             .0
             .iter()
@@ -206,8 +214,8 @@ impl<const N: usize> Similarity<OccurrenceMultiset> for SmallOccurrenceSet<N> {
     }
 }
 
-impl<const N: usize, const O: usize> Similarity<SmallOccurrenceSet<O>> for SmallOccurrenceSet<N> {
-    fn jaccard_similarity(&self, other: &SmallOccurrenceSet<O>) -> f32 {
+impl<const N: usize, const O: usize> Similarity<SmallOccurrencesSet<O>> for SmallOccurrencesSet<N> {
+    fn jaccard_similarity(&self, other: &SmallOccurrencesSet<O>) -> f32 {
         let intersection = self
             .0
             .iter()
@@ -217,7 +225,7 @@ impl<const N: usize, const O: usize> Similarity<SmallOccurrenceSet<O>> for Small
         intersection as f32 / union as f32
     }
 
-    fn overlap_coefficient(&self, other: &SmallOccurrenceSet<O>) -> f32 {
+    fn overlap_coefficient(&self, other: &SmallOccurrencesSet<O>) -> f32 {
         let intersection = self
             .0
             .iter()
@@ -227,7 +235,7 @@ impl<const N: usize, const O: usize> Similarity<SmallOccurrenceSet<O>> for Small
     }
 }
 
-impl WeightedSimilarity<OccurrenceMultiset> for OccurrenceMultiset {
+impl WeightedSimilarity<OccurrencesMultiset> for OccurrencesMultiset {
     fn weighted_jaccard_similarity<'a>(&'a self, mut other: &'a Self) -> f32 {
         let mut this = self;
         if this.table.len() > other.table.len() {
@@ -292,5 +300,11 @@ impl<const N: usize, L: WeightedSimilarity<R>, R> WeightedSimilarity<NGram<N, R>
 
     fn weighted_overlap_coefficient(&self, other: &NGram<N, R>) -> f32 {
         self.0.weighted_overlap_coefficient(&other.0)
+    }
+}
+
+impl AsRef<OccurrencesMultiset> for OccurrencesMultiset {
+    fn as_ref(&self) -> &OccurrencesMultiset {
+        self
     }
 }
