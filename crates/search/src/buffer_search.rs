@@ -1603,6 +1603,7 @@ mod tests {
                 &[
                     DisplayPoint::new(DisplayRow(2), 17)..DisplayPoint::new(DisplayRow(2), 19),
                     DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
+                    DisplayPoint::new(DisplayRow(2), 17)..DisplayPoint::new(DisplayRow(2), 19),
                 ]
             );
         });
@@ -1616,7 +1617,10 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(window, cx)),
-                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
+                &[
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
+                ]
             );
         });
 
@@ -1639,6 +1643,7 @@ mod tests {
                     DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
                     DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
                     DisplayPoint::new(DisplayRow(3), 60)..DisplayPoint::new(DisplayRow(3), 62),
+                    DisplayPoint::new(DisplayRow(0), 24)..DisplayPoint::new(DisplayRow(0), 26),
                 ]
             );
         });
@@ -1656,6 +1661,7 @@ mod tests {
                     DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
                     DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13),
                     DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58),
+                    DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43),
                 ]
             );
         });
@@ -1875,7 +1881,10 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(window, cx)),
-                &[DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),]
+                &[
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45),
+                    DisplayPoint::new(DisplayRow(2), 43)..DisplayPoint::new(DisplayRow(2), 45)
+                ]
             );
         });
 
@@ -1906,7 +1915,10 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             assert_eq!(
                 display_points_of(editor.all_text_background_highlights(window, cx)),
-                &[DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),]
+                &[
+                    DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),
+                    DisplayPoint::new(DisplayRow(0), 35)..DisplayPoint::new(DisplayRow(0), 40),
+                ]
             );
         });
 
@@ -2761,6 +2773,7 @@ mod tests {
                 &[
                     DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
                     DisplayPoint::new(DisplayRow(1), 9)..DisplayPoint::new(DisplayRow(1), 19),
+                    DisplayPoint::new(DisplayRow(0), 10)..DisplayPoint::new(DisplayRow(0), 20),
                 ],
             );
         });
