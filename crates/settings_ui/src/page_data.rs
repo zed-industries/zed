@@ -788,7 +788,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Code Actions"),
+                    SettingsPageItem::SectionHeader("Code Actions & Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Inline Code Actions",
                         description: "Show code action button at start of buffer line",
@@ -801,7 +801,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Selection"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Drag And Drop Selection",
                         description: "Enable drag and drop selection",
