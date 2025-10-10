@@ -32,6 +32,7 @@ editor.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
+git_to_graph.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true

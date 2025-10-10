@@ -20,3 +20,6 @@ workspace-hack.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 core-foundation-sys.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+icu.workspace = true
