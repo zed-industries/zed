@@ -16,14 +16,12 @@ test-support = []
 
 [dependencies]
 gpui.workspace = true
-menu.workspace = true
 system_specs.workspace = true
-ui.workspace = true
 urlencoding.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
