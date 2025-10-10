@@ -249,7 +249,6 @@ impl<S: Source> Iterator for TakeSamples<S> {
     type Item = Sample;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.left_to_take;
         if self.left_to_take == 0 {
             None
         } else {

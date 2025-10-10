@@ -38,3 +38,5 @@ libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://g
 rodio = { workspace = true, features = [ "wav", "playback", "wav_output", "noise" ] }
 gpui = { workspace = true, "features" = ["test-support"] }
 spectrum-analyzer = "1.7"
+plotly = "0.13"
+itertools.workspace = true

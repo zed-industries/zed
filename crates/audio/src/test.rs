@@ -1,6 +1,7 @@
 //! A complex end to end audio test comparing audio features like fft spectrum
 //! of a signal before and after going through the audio pipeline
 
+use std::env::current_dir;
 use std::io::Cursor;
 use std::iter;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use std::time::Duration;
 use gpui::BorrowAppContext;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use rodio::{ChannelCount, Decoder, SampleRate, mixer, nz};
+use rodio::{ChannelCount, Decoder, SampleRate, mixer, nz, wav_to_file};
 use rodio::{Source, buffer::SamplesBuffer};
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
 use spectrum_analyzer::windows::hann_window;
@@ -27,13 +28,17 @@ fn test_input_pipeline(cx: &mut gpui::TestAppContext) {
     let voip_parts = VoipParts::new(&cx.to_async()).unwrap();
     let input = Audio::input_pipeline(voip_parts, test_signal.clone()).unwrap();
 
-    let input = input
+    let pipeline = input
         .take_duration(test_signal_duration)
         .into_samples_buffer();
-    let expected_output = test_signal
+    rodio::wav_to_file(test_signal.clone(), "test_signal.wav").unwrap();
+    let expected = test_signal
         .constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
         .into_samples_buffer();
-    assert_similar_voice_spectra(expected_output, input);
+    // expected says its 48khz but its 16khz
+    rodio::wav_to_file(expected.clone(), "expected.wav").unwrap();
+    rodio::wav_to_file(pipeline.clone(), "pipeline.wav").unwrap();
+    assert_similar_voice_spectra(expected, pipeline);
 }
 
 #[gpui::test]
@@ -75,7 +80,7 @@ fn test_full_audio_pipeline(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| cx.update_default_global::<Audio, _>(|audio, _| audio.setup_mixer()));
     let voip_parts = VoipParts::new(&cx.to_async()).unwrap();
 
-    let input = Audio::input_pipeline(voip_parts, test_signal.clone()).unwrap();
+    let input = Audio::input_pipeline(voip_parts, test_signal).unwrap();
     cx.update(|cx| Audio::play_voip_stream(input, "test".to_string(), true, cx).unwrap());
 
     let audio_output = audio_output
@@ -135,47 +140,50 @@ impl BasicVoiceDetector {
 }
 
 // Test signals should be at least 50% voice
-fn assert_similar_voice_spectra(a: impl rodio::Source + Clone, b: impl rodio::Source + Clone) {
-    assert!(a.total_duration().is_some());
-    assert!(b.total_duration().is_some());
+fn assert_similar_voice_spectra(
+    expected: impl rodio::Source + Clone,
+    pipeline: impl rodio::Source + Clone,
+) {
+    assert!(expected.total_duration().is_some());
+    assert!(pipeline.total_duration().is_some());
 
-    assert_eq!(a.sample_rate(), b.sample_rate());
-    assert_eq!(a.channels(), b.channels());
+    assert_eq!(expected.sample_rate(), pipeline.sample_rate());
+    assert_eq!(expected.channels(), pipeline.channels());
 
-    let a_samples: Vec<_> = a.clone().collect();
-    let b_samples: Vec<_> = b.clone().collect();
-
-    let voice_detector = BasicVoiceDetector::new(a.clone());
-    let hundred_millis: usize = usize::try_from(a.sample_rate().get() / 10)
+    let voice_detector = BasicVoiceDetector::new(expected.clone());
+    let hundred_millis: usize = usize::try_from(expected.sample_rate().get() / 10)
         .unwrap()
         .next_power_of_two();
 
-    let total_duration = a.total_duration().expect("just asserted");
+    let total_duration = expected.total_duration().expect("just asserted");
     let mut voice_less_duration = Duration::ZERO;
-    for (input, output) in a_samples
+
+    let expected_samplse: Vec<_> = expected.clone().collect();
+    let pipeline_samples: Vec<_> = pipeline.clone().collect();
+    for (input, output) in expected_samplse
         .chunks_exact(hundred_millis)
-        .zip(b_samples.chunks_exact(hundred_millis))
+        .zip(pipeline_samples.chunks_exact(hundred_millis))
     {
-        let input = samples_fft_to_spectrum(
+        let expected = samples_fft_to_spectrum(
             &hann_window(input),
-            a.sample_rate().get(),
+            expected.sample_rate().get(),
             FrequencyLimit::Min(4.0),
             Some(&divide_by_N_sqrt),
         )
         .unwrap();
-        let output = samples_fft_to_spectrum(
+        let pipeline = samples_fft_to_spectrum(
             &hann_window(output),
-            b.sample_rate().get(),
+            pipeline.sample_rate().get(),
             FrequencyLimit::Min(4.0),
             Some(&divide_by_N_sqrt),
         )
         .unwrap();
 
-        if !voice_detector.may_contain_voice(&input) {
+        if !voice_detector.may_contain_voice(&expected) {
             voice_less_duration += Duration::from_millis(100);
             continue;
         }
-        assert_same_voice_signal(input, output);
+        assert_same_voice_signal(expected, pipeline);
     }
 
     assert!(
@@ -197,34 +205,39 @@ fn lowest_loud_frequency(spectrum: &FrequencySpectrum) -> f32 {
         .val()
 }
 
-fn assert_same_voice_signal(input: FrequencySpectrum, output: FrequencySpectrum) {
+fn assert_same_voice_signal(expected: FrequencySpectrum, pipeline: FrequencySpectrum) {
     // The timbre of a voice (the difference in how voices sound) is determined
     // by all kinds of resonances in the throat/mouth. These happen roughly at
     // multiples of the lowest usually loudest voice frequency.
 
-    let (voice_freq_input, voice_freq_output) = match (
-        fundamental_voice_freq(&input),
-        fundamental_voice_freq(&output),
+    let (voice_freq_expected, voice_freq_pipeline) = match (
+        fundamental_voice_freq(&expected),
+        fundamental_voice_freq(&pipeline),
     ) {
         (None, _) => return,
-        (Some(input_voice_freq), None) => panic!(
-            "Could not find fundamental voice freq in output while there is one in the input at {input_voice_freq}Hz.\nLoudest 5 frequencies in output:\n{}",
-            display_loudest_5_frequencies(&output)
-        ),
-        (Some(voice_freq_input), Some(voice_freq_output)) => (voice_freq_input, voice_freq_output),
+        (Some(voice_freq_expected), None) => {
+            panic!(
+                "Could not find fundamental voice freq in output while there is one in the input at {voice_freq_expected}Hz.\nLoudest 5 frequencies in output:\n{}\n\n{}",
+                display_loudest_5_frequencies(&pipeline),
+                plot_spectra(&expected, &pipeline),
+            );
+        }
+        (Some(voice_freq_expected), Some(voice_freq_pipeline)) => {
+            (voice_freq_expected, voice_freq_pipeline)
+        }
     };
 
     assert!(less_then_5percent_diff((
-        voice_freq_input,
-        voice_freq_output
+        voice_freq_expected,
+        voice_freq_pipeline
     )));
 
     // Guards against voice distortion
     // unfortunately affected by (de)noise as that (de)distorts voice.
     assert!(same_ratio_between_harmonics(
-        &input,
-        &output,
-        voice_freq_input
+        &expected,
+        &pipeline,
+        voice_freq_expected
     ));
 }
 
@@ -239,8 +252,8 @@ fn fundamental_voice_freq(spectrum: &FrequencySpectrum) -> Option<f32> {
 }
 
 fn same_ratio_between_harmonics(
-    input: &FrequencySpectrum,
-    output: &FrequencySpectrum,
+    expected: &FrequencySpectrum,
+    pipeline: &FrequencySpectrum,
     fundamental_voice_freq: f32,
 ) -> bool {
     fn ratios(
@@ -258,8 +271,8 @@ fn same_ratio_between_harmonics(
         })
     }
 
-    ratios(input, fundamental_voice_freq)
-        .zip(ratios(output, fundamental_voice_freq))
+    ratios(expected, fundamental_voice_freq)
+        .zip(ratios(pipeline, fundamental_voice_freq))
         .all(less_then_5percent_diff)
 }
 
@@ -278,7 +291,67 @@ fn display_loudest_5_frequencies(spectrum: &FrequencySpectrum) -> String {
         .collect()
 }
 
-fn recording_of_davids_voice(
+// Returns ascii encoding a link to open the plot
+fn plot_spectra(expected: &FrequencySpectrum, pipeline: &FrequencySpectrum) -> String {
+    use plotly::{Bar, Plot};
+
+    let mut plot = Plot::new();
+
+    let (x, y): (Vec<_>, Vec<_>) = expected
+        .data()
+        .iter()
+        .map(|(freq, amplitude)| (freq.val(), amplitude.val()))
+        .unzip();
+    let trace = Bar::new(x, y)
+        .name("expected")
+        .show_legend(true)
+        .opacity(0.5);
+    plot.add_trace(trace);
+
+    let (x, y): (Vec<_>, Vec<_>) = pipeline
+        .data()
+        .iter()
+        .map(|(freq, amplitude)| (freq.val(), amplitude.val()))
+        .unzip();
+    let trace = Bar::new(x, y)
+        .name("pipeline")
+        .show_legend(true)
+        .opacity(0.5);
+    plot.add_trace(trace);
+
+    let path = current_dir().unwrap().join("plot.html");
+    plot.write_html(&path);
+
+    link(path.display(), "Open spectra plot")
+}
+
+fn link(target: impl std::fmt::Display, name: &str) -> String {
+    const START_OF_LINK: &str = "\x1b]8;;file://";
+    const START_OF_NAME: &str = "\x1b\\";
+    const END_OF_LINK: &str = "\x1b]8;;\x1b\\";
+
+    format!("{START_OF_LINK}{target}{START_OF_NAME}{name}{END_OF_LINK}")
+}
+
+pub(crate) fn sine(channels: ChannelCount, sample_rate: SampleRate) -> impl Source + Clone {
+    // We can not resample this file ourselves as then we would not be testing
+    // the resampler. These are test files resampled by audacity.
+    let recording = match (channels.get(), sample_rate.get()) {
+        (1, 48_000) => include_bytes!("../test/sine_1_48000.wav").as_slice(),
+        (2, 48_000) => include_bytes!("../test/sine_2_48000.wav").as_slice(),
+        _ => panic!("No test recording with {channels} channels and sampler rate: {sample_rate}"),
+    };
+
+    let recording = Cursor::new(recording);
+    let recording = Decoder::new(recording).unwrap();
+    SamplesBuffer::new(
+        recording.channels(),
+        recording.sample_rate(),
+        recording.collect::<Vec<_>>(),
+    )
+}
+
+pub(crate) fn recording_of_davids_voice(
     channels: ChannelCount,
     sample_rate: SampleRate,
 ) -> impl Source + Clone {
@@ -286,6 +359,7 @@ fn recording_of_davids_voice(
     // the resampler. These are test files resampled by audacity.
     let recording = match (channels.get(), sample_rate.get()) {
         (1, 16_000) => include_bytes!("../test/input_test_1_16000.wav").as_slice(),
+        (1, 48_000) => include_bytes!("../test/input_test_1_48000.wav").as_slice(),
         (2, 48_000) => include_bytes!("../test/input_test_2_48000.wav").as_slice(),
         (3, 32_000) => include_bytes!("../test/input_test_3_32000.wav").as_slice(),
         _ => panic!("No test recording with {channels} channels and sampler rate: {sample_rate}"),
@@ -301,7 +375,7 @@ fn recording_of_davids_voice(
 }
 
 #[test]
-#[should_panic]
+// #[should_panic]
 fn test_rejects_pitch_shift() {
     // also known as 'robot/chipmunk voice'
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
@@ -310,12 +384,14 @@ fn test_rejects_pitch_shift() {
         .speed(1.2) // effectively increases the pitch by 20%
         .constant_samplerate(original.sample_rate())
         .into_samples_buffer();
+    wav_to_file(original.clone(), "original.wav").unwrap();
+    wav_to_file(pitch_shifted.clone(), "pitch_shifted.wav").unwrap();
 
     assert_similar_voice_spectra(original, pitch_shifted);
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "placeholder")]
 fn test_rejects_large_amounts_of_noise() {
     let original = recording_of_davids_voice(nz!(1), nz!(16000));
     let with_noise = add_noise(&original, 0.5);
