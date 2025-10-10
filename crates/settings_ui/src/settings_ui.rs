@@ -5,6 +5,7 @@ mod page_data;
 use anyhow::Result;
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
+use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
     ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
@@ -467,6 +468,7 @@ pub struct SettingsWindow {
 
 struct SearchState {
     engine: bm25::SearchEngine<usize>,
+    fuzzy_match_candidates: Vec<StringMatchCandidate>,
     key_lut: Vec<SearchItemKey>,
 }
 
@@ -1046,38 +1048,82 @@ impl SettingsWindow {
         }
 
         let search_state = self.search_state.as_ref().unwrap().clone();
-        self.search_task = Some(cx.spawn(async move |this, cx| {
-            let string_matches = cx
-                .background_spawn({
-                    let search_state = search_state.clone();
-                    let max_results = search_state.key_lut.len();
-                    async move { search_state.engine.search(&query, max_results) }
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                for page in &mut this.search_matches {
-                    page.fill(false);
-                }
 
-                for string_match in string_matches {
-                    // todo(settings_ui): process gets killed by SIGKILL (Illegal instruction) when this is uncommented?
-                    // if string_match.score < 0.4 {
-                    //     continue;
-                    // }
-                    let SearchItemKey {
-                        page_index,
-                        header_index,
-                        item_index,
-                    } = search_state.key_lut[string_match.document.id];
-                    let page = &mut this.search_matches[page_index];
-                    page[header_index] = true;
-                    page[item_index] = true;
-                }
-                this.filter_matches_to_file();
-                this.open_first_nav_page();
-                cx.notify();
-            })
-            .ok();
+        fn update_matches_inner(
+            this: &mut SettingsWindow,
+            search_state: &SearchState,
+            match_indices: impl Iterator<Item = usize>,
+            cx: &mut Context<SettingsWindow>,
+        ) {
+            for page in &mut this.search_matches {
+                page.fill(false);
+            }
+
+            for match_index in match_indices {
+                let SearchItemKey {
+                    page_index,
+                    header_index,
+                    item_index,
+                } = search_state.key_lut[match_index];
+                let page = &mut this.search_matches[page_index];
+                page[header_index] = true;
+                page[item_index] = true;
+            }
+            this.filter_matches_to_file();
+            this.open_first_nav_page();
+            cx.notify();
+        }
+
+        self.search_task = Some(cx.spawn(async move |this, cx| {
+            let bm25_task = cx.background_spawn({
+                let search_state = search_state.clone();
+                let max_results = search_state.key_lut.len();
+                let query = query.clone();
+                async move { search_state.engine.search(&query, max_results) }
+            });
+            let cancel_flag = std::sync::atomic::AtomicBool::new(false);
+            let fuzzy_search_task = fuzzy::match_strings(
+                search_state.fuzzy_match_candidates.as_slice(),
+                &query,
+                false,
+                true,
+                search_state.fuzzy_match_candidates.len(),
+                &cancel_flag,
+                cx.background_executor().clone(),
+            );
+
+            let fuzzy_matches = fuzzy_search_task.await;
+
+            _ = this
+                .update(cx, |this, cx| {
+                    update_matches_inner(
+                        this,
+                        search_state.as_ref(),
+                        fuzzy_matches
+                            .into_iter()
+                            .map(|fuzzy_match| fuzzy_match.candidate_id),
+                        cx,
+                    );
+                })
+                .ok();
+
+            let bm25_matches = bm25_task.await;
+
+            _ = this
+                .update(cx, |this, cx| {
+                    if bm25_matches.is_empty() {
+                        return;
+                    }
+                    update_matches_inner(
+                        this,
+                        search_state.as_ref(),
+                        bm25_matches
+                            .into_iter()
+                            .map(|bm25_match| bm25_match.document.id),
+                        cx,
+                    );
+                })
+                .ok();
         }));
     }
 
@@ -1092,6 +1138,17 @@ impl SettingsWindow {
     fn build_search_index(&mut self) {
         let mut key_lut: Vec<SearchItemKey> = vec![];
         let mut documents = Vec::default();
+        let mut fuzzy_match_candidates = Vec::default();
+
+        fn push_candidates(
+            fuzzy_match_candidates: &mut Vec<StringMatchCandidate>,
+            key_index: usize,
+            input: &str,
+        ) {
+            for word in input.split_ascii_whitespace() {
+                fuzzy_match_candidates.push(StringMatchCandidate::new(key_index, word));
+            }
+        }
 
         // PERF: We are currently searching all items even in project files
         // where many settings are filtered out, using the logic in filter_matches_to_file
@@ -1109,12 +1166,15 @@ impl SettingsWindow {
                             id: key_index,
                             contents: [item.title, item.description].join(" "),
                         });
+                        push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
+                        push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
                     }
                     SettingsPageItem::SectionHeader(header) => {
                         documents.push(bm25::Document {
                             id: key_index,
                             contents: header.to_string(),
                         });
+                        push_candidates(&mut fuzzy_match_candidates, key_index, header);
                         header_index = item_index;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
@@ -1122,7 +1182,11 @@ impl SettingsWindow {
                             id: key_index,
                             contents: sub_page_link.title.to_string(),
                         });
-                        // candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
+                        push_candidates(
+                            &mut fuzzy_match_candidates,
+                            key_index,
+                            sub_page_link.title,
+                        );
                     }
                 }
                 key_lut.push(SearchItemKey {
@@ -1134,7 +1198,11 @@ impl SettingsWindow {
         }
         let engine =
             bm25::SearchEngineBuilder::with_documents(bm25::Language::English, documents).build();
-        self.search_state = Some(Arc::new(SearchState { engine, key_lut }));
+        self.search_state = Some(Arc::new(SearchState {
+            engine,
+            key_lut,
+            fuzzy_match_candidates,
+        }));
     }
 
     fn build_content_handles(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
