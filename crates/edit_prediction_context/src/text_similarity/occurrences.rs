@@ -46,7 +46,6 @@ pub struct SmallOccurrences<const N: usize, S> {
 }
 
 /// Occurrence hash from a particular source type.
-#[derive(Debug)]
 pub struct HashFrom<S> {
     value: u32,
     _source: PhantomData<S>,
@@ -70,6 +69,11 @@ impl<S> Occurrences<S> {
             occurrences.add_hash(hash);
         }
         occurrences.into()
+    }
+
+    pub fn clear(&mut self) {
+        self.table.clear();
+        self.total_count = 0;
     }
 
     pub fn len(&self) -> u32 {
@@ -188,7 +192,11 @@ impl<S> Similarity<Occurrences<S>> for Occurrences<S> {
             .filter(|entry| other.contains_hash(entry.hash))
             .count();
         let union = this.table.len() + other.table.len() - intersection;
-        intersection as f32 / union as f32
+        if union == 0 {
+            0.0
+        } else {
+            intersection as f32 / union as f32
+        }
     }
 
     fn overlap_coefficient<'a>(&'a self, mut other: &'a Self) -> f32 {
@@ -201,7 +209,12 @@ impl<S> Similarity<Occurrences<S>> for Occurrences<S> {
             .iter()
             .filter(|entry| other.contains_hash(entry.hash))
             .count();
-        intersection as f32 / this.table.len() as f32
+        let smaller = this.table.len();
+        if smaller == 0 {
+            0.0
+        } else {
+            intersection as f32 / smaller as f32
+        }
     }
 }
 
@@ -213,7 +226,11 @@ impl<const N: usize, S> Similarity<Occurrences<S>> for SmallOccurrences<N, S> {
             .filter(|hash| other.contains_hash(**hash))
             .count();
         let union = self.hashes.len() + other.table.len() - intersection;
-        intersection as f32 / union as f32
+        if union == 0 {
+            0.0
+        } else {
+            intersection as f32 / union as f32
+        }
     }
 
     fn overlap_coefficient(&self, other: &Occurrences<S>) -> f32 {
@@ -222,7 +239,12 @@ impl<const N: usize, S> Similarity<Occurrences<S>> for SmallOccurrences<N, S> {
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        intersection as f32 / (self.hashes.len().min(other.table.len())) as f32
+        let smaller = self.hashes.len().min(other.table.len());
+        if smaller == 0 {
+            0.0
+        } else {
+            intersection as f32 / smaller as f32
+        }
     }
 }
 
@@ -236,7 +258,11 @@ impl<const N: usize, const O: usize, S> Similarity<SmallOccurrences<O, S>>
             .filter(|hash| other.contains_hash(**hash))
             .count();
         let union = self.hashes.len() + other.hashes.len() - intersection;
-        intersection as f32 / union as f32
+        if union == 0 {
+            0.0
+        } else {
+            intersection as f32 / union as f32
+        }
     }
 
     fn overlap_coefficient(&self, other: &SmallOccurrences<O, S>) -> f32 {
@@ -245,7 +271,12 @@ impl<const N: usize, const O: usize, S> Similarity<SmallOccurrences<O, S>>
             .iter()
             .filter(|hash| other.contains_hash(**hash))
             .count();
-        intersection as f32 / (self.hashes.len().min(other.hashes.len())) as f32
+        let smaller = self.hashes.len().min(other.hashes.len());
+        if smaller == 0 {
+            0.0
+        } else {
+            intersection as f32 / smaller as f32
+        }
     }
 }
 
@@ -303,6 +334,12 @@ impl<S> From<u32> for HashFrom<S> {
             value,
             _source: PhantomData,
         }
+    }
+}
+
+impl<S> Debug for HashFrom<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
     }
 }
 
