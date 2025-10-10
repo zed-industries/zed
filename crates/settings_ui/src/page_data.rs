@@ -422,6 +422,20 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Minimum Contrast For Highlights",
+                    description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            &settings_content.editor.minimum_contrast_for_highlights
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.editor.minimum_contrast_for_highlights
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
                 SettingsPageItem::SectionHeader("Guides"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Wrap Guides",
@@ -577,31 +591,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
             title: "Editor",
             items: {
                 let mut items = vec![
-                    SettingsPageItem::SectionHeader("Editor Behavior"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Redact Private Values",
-                        description: "Hide the values of variables in private files",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.redact_private_values,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.redact_private_values
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Middle Click Paste",
-                        description: "Whether to enable middle-click paste on Linux",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| &settings_content.editor.middle_click_paste,
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.middle_click_paste
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
+                    SettingsPageItem::SectionHeader("Multibuffer"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Double Click In Multibuffer",
                         description: "What to do when multibuffer is double-clicked in some of its excerpts",
@@ -611,20 +601,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                             },
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.double_click_in_multibuffer
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Go To Definition Fallback",
-                        description: "Whether to follow-up empty go to definition responses from the language server",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.go_to_definition_fallback
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.go_to_definition_fallback
                             },
                         }),
                         metadata: None,
@@ -649,20 +625,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                             pick: |settings_content| &settings_content.editor.excerpt_context_lines,
                             pick_mut: |settings_content| {
                                 &mut settings_content.editor.excerpt_context_lines
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Minimum Contrast For Highlights",
-                        description: "The minimum APCA perceptual contrast to maintain when rendering text over highlight backgrounds",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                &settings_content.editor.minimum_contrast_for_highlights
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.editor.minimum_contrast_for_highlights
                             },
                         }),
                         metadata: None,
@@ -5092,6 +5054,20 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             metadata: None,
             files: USER | LOCAL,
         }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Go To Definition Fallback",
+            description: "Whether to follow-up empty go to definition responses from the language server",
+            field: Box::new(SettingField {
+                pick: |settings_content| {
+                    &settings_content.editor.go_to_definition_fallback
+                },
+                pick_mut: |settings_content| {
+                    &mut settings_content.editor.go_to_definition_fallback
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
@@ -5661,6 +5637,18 @@ fn language_settings_data() -> Vec<SettingsPageItem> {
             ),
             metadata: None,
             files: USER | LOCAL,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Middle Click Paste",
+            description: "Whether to enable middle-click paste on Linux",
+            field: Box::new(SettingField {
+                pick: |settings_content| &settings_content.editor.middle_click_paste,
+                pick_mut: |settings_content| {
+                    &mut settings_content.editor.middle_click_paste
+                },
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Extend Comment On Newline",
