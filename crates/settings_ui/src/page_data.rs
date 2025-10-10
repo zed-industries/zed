@@ -87,6 +87,18 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
+                SettingsPageItem::SettingItem(SettingItem {
+                                       title: "Redact Private Values",
+                                       description: "Hide the values of variables in private files",
+                                       field: Box::new(SettingField {
+                                           pick: |settings_content| &settings_content.editor.redact_private_values,
+                                           pick_mut: |settings_content| {
+                                               &mut settings_content.editor.redact_private_values
+                                           },
+                                       }),
+                                       metadata: None,
+                                       files: USER,
+                                   }),
                 SettingsPageItem::SectionHeader("Scoped Settings"),
                 SettingsPageItem::SettingItem(SettingItem {
                     // todo(settings_ui): Implement another setting item type that just shows an edit in settings.json
@@ -1299,96 +1311,6 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                         metadata: None,
                         files: USER,
                     }),
-                    SettingsPageItem::SectionHeader("Tabs"),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show Tab Bar",
-                        description: "Whether or not to show the tab bar in the editor",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tab_bar) = &settings_content.tab_bar {
-                                    &tab_bar.show
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tab_bar.get_or_insert_default().show
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show Git Status In Tabs",
-                        description: "Whether to show the Git file status on a tab item",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.git_status
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().git_status
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Show File Icons In Tabs",
-                        description: "Whether to show the file icon for a tab",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.file_icons
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().file_icons
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        title: "Tab Close Position",
-                        description: "Position of the close button in a tab",
-                        field: Box::new(SettingField {
-                            pick: |settings_content| {
-                                if let Some(tabs) = &settings_content.tabs {
-                                    &tabs.close_position
-                                } else {
-                                    &None
-                                }
-                            },
-                            pick_mut: |settings_content| {
-                                &mut settings_content.tabs.get_or_insert_default().close_position
-                            },
-                        }),
-                        metadata: None,
-                        files: USER,
-                    }),
-                    SettingsPageItem::SettingItem(SettingItem {
-                        files: USER,
-                        title: "Maximum Tabs",
-                        description: "Maximum open tabs in a pane. Will not close an unsaved tab",
-                        // todo(settings_ui): The default for this value is null and it's use in code
-                        // is complex, so I'm going to come back to this later
-                        field: Box::new(
-                            SettingField {
-                                pick: |settings_content| &settings_content.workspace.max_tabs,
-                                pick_mut: |settings_content| {
-                                    &mut settings_content.workspace.max_tabs
-                                },
-                            }
-                            .unimplemented(),
-                        ),
-                        metadata: None,
-                    }),
                     SettingsPageItem::SectionHeader("Toolbar"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Breadcrumbs",
@@ -1998,6 +1920,96 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     metadata: None,
                     files: USER,
+                }),
+                SettingsPageItem::SectionHeader("Tabs"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Tab Bar",
+                    description: "Whether or not to show the tab bar in the editor",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tab_bar) = &settings_content.tab_bar {
+                                &tab_bar.show
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tab_bar.get_or_insert_default().show
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show Git Status In Tabs",
+                    description: "Whether to show the Git file status on a tab item",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.git_status
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().git_status
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Show File Icons In Tabs",
+                    description: "Whether to show the file icon for a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.file_icons
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().file_icons
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Tab Close Position",
+                    description: "Position of the close button in a tab",
+                    field: Box::new(SettingField {
+                        pick: |settings_content| {
+                            if let Some(tabs) = &settings_content.tabs {
+                                &tabs.close_position
+                            } else {
+                                &None
+                            }
+                        },
+                        pick_mut: |settings_content| {
+                            &mut settings_content.tabs.get_or_insert_default().close_position
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    files: USER,
+                    title: "Maximum Tabs",
+                    description: "Maximum open tabs in a pane. Will not close an unsaved tab",
+                    // todo(settings_ui): The default for this value is null and it's use in code
+                    // is complex, so I'm going to come back to this later
+                    field: Box::new(
+                        SettingField {
+                            pick: |settings_content| &settings_content.workspace.max_tabs,
+                            pick_mut: |settings_content| {
+                                &mut settings_content.workspace.max_tabs
+                            },
+                        }
+                        .unimplemented(),
+                    ),
+                    metadata: None,
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Show Navigation History Buttons",
