@@ -92,7 +92,6 @@ pub async fn init(crash_init: InitCrashHandler) {
                 #[cfg(target_os = "macos")]
                 suspend_all_other_threads();
 
-                client.ping().unwrap();
                 client.request_dump(crash_context).is_ok()
             } else {
                 true
