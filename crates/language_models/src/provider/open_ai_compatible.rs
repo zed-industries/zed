@@ -271,7 +271,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         match choice {
             LanguageModelToolChoice::Auto => self.model.capabilities.tools,
             LanguageModelToolChoice::Any => self.model.capabilities.tools,
-            LanguageModelToolChoice::None => true,
+            LanguageModelToolChoice::None => self.model.capabilities.tool_choice_none,
         }
     }
 
