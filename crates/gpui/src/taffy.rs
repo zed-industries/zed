@@ -197,9 +197,7 @@ impl TaffyLayoutEngine {
             transform(available_space.width),
             transform(available_space.height),
         );
-        // println!("outer :{:?}", available_space);
 
-        // let started_at = std::time::Instant::now();
         self.taffy
             .compute_layout_with_measure(
                 id.into(),
@@ -214,11 +212,6 @@ impl TaffyLayoutEngine {
                         height: known_dimensions.height.map(|e| Pixels(e / scale_factor)),
                     };
 
-                    // let known_dimensions = Size {
-                    //     width: known_dimensions.width.map(Pixels),
-                    //     height: known_dimensions.height.map(Pixels),
-                    // };
-
                     let available_space: Size<AvailableSpace> = available_space.into();
                     let untransform = |ev: AvailableSpace| match ev {
                         AvailableSpace::Definite(pixels) => {
@@ -232,20 +225,12 @@ impl TaffyLayoutEngine {
                         untransform(available_space.height),
                     );
 
-                    // println!(
-                    //     "known dimensions {:?} available space {:?}",
-                    //     known_dimensions, available_space
-                    // );
                     let a: Size<Pixels> =
                         (node_context.measure)(known_dimensions, available_space, window, cx);
                     size(a.width.0 * scale_factor, a.height.0 * scale_factor).into()
-                    // (node_context.measure)(known_dimensions, available_space.into(), window, cx)
-                    //     .into()
                 },
             )
             .expect(EXPECT_MESSAGE);
-
-        // println!("compute_layout took {:?}", started_at.elapsed());
     }
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
@@ -254,10 +239,6 @@ impl TaffyLayoutEngine {
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
-        // let mut bounds = Bounds {
-        //     origin: layout.location.into(),
-        //     size: layout.size.into(),
-        // };
         let mut bounds = Bounds {
             origin: point(
                 Pixels(layout.location.x / scale_factor),
@@ -268,7 +249,6 @@ impl TaffyLayoutEngine {
                 Pixels(layout.size.height / scale_factor),
             ),
         };
-        // println!("{:?}", bounds);
 
         if let Some(parent_id) = self.taffy.parent(id.0) {
             let parent_bounds = self.layout_bounds(parent_id.into(), scale_factor);

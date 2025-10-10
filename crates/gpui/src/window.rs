@@ -3071,11 +3071,6 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let bounds2 = bounds.scale(scale_factor);
-        println!("{:?}", bounds2);
-        if path.contains("rust.svg") {
-            println!("thing");
-        }
 
         let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
