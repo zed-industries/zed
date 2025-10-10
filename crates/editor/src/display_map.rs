@@ -812,6 +812,49 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
+    /// Validates if a string is a valid identifier for rainbow highlighting.
+    /// Filters out incomplete identifiers, keywords, and invalid patterns.
+    #[inline]
+    fn is_valid_rainbow_identifier(text: &str) -> bool {
+        // Skip empty or very short identifiers
+        if text.is_empty() || text.len() < 2 {
+            return false;
+        }
+        
+        // Skip if contains whitespace or control characters
+        if text.contains(char::is_whitespace) || text.contains(|c: char| c.is_control()) {
+            return false;
+        }
+        
+        // Skip common keywords across languages (lowercase for case-insensitive check)
+        let lowercase = text.to_lowercase();
+        const KEYWORDS: &[&str] = &[
+            // Rust keywords
+            "self", "super", "crate", "true", "false", "none", "some", "ok", "err",
+            "let", "mut", "fn", "pub", "impl", "struct", "enum", "trait", "type",
+            "if", "else", "match", "for", "while", "loop", "break", "continue", "return",
+            // Python keywords
+            "def", "class", "import", "from", "as", "pass", "with", "async", "await",
+            "lambda", "yield", "raise", "try", "except", "finally", "assert", "del",
+            // Common builtins
+            "print", "len", "str", "int", "float", "bool", "list", "dict", "set",
+            "range", "map", "filter", "sum", "min", "max", "abs", "all", "any",
+        ];
+        
+        if KEYWORDS.contains(&lowercase.as_str()) {
+            return false;
+        }
+        
+        // Must be valid identifier: starts with letter/_, rest alphanumeric/_
+        let mut chars = text.chars();
+        match chars.next() {
+            Some(first) if first.is_alphabetic() || first == '_' => {
+                chars.all(|c| c.is_alphanumeric() || c == '_')
+            }
+            _ => false,
+        }
+    }
+
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
         self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
@@ -979,6 +1022,9 @@ impl DisplaySnapshot {
         language_aware: bool,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        let rainbow_config = &editor_style.rainbow_highlighting;
+        let theme = &editor_style.syntax;
+        
         self.chunks(
             display_rows,
             language_aware,
@@ -987,10 +1033,40 @@ impl DisplaySnapshot {
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
-        .flat_map(|chunk| {
-            let highlight_style = chunk
+        .flat_map(move |chunk| {
+            // Get tree-sitter highlight style and capture name
+            let (highlight_style, capture_name) = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(&editor_style.syntax));
+                .map(|id| (id.style(theme), id.name(theme)))
+                .unwrap_or((None, None));
+
+            // Apply rainbow highlighting for tree-sitter variables
+            let rainbow_style = if rainbow_config.enabled {
+                capture_name
+                    .filter(|name| {
+                        // Include variable/property, but exclude variable.special (keywords like self, None)
+                        (name.starts_with("variable") && !name.contains("special")) 
+                            || name.starts_with("property")
+                    })
+                    .and_then(|_| {
+                        let text = chunk.text.trim();
+                        
+                        // Only apply rainbow to valid identifiers
+                        if Self::is_valid_rainbow_identifier(text) {
+                            use crate::rainbow_highlighter::RainbowHighlighter;
+                            let palette_size = theme.rainbow_palette_size();
+                            let hash_index = RainbowHighlighter::hash_to_index(text, palette_size);
+                            theme.rainbow_color(hash_index)
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            };
+
+            // If rainbow highlighting applies, use it; otherwise use tree-sitter style
+            let final_highlight_style = rainbow_style.or(highlight_style);
 
             let chunk_highlight = chunk.highlight_style.map(|chunk_highlight| {
                 HighlightStyle {
@@ -1033,7 +1109,7 @@ impl DisplaySnapshot {
                     ..Default::default()
                 });
 
-            let style = [highlight_style, chunk_highlight, diagnostic_highlight]
+            let style = [final_highlight_style, chunk_highlight, diagnostic_highlight]
                 .into_iter()
                 .flatten()
                 .reduce(|acc, highlight| acc.highlight(highlight));

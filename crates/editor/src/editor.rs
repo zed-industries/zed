@@ -690,6 +690,7 @@ pub struct EditorStyle {
     pub edit_prediction_styles: EditPredictionStyles,
     pub unnecessary_code_fade: f32,
     pub show_underlines: bool,
+    pub rainbow_highlighting: editor_settings::RainbowConfig,
 }
 
 impl Default for EditorStyle {
@@ -712,6 +713,7 @@ impl Default for EditorStyle {
             },
             unnecessary_code_fade: Default::default(),
             show_underlines: true,
+            rainbow_highlighting: editor_settings::RainbowConfig::default(),
         }
     }
 }
@@ -21481,6 +21483,7 @@ impl Render for Editor {
             edit_prediction_styles: make_suggestion_styles(cx),
             unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
             show_underlines: self.diagnostics_enabled(),
+            rainbow_highlighting: EditorSettings::get_global(cx).rainbow_highlighting,
         })
     }
 }
