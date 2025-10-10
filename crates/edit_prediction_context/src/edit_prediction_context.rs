@@ -201,6 +201,7 @@ mod tests {
                         },
                         score: EditPredictionScoreOptions {
                             omit_excerpt_overlaps: true,
+                            prefilter_score_ratio: 0.0,
                         },
                     },
                     Some(index.clone()),

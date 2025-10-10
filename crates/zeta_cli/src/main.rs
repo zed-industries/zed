@@ -112,6 +112,8 @@ struct Zeta2Args {
     file_indexing_parallelism: usize,
     #[arg(long, default_value_t = false)]
     disable_imports_gathering: bool,
+    #[arg(long, default_value_t = 0.5)]
+    prefilter_score_ratio: f32,
 }
 
 #[derive(clap::ValueEnum, Default, Debug, Clone)]
@@ -389,6 +391,7 @@ impl Zeta2Args {
                 },
                 score: EditPredictionScoreOptions {
                     omit_excerpt_overlaps,
+                    prefilter_score_ratio: self.prefilter_score_ratio,
                 },
             },
             max_diagnostic_bytes: self.max_diagnostic_bytes,

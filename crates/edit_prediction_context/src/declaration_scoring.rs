@@ -19,9 +19,10 @@ use crate::{
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EditPredictionScoreOptions {
     pub omit_excerpt_overlaps: bool,
+    pub prefilter_score_ratio: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -262,6 +263,8 @@ pub fn scored_declarations(
 
         let mut max_import_similarity = 0.0;
         let mut max_wildcard_import_similarity = 0.0;
+        // todo! consider max retrieval score instead?
+        let mut max_score = 0.0;
 
         let mut scored_declarations_for_identifier = Vec::with_capacity(checked_declarations.len());
         for checked_declaration in checked_declarations {
@@ -294,11 +297,19 @@ pub fn scored_declarations(
                 .entry(declaration.declaration.project_entry_id())
                 .or_default()
                 .push(declaration.declaration.item_range());
+            let score = declaration.score(DeclarationStyle::Declaration);
             scored_declarations_for_identifier.push(declaration);
+
+            if score > max_score {
+                max_score = score;
+            }
         }
 
-        if max_import_similarity > 0.0 || max_wildcard_import_similarity > 0.0 {
-            for declaration in scored_declarations_for_identifier.iter_mut() {
+        if max_import_similarity > 0.0
+            || max_wildcard_import_similarity > 0.0
+            || options.prefilter_score_ratio > 0.0
+        {
+            for mut declaration in scored_declarations_for_identifier.into_iter() {
                 if max_import_similarity > 0.0 {
                     declaration.components.max_import_similarity = max_import_similarity;
                     declaration.components.normalized_import_similarity =
@@ -309,10 +320,16 @@ pub fn scored_declarations(
                         declaration.components.wildcard_import_similarity
                             / max_wildcard_import_similarity;
                 }
+                if options.prefilter_score_ratio <= 0.0
+                    || declaration.score(DeclarationStyle::Declaration)
+                        > max_score * options.prefilter_score_ratio
+                {
+                    scored_declarations.push(declaration);
+                }
             }
+        } else {
+            scored_declarations.extend(scored_declarations_for_identifier);
         }
-
-        scored_declarations.extend(scored_declarations_for_identifier);
     }
 
     // TODO: Inform this via import / retrieval scores of outline items

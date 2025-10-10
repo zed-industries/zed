@@ -52,6 +52,7 @@ pub const DEFAULT_CONTEXT_OPTIONS: EditPredictionContextOptions = EditPrediction
     },
     score: EditPredictionScoreOptions {
         omit_excerpt_overlaps: true,
+        prefilter_score_ratio: 0.5,
     },
 };
 
