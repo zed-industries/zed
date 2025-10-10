@@ -7,7 +7,13 @@ use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::Project;
 use smol::stream::StreamExt;
-use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
+use std::{
+    any::{Any, TypeId},
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+    time::Duration,
+};
 use text::ToOffset;
 use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
@@ -317,7 +323,7 @@ impl Item for ProposedChangesEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
