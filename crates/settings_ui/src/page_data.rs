@@ -726,7 +726,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     SettingsPageItem::SectionHeader("Signature Help"),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Auto Signature Help",
-                        description: "Automatically show a signature help pop-up or not",
+                        description: "Automatically show a signature help pop-up",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.auto_signature_help,
                             pick_mut: |settings_content| {
@@ -738,7 +738,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Show Signature Help After Edits",
-                        description: "Show the signature help pop-up after completions or bracket pairs inserted",
+                        description: "Show the signature help pop-up after completions or bracket pairs are inserted",
                         field: Box::new(SettingField {
                             pick: |settings_content| {
                                 &settings_content.editor.show_signature_help_after_edits
@@ -874,7 +874,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     }),
                     SettingsPageItem::SettingItem(SettingItem {
                         title: "Relative Line Numbers",
-                        description: "Whether the line numbers on editors gutter are relative or not",
+                        description: "Whether the line numbers in the editor's gutter are relative or not",
                         field: Box::new(SettingField {
                             pick: |settings_content| &settings_content.editor.relative_line_numbers,
                             pick_mut: |settings_content| {
@@ -2479,7 +2479,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Reveal Entries",
-                    description: "Whether to reveal it in the project panel automatically when a corresponding project entry becomes active",
+                    description: "Whether to reveal entries in the project panel automatically when a corresponding project entry becomes active",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(project_panel) = &settings_content.project_panel {
@@ -2869,7 +2869,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Fold Directories",
-                    description: "Whether to fold directories automatically when a directory has only one directory inside",
+                    description: "Whether to fold directories automatically when a directory contains only one subdirectory",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
                             if let Some(outline_panel) = &settings_content.outline_panel {
