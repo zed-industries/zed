@@ -6689,7 +6689,9 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
             ".hidden-file.txt": "hidden file content",
             "visible-file.txt": "visible file content",
             ".hidden-parent-dir": {
-                "nested-file.txt": "file in hidden dir"
+                "nested-dir": {
+                    "file.txt": "file content",
+                }
             },
             "visible-dir": {
                 "file-in-visible.txt": "file content",
@@ -6728,18 +6730,27 @@ async fn test_hide_hidden_entries(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     toggle_expand_dir(&panel, "root/.hidden-parent-dir", cx);
+    toggle_expand_dir(&panel, "root/.hidden-parent-dir/nested-dir", cx);
     toggle_expand_dir(&panel, "root/visible-dir", cx);
     toggle_expand_dir(&panel, "root/visible-dir/nested", cx);
     toggle_expand_dir(&panel, "root/visible-dir/nested/.hidden-nested-dir", cx);
+    toggle_expand_dir(
+        &panel,
+        "root/visible-dir/nested/.hidden-nested-dir/.double-hidden-dir",
+        cx,
+    );
 
     let expanded = [
         "v root",
         "    v .hidden-parent-dir",
-        "          nested-file.txt",
+        "        v nested-dir",
+        "              file.txt",
         "    v visible-dir",
         "        v nested",
-        "            v .hidden-nested-dir  <== selected",
-        "                > .double-hidden-dir",
+        "            v .hidden-nested-dir",
+        "                v .double-hidden-dir  <== selected",
+        "                      deep-file-1.txt",
+        "                      deep-file-2.txt",
         "                  hidden-nested-file-1.txt",
         "                  hidden-nested-file-2.txt",
         "              visible-nested-file.txt",
