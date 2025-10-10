@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use language::BufferSnapshot;
 
-use crate::{Occurrences, SlidingWindow, hashes_of_lowercase_identifier_parts};
+use crate::{IdentifierParts, Occurrences};
 
 // TODO:
 //
@@ -23,7 +23,7 @@ pub struct SimilarSnippet {
 }
 
 pub fn similar_snippets(
-    excerpt_occurrences: &Occurrences,
+    excerpt_occurrences: &Occurrences<IdentifierParts>,
     skip_range: Option<Range<usize>>,
     buffer: &BufferSnapshot,
     min_bytes: usize,

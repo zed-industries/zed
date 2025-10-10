@@ -4,7 +4,8 @@ use hashbrown::HashTable;
 use smallvec::SmallVec;
 use std::{
     fmt::Debug,
-    hash::{Hash as _, Hasher as _},
+    hash::{Hash, Hasher},
+    marker::PhantomData,
 };
 use util::debug_panic;
 
@@ -26,13 +27,13 @@ pub trait HashOccurrences {
 }
 
 /// Multiset of hash occurrences used in similarity metrics.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct OccurrencesMultiset {
     table: HashTable<OccurrenceEntry>,
     total_count: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct OccurrenceEntry {
     hash: u32,
     count: u32,
@@ -43,51 +44,34 @@ struct OccurrenceEntry {
 #[derive(Debug, Default)]
 pub struct SmallOccurrencesSet<const N: usize>(SmallVec<[u32; N]>);
 
-/// Wraps a hash occurrences set to implement n-grams, aka w-shingling. Each N length interval of
+pub type HashFrom<S> = FromSource<u32, S>;
+pub type Occurrences<S> = FromSource<OccurrencesMultiset, S>;
+pub type SmallOccurrences<const N: usize, S> = FromSource<SmallOccurrencesSet<N>, S>;
+
+/// Indicates that a value comes from a particular source type. This provides safety, as it helps
+/// ensure that the same input preprocessing is used when computing similarity metrics for
+/// occurrences.
+#[derive(Debug, Clone, Default)]
+pub struct FromSource<T, S> {
+    value: T,
+    _source: PhantomData<S>,
+}
+
+/// Source type for occurrences that come from n-grams, aka w-shingling. Each N length interval of
 /// the input will be treated as one occurrence.
 ///
-/// Note that this hashes the hashes it's provided - may more efficient to use a proper rolling
-/// hash, especially for large N. However, didn't find a rust rolling hash implementation that
+/// Note that this hashes the hashes it's provided for every output - may be more efficient to use a
+/// proper rolling hash. Unfortunately, I didn't find a rust rolling hash implementation that
 /// operated on updates larger than u8.
-#[derive(Debug, Default)]
-struct NGram<const N: usize, T>(T);
+struct NGram<const N: usize, S>(S);
 
-impl HashOccurrences for OccurrencesMultiset {
-    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
-        let mut this = Self::default();
+impl<S> Occurrences<S> {
+    pub fn new(hashes: impl IntoIterator<Item = HashFrom<S>>) -> Self {
+        let mut occurrences = OccurrencesMultiset::default();
         for hash in hashes {
-            this.add_hash(hash);
+            occurrences.add_hash(hash.value);
         }
-        this
-    }
-}
-
-impl<const N: usize> HashOccurrences for SmallOccurrencesSet<N> {
-    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
-        let mut this = Self::default();
-        this.0.extend(hashes);
-        this.0.sort_unstable();
-        this.0.dedup();
-        this.0.shrink_to_fit();
-        this
-    }
-}
-
-impl<const N: usize, T: HashOccurrences> HashOccurrences for NGram<N, T> {
-    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
-        let mut window: ArrayDeque<u32, N, arraydeque::Wrapping> = ArrayDeque::new();
-        NGram(T::from_hashes(hashes.into_iter().filter_map(|hash| {
-            if window.push_back(hash).is_some() {
-                let mut hasher = FxHasher::default();
-                window.hash(&mut hasher);
-                let (window_prefix, window_suffix) = window.as_slices();
-                window_prefix.hash(&mut hasher);
-                window_suffix.hash(&mut hasher);
-                Some(hasher.finish() as u32)
-            } else {
-                None
-            }
-        })))
+        occurrences.into()
     }
 }
 
@@ -155,6 +139,19 @@ impl OccurrencesMultiset {
             .find(hash as u64, |entry| entry.hash == hash)
             .map(|entry| entry.count)
             .unwrap_or(0)
+    }
+}
+
+impl<const N: usize, S> SmallOccurrences<N, S> {
+    pub fn new(hashes: impl IntoIterator<Item = HashFrom<S>>) -> Self {
+        let mut occurrences = SmallOccurrencesSet::default();
+        occurrences
+            .0
+            .extend(hashes.into_iter().map(|hash| hash.value));
+        occurrences.0.sort_unstable();
+        occurrences.0.dedup();
+        occurrences.0.shrink_to_fit();
+        occurrences.into()
     }
 }
 
@@ -283,28 +280,76 @@ impl WeightedSimilarity<OccurrencesMultiset> for OccurrencesMultiset {
     }
 }
 
-impl<const N: usize, L: Similarity<R>, R> Similarity<NGram<N, R>> for NGram<N, L> {
-    fn jaccard_similarity(&self, other: &NGram<N, R>) -> f32 {
-        self.0.jaccard_similarity(&other.0)
-    }
-
-    fn overlap_coefficient(&self, other: &NGram<N, R>) -> f32 {
-        self.0.overlap_coefficient(&other.0)
-    }
-}
-
-impl<const N: usize, L: WeightedSimilarity<R>, R> WeightedSimilarity<NGram<N, R>> for NGram<N, L> {
-    fn weighted_jaccard_similarity(&self, other: &NGram<N, R>) -> f32 {
-        self.0.weighted_jaccard_similarity(&other.0)
-    }
-
-    fn weighted_overlap_coefficient(&self, other: &NGram<N, R>) -> f32 {
-        self.0.weighted_overlap_coefficient(&other.0)
+impl<V, S> From<V> for FromSource<V, S> {
+    fn from(value: V) -> Self {
+        Self {
+            value,
+            _source: PhantomData,
+        }
     }
 }
 
-impl AsRef<OccurrencesMultiset> for OccurrencesMultiset {
-    fn as_ref(&self) -> &OccurrencesMultiset {
-        self
+impl<V: Hash, S> Hash for FromSource<V, S> {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        self.value.hash(hasher);
+    }
+}
+
+impl<LI: Similarity<RI>, RI, S> Similarity<FromSource<RI, S>> for FromSource<LI, S> {
+    fn jaccard_similarity(&self, other: &FromSource<RI, S>) -> f32 {
+        self.value.jaccard_similarity(&other.value)
+    }
+
+    fn overlap_coefficient(&self, other: &FromSource<RI, S>) -> f32 {
+        self.value.overlap_coefficient(&other.value)
+    }
+}
+
+impl<LI: WeightedSimilarity<RI>, RI, S> WeightedSimilarity<FromSource<RI, S>>
+    for FromSource<LI, S>
+{
+    fn weighted_jaccard_similarity(&self, other: &FromSource<RI, S>) -> f32 {
+        self.value.weighted_jaccard_similarity(&other.value)
+    }
+
+    fn weighted_overlap_coefficient(&self, other: &FromSource<RI, S>) -> f32 {
+        self.value.weighted_overlap_coefficient(&other.value)
+    }
+}
+
+struct NGramIterator<const N: usize, S, I> {
+    hashes: I,
+    window: ArrayDeque<HashFrom<S>, N, arraydeque::Wrapping>,
+}
+
+impl<const N: usize, S, I> NGramIterator<N, S, I>
+where
+    I: Iterator<Item = HashFrom<S>>,
+{
+    fn new<V: Hash>(hashes: I) -> Self {
+        Self {
+            hashes,
+            window: ArrayDeque::new(),
+        }
+    }
+}
+
+impl<const N: usize, S, I> Iterator for NGramIterator<N, S, I>
+where
+    I: Iterator<Item = HashFrom<S>>,
+{
+    type Item = HashFrom<NGram<N, S>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(hash) = self.hashes.next() {
+            if self.window.push_back(hash).is_some() {
+                let mut hasher = FxHasher::default();
+                let (window_prefix, window_suffix) = self.window.as_slices();
+                window_prefix.hash(&mut hasher);
+                window_suffix.hash(&mut hasher);
+                return Some((hasher.finish() as u32).into());
+            }
+        }
+        return None;
     }
 }

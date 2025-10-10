@@ -2,7 +2,9 @@ mod identifier_parts;
 mod occurrences;
 
 pub use identifier_parts::IdentifierParts;
-pub use occurrences::{OccurrencesMultiset, Similarity, WeightedSimilarity};
+pub use occurrences::{
+    Occurrences, OccurrencesMultiset, Similarity, SmallOccurrences, WeightedSimilarity,
+};
 
 // Variants to consider experimenting:
 //

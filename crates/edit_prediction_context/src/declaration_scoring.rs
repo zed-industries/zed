@@ -8,12 +8,10 @@ use strum::EnumIter;
 use text::{Point, ToPoint};
 
 use crate::{
-    Declaration, EditPredictionExcerpt, Identifier,
+    Declaration, EditPredictionExcerpt, Identifier, Occurrences,
     reference::{Reference, ReferenceRegion},
     syntax_index::SyntaxIndexState,
-    text_similarity::{
-        IdentifierParts, OccurrencesMultiset, Similarity as _, WeightedSimilarity as _,
-    },
+    text_similarity::{IdentifierParts, Similarity as _, WeightedSimilarity as _},
 };
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
@@ -62,8 +60,8 @@ impl ScoredDeclaration {
 pub fn scored_declarations(
     index: &SyntaxIndexState,
     excerpt: &EditPredictionExcerpt,
-    excerpt_occurrences: &IdentifierParts<OccurrencesMultiset>,
-    adjacent_occurrences: &IdentifierParts<OccurrencesMultiset>,
+    excerpt_occurrences: &Occurrences<IdentifierParts>,
+    adjacent_occurrences: &Occurrences<IdentifierParts>,
     identifier_to_references: HashMap<Identifier, Vec<Reference>>,
     cursor_offset: usize,
     current_buffer: &BufferSnapshot,
@@ -180,8 +178,8 @@ fn score_declaration(
     declaration_line_distance_rank: usize,
     same_file_declaration_count: usize,
     declaration_count: usize,
-    excerpt_occurrences: &IdentifierParts<OccurrencesMultiset>,
-    adjacent_occurrences: &IdentifierParts<OccurrencesMultiset>,
+    excerpt_occurrences: &Occurrences<IdentifierParts>,
+    adjacent_occurrences: &Occurrences<IdentifierParts>,
     cursor: Point,
     current_buffer: &BufferSnapshot,
 ) -> Option<ScoredDeclaration> {
@@ -201,9 +199,11 @@ fn score_declaration(
         .min()
         .unwrap();
 
-    let item_source_occurrences = IdentifierParts::within_string(&declaration.item_text().0);
-    let item_signature_occurrences =
-        IdentifierParts::within_string(&declaration.signature_text().0);
+    let item_source_occurrences =
+        Occurrences::new(IdentifierParts::within_string(&declaration.item_text().0));
+    let item_signature_occurrences = Occurrences::new(IdentifierParts::within_string(
+        &declaration.signature_text().0,
+    ));
     let excerpt_vs_item_jaccard = excerpt_occurrences.jaccard_similarity(&item_source_occurrences);
     let excerpt_vs_signature_jaccard =
         excerpt_occurrences.jaccard_similarity(&item_signature_occurrences);

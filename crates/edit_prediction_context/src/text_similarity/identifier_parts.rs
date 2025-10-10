@@ -1,41 +1,21 @@
-use crate::text_similarity::occurrences::{HashOccurrences, Similarity, WeightedSimilarity};
+use crate::text_similarity::occurrences::HashFrom;
 use std::hash::{Hash, Hasher as _};
 
-/// Occurrence set which splits the input into alphanumeric characters, and further splits these
+/// Occurrence source which splits the input into alphanumeric characters, and further splits these
 /// when cases change to handle PascalCase and camelCase.
-pub struct IdentifierParts<T>(T);
+pub struct IdentifierParts;
 
-impl<T: HashOccurrences> IdentifierParts<T> {
-    pub fn within_string(text: &str) -> Self {
-        IdentifierParts(T::from_hashes(
-            identifier_parts(text).map(fx_hash_ascii_lowercase),
-        ))
+impl IdentifierParts {
+    pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
+        IdentifierPartsIterator::new(text).map(|part| fx_hash_ascii_lowercase(part).into())
     }
 
-    pub fn within_identifiers<'a>(identifiers: impl IntoIterator<Item = &'a str>) -> Self {
-        IdentifierParts(T::from_hashes(identifiers.into_iter().flat_map(
-            |identifier| identifier_parts(identifier).map(fx_hash_ascii_lowercase),
-        )))
-    }
-}
-
-impl<L: Similarity<R>, R> Similarity<IdentifierParts<R>> for IdentifierParts<L> {
-    fn jaccard_similarity(&self, other: &IdentifierParts<R>) -> f32 {
-        self.0.jaccard_similarity(&other.0)
-    }
-
-    fn overlap_coefficient(&self, other: &IdentifierParts<R>) -> f32 {
-        self.0.overlap_coefficient(&other.0)
-    }
-}
-
-impl<L: WeightedSimilarity<R>, R> WeightedSimilarity<IdentifierParts<R>> for IdentifierParts<L> {
-    fn weighted_jaccard_similarity(&self, other: &IdentifierParts<R>) -> f32 {
-        self.0.weighted_jaccard_similarity(&other.0)
-    }
-
-    fn weighted_overlap_coefficient(&self, other: &IdentifierParts<R>) -> f32 {
-        self.0.weighted_overlap_coefficient(&other.0)
+    pub fn within_strings<'a>(
+        strings: impl IntoIterator<Item = &'a str>,
+    ) -> impl Iterator<Item = HashFrom<Self>> {
+        strings.into_iter().flat_map(|text| {
+            IdentifierPartsIterator::new(text).map(|part| fx_hash_ascii_lowercase(part).into())
+        })
     }
 }
 
@@ -52,11 +32,7 @@ fn fx_hash_ascii_lowercase(text: &str) -> u32 {
 }
 
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
-fn identifier_parts(identifier: &str) -> IdentifierPartIterator<'_> {
-    IdentifierPartIterator::new(identifier)
-}
-
-struct IdentifierPartIterator<'a> {
+struct IdentifierPartsIterator<'a> {
     text: &'a str,
     chars: std::str::CharIndices<'a>,
     start: Option<usize>,
@@ -64,7 +40,7 @@ struct IdentifierPartIterator<'a> {
     prev_char_is_uppercase: bool,
 }
 
-impl<'a> IdentifierPartIterator<'a> {
+impl<'a> IdentifierPartsIterator<'a> {
     fn new(text: &'a str) -> Self {
         Self {
             text,
@@ -76,7 +52,7 @@ impl<'a> IdentifierPartIterator<'a> {
     }
 }
 
-impl<'a> Iterator for IdentifierPartIterator<'a> {
+impl<'a> Iterator for IdentifierPartsIterator<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -142,63 +118,48 @@ impl<'a> Iterator for IdentifierPartIterator<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::{OccurrencesMultiset, text_similarity::occurrences::SmallOccurrencesSet};
+    use crate::{
+        Similarity as _, WeightedSimilarity as _,
+        text_similarity::occurrences::{Occurrences, SmallOccurrences, SmallOccurrencesSet},
+    };
 
     use super::*;
 
     #[test]
     fn test_split_identifier() {
+        fn identifier_parts<'a>(text: &'a str) -> Vec<&'a str> {
+            IdentifierPartsIterator::new(text).collect()
+        }
+
         assert_eq!(
-            identifier_parts("snake_case kebab-case PascalCase camelCase XMLParser")
-                .collect::<Vec<_>>(),
+            identifier_parts("snake_case kebab-case PascalCase camelCase XMLParser"),
             vec![
                 "snake", "case", "kebab", "case", "Pascal", "Case", "camel", "Case", "XML",
                 "Parser"
             ]
         );
+        assert_eq!(identifier_parts("snake_case"), vec!["snake", "case"]);
+        assert_eq!(identifier_parts("kebab-case"), vec!["kebab", "case"]);
+        assert_eq!(identifier_parts("PascalCase"), vec!["Pascal", "Case"]);
+        assert_eq!(identifier_parts("camelCase"), vec!["camel", "Case"]);
+        assert_eq!(identifier_parts("XMLParser"), vec!["XML", "Parser"]);
+        assert_eq!(identifier_parts(""), Vec::<&str>::new());
+        assert_eq!(identifier_parts("a"), vec!["a"]);
+        assert_eq!(identifier_parts("ABC"), vec!["ABC"]);
+        assert_eq!(identifier_parts("abc"), vec!["abc"]);
+        assert_eq!(identifier_parts("123"), vec!["123"]);
+        assert_eq!(identifier_parts("a1B2c3"), vec!["a1", "B2c3"]);
+        assert_eq!(identifier_parts("HTML5Parser"), vec!["HTML5", "Parser"]);
         assert_eq!(
-            identifier_parts("snake_case").collect::<Vec<_>>(),
-            vec!["snake", "case"]
-        );
-        assert_eq!(
-            identifier_parts("kebab-case").collect::<Vec<_>>(),
-            vec!["kebab", "case"]
-        );
-        assert_eq!(
-            identifier_parts("PascalCase").collect::<Vec<_>>(),
-            vec!["Pascal", "Case"]
-        );
-        assert_eq!(
-            identifier_parts("camelCase").collect::<Vec<_>>(),
-            vec!["camel", "Case"]
-        );
-        assert_eq!(
-            identifier_parts("XMLParser").collect::<Vec<_>>(),
-            vec!["XML", "Parser"]
-        );
-        assert_eq!(identifier_parts("").collect::<Vec<_>>(), Vec::<&str>::new());
-        assert_eq!(identifier_parts("a").collect::<Vec<_>>(), vec!["a"]);
-        assert_eq!(identifier_parts("ABC").collect::<Vec<_>>(), vec!["ABC"]);
-        assert_eq!(identifier_parts("abc").collect::<Vec<_>>(), vec!["abc"]);
-        assert_eq!(identifier_parts("123").collect::<Vec<_>>(), vec!["123"]);
-        assert_eq!(
-            identifier_parts("a1B2c3").collect::<Vec<_>>(),
-            vec!["a1", "B2c3"]
-        );
-        assert_eq!(
-            identifier_parts("HTML5Parser").collect::<Vec<_>>(),
-            vec!["HTML5", "Parser"]
-        );
-        assert_eq!(
-            identifier_parts("_leading_underscore").collect::<Vec<_>>(),
+            identifier_parts("_leading_underscore"),
             vec!["leading", "underscore"]
         );
         assert_eq!(
-            identifier_parts("trailing_underscore_").collect::<Vec<_>>(),
+            identifier_parts("trailing_underscore_"),
             vec!["trailing", "underscore"]
         );
         assert_eq!(
-            identifier_parts("--multiple--delimiters--").collect::<Vec<_>>(),
+            identifier_parts("--multiple--delimiters--"),
             vec!["multiple", "delimiters"]
         );
     }
@@ -207,17 +168,17 @@ mod test {
     fn test_similarity_functions() {
         // 10 identifier parts, 8 unique
         // Repeats: 2 "outline", 2 "items"
-        let multiset_a: IdentifierParts<OccurrencesMultiset> = IdentifierParts::within_string(
+        let multiset_a = Occurrences::new(IdentifierParts::within_string(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
-        );
-        let set_a: IdentifierParts<SmallOccurrencesSet<8>> = IdentifierParts::within_string(
+        ));
+        let set_a = SmallOccurrences::<8, IdentifierParts>::new(IdentifierParts::within_string(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
-        );
+        ));
         // 14 identifier parts, 11 unique
         // Repeats: 2 "outline", 2 "language", 2 "tree"
-        let set_b: IdentifierParts<OccurrencesMultiset> = IdentifierParts::within_string(
+        let set_b = Occurrences::new(IdentifierParts::within_string(
             "pub fn query_outline_items(language: &Language, tree: &Tree, source: &str) -> Vec<OutlineItem> {",
-        );
+        ));
 
         // 6 overlaps: "outline", "items", "query", "language", "tree", "source"
         // 7 non-overlaps: "let", "mut", "pub", "fn", "vec", "item", "str"
