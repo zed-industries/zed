@@ -1903,7 +1903,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                 }),
                 SettingsPageItem::SectionHeader("Tab Bar"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Editor Tabs",
+                    title: "Show Tab Bar",
                     description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
@@ -1920,9 +1920,8 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     metadata: None,
                     files: USER,
                 }),
-                SettingsPageItem::SectionHeader("Tabs"),
                 SettingsPageItem::SettingItem(SettingItem {
-                    title: "Show Tab Bar",
+                    title: "Editor Tabs",
                     description: "Show the tab bar in the editor",
                     field: Box::new(SettingField {
                         pick: |settings_content| {
