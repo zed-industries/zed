@@ -170,13 +170,11 @@ impl UniformListScrollHandle {
     /// This uses non-strict scrolling: if the item is already visible within the offset region,
     /// no scrolling occurs.
     ///
-    /// The offset parameter shifts the target position by the specified number of items:
-    /// - `ScrollStrategy::Top`: Places the item `offset` items down from the top edge
-    ///   (e.g., offset=2 means the item appears as the 3rd visible item)
-    /// - `ScrollStrategy::Center`: Centers the item within a viewport that starts `offset` items
-    ///   from the top.
-    /// - `ScrollStrategy::Bottom`: Places the item `offset` items up from the bottom edge
-    ///   (e.g., offset=1 means the item appears as the second-to-last visible item)
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
     pub fn scroll_to_item_with_offset(&self, ix: usize, strategy: ScrollStrategy, offset: usize) {
         self.0.borrow_mut().deferred_scroll_to_item = Some(DeferredScrollToItem {
             item_index: ix,
@@ -191,13 +189,11 @@ impl UniformListScrollHandle {
     /// This uses strict scrolling: the item will always be scrolled to match the strategy position,
     /// even if it's already visible.
     ///
-    /// The offset parameter shifts the target position by the specified number of items:
-    /// - `ScrollStrategy::Top`: Places the item `offset` items down from the top edge
-    ///   (e.g., offset=2 means the item appears as the 3rd visible item)
-    /// - `ScrollStrategy::Center`: Centers the item within a viewport that starts `offset` items
-    ///   from the top.
-    /// - `ScrollStrategy::Bottom`: Places the item `offset` items up from the bottom edge
-    ///   (e.g., offset=1 means the item appears as the second-to-last visible item)
+    /// The offset parameter shrinks the effective viewport by the specified number of items
+    /// from the corresponding edge, then applies the scroll strategy within that reduced viewport:
+    /// - `ScrollStrategy::Top`: Shrinks from top, positions item at the new top
+    /// - `ScrollStrategy::Center`: Shrinks from top, centers item in the reduced viewport
+    /// - `ScrollStrategy::Bottom`: Shrinks from bottom, positions item at the new bottom
     pub fn scroll_to_item_strict_with_offset(
         &self,
         ix: usize,
