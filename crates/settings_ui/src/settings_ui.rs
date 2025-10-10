@@ -463,11 +463,11 @@ pub struct SettingsWindow {
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
-    search_state: Option<Arc<SearchState>>,
+    search_index: Option<Arc<SearchIndex>>,
 }
 
-struct SearchState {
-    engine: bm25::SearchEngine<usize>,
+struct SearchIndex {
+    bm25_engine: bm25::SearchEngine<usize>,
     fuzzy_match_candidates: Vec<StringMatchCandidate>,
     key_lut: Vec<SearchItemKey>,
 }
@@ -894,7 +894,7 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
-            search_state: None,
+            search_index: None,
         };
 
         this.fetch_files(window, cx);
@@ -1038,7 +1038,7 @@ impl SettingsWindow {
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
         self.search_task.take();
         let query = self.search_bar.read(cx).text(cx);
-        if query.is_empty() || self.search_state.is_none() {
+        if query.is_empty() || self.search_index.is_none() {
             for page in &mut self.search_matches {
                 page.fill(true);
             }
@@ -1047,11 +1047,11 @@ impl SettingsWindow {
             return;
         }
 
-        let search_state = self.search_state.as_ref().unwrap().clone();
+        let search_index = self.search_index.as_ref().unwrap().clone();
 
         fn update_matches_inner(
             this: &mut SettingsWindow,
-            search_state: &SearchState,
+            search_index: &SearchIndex,
             match_indices: impl Iterator<Item = usize>,
             cx: &mut Context<SettingsWindow>,
         ) {
@@ -1064,7 +1064,7 @@ impl SettingsWindow {
                     page_index,
                     header_index,
                     item_index,
-                } = search_state.key_lut[match_index];
+                } = search_index.key_lut[match_index];
                 let page = &mut this.search_matches[page_index];
                 page[header_index] = true;
                 page[item_index] = true;
@@ -1076,18 +1076,18 @@ impl SettingsWindow {
 
         self.search_task = Some(cx.spawn(async move |this, cx| {
             let bm25_task = cx.background_spawn({
-                let search_state = search_state.clone();
-                let max_results = search_state.key_lut.len();
+                let search_index = search_index.clone();
+                let max_results = search_index.key_lut.len();
                 let query = query.clone();
-                async move { search_state.engine.search(&query, max_results) }
+                async move { search_index.bm25_engine.search(&query, max_results) }
             });
             let cancel_flag = std::sync::atomic::AtomicBool::new(false);
             let fuzzy_search_task = fuzzy::match_strings(
-                search_state.fuzzy_match_candidates.as_slice(),
+                search_index.fuzzy_match_candidates.as_slice(),
                 &query,
                 false,
                 true,
-                search_state.fuzzy_match_candidates.len(),
+                search_index.fuzzy_match_candidates.len(),
                 &cancel_flag,
                 cx.background_executor().clone(),
             );
@@ -1098,7 +1098,7 @@ impl SettingsWindow {
                 .update(cx, |this, cx| {
                     update_matches_inner(
                         this,
-                        search_state.as_ref(),
+                        search_index.as_ref(),
                         fuzzy_matches
                             .into_iter()
                             .map(|fuzzy_match| fuzzy_match.candidate_id),
@@ -1116,7 +1116,7 @@ impl SettingsWindow {
                     }
                     update_matches_inner(
                         this,
-                        search_state.as_ref(),
+                        search_index.as_ref(),
                         bm25_matches
                             .into_iter()
                             .map(|bm25_match| bm25_match.document.id),
@@ -1198,8 +1198,8 @@ impl SettingsWindow {
         }
         let engine =
             bm25::SearchEngineBuilder::with_documents(bm25::Language::English, documents).build();
-        self.search_state = Some(Arc::new(SearchState {
-            engine,
+        self.search_index = Some(Arc::new(SearchIndex {
+            bm25_engine: engine,
             key_lut,
             fuzzy_match_candidates,
         }));
@@ -2563,7 +2563,7 @@ mod test {
                 cx,
             ),
             files_focus_handle: cx.focus_handle(),
-            search_state: None,
+            search_index: None,
         };
 
         settings_window.build_search_matches();
