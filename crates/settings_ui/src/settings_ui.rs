@@ -1284,11 +1284,10 @@ impl SettingsWindow {
     }
 
     fn open_first_nav_page(&mut self) {
-        let first_navbar_entry_index = self
-            .visible_navbar_entries()
-            .next()
-            .map(|e| e.0)
-            .unwrap_or(0);
+        let Some(first_navbar_entry_index) = self.visible_navbar_entries().next().map(|e| e.0)
+        else {
+            return;
+        };
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
