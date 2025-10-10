@@ -2090,38 +2090,33 @@ impl Project {
             .project_path_git_status(project_path, cx)
     }
 
-    pub fn visibility_for_paths(
-        &self,
-        paths: &[PathBuf],
-        metadatas: &[Metadata],
-        exclude_sub_dirs: bool,
-        cx: &App,
-    ) -> Option<bool> {
-        paths
-            .iter()
-            .zip(metadatas)
-            .map(|(path, metadata)| self.visibility_for_path(path, metadata, exclude_sub_dirs, cx))
-            .max()
-            .flatten()
-    }
+    pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
+        use std::collections::HashSet;
 
-    pub fn visibility_for_path(
-        &self,
-        path: &Path,
-        metadata: &Metadata,
-        exclude_sub_dirs: bool,
-        cx: &App,
-    ) -> Option<bool> {
-        let path = SanitizedPath::new(path).as_path();
-        self.worktrees(cx)
+        // Collect the set of provided paths as canonicalized absolute paths
+        let input_set: HashSet<_> = paths
+            .iter()
+            .map(|p| SanitizedPath::new(p).as_path().to_path_buf())
+            .collect();
+
+        // Collect the set of visible worktree root paths in the workspace
+        let workspace_set: HashSet<_> = self
+            .worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
-                let abs_path = worktree.as_local()?.abs_path();
-                let contains = path == abs_path.as_ref()
-                    || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
-                contains.then(|| worktree.is_visible())
+                if worktree.is_visible() {
+                    worktree.as_local().map(|w| w.abs_path().to_path_buf())
+                } else {
+                    None
+                }
             })
-            .max()
+            .collect();
+
+        if input_set == workspace_set {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     pub fn create_entry(
