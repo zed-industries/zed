@@ -1184,13 +1184,15 @@ impl SettingsWindow {
         // will be constant.
         for (page_index, page) in self.pages.iter().enumerate() {
             let mut header_index = 0;
+            let mut header_str = "";
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 match item {
                     SettingsPageItem::SettingItem(item) => {
                         documents.push(bm25::Document {
                             id: key_index,
-                            contents: [item.title, item.description].join(" "),
+                            contents: [page.title, header_str, item.title, item.description]
+                                .join("\n"),
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.title);
                         push_candidates(&mut fuzzy_match_candidates, key_index, item.description);
@@ -1202,11 +1204,12 @@ impl SettingsWindow {
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, header);
                         header_index = item_index;
+                        header_str = *header;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         documents.push(bm25::Document {
                             id: key_index,
-                            contents: sub_page_link.title.to_string(),
+                            contents: [page.title, header_str, sub_page_link.title].join("\n"),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
@@ -1215,6 +1218,9 @@ impl SettingsWindow {
                         );
                     }
                 }
+                push_candidates(&mut fuzzy_match_candidates, key_index, page.title);
+                push_candidates(&mut fuzzy_match_candidates, key_index, header_str);
+
                 key_lut.push(SearchItemKey {
                     page_index,
                     header_index,
