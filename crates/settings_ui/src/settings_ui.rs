@@ -38,7 +38,7 @@ use ui::{
 use ui_input::{NumberField, NumberFieldType};
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{OpenOptions, OpenVisible, Workspace, client_side_decorations};
-use zed_actions::OpenSettingsEditor;
+use zed_actions::OpenSettings;
 
 use crate::components::SettingsEditor;
 
@@ -286,7 +286,7 @@ pub fn init(cx: &mut App) {
     init_renderers(cx);
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
-        workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
+        workspace.register_action(|workspace, _: &OpenSettings, window, cx| {
             let window_handle = window
                 .window_handle()
                 .downcast::<Workspace>()
