@@ -1,35 +1,18 @@
 # Rainbow Brackets
 
-Rainbow brackets is a feature that colors matching bracket pairs (`{}`, `[]`, `()`) in your code using different colors based on their nesting depth. This helps visually distinguish nested code blocks and makes it easier to identify matching bracket pairs.
-
-## Current Status
-
-The rainbow brackets feature is currently in early development. Basic functionality is working:
-- Brackets are colored based on nesting depth
-- Colors remain stable while scrolling
-- Performance is optimized using caching
+Rainbow brackets colors matching bracket pairs (`{}`, `[]`, `()`) in your code using different colors based on their nesting depth. This helps visually distinguish nested code blocks and makes it easier to identify matching bracket pairs.
 
 ## Configuration
 
-Rainbow brackets can be configured in your `settings.json` file under the `editor.rainbow_brackets` key:
+Rainbow brackets can be configured in your `settings.json`:
 
 ```json
 {
-  "editor": {
-    "rainbow_brackets": {
-      "enabled": true,
-      "mode": "gradient",
-      "gradient_start_hue": 0,
-      "gradient_step": 60,
-      "show_in_minimap": true,
-      "pulse_active_scope": true,
-      "pulse_duration_ms": 300,
-      "dim_inactive_scopes": false,
-      "animate_fade": true,
-      "animate_glow": true,
-      "animation_duration_ms": 200,
-      "max_brackets": 100000
-    }
+  "rainbow_brackets": {
+    "enabled": true,
+    "start_hue": 0,
+    "hue_step": 30,
+    "max_brackets": 100000
   }
 }
 ```
@@ -39,111 +22,84 @@ Rainbow brackets can be configured in your `settings.json` file under the `edito
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable or disable rainbow brackets |
-| `mode` | string | `"gradient"` | Coloring mode: `"gradient"` (infinite HSL gradient) or `"classic"` (6-color cycling) |
-| `gradient_start_hue` | number | `0` | Starting hue for gradient mode (0-360 degrees) |
-| `gradient_step` | number | `60` | Hue step per nesting level in degrees |
-| `show_in_minimap` | boolean | `true` | Whether to show bracket colors in the minimap |
-| `pulse_active_scope` | boolean | `true` | Whether to pulse/animate the active bracket pair |
-| `pulse_duration_ms` | number | `300` | Duration of pulse animation in milliseconds |
-| `dim_inactive_scopes` | boolean | `false` | Whether to dim inactive bracket scopes |
-| `animate_fade` | boolean | `true` | Whether to show fade-in animation when opening files |
-| `animate_glow` | boolean | `true` | Whether to show glow animation on active bracket pair |
-| `animation_duration_ms` | number | `200` | Duration of fade-in animation in milliseconds |
-| `max_brackets` | number | `100000` | Maximum number of brackets to colorize for performance |
+| `start_hue` | number | `0` | Starting hue for colors (0-360 degrees). 0=red, 120=green, 240=blue |
+| `hue_step` | number | `30` | Hue change per nesting level in degrees (1-180) |
+| `max_brackets` | number | `100000` | Maximum number of brackets to colorize (for performance) |
 
 ## How It Works
 
 ### Bracket Detection
-Rainbow brackets uses tree-sitter to parse the syntax tree and identify bracket pairs in the code. The system processes brackets in the following types:
+Rainbow brackets uses tree-sitter to parse the syntax tree and identify bracket pairs. The specific brackets highlighted depend on each language's configuration, but typically include:
 - Curly braces: `{}`
 - Square brackets: `[]`
 - Parentheses: `()`
 
-### Nesting Level Calculation
-The feature uses a stack-based O(n) algorithm to calculate nesting levels:
-1. Brackets are sorted by their position in the document
-2. A stack tracks open brackets
-3. When an open bracket is found, it's pushed to the stack
-4. When a close bracket is found, it's matched with the corresponding open bracket
-5. The nesting level is determined by the stack depth
-
 ### Color Assignment
-Colors are assigned based on the nesting level:
-- **Gradient Mode**: Uses an HSL color wheel with configurable start hue and step
-- **Classic Mode**: Cycles through a fixed set of 6 colors (not fully implemented)
+Colors are assigned using the HSL color wheel:
+1. Level 0 (outermost) starts at `start_hue`
+2. Each nesting level adds `hue_step` degrees
+3. Colors wrap around at 360 degrees (e.g., 380° becomes 20°)
 
-To avoid highlight conflicts, the system uses 12 separate highlight types (RainbowBracketHighlight0-11) with colors assigned using modulo arithmetic.
+Example with `start_hue: 0` and `hue_step: 60`:
+- Level 0: Red (0°)
+- Level 1: Yellow (60°)
+- Level 2: Green (120°)
+- Level 3: Cyan (180°)
+- Level 4: Blue (240°)
+- Level 5: Magenta (300°)
+- Level 6: Red again (360° = 0°)
 
-### Caching
-To improve performance, bracket calculations are cached:
-- Cache is invalidated when the buffer is edited (tracked by edit_count)
-- Empty results (when tree-sitter isn't ready) are not cached
-- Cache uses IndexMap to maintain deterministic iteration order
+### Technical Limitations
 
-## Current Limitations
+Due to GPUI's highlight system architecture, rainbow brackets can display a **maximum of 12 unique colors** simultaneously. Nesting levels beyond 12 will cycle through the same colors (level 12 uses the same color as level 0, level 13 as level 1, etc.).
 
-### Non-Functional Features
-Several configuration options are defined but not yet implemented:
-- **Classic mode**: The 6-color cycling mode is not implemented
-- **Animations**: All animation settings (pulse, fade, glow) are not functional
-- **Minimap**: Bracket colors are not shown in the minimap
-- **Dim inactive scopes**: Does not dim brackets outside the current scope
-- **Active scope tracking**: Cursor position tracking for active brackets is not working
+This limitation exists because GPUI's `highlight_text()` API requires separate highlight types for overlapping highlights, and we define 12 types (`RainbowBracketHighlight0` through `RainbowBracketHighlight11`).
 
-### Known Issues
-1. **Tree-sitter dependency**: Brackets won't appear until tree-sitter finishes parsing
-2. **Animation limitations**: GPUI's `highlight_text()` API doesn't support animations
-3. **Large file performance**: Files with >100,000 brackets are skipped by default
+## Performance
 
-### Performance Considerations
-- The `max_brackets` setting limits processing to prevent performance issues
-- Default limit is 100,000 brackets, suitable for most large files
-- Processing is limited to the visible viewport when possible
+### Optimization Features
+- **Smart caching**: Bracket calculations are cached and only recomputed when the buffer is edited
+- **Performance limit**: Files with more than `max_brackets` brackets skip highlighting
+- **Efficient algorithm**: O(n) single-pass algorithm for nesting level calculation
 
-## Implementation Details
+### Performance Tips
+- For very large files (>100K brackets), consider reducing `max_brackets` or disabling rainbow brackets
+- The default limit of 100,000 brackets handles most large files without issues
 
-### Key Files
-- `crates/editor/src/rainbow_brackets.rs` - Main implementation
-- `crates/editor/src/editor_settings.rs` - Settings integration
-- `crates/settings/src/settings_content/editor.rs` - Settings schema
+## Language Support
 
-### Data Structures
-```rust
-pub struct RainbowBracketTracker {
-    nesting_levels: IndexMap<Range<Anchor>, u32>,  // Bracket ranges to nesting levels
-    cached_edit_count: Option<usize>,               // For cache invalidation
-    enabled: bool,                                  // Feature toggle
-    mode: RainbowMode,                              // Gradient or Classic
-    gradient_config: GradientConfig,                // Color configuration
-    // ... animation fields (not functional)
-}
-```
+Rainbow brackets work with any language that has bracket pairs configured. Most languages in Zed already have proper bracket configurations, including:
+- Rust, C, C++, Go
+- JavaScript, TypeScript, TSX
+- Python
+- JSON, YAML
+- HTML, CSS
+- And many more
 
-### Highlight System
-The implementation uses Zed's highlight system with 12 separate highlight types to avoid conflicts when multiple brackets need different colors at the same position.
-
-## Future Improvements
-
-Planned enhancements include:
-- Implementing classic 6-color mode
-- Adding animation support when GPUI allows
-- Minimap integration
-- Active scope highlighting with cursor tracking
-- Language-specific bracket customization
-- Performance optimizations for very large files
-- Configurable bracket types per language
+Each language defines its bracket pairs in its `config.toml` file. For example, Python includes `{}`, `[]`, `()` as well as various string delimiters.
 
 ## Troubleshooting
 
 ### Brackets not appearing
-- Check that `enabled` is set to `true` in settings
-- Wait for tree-sitter to finish parsing (especially on large files)
-- Verify the file has fewer brackets than `max_brackets` setting
+1. Ensure `enabled` is set to `true` in your settings
+2. Wait for tree-sitter to finish parsing (may take a moment on large files)
+3. Check that the file has fewer brackets than the `max_brackets` setting
+4. Verify the file's language has bracket pairs configured
 
-### Colors changing unexpectedly
-- This issue has been fixed by using IndexMap for deterministic ordering
-- If still occurring, check for settings changes or file edits
+### Colors not as expected
+- Remember that only 12 unique colors can be displayed
+- Colors cycle: level 12 = level 0, level 13 = level 1, etc.
+- Adjust `start_hue` and `hue_step` to customize the color palette
 
 ### Performance issues
 - Reduce `max_brackets` setting for very large files
-- Consider disabling for specific file types if needed
+- Consider disabling for specific workspaces with many large generated files
+
+## Implementation Details
+
+The rainbow brackets implementation lives in:
+- `crates/editor/src/rainbow_brackets.rs` - Core implementation
+- `crates/editor/src/editor_settings.rs` - Settings integration
+- `crates/settings/src/settings_content/editor.rs` - Configuration schema
+
+The implementation uses an efficient stack-based algorithm to calculate nesting levels in a single pass, caches results to avoid recalculation during scrolling, and integrates cleanly with Zed's highlighting system.
