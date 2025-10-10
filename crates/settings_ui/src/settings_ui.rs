@@ -1881,14 +1881,17 @@ impl SettingsWindow {
                 .find(|(_, (_, item))| !matches!(item, SettingsPageItem::SectionHeader(_)))
                 .map(|(index, _)| index);
 
+            let root_nav_label = self
+                .navbar_entries
+                .iter()
+                .find(|entry| entry.is_root && entry.page_index == self.current_page_index())
+                .map(|entry| entry.title);
+
             page_content = page_content
                 .when(sub_page_stack().is_empty(), |this| {
-                    this.when_some(
-                        self.navbar_entries
-                            .get(self.navbar_entry)
-                            .map(|entry| entry.title),
-                        |this, title| this.child(Label::new(title).size(LabelSize::Large).mb_3()),
-                    )
+                    this.when_some(root_nav_label, |this, title| {
+                        this.child(Label::new(title).size(LabelSize::Large).mt_2().mb_3())
+                    })
                 })
                 .children(items.clone().into_iter().enumerate().map(
                     |(index, (actual_item_index, item))| {
