@@ -2274,9 +2274,15 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
-            rainbow_bracket_tracker: rainbow_brackets::RainbowBracketTracker::new(
-                EditorSettings::get_global(cx).rainbow_brackets.enabled,
-            ),
+            rainbow_bracket_tracker: {
+                let settings = EditorSettings::get_global(cx);
+                rainbow_brackets::RainbowBracketTracker::new(
+                    settings.rainbow_brackets.enabled,
+                    settings.rainbow_brackets.start_hue,
+                    settings.rainbow_brackets.hue_step,
+                    settings.rainbow_brackets.max_brackets,
+                )
+            },
         };
 
         if is_minimap {
