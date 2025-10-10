@@ -1784,38 +1784,47 @@ impl SettingsWindow {
                 .find(|(_, (_, item))| !matches!(item, SettingsPageItem::SectionHeader(_)))
                 .map(|(index, _)| index);
 
-            page_content = page_content.children(items.clone().into_iter().enumerate().map(
-                |(index, (actual_item_index, item))| {
-                    let no_bottom_border = items
-                        .get(index + 1)
-                        .map(|(_, next_item)| {
-                            matches!(next_item, SettingsPageItem::SectionHeader(_))
-                        })
-                        .unwrap_or(false);
-                    let is_last = Some(index) == last_non_header_index;
+            page_content = page_content
+                .when(sub_page_stack().is_empty(), |this| {
+                    this.when_some(
+                        self.navbar_entries
+                            .get(self.navbar_entry)
+                            .map(|entry| entry.title),
+                        |this, title| this.child(Label::new(title).size(LabelSize::Large).mb_3()),
+                    )
+                })
+                .children(items.clone().into_iter().enumerate().map(
+                    |(index, (actual_item_index, item))| {
+                        let no_bottom_border = items
+                            .get(index + 1)
+                            .map(|(_, next_item)| {
+                                matches!(next_item, SettingsPageItem::SectionHeader(_))
+                            })
+                            .unwrap_or(false);
+                        let is_last = Some(index) == last_non_header_index;
 
-                    if let SettingsPageItem::SectionHeader(header) = item {
-                        section_header = Some(*header);
-                    }
-                    v_flex()
-                        .w_full()
-                        .min_w_0()
-                        .id(("settings-page-item", actual_item_index))
-                        .when_some(page_index, |element, page_index| {
-                            element.track_focus(
-                                &self.content_handles[page_index][actual_item_index]
-                                    .focus_handle(cx),
-                            )
-                        })
-                        .child(item.render(
-                            self,
-                            section_header.expect("All items rendered after a section header"),
-                            no_bottom_border || is_last,
-                            window,
-                            cx,
-                        ))
-                },
-            ))
+                        if let SettingsPageItem::SectionHeader(header) = item {
+                            section_header = Some(*header);
+                        }
+                        v_flex()
+                            .w_full()
+                            .min_w_0()
+                            .id(("settings-page-item", actual_item_index))
+                            .when_some(page_index, |element, page_index| {
+                                element.track_focus(
+                                    &self.content_handles[page_index][actual_item_index]
+                                        .focus_handle(cx),
+                                )
+                            })
+                            .child(item.render(
+                                self,
+                                section_header.expect("All items rendered after a section header"),
+                                no_bottom_border || is_last,
+                                window,
+                                cx,
+                            ))
+                    },
+                ))
         }
         page_content
     }
