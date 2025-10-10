@@ -5889,9 +5889,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "menu",
  "system_specs",
- "ui",
  "urlencoding",
  "workspace",
  "workspace-hack",
