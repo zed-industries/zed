@@ -1,3 +1,4 @@
+pub mod call_overlay;
 pub mod channel_view;
 pub mod collab_panel;
 pub mod notification_panel;
@@ -23,6 +24,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
 
     channel_view::init(cx);
     collab_panel::init(cx);
+    call_overlay::init(cx);
     notification_panel::init(cx);
     notifications::init(app_state, cx);
     title_bar::init(cx);
