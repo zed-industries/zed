@@ -5166,6 +5166,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arraydeque",
  "arrayvec",
  "clap",
  "cloud_llm_client",

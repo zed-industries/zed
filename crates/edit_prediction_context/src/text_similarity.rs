@@ -6,8 +6,6 @@ pub use occurrences::{OccurrenceMultiset, Similarity, WeightedSimilarity};
 
 // Variants to consider experimenting:
 //
-// * N-grams
-//
 // * Also include unsplit identifier (or a hash of its hashes), so that full identifier matches get
 // a higher score.
 //

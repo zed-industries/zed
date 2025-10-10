@@ -1,6 +1,11 @@
+use arraydeque::ArrayDeque;
+use collections::FxHasher;
 use hashbrown::HashTable;
 use smallvec::SmallVec;
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    hash::{Hash as _, Hasher as _},
+};
 use util::debug_panic;
 
 /// Similarity metrics that use a set of occurrences.
@@ -17,29 +22,38 @@ pub trait WeightedSimilarity<T> {
 
 /// Occurrence sets that can be constructed from hashes.
 pub trait HashOccurrences {
-    fn from_hashes(hashes: impl IntoIterator<Item = u64>) -> Self;
+    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self;
 }
 
 /// Multiset of hash occurrences used in similarity metrics.
 #[derive(Debug, Default)]
 pub struct OccurrenceMultiset {
     table: HashTable<OccurrenceEntry>,
-    total_count: usize,
+    total_count: u32,
 }
 
 #[derive(Debug)]
 struct OccurrenceEntry {
-    hash: u64,
-    count: usize,
+    hash: u32,
+    count: u32,
 }
 
 /// Small set of hash occurrences. Since this does not track the number of times each has occurred,
 /// this only implements `Similarity` and not `WeightedSimilarity`.
 #[derive(Debug, Default)]
-pub struct SmallOccurrenceSet<const N: usize>(SmallVec<[u64; N]>);
+pub struct SmallOccurrenceSet<const N: usize>(SmallVec<[u32; N]>);
+
+/// Wraps a hash occurrences set to implement n-grams, aka w-shingling. Each N length interval of
+/// the input will be treated as one occurrence.
+///
+/// Note that this hashes the hashes it's provided - may more efficient to use a proper rolling
+/// hash, especially for large N. However, didn't find a rust rolling hash implementation that
+/// operated on updates larger than u8.
+#[derive(Debug, Default)]
+struct NGram<const N: usize, T>(T);
 
 impl HashOccurrences for OccurrenceMultiset {
-    fn from_hashes(hashes: impl IntoIterator<Item = u64>) -> Self {
+    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
         let mut this = Self::default();
         for hash in hashes {
             this.add_hash(hash);
@@ -49,7 +63,7 @@ impl HashOccurrences for OccurrenceMultiset {
 }
 
 impl<const N: usize> HashOccurrences for SmallOccurrenceSet<N> {
-    fn from_hashes(hashes: impl IntoIterator<Item = u64>) -> Self {
+    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
         let mut this = Self::default();
         this.0.extend(hashes);
         this.0.sort_unstable();
@@ -59,14 +73,32 @@ impl<const N: usize> HashOccurrences for SmallOccurrenceSet<N> {
     }
 }
 
+impl<const N: usize, T: HashOccurrences> HashOccurrences for NGram<N, T> {
+    fn from_hashes(hashes: impl IntoIterator<Item = u32>) -> Self {
+        let mut window: ArrayDeque<u32, N, arraydeque::Wrapping> = ArrayDeque::new();
+        NGram(T::from_hashes(hashes.into_iter().filter_map(|hash| {
+            if window.push_back(hash).is_some() {
+                let mut hasher = FxHasher::default();
+                window.hash(&mut hasher);
+                let (window_prefix, window_suffix) = window.as_slices();
+                window_prefix.hash(&mut hasher);
+                window_suffix.hash(&mut hasher);
+                Some(hasher.finish() as u32)
+            } else {
+                None
+            }
+        })))
+    }
+}
+
 impl OccurrenceMultiset {
-    fn add_hash(&mut self, hash: u64) -> usize {
+    fn add_hash(&mut self, hash: u32) -> u32 {
         let new_count = self
             .table
             .entry(
-                hash,
+                hash as u64,
                 |entry: &OccurrenceEntry| entry.hash == hash,
-                |entry| entry.hash,
+                |entry| entry.hash as u64,
             )
             .and_modify(|entry| entry.count += 1)
             .or_insert(OccurrenceEntry { hash, count: 1 })
@@ -76,11 +108,11 @@ impl OccurrenceMultiset {
         new_count
     }
 
-    fn remove_hash(&mut self, hash: u64) -> usize {
+    fn remove_hash(&mut self, hash: u32) -> u32 {
         let entry = self.table.entry(
-            hash,
+            hash as u64,
             |entry: &OccurrenceEntry| entry.hash == hash,
-            |entry| entry.hash,
+            |entry| entry.hash as u64,
         );
         match entry {
             hashbrown::hash_table::Entry::Occupied(mut entry) => {
@@ -106,20 +138,20 @@ impl OccurrenceMultiset {
         }
     }
 
-    fn contains_hash(&self, hash: u64) -> bool {
+    fn contains_hash(&self, hash: u32) -> bool {
         self.get_count(hash) != 0
     }
 
-    fn get_count(&self, hash: u64) -> usize {
+    fn get_count(&self, hash: u32) -> u32 {
         self.table
-            .find(hash, |entry| entry.hash == hash)
+            .find(hash as u64, |entry| entry.hash == hash)
             .map(|entry| entry.count)
             .unwrap_or(0)
     }
 }
 
 impl<const N: usize> SmallOccurrenceSet<N> {
-    fn contains_hash(&self, hash: u64) -> bool {
+    fn contains_hash(&self, hash: u32) -> bool {
         self.0.iter().any(|h| *h == hash)
     }
 }
@@ -240,5 +272,25 @@ impl WeightedSimilarity<OccurrenceMultiset> for OccurrenceMultiset {
         } else {
             numerator as f32 / denominator as f32
         }
+    }
+}
+
+impl<const N: usize, L: Similarity<R>, R> Similarity<NGram<N, R>> for NGram<N, L> {
+    fn jaccard_similarity(&self, other: &NGram<N, R>) -> f32 {
+        self.0.jaccard_similarity(&other.0)
+    }
+
+    fn overlap_coefficient(&self, other: &NGram<N, R>) -> f32 {
+        self.0.overlap_coefficient(&other.0)
+    }
+}
+
+impl<const N: usize, L: WeightedSimilarity<R>, R> WeightedSimilarity<NGram<N, R>> for NGram<N, L> {
+    fn weighted_jaccard_similarity(&self, other: &NGram<N, R>) -> f32 {
+        self.0.weighted_jaccard_similarity(&other.0)
+    }
+
+    fn weighted_overlap_coefficient(&self, other: &NGram<N, R>) -> f32 {
+        self.0.weighted_overlap_coefficient(&other.0)
     }
 }

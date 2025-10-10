@@ -1,6 +1,8 @@
 use crate::text_similarity::occurrences::{HashOccurrences, Similarity, WeightedSimilarity};
 use std::hash::{Hash, Hasher as _};
 
+/// Occurrence set which splits the input into alphanumeric characters, and further splits these
+/// when cases change to handle PascalCase and camelCase.
 pub struct IdentifierParts<T>(T);
 
 impl<T: HashOccurrences> IdentifierParts<T> {
@@ -17,34 +19,36 @@ impl<T: HashOccurrences> IdentifierParts<T> {
     }
 }
 
-impl<T: Similarity<O>, O> Similarity<IdentifierParts<O>> for IdentifierParts<T> {
-    fn jaccard_similarity(&self, other: &IdentifierParts<O>) -> f32 {
+impl<L: Similarity<R>, R> Similarity<IdentifierParts<R>> for IdentifierParts<L> {
+    fn jaccard_similarity(&self, other: &IdentifierParts<R>) -> f32 {
         self.0.jaccard_similarity(&other.0)
     }
 
-    fn overlap_coefficient(&self, other: &IdentifierParts<O>) -> f32 {
+    fn overlap_coefficient(&self, other: &IdentifierParts<R>) -> f32 {
         self.0.overlap_coefficient(&other.0)
     }
 }
 
-impl<T: WeightedSimilarity<O>, O> WeightedSimilarity<IdentifierParts<O>> for IdentifierParts<T> {
-    fn weighted_jaccard_similarity(&self, other: &IdentifierParts<O>) -> f32 {
+impl<L: WeightedSimilarity<R>, R> WeightedSimilarity<IdentifierParts<R>> for IdentifierParts<L> {
+    fn weighted_jaccard_similarity(&self, other: &IdentifierParts<R>) -> f32 {
         self.0.weighted_jaccard_similarity(&other.0)
     }
 
-    fn weighted_overlap_coefficient(&self, other: &IdentifierParts<O>) -> f32 {
+    fn weighted_overlap_coefficient(&self, other: &IdentifierParts<R>) -> f32 {
         self.0.weighted_overlap_coefficient(&other.0)
     }
 }
 
-fn fx_hash_ascii_lowercase(text: &str) -> u64 {
+fn fx_hash_ascii_lowercase(text: &str) -> u32 {
     // Hash lowercased text without allocating. May be possible to do this more efficiently by using
-    // bit manipulation to lowercase and hash 8 bytes at a time (or even faster with SIMD).
+    // bit manipulation to lowercase and hash 4 bytes at a time (or 8 bytes at a time with
+    // FxHasher64).
     let mut hasher = collections::FxHasher::default();
     for ch in text.chars() {
         ch.to_ascii_lowercase().hash(&mut hasher);
     }
-    hasher.finish()
+    // TODO: Ideally should directly compute a u32 hash.
+    hasher.finish() as u32
 }
 
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
