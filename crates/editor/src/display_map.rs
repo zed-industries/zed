@@ -812,13 +812,6 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    /// Validates if a string is a valid identifier for rainbow highlighting.
-    /// Does NOT include language-specific keyword filtering - that should be done by Language layer.
-    #[inline]
-    fn is_valid_rainbow_identifier(text: &str) -> bool {
-        crate::rainbow_identifier::is_valid_identifier(text)
-    }
-
     pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
         self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
@@ -1023,7 +1016,7 @@ impl DisplaySnapshot {
                     })
                     .unwrap_or(false);
 
-                let rainbow_style = if rainbow_config.enabled && is_variable_like {
+                let rainbow_style = if is_variable_like {
                     if let Some((cached_start, cached_end, cached_style)) = cached_identifier {
                         if chunk_start >= *cached_start && chunk_end <= *cached_end {
                             *cached_style
@@ -1038,17 +1031,18 @@ impl DisplaySnapshot {
                             buffer_snapshot,
                             chunk_start..chunk_end,
                         ) {
-                            if Self::is_valid_rainbow_identifier(&identifier) {
-                                use crate::rainbow_highlighter::RainbowHighlighter;
-                                let palette_size = theme.rainbow_palette_size();
-                                let hash_index = RainbowHighlighter::hash_to_index(&identifier, palette_size);
-                                let style = theme.rainbow_color(hash_index);
-                                
+                            // Use shared rainbow highlighting logic (same as LSP)
+                            let style = crate::rainbow_highlighting::try_rainbow_highlight(
+                                &identifier,
+                                true,  // is_variable_like already checked
+                                rainbow_config.enabled,
+                                theme,
+                            );
+                            
+                            if style.is_some() {
                                 *cached_identifier = Some((range.start, range.end, style));
-                                style
-                            } else {
-                                None
                             }
+                            style
                         } else {
                             None
                         }
@@ -1757,18 +1751,17 @@ impl<'a> SemanticTokenStylizer<'a> {
         variable_name: Option<&str>,
         rainbow_config: Option<&crate::editor_settings::RainbowConfig>,
     ) -> Option<HighlightStyle> {
-        use crate::rainbow_highlighter::RainbowHighlighter;
-        
         let token_type_name = self.token_type(token_type)?;
         
-        // 🌈 RAINBOW OVERRIDE for variable-like tokens
+        // 🌈 RAINBOW OVERRIDE for variable-like tokens (shared logic with tree-sitter)
         if let (Some(config), Some(name)) = (rainbow_config, variable_name) {
-            if config.enabled && matches!(token_type_name, "variable" | "parameter" | "property") {
-                let palette_size = theme.rainbow_palette_size();
-                let hash_index = RainbowHighlighter::hash_to_index(name, palette_size);
-                if let Some(rainbow_style) = theme.rainbow_color(hash_index) {
-                    return Some(rainbow_style);
-                }
+            if let Some(rainbow_style) = crate::rainbow_highlighting::try_rainbow_highlight(
+                name,
+                crate::rainbow_highlighting::is_variable_like_token(token_type_name),
+                config.enabled,
+                theme,
+            ) {
+                return Some(rainbow_style);
             }
         }
         

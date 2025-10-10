@@ -36,6 +36,7 @@ pub mod movement;
 mod persistence;
 mod proposed_changes_editor;
 mod rainbow_highlighter;
+mod rainbow_highlighting;
 mod rainbow_identifier;
 mod rust_analyzer_ext;
 pub mod scroll;
