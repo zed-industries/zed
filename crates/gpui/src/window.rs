@@ -3107,7 +3107,7 @@ impl Window {
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: svg_bouonds
+            bounds: svg_bounds
                 .map_origin(|origin| origin.round())
                 .map_size(|size| size.ceil()),
             content_mask,
