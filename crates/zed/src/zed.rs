@@ -4657,6 +4657,7 @@ mod tests {
                 "window",
                 "workspace",
                 "zed",
+                "zed_actions",
                 "zed_predict_onboarding",
                 "zeta",
             ];
