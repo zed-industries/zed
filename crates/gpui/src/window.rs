@@ -3071,6 +3071,7 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
+
         let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
             path,
@@ -3106,7 +3107,9 @@ impl Window {
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: svg_bounds,
+            bounds: svg_bounds
+                .map_origin(|origin| origin.round())
+                .map_size(|size| size.ceil()),
             content_mask,
             color: color.opacity(element_opacity),
             tile,
@@ -3219,11 +3222,14 @@ impl Window {
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
         let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_layout(style, rem_size, &cx.layout_id_buffer)
+        self.layout_engine.as_mut().unwrap().request_layout(
+            style,
+            rem_size,
+            scale_factor,
+            &cx.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -3245,10 +3251,11 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
+        let scale_factor = self.scale_factor();
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, measure)
+            .request_measured_layout(style, rem_size, scale_factor, measure)
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -3276,11 +3283,12 @@ impl Window {
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
 
+        let scale_factor = self.scale_factor();
         let mut bounds = self
             .layout_engine
             .as_mut()
             .unwrap()
-            .layout_bounds(layout_id)
+            .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
         bounds.origin += self.element_offset();
         bounds
