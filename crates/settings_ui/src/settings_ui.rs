@@ -3,6 +3,7 @@ mod components;
 mod page_data;
 
 use anyhow::Result;
+use bm25::Document;
 use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
@@ -463,6 +464,8 @@ pub struct SettingsWindow {
     navbar_focus_handle: Entity<NonFocusableHandle>,
     content_focus_handle: Entity<NonFocusableHandle>,
     files_focus_handle: FocusHandle,
+    search_engine: bm25::SearchEngine<usize>,
+    search_engine_key_lut: Vec<SearchItemKey>,
 }
 
 struct SubPage {
@@ -805,6 +808,12 @@ impl SettingsUiFile {
     }
 }
 
+struct SearchItemKey {
+    page_index: usize,
+    header_index: usize,
+    item_index: usize,
+}
+
 impl SettingsWindow {
     pub fn new(
         original_window: Option<WindowHandle<Workspace>>,
@@ -881,10 +890,18 @@ impl SettingsWindow {
                 .focus_handle()
                 .tab_index(HEADER_CONTAINER_TAB_INDEX)
                 .tab_stop(false),
+            // todo! remove
+            search_engine: bm25::SearchEngineBuilder::with_documents(
+                bm25::Language::English,
+                Vec::<bm25::Document<usize>>::new(),
+            )
+            .build(),
+            search_engine_key_lut: vec![],
         };
 
         this.fetch_files(window, cx);
         this.build_ui(window, cx);
+        this.build_search_index();
 
         this.search_bar.update(cx, |editor, cx| {
             editor.focus_handle(cx).focus(window);
@@ -1032,70 +1049,11 @@ impl SettingsWindow {
             return;
         }
 
-        struct ItemKey {
-            page_index: usize,
-            header_index: usize,
-            item_index: usize,
-        }
-        let mut key_lut: Vec<ItemKey> = vec![];
-        let mut candidates = Vec::default();
-
-        fn push_candidates(
-            candidates: &mut Vec<StringMatchCandidate>,
-            key_index: usize,
-            input: &str,
-        ) {
-            for word in input.split_ascii_whitespace() {
-                candidates.push(StringMatchCandidate::new(key_index, word));
-            }
-        }
-
-        // PERF: We are currently searching all items even in project files
-        // where many settings are filtered out, using the logic in filter_matches_to_file
-        // we could only search relevant items based on the current file
-        // PERF: We are reconstructing the string match candidates Vec each time we search.
-        // This is completely unnecessary as now that pages are filtered, the string match candidates Vec
-        // will be constant.
-        for (page_index, page) in self.pages.iter().enumerate() {
-            let mut header_index = 0;
-            for (item_index, item) in page.items.iter().enumerate() {
-                let key_index = key_lut.len();
-                match item {
-                    SettingsPageItem::SettingItem(item) => {
-                        push_candidates(&mut candidates, key_index, item.title);
-                        push_candidates(&mut candidates, key_index, item.description);
-                    }
-                    SettingsPageItem::SectionHeader(header) => {
-                        push_candidates(&mut candidates, key_index, header);
-                        header_index = item_index;
-                    }
-                    SettingsPageItem::SubPageLink(sub_page_link) => {
-                        push_candidates(&mut candidates, key_index, sub_page_link.title);
-                        // candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
-                    }
-                }
-                key_lut.push(ItemKey {
-                    page_index,
-                    header_index,
-                    item_index,
-                });
-            }
-        }
-        let atomic_bool = AtomicBool::new(false);
-
         self.search_task = Some(cx.spawn(async move |this, cx| {
-            let string_matches = fuzzy::match_strings(
-                candidates.as_slice(),
-                &query,
-                false,
-                true,
-                candidates.len(),
-                &atomic_bool,
-                cx.background_executor().clone(),
-            );
-            let string_matches = string_matches.await;
-
             this.update(cx, |this, cx| {
+                let string_matches = this
+                    .search_engine
+                    .search(&query, this.search_engine_key_lut.len());
                 for page in &mut this.search_matches {
                     page.fill(false);
                 }
@@ -1105,11 +1063,11 @@ impl SettingsWindow {
                     // if string_match.score < 0.4 {
                     //     continue;
                     // }
-                    let ItemKey {
+                    let SearchItemKey {
                         page_index,
                         header_index,
                         item_index,
-                    } = key_lut[string_match.candidate_id];
+                    } = this.search_engine_key_lut[string_match.document.id];
                     let page = &mut this.search_matches[page_index];
                     page[header_index] = true;
                     page[item_index] = true;
@@ -1128,6 +1086,54 @@ impl SettingsWindow {
             .iter()
             .map(|page| vec![true; page.items.len()])
             .collect::<Vec<_>>();
+    }
+
+    fn build_search_index(&mut self) {
+        let mut key_lut: Vec<SearchItemKey> = vec![];
+        let mut documents = Vec::default();
+
+        // PERF: We are currently searching all items even in project files
+        // where many settings are filtered out, using the logic in filter_matches_to_file
+        // we could only search relevant items based on the current file
+        // PERF: We are reconstructing the string match candidates Vec each time we search.
+        // This is completely unnecessary as now that pages are filtered, the string match candidates Vec
+        // will be constant.
+        for (page_index, page) in self.pages.iter().enumerate() {
+            let mut header_index = 0;
+            for (item_index, item) in page.items.iter().enumerate() {
+                let key_index = key_lut.len();
+                match item {
+                    SettingsPageItem::SettingItem(item) => {
+                        documents.push(bm25::Document {
+                            id: key_index,
+                            contents: [item.title, item.description].join(" "),
+                        });
+                    }
+                    SettingsPageItem::SectionHeader(header) => {
+                        documents.push(bm25::Document {
+                            id: key_index,
+                            contents: header.to_string(),
+                        });
+                        header_index = item_index;
+                    }
+                    SettingsPageItem::SubPageLink(sub_page_link) => {
+                        documents.push(bm25::Document {
+                            id: key_index,
+                            contents: sub_page_link.title.to_string(),
+                        });
+                        // candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
+                    }
+                }
+                key_lut.push(SearchItemKey {
+                    page_index,
+                    header_index,
+                    item_index,
+                });
+            }
+        }
+        self.search_engine_key_lut = key_lut;
+        self.search_engine =
+            bm25::SearchEngineBuilder::with_documents(bm25::Language::English, documents).build();
     }
 
     fn build_content_handles(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
