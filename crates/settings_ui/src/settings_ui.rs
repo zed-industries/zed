@@ -1040,21 +1040,38 @@ impl SettingsWindow {
         let mut key_lut: Vec<ItemKey> = vec![];
         let mut candidates = Vec::default();
 
+        fn push_candidates(
+            candidates: &mut Vec<StringMatchCandidate>,
+            key_index: usize,
+            input: &str,
+        ) {
+            for word in input.split_ascii_whitespace() {
+                candidates.push(StringMatchCandidate::new(key_index, word));
+            }
+        }
+
+        // PERF: We are currently searching all items even in project files
+        // where many settings are filtered out, using the logic in filter_matches_to_file
+        // we could only search relevant items based on the current file
+        // PERF: We are reconstructing the string match candidates Vec each time we search.
+        // This is completely unnecessary as now that pages are filtered, the string match candidates Vec
+        // will be constant.
         for (page_index, page) in self.pages.iter().enumerate() {
             let mut header_index = 0;
             for (item_index, item) in page.items.iter().enumerate() {
                 let key_index = key_lut.len();
                 match item {
                     SettingsPageItem::SettingItem(item) => {
-                        candidates.push(StringMatchCandidate::new(key_index, item.title));
-                        candidates.push(StringMatchCandidate::new(key_index, item.description));
+                        push_candidates(&mut candidates, key_index, item.title);
+                        push_candidates(&mut candidates, key_index, item.description);
                     }
                     SettingsPageItem::SectionHeader(header) => {
-                        candidates.push(StringMatchCandidate::new(key_index, header));
+                        push_candidates(&mut candidates, key_index, header);
                         header_index = item_index;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
-                        candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
+                        push_candidates(&mut candidates, key_index, sub_page_link.title);
+                        // candidates.push(StringMatchCandidate::new(key_index, sub_page_link.title));
                     }
                 }
                 key_lut.push(ItemKey {
@@ -1084,6 +1101,10 @@ impl SettingsWindow {
                 }
 
                 for string_match in string_matches {
+                    // todo(settings_ui): process gets killed by SIGKILL (Illegal instruction) when this is uncommented?
+                    // if string_match.score < 0.4 {
+                    //     continue;
+                    // }
                     let ItemKey {
                         page_index,
                         header_index,
@@ -1198,11 +1219,10 @@ impl SettingsWindow {
     }
 
     fn open_first_nav_page(&mut self) {
-        let first_navbar_entry_index = self
-            .visible_navbar_entries()
-            .next()
-            .map(|e| e.0)
-            .unwrap_or(0);
+        let Some(first_navbar_entry_index) = self.visible_navbar_entries().next().map(|e| e.0)
+        else {
+            return;
+        };
         self.open_navbar_entry_page(first_navbar_entry_index);
     }
 
