@@ -13,6 +13,7 @@ use gpui::{AppContext, AsyncApp};
 use language::OffsetRangeExt;
 use language::{BufferSnapshot, Point};
 use ordered_float::OrderedFloat;
+use polars::prelude::*;
 use project::{Project, ProjectEntryId, ProjectPath, Worktree};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -247,7 +248,6 @@ pub async fn retrieval_stats(
     let done_count = Arc::new(AtomicUsize::new(0));
 
     let (output_tx, mut output_rx) = mpsc::unbounded::<RetrievalStatsResult>();
-    let mut output = std::fs::File::create("target/zeta-retrieval-stats.txt")?;
 
     let tasks = files
         .into_iter()
@@ -356,7 +356,7 @@ pub async fn retrieval_stats(
                     } else if has_external_definition {
                         RetrievalOutcome::NoMatchDueToExternalLspDefinitions
                     } else if in_excerpt {
-                        RetrievalOutcome::ProbablyLocal
+                        RetrievalOutcome::InExcerpt
                     } else {
                         RetrievalOutcome::NoMatch
                     };
@@ -386,139 +386,282 @@ pub async fn retrieval_stats(
 
     drop(output_tx);
 
-    let results_task = cx.background_spawn(async move {
-        let mut results = Vec::new();
+    let df_task = cx.background_spawn(async move {
+        let mut outcome_type = Vec::new();
+        let mut best_match = Vec::new();
+        let mut path = Vec::new();
+        let mut identifier = Vec::new();
+        let mut point_row = Vec::new();
+        let mut point_column = Vec::new();
+        let mut lsp_definitions_count = Vec::new();
+        let mut retrieved_definitions_count = Vec::new();
+        let mut has_multiple_retrieved = Vec::new();
+
         while let Some(result) = output_rx.next().await {
-            output
-                .write_all(format!("{:#?}\n", result).as_bytes())
-                .log_err();
-            results.push(result)
+            let (outcome_str, best_match_val) = match &result.outcome {
+                RetrievalOutcome::Match { best_match: bm } => ("Match", Some(*bm as i32)),
+                RetrievalOutcome::InExcerpt => ("InExcerpt", None),
+                RetrievalOutcome::NoMatch => ("NoMatch", None),
+                RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
+                    ("NoMatchDueToExternalLspDefinitions", None)
+                }
+            };
+
+            outcome_type.push(outcome_str);
+            best_match.push(best_match_val);
+            path.push(result.path.as_unix_str().to_string());
+            identifier.push(result.identifier.name.to_string());
+            point_row.push(result.point.row);
+            point_column.push(result.point.column);
+            lsp_definitions_count.push(result.lsp_definitions.len() as u32);
+            retrieved_definitions_count.push(result.retrieved_definitions.len() as u32);
+            has_multiple_retrieved.push(result.retrieved_definitions.len() > 1);
         }
-        results
+
+        DataFrame::new(vec![
+            Series::new(PlSmallStr::from_str("outcome_type"), outcome_type).into(),
+            Series::new(PlSmallStr::from_str("best_match"), best_match).into(),
+            Series::new(PlSmallStr::from_str("path"), path).into(),
+            Series::new(PlSmallStr::from_str("identifier"), identifier).into(),
+            Series::new(PlSmallStr::from_str("point_row"), point_row).into(),
+            Series::new(PlSmallStr::from_str("point_column"), point_column).into(),
+            Series::new(
+                PlSmallStr::from_str("lsp_definitions_count"),
+                lsp_definitions_count,
+            )
+            .into(),
+            Series::new(
+                PlSmallStr::from_str("retrieved_definitions_count"),
+                retrieved_definitions_count,
+            )
+            .into(),
+            Series::new(
+                PlSmallStr::from_str("has_multiple_retrieved"),
+                has_multiple_retrieved,
+            )
+            .into(),
+        ])
     });
 
     futures::future::try_join_all(tasks).await?;
     println!("Tasks completed");
-    let results = results_task.await;
+    let df = df_task.await?;
     println!("Results received");
 
-    let mut references_count = 0;
+    // Calculate stats using polars
+    let stats = SummaryStats::from_dataframe(&df)?;
 
-    let mut included_count = 0;
-    let mut both_absent_count = 0;
+    println!("{}", stats);
+    println!("LSP definition cache at {}", lsp_definitions_path.display());
 
-    let mut retrieved_count = 0;
-    let mut top_match_count = 0;
-    let mut non_top_match_count = 0;
-    let mut ranking_involved_top_match_count = 0;
+    Ok("".to_string())
+}
 
-    let mut no_match_count = 0;
-    let mut no_match_none_retrieved = 0;
-    let mut no_match_wrong_retrieval = 0;
+struct SummaryStats {
+    references_count: usize,
+    included_count: usize,
+    both_absent_count: usize,
+    retrieved_count: usize,
+    top_match_count: usize,
+    non_top_match_count: usize,
+    ranking_involved_top_match_count: usize,
+    no_match_count: usize,
+    no_match_none_retrieved: usize,
+    no_match_wrong_retrieval: usize,
+    expected_no_match_count: usize,
+    in_excerpt_count: usize,
+    external_definition_count: usize,
+}
 
-    let mut expected_no_match_count = 0;
-    let mut in_excerpt_count = 0;
-    let mut external_definition_count = 0;
+impl SummaryStats {
+    fn from_dataframe(df: &DataFrame) -> Result<Self> {
+        let references_count = df.height();
 
-    for result in results {
-        references_count += 1;
-        match &result.outcome {
-            RetrievalOutcome::Match { best_match } => {
-                included_count += 1;
-                retrieved_count += 1;
-                let multiple = result.retrieved_definitions.len() > 1;
-                if *best_match == 0 {
-                    top_match_count += 1;
-                    if multiple {
-                        ranking_involved_top_match_count += 1;
-                    }
-                } else {
-                    non_top_match_count += 1;
-                }
-            }
-            RetrievalOutcome::NoMatch => {
-                if result.lsp_definitions.is_empty() {
-                    included_count += 1;
-                    both_absent_count += 1;
-                } else {
-                    no_match_count += 1;
-                    if result.retrieved_definitions.is_empty() {
-                        no_match_none_retrieved += 1;
-                    } else {
-                        no_match_wrong_retrieval += 1;
-                    }
-                }
-            }
-            RetrievalOutcome::NoMatchDueToExternalLspDefinitions => {
-                expected_no_match_count += 1;
-                external_definition_count += 1;
-            }
-            RetrievalOutcome::ProbablyLocal => {
-                included_count += 1;
-                in_excerpt_count += 1;
-            }
-        }
+        // Match outcomes
+        let match_mask = df.column("outcome_type")?.str()?.equal("Match");
+        let match_df = df.filter(&match_mask)?;
+        let retrieved_count = match_df.height();
+
+        // Top match (best_match == 0)
+        let top_match_mask = match_df.column("best_match")?.i32()?.equal(0);
+        let top_match_count = top_match_mask.sum().unwrap_or(0) as usize;
+
+        // Ranking involved top match (has_multiple_retrieved and best_match == 0)
+        let top_match_df = match_df.filter(&top_match_mask)?;
+        let ranking_involved_top_match_count = top_match_df
+            .column("has_multiple_retrieved")?
+            .bool()?
+            .sum()
+            .unwrap_or(0) as usize;
+
+        let non_top_match_count = retrieved_count - top_match_count;
+
+        // NoMatch outcomes
+        let no_match_mask = df.column("outcome_type")?.str()?.equal("NoMatch");
+        let no_match_df = df.filter(&no_match_mask)?;
+        let _no_match_total = no_match_df.height();
+
+        // NoMatch with no LSP definitions (both absent)
+        let no_lsp_mask = no_match_df.column("lsp_definitions_count")?.u32()?.equal(0);
+        let both_absent_count = no_lsp_mask.sum().unwrap_or(0) as usize;
+
+        // NoMatch with LSP definitions
+        let has_lsp_mask = no_match_df.column("lsp_definitions_count")?.u32()?.gt(0);
+        let no_match_with_lsp = no_match_df.filter(&has_lsp_mask)?;
+        let no_match_count = no_match_with_lsp.height();
+
+        // NoMatch with no retrieved definitions
+        let no_retrieved_mask = no_match_with_lsp
+            .column("retrieved_definitions_count")?
+            .u32()?
+            .equal(0);
+        let no_match_none_retrieved = no_retrieved_mask.sum().unwrap_or(0) as usize;
+
+        // NoMatch with wrong retrieval
+        let has_retrieved_mask = no_match_with_lsp
+            .column("retrieved_definitions_count")?
+            .u32()?
+            .gt(0);
+        let no_match_wrong_retrieval = has_retrieved_mask.sum().unwrap_or(0) as usize;
+
+        // InExcerpt outcomes
+        let in_excerpt_mask = df.column("outcome_type")?.str()?.equal("InExcerpt");
+        let in_excerpt_count = in_excerpt_mask.sum().unwrap_or(0) as usize;
+
+        // NoMatchDueToExternalLspDefinitions outcomes
+        let external_mask = df
+            .column("outcome_type")?
+            .str()?
+            .equal("NoMatchDueToExternalLspDefinitions");
+        let external_definition_count = external_mask.sum().unwrap_or(0) as usize;
+        let expected_no_match_count = external_definition_count;
+
+        // Included count: Match + InExcerpt + both_absent
+        let included_count = retrieved_count + in_excerpt_count + both_absent_count;
+
+        Ok(SummaryStats {
+            references_count,
+            included_count,
+            both_absent_count,
+            retrieved_count,
+            top_match_count,
+            non_top_match_count,
+            ranking_involved_top_match_count,
+            no_match_count,
+            no_match_none_retrieved,
+            no_match_wrong_retrieval,
+            expected_no_match_count,
+            in_excerpt_count,
+            external_definition_count,
+        })
     }
 
     fn count_and_percentage(part: usize, total: usize) -> String {
         format!("{} ({:.2}%)", part, (part as f64 / total as f64) * 100.0)
     }
+}
 
-    println!("");
-    println!("╮ references: {}", references_count);
-    println!(
-        "├─╮ included: {}",
-        count_and_percentage(included_count, references_count),
-    );
-    println!(
-        "│ ├─╮ retrieved: {}",
-        count_and_percentage(retrieved_count, references_count)
-    );
-    println!(
-        "│ │ ├─╮ top match : {}",
-        count_and_percentage(top_match_count, retrieved_count)
-    );
-    println!(
-        "│ │ │ ╰─╴ involving ranking: {}",
-        count_and_percentage(ranking_involved_top_match_count, top_match_count)
-    );
-    println!(
-        "│ │ ╰─╴ non-top match: {}",
-        count_and_percentage(non_top_match_count, retrieved_count)
-    );
-    println!(
-        "│ ├─╴ both absent: {}",
-        count_and_percentage(both_absent_count, included_count)
-    );
-    println!(
-        "│ ╰─╴ in excerpt: {}",
-        count_and_percentage(in_excerpt_count, included_count)
-    );
-    println!(
-        "├─╮ no match: {}",
-        count_and_percentage(no_match_count, references_count)
-    );
-    println!(
-        "│ ├─╴ none retrieved: {}",
-        count_and_percentage(no_match_none_retrieved, no_match_count)
-    );
-    println!(
-        "│ ╰─╴ wrong retrieval: {}",
-        count_and_percentage(no_match_wrong_retrieval, no_match_count)
-    );
-    println!(
-        "╰─╮ expected no match: {}",
-        count_and_percentage(expected_no_match_count, references_count)
-    );
-    println!(
-        "  ╰─╴ external definition: {}",
-        count_and_percentage(external_definition_count, expected_no_match_count)
-    );
+impl std::fmt::Display for SummaryStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "╮ references: {}", self.references_count)?;
+        writeln!(
+            f,
+            "├─╮ included: {}",
+            Self::count_and_percentage(self.included_count, self.references_count),
+        )?;
+        writeln!(
+            f,
+            "│ ├─╮ retrieved: {}",
+            Self::count_and_percentage(self.retrieved_count, self.references_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ ├─╮ top match : {}",
+            Self::count_and_percentage(self.top_match_count, self.retrieved_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ │ ╰─╴ involving ranking: {}",
+            Self::count_and_percentage(self.ranking_involved_top_match_count, self.top_match_count)
+        )?;
+        writeln!(
+            f,
+            "│ │ ╰─╴ non-top match: {}",
+            Self::count_and_percentage(self.non_top_match_count, self.retrieved_count)
+        )?;
+        writeln!(
+            f,
+            "│ ├─╴ both absent: {}",
+            Self::count_and_percentage(self.both_absent_count, self.included_count)
+        )?;
+        writeln!(
+            f,
+            "│ ╰─╴ in excerpt: {}",
+            Self::count_and_percentage(self.in_excerpt_count, self.included_count)
+        )?;
+        writeln!(
+            f,
+            "├─╮ no match: {}",
+            Self::count_and_percentage(self.no_match_count, self.references_count)
+        )?;
+        writeln!(
+            f,
+            "│ ├─╴ none retrieved: {}",
+            Self::count_and_percentage(self.no_match_none_retrieved, self.no_match_count)
+        )?;
+        writeln!(
+            f,
+            "│ ╰─╴ wrong retrieval: {}",
+            Self::count_and_percentage(self.no_match_wrong_retrieval, self.no_match_count)
+        )?;
+        writeln!(
+            f,
+            "╰─╮ expected no match: {}",
+            Self::count_and_percentage(self.expected_no_match_count, self.references_count)
+        )?;
+        writeln!(
+            f,
+            "  ╰─╴ external definition: {}",
+            Self::count_and_percentage(
+                self.external_definition_count,
+                self.expected_no_match_count
+            )
+        )?;
+        Ok(())
+    }
+}
 
-    println!("");
-    println!("LSP definition cache at {}", lsp_definitions_path.display());
+#[derive(Debug)]
+struct RetrievalStatsResult {
+    outcome: RetrievalOutcome,
+    path: Arc<RelPath>,
+    identifier: Identifier,
+    point: Point,
+    lsp_definitions: Vec<SourceRange>,
+    retrieved_definitions: Vec<RetrievedDefinition>,
+}
 
-    Ok("".to_string())
+#[derive(Debug)]
+enum RetrievalOutcome {
+    Match {
+        /// Lowest index within retrieved_definitions that matches an LSP definition.
+        best_match: usize,
+    },
+    InExcerpt,
+    NoMatch,
+    NoMatchDueToExternalLspDefinitions,
+}
+
+#[derive(Debug)]
+struct RetrievedDefinition {
+    path: Arc<RelPath>,
+    range: Range<Point>,
+    score: f32,
+    #[allow(dead_code)]
+    retrieval_score: f32,
+    #[allow(dead_code)]
+    components: DeclarationScoreComponents,
 }
 
 struct RetrieveResult {
@@ -827,40 +970,4 @@ impl From<SerializablePoint> for Point {
             column: serializable.column.saturating_sub(1),
         }
     }
-}
-
-#[derive(Debug)]
-struct RetrievalStatsResult {
-    outcome: RetrievalOutcome,
-    #[allow(dead_code)]
-    path: Arc<RelPath>,
-    #[allow(dead_code)]
-    identifier: Identifier,
-    #[allow(dead_code)]
-    point: Point,
-    #[allow(dead_code)]
-    lsp_definitions: Vec<SourceRange>,
-    retrieved_definitions: Vec<RetrievedDefinition>,
-}
-
-#[derive(Debug)]
-enum RetrievalOutcome {
-    Match {
-        /// Lowest index within retrieved_definitions that matches an LSP definition.
-        best_match: usize,
-    },
-    ProbablyLocal,
-    NoMatch,
-    NoMatchDueToExternalLspDefinitions,
-}
-
-#[derive(Debug)]
-struct RetrievedDefinition {
-    path: Arc<RelPath>,
-    range: Range<Point>,
-    score: f32,
-    #[allow(dead_code)]
-    retrieval_score: f32,
-    #[allow(dead_code)]
-    components: DeclarationScoreComponents,
 }

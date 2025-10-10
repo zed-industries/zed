@@ -51,3 +51,4 @@ workspace-hack.workspace = true
 zeta.workspace = true
 zeta2.workspace = true
 zlog.workspace = true
+polars = { version = "0.51", features = ["lazy", "dtype-struct"] }
