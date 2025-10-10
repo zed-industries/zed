@@ -8,20 +8,20 @@ use std::time::{Duration, Instant};
 
 pub struct RainbowBracketTracker {
     enabled: bool,
-    start_hue: f32,
-    hue_step: f32,
-    max_brackets: u32,
+    pub(crate) start_hue: f32,
+    pub(crate) hue_step: f32,
+    pub(crate) max_brackets: u32,
     pub(crate) nesting_levels: IndexMap<Range<Anchor>, u32>,
     // Cache: track buffer edit_count to avoid recalculating on scrolls
-    cached_edit_count: Option<usize>,
+    pub(crate) cached_edit_count: Option<usize>,
     // Active bracket pair at cursor position
     pub(crate) active_pair: Option<(Range<Anchor>, Range<Anchor>)>,
     // Cache the last cursor position to avoid redundant active pair updates
-    last_cursor_offset: Option<usize>,
+    pub(crate) last_cursor_offset: Option<usize>,
     // Throttle active pair updates
     last_active_pair_update: Option<Instant>,
     // Cache for visible range to avoid recalculating all brackets
-    cached_visible_range: Option<Range<usize>>,
+    pub(crate) cached_visible_range: Option<Range<usize>>,
 }
 
 impl RainbowBracketTracker {
@@ -418,173 +418,5 @@ pub fn refresh_rainbow_brackets(
             active_style,
             cx,
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_color_calculation_start_hue() {
-        let tracker = RainbowBracketTracker::new(true, 0.0, 60.0, 100000);
-
-        let color_0 = tracker.get_color_for_level(0);
-        assert_eq!(color_0.h, 0.0, "Level 0 should start at hue 0 (red)");
-        assert_eq!(color_0.s, 0.75, "Saturation should be 0.75");
-        assert_eq!(color_0.l, 0.6, "Lightness should be 0.6");
-        assert_eq!(color_0.a, 1.0, "Alpha should be 1.0");
-    }
-
-    #[test]
-    fn test_color_calculation_step() {
-        let tracker = RainbowBracketTracker::new(true, 0.0, 60.0, 100000);
-
-        let color_1 = tracker.get_color_for_level(1);
-        let expected_hue_1 = 60.0 / 360.0;
-        assert!(
-            (color_1.h - expected_hue_1).abs() < 0.001,
-            "Level 1 should be at 60 degrees (yellow)"
-        );
-
-        let color_2 = tracker.get_color_for_level(2);
-        let expected_hue_2 = 120.0 / 360.0;
-        assert!(
-            (color_2.h - expected_hue_2).abs() < 0.001,
-            "Level 2 should be at 120 degrees (green)"
-        );
-    }
-
-    #[test]
-    fn test_color_wraps_at_360() {
-        let tracker = RainbowBracketTracker::new(true, 0.0, 60.0, 100000);
-
-        let color_6 = tracker.get_color_for_level(6);
-        assert!(
-            (color_6.h - 0.0).abs() < 0.001,
-            "Level 6 (360 degrees) should wrap back to red"
-        );
-
-        let color_7 = tracker.get_color_for_level(7);
-        let expected_hue_7 = 60.0 / 360.0;
-        assert!(
-            (color_7.h - expected_hue_7).abs() < 0.001,
-            "Level 7 should wrap to 60 degrees (yellow)"
-        );
-    }
-
-    #[test]
-    fn test_supports_unlimited_nesting() {
-        let tracker = RainbowBracketTracker::new(true, 0.0, 30.0, 100000);
-
-        let color_100 = tracker.get_color_for_level(100);
-        assert!(
-            color_100.h >= 0.0 && color_100.h < 1.0,
-            "Should produce valid hue for deep nesting"
-        );
-
-        let color_1000 = tracker.get_color_for_level(1000);
-        assert!(
-            color_1000.h >= 0.0 && color_1000.h < 1.0,
-            "Should produce valid hue for very deep nesting"
-        );
-    }
-
-    #[test]
-    fn test_custom_start_hue() {
-        let tracker = RainbowBracketTracker::new(true, 180.0, 30.0, 100000);
-
-        let color = tracker.get_color_for_level(0);
-        assert!(
-            (color.h - 180.0 / 360.0).abs() < 0.001,
-            "Should start at cyan (180 degrees)"
-        );
-    }
-
-    #[test]
-    fn test_custom_step() {
-        let tracker = RainbowBracketTracker::new(true, 0.0, 45.0, 100000);
-
-        let color_1 = tracker.get_color_for_level(1);
-        assert!(
-            (color_1.h - 45.0 / 360.0).abs() < 0.001,
-            "Should step by 45 degrees"
-        );
-
-        let color_8 = tracker.get_color_for_level(8);
-        assert!(
-            (color_8.h - 0.0).abs() < 0.001,
-            "8 * 45 = 360, should wrap to 0"
-        );
-    }
-
-    #[test]
-    fn test_disabled_tracker_returns_empty_highlights() {
-        let tracker = RainbowBracketTracker::new(false, 0.0, 30.0, 100000);
-        assert!(!tracker.is_enabled(), "Tracker should be disabled");
-
-        let highlights = tracker.get_bracket_highlights();
-        assert!(
-            highlights.is_empty(),
-            "Disabled tracker should return no highlights"
-        );
-    }
-
-    #[test]
-    fn test_can_toggle_enabled() {
-        let mut tracker = RainbowBracketTracker::new(true, 0.0, 30.0, 100000);
-        assert!(tracker.is_enabled());
-
-        tracker.set_enabled(false);
-        assert!(!tracker.is_enabled());
-
-        tracker.set_enabled(true);
-        assert!(tracker.is_enabled());
-    }
-
-    #[test]
-    fn test_active_pair_detection() {
-        use gpui::{App, Entity};
-        use language::Language;
-        use multi_buffer::MultiBuffer;
-
-        let mut cx = App::test();
-        let buffer = cx.new(|cx| {
-            let mut buffer = MultiBuffer::new(0, language::Capability::ReadWrite);
-            buffer.push_text("{ [ ( ) ] }", cx);
-            buffer
-        });
-
-        // Create a tracker
-        let mut tracker = RainbowBracketTracker::new(true, 0.0, 60.0, 100000);
-
-        // Test with cursor at different positions
-        cx.update(|cx| {
-            let snapshot = buffer.read(cx).snapshot();
-
-            // Update brackets first
-            tracker.update_brackets(&snapshot, None);
-
-            // Test cursor inside innermost brackets
-            let cursor_at_4 = snapshot.anchor_before(4); // Position after first (
-            tracker.update_active_pair(cursor_at_4, &snapshot);
-            assert!(
-                tracker.active_pair.is_some(),
-                "Should detect active pair when cursor inside brackets"
-            );
-
-            // Test cursor outside all brackets
-            let cursor_at_0 = snapshot.anchor_before(0); // Position at start
-            tracker.update_active_pair(cursor_at_0, &snapshot);
-            // This might be None or might detect the adjacent bracket
-
-            // Test with disabled tracker
-            tracker.set_enabled(false);
-            tracker.update_active_pair(cursor_at_4, &snapshot);
-            assert!(
-                tracker.active_pair.is_none(),
-                "Should not detect active pair when disabled"
-            );
-        });
     }
 }
