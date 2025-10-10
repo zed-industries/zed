@@ -41,12 +41,6 @@ impl InvalidationStrategy {
     }
 }
 
-#[derive(Debug)]
-pub struct RowChunkCachedHints {
-    pub hints: CacheInlayHints,
-    pub cached: bool,
-}
-
 pub struct BufferInlayHints {
     snapshot: BufferSnapshot,
     buffer_chunks: Vec<BufferChunk>,

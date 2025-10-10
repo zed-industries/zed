@@ -127,7 +127,7 @@ use util::{
 
 pub use fs::*;
 pub use language::Location;
-pub use lsp_store::inlay_hint_cache::{InvalidationStrategy, RowChunkCachedHints};
+pub use lsp_store::inlay_hint_cache::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
@@ -6468,7 +6468,7 @@ impl LspStore {
         buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<HashMap<Range<BufferRow>, RowChunkCachedHints>>> {
+    ) -> Task<Result<HashMap<Range<BufferRow>, CacheInlayHints>>> {
         let buffer_version = buffer.read(cx).version();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
@@ -6549,15 +6549,7 @@ impl LspStore {
         if hint_fetch_tasks.is_empty() && ranges_to_query.is_empty() {
             Task::ready(Ok(cached_inlay_hints
                 .into_iter()
-                .map(|(row_chunk, hints)| {
-                    (
-                        row_chunk,
-                        RowChunkCachedHints {
-                            hints,
-                            cached: true,
-                        },
-                    )
-                })
+                .map(|(row_chunk, hints)| (row_chunk, hints))
                 .collect()))
         } else {
             for (chunk, range_to_query) in ranges_to_query {
@@ -6610,15 +6602,7 @@ impl LspStore {
                 .await;
                 let mut combined_hints = cached_inlay_hints
                     .into_iter()
-                    .map(|(chunk, cached_hints)| {
-                        (
-                            chunk,
-                            RowChunkCachedHints {
-                                hints: cached_hints,
-                                cached: true,
-                            },
-                        )
-                    })
+                    .map(|(chunk, cached_hints)| (chunk, cached_hints))
                     .collect::<HashMap<_, _>>();
                 lsp_store.update(cx, |lsp_store, cx| {
                     if !invalidate_cache
@@ -6644,16 +6628,11 @@ impl LspStore {
                     for (chunk, new_inlay_hints) in new_inlay_hints {
                         match new_inlay_hints {
                             Ok(new_hints) => {
-                                let combined_hints = combined_hints
-                                    .entry(chunk.start..chunk.end)
-                                    .or_insert_with(|| RowChunkCachedHints {
-                                        hints: HashMap::default(),
-                                        cached: false,
-                                    });
+                                let combined_hints =
+                                    combined_hints.entry(chunk.start..chunk.end).or_default();
                                 for (server_id, new_hints) in new_hints {
                                     if for_server.is_none_or(|for_server| for_server == server_id) {
                                         combined_hints
-                                            .hints
                                             .entry(server_id)
                                             .or_insert_with(Vec::new)
                                             .extend(new_hints.clone());

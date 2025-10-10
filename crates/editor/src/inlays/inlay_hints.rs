@@ -13,8 +13,7 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
-    InvalidationStrategy, ResolveState,
-    lsp_store::{ResolvedHint, RowChunkCachedHints},
+    InvalidationStrategy, ResolveState, lsp_store::ResolvedHint,
 };
 use text::{Bias, BufferId, OffsetRangeExt as _};
 use ui::{Context, Window};
@@ -372,7 +371,6 @@ impl Editor {
             })
         };
 
-        // TODO kb this will result for multiple requests for the same chunks, batch ranges per buffer id instead.
         for (excerpt_id, (buffer, buffer_version, range)) in self.visible_excerpts(cx) {
             let Some(inlay_hints) = self.inlay_hints.as_mut() else {
                 return;
@@ -391,8 +389,8 @@ impl Editor {
 
             let semantics_provider = semantics_provider.clone();
             inlay_hints.hint_tasks.entry(buffer_id).or_default().insert(
-                // TODO kb this is a range of the visible excerpt
-                // does not look appropriate?
+                // TODO kb this is a range of the visible excerpt, does not look appropriate?
+                // Instead, make `semantics_provider.inlay_hints` to return a HashMap of hint fetch tasks by row chunk?
                 hints_range.clone(),
                 cx.spawn(async move |editor, cx| {
                     if let Some(debounce) = debounce {
@@ -448,25 +446,21 @@ impl Editor {
                                 let inlay_tasks =
                                     inlay_hints.hint_tasks.entry(buffer_id).or_default();
                                 let mut hints_to_remove = Vec::new();
-                                match &inlay_hints.inlays_for_version {
-                                    Some(inlays_for_version) => {
-                                        if !inlays_for_version.changed_since(&buffer_version) {
-                                            if should_invalidate
-                                                || buffer_version.changed_since(inlays_for_version)
-                                            {
-                                                inlay_tasks.clear();
-                                                inlay_hints.hint_chunks_received.clear();
-                                                inlay_hints.hint_kinds.clear();
-                                                hints_to_remove.extend(visible_inlay_hint_ids);
-                                            }
-                                        }
+                                if let Some(inlays_for_version) = &inlay_hints.inlays_for_version {
+                                    if !inlays_for_version.changed_since(&buffer_version)
+                                        && (should_invalidate
+                                            || buffer_version.changed_since(inlays_for_version))
+                                    {
+                                        inlay_tasks.clear();
+                                        inlay_hints.hint_chunks_received.clear();
+                                        inlay_hints.hint_kinds.clear();
+                                        hints_to_remove.extend(visible_inlay_hint_ids);
                                     }
-                                    None => {}
                                 }
 
                                 let hints_to_insert = new_hints
                                     .into_iter()
-                                    .flat_map(|(chunk, RowChunkCachedHints { hints, .. })| {
+                                    .flat_map(|(chunk, hints)| {
                                         inlay_hints.hint_chunks_received.insert(chunk.clone());
                                         hints
                                             .into_values()
