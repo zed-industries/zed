@@ -2030,8 +2030,11 @@ impl RemoteServerProjects {
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone())
-        .entry(state.add_new_wsl.clone());
+        .entry(state.add_new_server.clone());
+
+        if cfg!(target_os = "windows") {
+            modal_section = modal_section.entry(state.add_new_wsl.clone());
+        }
 
         for server in &state.servers {
             match server {
