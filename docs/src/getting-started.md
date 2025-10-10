@@ -20,6 +20,10 @@ As well as Zed preview:
 brew install --cask zed@preview
 ```
 
+### Windows
+
+Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
+
 ### Linux
 
 For most Linux users, the easiest way to install Zed is through our installation script:

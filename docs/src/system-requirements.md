@@ -14,7 +14,6 @@ Zed supports the follow macOS releases:
 | macOS 12.x    | Monterey | EOL 2024-09-16 | Supported           |
 | macOS 11.x    | Big Sur  | EOL 2023-09-26 | Partially Supported |
 | macOS 10.15.x | Catalina | EOL 2022-09-12 | Partially Supported |
-| macOS 10.14.x | Mojave   | EOL 2021-10-25 | Unsupported         |
 
 The macOS releases labelled "Partially Supported" (Big Sur and Catalina) do not support screen sharing via Zed Collaboration. These features use the [LiveKit SDK](https://livekit.io) which relies upon [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/) only available on macOS 12 (Monterey) and newer.
 
@@ -43,7 +42,20 @@ Zed requires a Vulkan 1.3 driver, and the following desktop portals:
 
 ## Windows
 
-Not yet available as an official download. Can be built [from source](./development/windows.md).
+Zed supports the follow Windows releases:
+| Version | Microsoft Status | Zed Status |
+| ------------------------- | ------------------ | ------------------- |
+| Windows 11 (all releases) | Supported | Supported |
+| Windows 10 (64-bit) | Supported | Supported |
+
+### Windows Hardware
+
+Zed supports machines with Intel or AMD 64-bit (x86_64) processors that meet the above Windows requirements:
+
+- Windows 11 (64-bit)
+- Windows 10 (64-bit)
+- Graphics: A GPU that supports DirectX 11 (most PCs from 2012+).
+- Driver: Current NVIDIA/AMD/Intel driver (not the Microsoft Basic Display Adapter).
 
 ## FreeBSD
 
