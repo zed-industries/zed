@@ -408,7 +408,26 @@ impl Editor {
                     }) else {
                         return;
                     };
-                    let new_hints = new_hints.await;
+                    let new_hints = match new_hints.await {
+                        Ok(new_hints) => new_hints,
+                        Err(e) => {
+                            editor
+                                .update(cx, |editor, _| {
+                                    if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
+                                        if let Some(hint_tasks) =
+                                            inlay_hints.hint_tasks.get_mut(&buffer_id)
+                                        {
+                                            hint_tasks.remove(&hints_range);
+                                        }
+                                    }
+                                })
+                                .ok();
+                            log::error!(
+                                "Failed to query inlays for range {buffer_point_range:?}, {e:#}"
+                            );
+                            return;
+                        }
+                    };
                     editor
                         .update(cx, |editor, cx| {
                             let visible_inlay_hint_ids = editor
@@ -428,93 +447,63 @@ impl Editor {
                             if let Some(inlay_hints) = editor.inlay_hints.as_mut() {
                                 let inlay_tasks =
                                     inlay_hints.hint_tasks.entry(buffer_id).or_default();
-                                match new_hints {
-                                    Ok(new_hints) => {
-                                        let mut hints_to_remove = Vec::new();
-                                        match &inlay_hints.inlays_for_version {
-                                            Some(inlays_for_version) => {
-                                                if !inlays_for_version
-                                                    .changed_since(&buffer_version)
-                                                {
-                                                    if should_invalidate
-                                                        || buffer_version
-                                                            .changed_since(inlays_for_version)
-                                                    {
-                                                        inlay_tasks.clear();
-                                                        inlay_hints.hint_chunks_received.clear();
-                                                        inlay_hints.hint_kinds.clear();
-                                                        hints_to_remove
-                                                            .extend(visible_inlay_hint_ids);
-                                                    }
-                                                }
+                                let mut hints_to_remove = Vec::new();
+                                match &inlay_hints.inlays_for_version {
+                                    Some(inlays_for_version) => {
+                                        if !inlays_for_version.changed_since(&buffer_version) {
+                                            if should_invalidate
+                                                || buffer_version.changed_since(inlays_for_version)
+                                            {
+                                                inlay_tasks.clear();
+                                                inlay_hints.hint_chunks_received.clear();
+                                                inlay_hints.hint_kinds.clear();
+                                                hints_to_remove.extend(visible_inlay_hint_ids);
                                             }
-                                            None => {}
                                         }
-
-                                        let hints_to_insert = new_hints
-                                            .into_iter()
-                                            .flat_map(
-                                                |(chunk, RowChunkCachedHints { hints, .. })| {
-                                                    inlay_hints
-                                                        .hint_chunks_received
-                                                        .insert(chunk.clone());
-                                                    hints
-                                                        .into_values()
-                                                        .flatten()
-                                                        .filter(|(new_hint_id, _)| {
-                                                            !inlay_hints
-                                                                .hint_kinds
-                                                                .contains_key(new_hint_id)
-                                                        })
-                                                        .filter(|(_, new_hint)| {
-                                                            inlay_hints
-                                                                .allowed_hint_kinds
-                                                                .contains(&new_hint.kind)
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                },
-                                            )
-                                            .collect::<Vec<_>>()
-                                            .into_iter()
-                                            .filter_map(|(hint_id, lsp_hint)| {
-                                                if lsp_hint
-                                                    .position
-                                                    .cmp(
-                                                        &buffer_anchor_range.start,
-                                                        buffer_snapshot,
-                                                    )
-                                                    .is_ge()
-                                                    && lsp_hint
-                                                        .position
-                                                        .cmp(
-                                                            &buffer_anchor_range.end,
-                                                            buffer_snapshot,
-                                                        )
-                                                        .is_le()
-                                                {
-                                                    let position = multi_buffer_snapshot
-                                                        .anchor_in_excerpt(
-                                                            excerpt_id,
-                                                            lsp_hint.position,
-                                                        )?;
-                                                    inlay_hints
-                                                        .hint_kinds
-                                                        .insert(hint_id, lsp_hint.kind);
-                                                    return Some(Inlay::hint(
-                                                        hint_id, position, &lsp_hint,
-                                                    ));
-                                                }
-                                                None
-                                            })
-                                            .collect();
-                                        // TODO kb hints to remove and to insert may be almost the same, causing unnecessary flickering
-                                        update_data = Some((hints_to_remove, hints_to_insert));
-                                        inlay_hints.inlays_for_version = Some(buffer_version);
                                     }
-                                    // TODO kb who should log and clean up the errored state? Could we do that with `lsp_store_cx.spawn`?
-                                    Err(_) => {}
+                                    None => {}
                                 }
 
+                                let hints_to_insert = new_hints
+                                    .into_iter()
+                                    .flat_map(|(chunk, RowChunkCachedHints { hints, .. })| {
+                                        inlay_hints.hint_chunks_received.insert(chunk.clone());
+                                        hints
+                                            .into_values()
+                                            .flatten()
+                                            .filter(|(new_hint_id, _)| {
+                                                !inlay_hints.hint_kinds.contains_key(new_hint_id)
+                                            })
+                                            .filter(|(_, new_hint)| {
+                                                inlay_hints
+                                                    .allowed_hint_kinds
+                                                    .contains(&new_hint.kind)
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .into_iter()
+                                    .filter_map(|(hint_id, lsp_hint)| {
+                                        if lsp_hint
+                                            .position
+                                            .cmp(&buffer_anchor_range.start, buffer_snapshot)
+                                            .is_ge()
+                                            && lsp_hint
+                                                .position
+                                                .cmp(&buffer_anchor_range.end, buffer_snapshot)
+                                                .is_le()
+                                        {
+                                            let position = multi_buffer_snapshot
+                                                .anchor_in_excerpt(excerpt_id, lsp_hint.position)?;
+                                            inlay_hints.hint_kinds.insert(hint_id, lsp_hint.kind);
+                                            return Some(Inlay::hint(hint_id, position, &lsp_hint));
+                                        }
+                                        None
+                                    })
+                                    .collect();
+                                // TODO kb hints to remove and to insert may be almost the same, causing unnecessary flickering
+                                update_data = Some((hints_to_remove, hints_to_insert));
+                                inlay_hints.inlays_for_version = Some(buffer_version);
                                 inlay_tasks.remove(&hints_range);
                             }
 
