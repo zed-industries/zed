@@ -351,8 +351,35 @@ pub fn into_open_ai(
 ) -> open_ai::Request {
     let stream = !model_id.starts_with("o1-");
 
+    // First pass: collect all ToolUse IDs to validate ToolResults
+    // This prevents orphaned tool results that cause Bedrock to fail
+    let mut valid_tool_use_ids = std::collections::HashSet::new();
+    for message in &request.messages {
+        for content in &message.content {
+            if let MessageContent::ToolUse(tool_use) = content {
+                valid_tool_use_ids.insert(tool_use.id.clone());
+            }
+        }
+    }
+
+    // Second pass: filter messages to remove orphaned tool results
+    let filtered_messages: Vec<_> = request
+        .messages
+        .into_iter()
+        .map(|mut message| {
+            message.content.retain(|content| match content {
+                MessageContent::ToolResult(tool_result) => {
+                    valid_tool_use_ids.contains(&tool_result.tool_use_id)
+                }
+                _ => true,
+            });
+            message
+        })
+        .filter(|message| !message.content.is_empty())
+        .collect();
+
     let mut messages = Vec::new();
-    for message in request.messages {
+    for message in filtered_messages {
         for content in message.content {
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
