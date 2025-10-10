@@ -76,9 +76,10 @@ impl ProjectSearcher {
                     get_buffer_for_full_scan_tx,
                 ))
             });
-            self.open_buffers(get_buffer_for_full_scan_rx, find_all_matches_tx, cx)
-                .await;
-            worker_pool.await;
+            let open_buffers =
+                self.open_buffers(get_buffer_for_full_scan_rx, find_all_matches_tx, cx);
+            futures::future::join(worker_pool, open_buffers).await;
+
             let limit_reached = matches_count.load(Ordering::Acquire) > MAX_SEARCH_RESULT_RANGES
                 || matched_buffer_count.load(Ordering::Acquire) > MAX_SEARCH_RESULT_FILES;
             if limit_reached {
@@ -207,7 +208,7 @@ impl Worker<'_> {
                 },
                 find_first_match = find_first_match.next() => {
                     if let Some(buffer_with_at_least_one_match) = find_first_match {
-                        handler.handle_find_first_match(buffer_with_at_least_one_match);
+                        handler.handle_find_first_match(buffer_with_at_least_one_match).await;
                     }
 
                 },
