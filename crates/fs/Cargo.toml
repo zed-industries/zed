@@ -13,7 +13,6 @@ path = "src/fs.rs"
 
 [dependencies]
 anyhow.workspace = true
-async-fs.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
