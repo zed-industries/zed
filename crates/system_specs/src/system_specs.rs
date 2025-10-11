@@ -36,7 +36,7 @@ impl SystemSpecs {
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();
         let system = System::new_with_specifics(
-            RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
+            RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
         );
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;
@@ -79,7 +79,7 @@ impl SystemSpecs {
         let os_name = telemetry::os_name();
         let os_version = telemetry::os_version();
         let system = System::new_with_specifics(
-            RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
+            RefreshKind::nothing().with_memory(MemoryRefreshKind::everything()),
         );
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;

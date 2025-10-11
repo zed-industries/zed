@@ -988,10 +988,9 @@ fn is_new_version(version: &str) -> bool {
 }
 
 fn is_file_in_use(file_name: &OsStr) -> bool {
-    let info =
-        sysinfo::System::new_with_specifics(sysinfo::RefreshKind::new().with_processes(
-            sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::Always),
-        ));
+    let info = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing().with_processes(
+        sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
+    ));
 
     for process in info.processes().values() {
         if process

@@ -390,7 +390,6 @@ impl TerminalBuilder {
             is_ssh_terminal: false,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
-            #[cfg(windows)]
             shell_program: None,
             activation_script: Vec::new(),
             template: CopyTemplate {
@@ -466,16 +465,15 @@ impl TerminalBuilder {
 
         let shell_params = match shell.clone() {
             Shell::System => {
-                #[cfg(target_os = "windows")]
-                {
+                if cfg!(windows) {
                     Some(ShellParams::new(
                         util::shell::get_windows_system_shell(),
                         None,
                         None,
                     ))
+                } else {
+                    None
                 }
-                #[cfg(not(target_os = "windows"))]
-                None
             }
             Shell::Program(program) => Some(ShellParams::new(program, None, None)),
             Shell::WithArguments {
@@ -607,7 +605,6 @@ impl TerminalBuilder {
             is_ssh_terminal,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
-            #[cfg(windows)]
             shell_program,
             activation_script: activation_script.clone(),
             template: CopyTemplate {
@@ -829,7 +826,6 @@ pub struct Terminal {
     is_ssh_terminal: bool,
     last_mouse_move_time: Instant,
     last_hyperlink_search_position: Option<Point<Pixels>>,
-    #[cfg(windows)]
     shell_program: Option<String>,
     template: CopyTemplate,
     activation_script: Vec<String>,
@@ -882,18 +878,10 @@ impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
-                // ignore default shell program title change as windows always sends those events
-                // and it would end up showing the shell executable path in breadcrumbs
-                #[cfg(windows)]
-                {
-                    if self
-                        .shell_program
-                        .as_ref()
-                        .map(|e| *e == title)
-                        .unwrap_or(false)
-                    {
-                        return;
-                    }
+                if cfg!(windows) && self.shell_program.as_ref().is_some_and(|e| *e == title) {
+                    // ignore default shell program title change as windows always sends those events
+                    // and it would end up showing the shell executable path in breadcrumbs
+                    return;
                 }
 
                 self.breadcrumb_text = title;
