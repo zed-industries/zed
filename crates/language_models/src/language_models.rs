@@ -13,10 +13,12 @@ mod settings;
 pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::anthropic_vertex::AnthropicVertexLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
+use crate::provider::google_vertex::GoogleVertexLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
@@ -144,6 +146,17 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        // NEW REGISTRATION BY DIAB
+        GoogleVertexLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        // NEW REGISTRATION BY DIAB
+        AnthropicVertexLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        MistralLanguageModelProvider::new(client.http_client(), cx),
         Arc::new(BedrockLanguageModelProvider::new(client.http_client(), cx)),
         cx,
     );
