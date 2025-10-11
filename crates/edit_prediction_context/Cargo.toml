@@ -37,14 +37,20 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 clap.workspace = true
+criterion.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = {workspace= true, features = ["test-support"]}
+rand.workspace = true
 serde_json.workspace = true
 settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+[[bench]]
+name = "text_similarity_benchmark"
+harness = false

@@ -46,6 +46,11 @@ pub struct SmallOccurrences<const N: usize, S> {
 }
 
 /// Occurrence hash from a particular source type.
+///
+/// u32 hash values are used instead of u64 since this uses half as much memory and is a bit faster.
+/// The rationale for this is that these similarity metrics are being used as heuristics and
+/// precision is not needed. The probability of a hash collision is 50% with 77k hashes. The
+/// probability that a hash collision will actually cause different behavior is far lower.
 pub struct HashFrom<S> {
     value: u32,
     _source: PhantomData<S>,

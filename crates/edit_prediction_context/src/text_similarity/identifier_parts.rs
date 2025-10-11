@@ -1,13 +1,8 @@
-use collections::FxHasher;
-
 use crate::text_similarity::occurrences::HashFrom;
-use std::{
-    hash::{Hash, Hasher as _},
-    iter::Peekable,
-};
+use std::iter::Peekable;
 
-/// Occurrence source which splits the input into alphanumeric characters, and further splits these
-/// when cases change to handle PascalCase and camelCase.
+/// Occurrence source which splits the input into runs of ascii alphanumeric or unicode characters,
+/// and further splits these on ascii case transitions (camelCase and PascalCase).
 #[derive(Debug)]
 pub struct IdentifierParts;
 
@@ -28,7 +23,7 @@ impl IdentifierParts {
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
 struct HashedIdentifierParts<I: Iterator<Item = u8>> {
     str_bytes: Peekable<I>,
-    hasher: Option<FxHasher>,
+    hasher: Option<FxHasher32>,
     prev_char_is_uppercase: bool,
 }
 
@@ -50,7 +45,7 @@ impl<I: Iterator<Item = u8>> Iterator for HashedIdentifierParts<I> {
             let included = !ch.is_ascii() || ch.is_ascii_alphanumeric();
             if let Some(mut hasher) = self.hasher.take() {
                 if !included {
-                    return Some((hasher.finish() as u32).into());
+                    return Some(hasher.finish().into());
                 }
 
                 // camelCase and PascalCase
@@ -66,27 +61,47 @@ impl<I: Iterator<Item = u8>> Iterator for HashedIdentifierParts<I> {
 
                 if should_split {
                     let result = (hasher.finish() as u32).into();
-                    let mut hasher = FxHasher::default();
-                    ch.to_ascii_lowercase().hash(&mut hasher);
+                    let mut hasher = FxHasher32::default();
+                    hasher.write_u8(ch.to_ascii_lowercase());
                     self.hasher = Some(hasher);
                     return Some(result);
                 } else {
-                    ch.to_ascii_lowercase().hash(&mut hasher);
+                    hasher.write_u8(ch.to_ascii_lowercase());
                     self.hasher = Some(hasher);
                 }
             } else if included {
-                let mut hasher = FxHasher::default();
-                ch.to_ascii_lowercase().hash(&mut hasher);
+                let mut hasher = FxHasher32::default();
+                hasher.write_u8(ch.to_ascii_lowercase());
                 self.hasher = Some(hasher);
                 self.prev_char_is_uppercase = ch.is_ascii_uppercase();
             }
         }
 
         if let Some(hasher) = self.hasher.take() {
-            return Some((hasher.finish() as u32).into());
+            return Some(hasher.finish().into());
         }
 
         None
+    }
+}
+
+/// 32-bit variant of FXHasher
+struct FxHasher32(u32);
+
+impl Default for FxHasher32 {
+    fn default() -> Self {
+        FxHasher32(0)
+    }
+}
+
+impl FxHasher32 {
+    #[inline]
+    pub fn write_u8(&mut self, byte: u8) {
+        self.0 = self.0.wrapping_add(byte as u32).wrapping_mul(0x93d765dd);
+    }
+
+    pub fn finish(self) -> u32 {
+        self.0
     }
 }
 
@@ -107,7 +122,7 @@ mod test {
                 HashedIdentifierParts::new(text.bytes()).collect::<Vec<_>>(),
                 expected
                     .iter()
-                    .map(|part| fx_hash_ascii_lowercase(part).into())
+                    .map(|part| fxhash32_ascii_lowercase(part).into())
                     .collect::<Vec<_>>()
             );
         }
@@ -173,10 +188,10 @@ mod test {
         assert_eq!(multiset_a.weighted_overlap_coefficient(&set_b), 7.0 / 10.0);
     }
 
-    fn fx_hash_ascii_lowercase(text: &str) -> u32 {
-        let mut hasher = collections::FxHasher::default();
-        for ch in text.chars() {
-            ch.to_ascii_lowercase().hash(&mut hasher);
+    fn fxhash32_ascii_lowercase(text: &str) -> u32 {
+        let mut hasher = FxHasher32::default();
+        for byte in text.bytes() {
+            hasher.write_u8(byte.to_ascii_lowercase());
         }
         hasher.finish() as u32
     }
