@@ -1612,7 +1612,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     title: "JSON",
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
+                        this.render_sub_page_items(
                             language_settings_data().iter().enumerate(),
                             None,
                             window,
@@ -1625,7 +1625,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     title: "JSONC",
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
+                        this.render_sub_page_items(
                             language_settings_data().iter().enumerate(),
                             None,
                             window,
@@ -1638,7 +1638,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     title: "Rust",
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
+                        this.render_sub_page_items(
                             language_settings_data().iter().enumerate(),
                             None,
                             window,
@@ -1651,7 +1651,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     title: "Python",
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
+                        this.render_sub_page_items(
                             language_settings_data().iter().enumerate(),
                             None,
                             window,
@@ -1664,7 +1664,7 @@ pub(crate) fn settings_data() -> Vec<SettingsPage> {
                     title: "TSX",
                     files: USER | LOCAL,
                     render: Arc::new(|this, window, cx| {
-                        this.render_page_items(
+                        this.render_sub_page_items(
                             language_settings_data().iter().enumerate(),
                             None,
                             window,
