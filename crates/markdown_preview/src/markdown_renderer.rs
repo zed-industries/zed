@@ -487,11 +487,9 @@ fn calculate_table_column_lengths(
 
             let length_per_col = length / cell.col_span;
             for i in 0..cell.col_span {
-                let target_index = col_index + i;
-                if target_index >= max_lengths.len() {
-                    max_lengths.resize(target_index + 1, length_per_col);
+                if col_index + i < max_lengths.len() {
+                    max_lengths[col_index + i] = max_lengths[col_index + i].max(length_per_col);
                 }
-                max_lengths[target_index] = max_lengths[target_index].max(length_per_col);
             }
             col_index += cell.col_span;
         }
@@ -976,7 +974,9 @@ mod tests {
     fn test_calculate_table_column_lengths() {
         #[track_caller]
         fn test(expect_max_lengths: Vec<usize>, rows: Vec<ParsedMarkdownTableRow>) {
-            let mut max_lengths = Vec::new();
+            let max_column_count = calculate_table_columns_count(&rows);
+
+            let mut max_lengths = vec![0; max_column_count];
             calculate_table_column_lengths(&mut max_lengths, &rows);
 
             assert_eq!(expect_max_lengths, max_lengths);
