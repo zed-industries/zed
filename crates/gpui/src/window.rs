@@ -11,10 +11,10 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SwipeDirection, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    TouchPadGestureEvent, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     point, prelude::*, px, rems, size, transparent_black,
 };
@@ -3660,12 +3660,15 @@ impl Window {
                 }
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+            PlatformInput::TouchPad(TouchPadGestureEvent::Swipe(_)) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        } else if let Some(TouchPadGestureEvent::Swipe(direction)) = event.touchpad_event() {
+            self.dispatch_swipe_event(direction, cx);
         }
 
         DispatchEventResult {
@@ -3725,6 +3728,26 @@ impl Window {
                 self.refresh();
             }
         }
+    }
+
+    fn dispatch_swipe_event(&mut self, direction: &SwipeDirection, cx: &mut App) {
+        // Eventually we want to read from a config what to do, while forward/back is default.
+        let action_name = match direction {
+            SwipeDirection::Right => Some("pane::GoForward"),
+            SwipeDirection::Left => Some("pane::GoBack"),
+            _ => None,
+        };
+
+        if let Ok(_) = action_name
+            .ok_or_else(|| crate::ActionBuildError::NotFound {
+                name: format!("swipe::{:?}", action_name),
+            })
+            .and_then(|action_name| cx.build_action(action_name, None))
+            .map(|action| {
+                self.dispatch_action(action, cx);
+                direction
+            })
+        {}
     }
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
