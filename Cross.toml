@@ -1,2 +1,0 @@
-[build]
-dockerfile = "Dockerfile-cross"
