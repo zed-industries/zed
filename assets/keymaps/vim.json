@@ -1017,5 +1017,16 @@
       // and Windows.
       "alt-l": "editor::AcceptEditPrediction"
     }
+  },
+  {
+    "context": "SettingsWindow > NavigationMenu",
+    "bindings": {
+      "l": "settings_editor::ExpandNavEntry",
+      "h": "settings_editor::CollapseNavEntry",
+      "k": "settings_editor::FocusPreviousNavEntry",
+      "j": "settings_editor::FocusNextNavEntry",
+      "g g": "settings_editor::FocusFirstNavEntry",
+      "shift-g": "settings_editor::FocusLastNavEntry"
+    }
   }
 ]
