@@ -1,4 +1,4 @@
-use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
+use gpui::{Context, Entity, Render, Subscription, WeakEntity, Window, div};
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
@@ -89,7 +89,7 @@ impl Render for ModeIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
-            return div().into_any();
+            return div().none().into_any_element();
         };
 
         let vim_readable = vim.read(cx);
@@ -107,7 +107,12 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
+
+            if pending.is_empty() {
+                format!("-- {mode} --").into()
+            } else {
+                format!("{pending} -- {mode} --").into()
+            }
         };
 
         Label::new(label)
