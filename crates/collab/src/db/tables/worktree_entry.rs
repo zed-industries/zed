@@ -19,6 +19,7 @@ pub struct Model {
     pub is_ignored: bool,
     pub is_external: bool,
     pub is_deleted: bool,
+    pub is_hidden: bool,
     pub scan_id: i64,
     pub is_fifo: bool,
     pub canonical_path: Option<String>,

@@ -282,6 +282,7 @@ impl Database {
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
                         is_deleted: ActiveValue::set(false),
+                        is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
                     }
@@ -300,6 +301,7 @@ impl Database {
                         worktree_entry::Column::MtimeNanos,
                         worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
+                        worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
                     ])
                     .to_owned(),
@@ -905,6 +907,7 @@ impl Database {
                         canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
+                        is_hidden: db_entry.is_hidden,
                         // This is only used in the summarization backlog, so if it's None,
                         // that just means we won't be able to detect when to resummarize
                         // based on total number of backlogged bytes - instead, we'd go

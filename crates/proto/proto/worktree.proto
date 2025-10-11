@@ -27,6 +27,7 @@ message Entry {
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
+    bool is_hidden = 13;
 }
 
 message AddWorktree {

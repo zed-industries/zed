@@ -30,6 +30,7 @@ pub struct ProjectPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
+    pub hide_hidden: bool,
     pub drag_and_drop: bool,
 }
 
@@ -79,6 +80,7 @@ impl Settings for ProjectPanelSettings {
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
+            hide_hidden: project_panel.hide_hidden.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
         }
     }

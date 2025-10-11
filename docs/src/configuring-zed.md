@@ -4223,6 +4223,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
       "show": "always"
     },
     "hide_root": false,
+    "hide_hidden": false,
     "starts_open": true
   }
 }
