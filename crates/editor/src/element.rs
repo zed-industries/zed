@@ -3257,18 +3257,12 @@ impl EditorElement {
                         )
                 });
 
-                #[cfg(not(test))]
                 let hitbox = line_origin.map(|line_origin| {
                     window.insert_hitbox(
                         Bounds::new(line_origin, size(shaped_line.width, line_height)),
                         HitboxBehavior::Normal,
                     )
                 });
-                #[cfg(test)]
-                let hitbox = {
-                    let _ = line_origin;
-                    None
-                };
 
                 let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
                 let multi_buffer_row = MultiBufferRow(multi_buffer_row);

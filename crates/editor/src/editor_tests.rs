@@ -18706,6 +18706,98 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_multibuffer_line_number_navigation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "abc";
+    let buffer = cx.new(|cx| Buffer::local(sample_text, cx));
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+            cx,
+        );
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.buffer_kind(cx)),
+                Some(ItemBufferKind::Multibuffer),
+                "The multibuffer should be active after adding it"
+            );
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    // FIXME: don't hardcode the coordinates of the first line number
+    cx.simulate_click(point(px(50.), px(80.)), Modifiers::none());
+    cx.executor().run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.buffer_kind(cx)),
+                Some(ItemBufferKind::Singleton),
+                "Clicking a line number should navigate to a singleton buffer"
+            );
+        })
+        .unwrap();
+
+    let back_button_bounds = cx.debug_bounds("ICON-ArrowLeft").unwrap();
+    cx.simulate_click(back_button_bounds.origin, Modifiers::none());
+    cx.executor().run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.buffer_kind(cx)),
+                Some(ItemBufferKind::Multibuffer),
+                "Clicking the back button should navigate to the multibuffer"
+            );
+        })
+        .unwrap();
+
+    let forward_button_bounds = cx.debug_bounds("ICON-ArrowRight").unwrap();
+    cx.simulate_click(forward_button_bounds.origin, Modifiers::none());
+    cx.executor().run_until_parked();
+
+    workspace
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(
+                workspace.active_item(cx).map(|item| item.buffer_kind(cx)),
+                Some(ItemBufferKind::Singleton),
+                "Clicking the forward button should navigate to the singleton buffer"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
