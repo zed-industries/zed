@@ -453,6 +453,7 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
         .child(
             v_flex()
                 .gap_0p5()
+                .max_w_5_6()
                 .child(Label::new("Import Settings"))
                 .child(
                     Label::new("Automatically pull your settings from other editors")
