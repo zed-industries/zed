@@ -10,7 +10,11 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
-use open_ai::{ResponseStreamEvent, stream_completion};
+use open_ai::{
+    ResponseStreamEvent,
+    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    stream_completion,
+};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
@@ -19,7 +23,9 @@ use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKeyState;
-use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use crate::provider::open_ai::{
+    OpenAiEventMapper, ResponseEventMapper, into_open_ai, into_open_ai_response,
+};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -144,12 +150,21 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
+        let state = self.state.read(cx);
+        if let Some(model) = state
             .settings
             .available_models
-            .first()
-            .map(|model| self.create_language_model(model.clone()))
+            .iter()
+            .find(|model| model.capabilities.chat_completions)
+        {
+            Some(self.create_language_model(model.clone()))
+        } else {
+            state
+                .settings
+                .available_models
+                .first()
+                .map(|model| self.create_language_model(model.clone()))
+        }
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -157,13 +172,15 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        self.state
-            .read(cx)
-            .settings
-            .available_models
-            .iter()
-            .map(|model| self.create_language_model(model.clone()))
-            .collect()
+        self.state.read(cx).settings.available_models.iter().map(|model| {
+            if !model.capabilities.chat_completions {
+                log::debug!(
+                    "Model `{}` does not support /chat/completions; falling back to Responses API",
+                    model.name
+                );
+            }
+            self.create_language_model(model.clone())
+        }).collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -225,6 +242,37 @@ impl OpenAiCompatibleLanguageModel {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_response(
+        &self,
+        request: ResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let provider = self.provider_name.clone();
+        let future = self.request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_response(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
         });
@@ -322,20 +370,37 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(
-            request,
-            &self.model.name,
-            self.model.capabilities.parallel_tool_calls,
-            self.model.capabilities.prompt_cache_key,
-            self.max_output_tokens(),
-            None,
-        );
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+        if self.model.capabilities.chat_completions {
+            let request = into_open_ai(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                None,
+            );
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
+            let (request, stop_sequences) = into_open_ai_response(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                None,
+            );
+            let completions = self.stream_response(request, cx);
+            async move {
+                let mapper = ResponseEventMapper::new(stop_sequences);
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
         }
-        .boxed()
     }
 }
 
