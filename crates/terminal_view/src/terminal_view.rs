@@ -523,7 +523,10 @@ impl TerminalView {
             }
         }
         self.terminal.update(cx, |term, cx| {
-            term.scroll_wheel(event, TerminalSettings::get_global(cx).scroll_multiplier)
+            term.scroll_wheel(
+                event,
+                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+            )
         });
     }
 
