@@ -1,10 +1,10 @@
-mod identifier_parts;
 mod occurrences;
 mod sliding_window;
+mod tokens;
 
-pub use identifier_parts::*;
 pub use occurrences::*;
 pub use sliding_window::*;
+pub use tokens::*;
 
 // Variants to consider trying:
 //
