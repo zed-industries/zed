@@ -13,7 +13,7 @@ pub struct IdentifierParts;
 
 impl IdentifierParts {
     pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
-        IdentifierHashedParts::new(text.bytes())
+        HashedIdentifierParts::new(text.bytes())
     }
 
     pub fn within_strings<'a>(
@@ -21,18 +21,18 @@ impl IdentifierParts {
     ) -> impl Iterator<Item = HashFrom<Self>> {
         strings
             .into_iter()
-            .flat_map(|text| IdentifierHashedParts::new(text.bytes()))
+            .flat_map(|text| HashedIdentifierParts::new(text.bytes()))
     }
 }
 
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
-struct IdentifierHashedParts<I: Iterator<Item = u8>> {
+struct HashedIdentifierParts<I: Iterator<Item = u8>> {
     str_bytes: Peekable<I>,
     hasher: Option<FxHasher>,
     prev_char_is_uppercase: bool,
 }
 
-impl<I: Iterator<Item = u8>> IdentifierHashedParts<I> {
+impl<I: Iterator<Item = u8>> HashedIdentifierParts<I> {
     fn new(str_bytes: I) -> Self {
         Self {
             str_bytes: str_bytes.peekable(),
@@ -42,7 +42,7 @@ impl<I: Iterator<Item = u8>> IdentifierHashedParts<I> {
     }
 }
 
-impl<I: Iterator<Item = u8>> Iterator for IdentifierHashedParts<I> {
+impl<I: Iterator<Item = u8>> Iterator for HashedIdentifierParts<I> {
     type Item = HashFrom<IdentifierParts>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -104,7 +104,7 @@ mod test {
         #[track_caller]
         fn check_identifier_parts(text: &str, expected: &[&str]) {
             assert_eq!(
-                IdentifierHashedParts::new(text.bytes()).collect::<Vec<_>>(),
+                HashedIdentifierParts::new(text.bytes()).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| fx_hash_ascii_lowercase(part).into())
