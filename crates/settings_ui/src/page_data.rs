@@ -300,9 +300,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::ThemeSelection::Static(_) => return,
                                             settings::ThemeSelection::Dynamic { mode, light, dark } => {
                                                 match mode {
-                                                    theme::ThemeMode::Light => light.clone(),
-                                                    theme::ThemeMode::Dark => dark.clone(),
-                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                    theme::ThemeAppearanceMode::Light => light.clone(),
+                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                                 }
                                             },
                                         };
@@ -315,7 +315,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         };
 
                                         settings::ThemeSelection::Dynamic {
-                                            mode: settings::ThemeMode::System,
+                                            mode: settings::ThemeAppearanceMode::System,
                                             light: static_name.clone(),
                                             dark: static_name,
                                         }
@@ -470,9 +470,9 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                             settings::IconThemeSelection::Static(_) => return,
                                             settings::IconThemeSelection::Dynamic { mode, light, dark } => {
                                                 match mode {
-                                                    theme::ThemeMode::Light => light.clone(),
-                                                    theme::ThemeMode::Dark => dark.clone(),
-                                                    theme::ThemeMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                    theme::ThemeAppearanceMode::Light => light.clone(),
+                                                    theme::ThemeAppearanceMode::Dark => dark.clone(),
+                                                    theme::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
                                                 }
                                             },
                                         };
@@ -485,7 +485,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
                                         };
 
                                         settings::IconThemeSelection::Dynamic {
-                                            mode: settings::ThemeMode::System,
+                                            mode: settings::ThemeAppearanceMode::System,
                                             light: static_name.clone(),
                                             dark: static_name,
                                         }
