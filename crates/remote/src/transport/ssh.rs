@@ -789,7 +789,7 @@ impl SshSocket {
     }
 
     async fn platform(&self) -> Result<RemotePlatform> {
-        let uname = self.run_command("uname", &["-sm"]).await?;
+        let uname = self.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
             anyhow::bail!("unknown uname: {uname:?}")
         };
