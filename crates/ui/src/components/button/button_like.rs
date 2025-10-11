@@ -669,7 +669,7 @@ impl RenderOnce for ButtonLike {
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base08.rems(cx)),
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
