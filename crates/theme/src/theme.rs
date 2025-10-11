@@ -408,8 +408,8 @@ impl Theme {
 
 /// Asynchronously reads the user theme from the specified path.
 pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-    let reader = fs.open_sync(theme_path).await?;
-    let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
+    let bytes = fs.load_bytes(theme_path).await?;
+    let theme_family: ThemeFamilyContent = serde_json_lenient::from_slice(&bytes)?;
 
     for theme in &theme_family.themes {
         if theme
@@ -433,8 +433,8 @@ pub async fn read_icon_theme(
     icon_theme_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<IconThemeFamilyContent> {
-    let reader = fs.open_sync(icon_theme_path).await?;
-    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
+    let bytes = fs.load_bytes(icon_theme_path).await?;
+    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_slice(&bytes)?;
 
     Ok(icon_theme_family)
 }
