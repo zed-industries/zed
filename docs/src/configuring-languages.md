@@ -320,8 +320,8 @@ To run linter fixes automatically on save:
 ```json
 "languages": {
   "JavaScript": {
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
+    "formatter": {
+      "code_action": "source.fixAll.eslint"
     }
   }
 }
@@ -334,15 +334,17 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
 ```json
 "languages": {
   "JavaScript": {
-    "formatter": {
-      "external": {
-        "command": "prettier",
-        "arguments": ["--stdin-filepath", "{buffer_path}"]
+    "formatter": [
+      {
+        "code_action": "source.fixAll.eslint"
+      },
+      {
+        "external": {
+          "command": "prettier",
+          "arguments": ["--stdin-filepath", "{buffer_path}"]
+        }
       }
-    },
-    "code_actions_on_format": {
-      "source.fixAll.eslint": true
-    },
+    ],
     "format_on_save": "on"
   }
 }
