@@ -24,6 +24,7 @@ schemars = { workspace = true, optional = true }
 anthropic.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 workspace-hack.workspace = true

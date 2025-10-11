@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_vertex_ai::{
-    FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
-    ThinkingConfig, UsageMetadata,
+    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, ThinkingConfig,
+    UsageMetadata,
 };
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
@@ -18,9 +18,8 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+pub use settings::GoogleVertexAvailableModel as AvailableModel;
+use settings::{ModelMode, Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{
     Arc,
@@ -42,43 +41,6 @@ pub struct GoogleVertexSettings {
     pub project_id: String,  // ADDED
     pub location_id: String, // ADDED
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
-}
-
-impl From<ModelMode> for GoogleModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => GoogleModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => GoogleModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-impl From<GoogleModelMode> for ModelMode {
-    fn from(value: GoogleModelMode) -> Self {
-        match value {
-            GoogleModelMode::Default => ModelMode::Default,
-            GoogleModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    name: String,
-    display_name: Option<String>,
-    max_tokens: u64,
-    mode: Option<ModelMode>,
 }
 
 pub struct GoogleVertexLanguageModelProvider {
@@ -246,9 +208,10 @@ impl LanguageModelProvider for GoogleVertexLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
+        for model in AllLanguageModelSettings::get_global(cx)
             .google_vertex
             .available_models
+            .iter()
         {
             models.insert(
                 model.name.clone(),
@@ -256,7 +219,7 @@ impl LanguageModelProvider for GoogleVertexLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    mode: model.mode.unwrap_or_default().into(),
+                    mode: model.mode.clone().unwrap(),
                 },
             );
         }
@@ -474,7 +437,7 @@ impl LanguageModel for GoogleVertexLanguageModel {
 pub fn into_vertex_ai(
     mut request: LanguageModelRequest,
     model_id: String,
-    mode: GoogleModelMode,
+    mode: ModelMode,
 ) -> google_vertex_ai::GenerateContentRequest {
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
@@ -603,10 +566,10 @@ pub fn into_vertex_ai(
             max_output_tokens: None,
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
             thinking_config: match mode {
-                GoogleModelMode::Thinking { budget_tokens } => {
+                ModelMode::Thinking { budget_tokens } => {
                     budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
                 }
-                GoogleModelMode::Default => None,
+                ModelMode::Default => None,
             },
             top_p: None,
             top_k: None,

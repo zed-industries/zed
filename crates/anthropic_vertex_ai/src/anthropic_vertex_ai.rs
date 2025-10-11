@@ -7,6 +7,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
+use settings::ModelMode;
 use strum::EnumIter;
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -23,16 +24,6 @@ pub struct AnthropicVertexModelCacheConfiguration {
     pub min_total_token: u64,
     pub should_speculate: bool,
     pub max_cache_anchors: usize,
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]

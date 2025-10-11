@@ -5,22 +5,12 @@ use gpui::App;
 use settings::Settings;
 
 use crate::provider::{
-    self,
-    anthropic::AnthropicSettings,
-    anthropic_vertex::AnthropicVertexSettings,
-    bedrock::AmazonBedrockSettings,
-    cloud::{self, ZedDotDevSettings},
-    deepseek::DeepSeekSettings,
-    google::GoogleSettings,
-    google_vertex::GoogleVertexSettings,
-    lmstudio::LmStudioSettings,
-    mistral::MistralSettings,
-    ollama::OllamaSettings,
-    open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings,
-    open_router::OpenRouterSettings,
-    vercel::VercelSettings,
-    x_ai::XAiSettings,
+    anthropic::AnthropicSettings, anthropic_vertex::AnthropicVertexSettings,
+    bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
+    google::GoogleSettings, google_vertex::GoogleVertexSettings, lmstudio::LmStudioSettings,
+    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
+    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
+    vercel::VercelSettings, x_ai::XAiSettings,
 };
 
 /// Initializes the language model settings.
@@ -52,8 +42,8 @@ impl settings::Settings for AllLanguageModelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let language_models = content.language_models.clone().unwrap();
         let anthropic = language_models.anthropic.unwrap();
-        let google_vertex: language_models.google_vertex.unwrap();
-        let anthropic_vertex: language_models.anthropic_vertex.unwrap();
+        let google_vertex = language_models.google_vertex.unwrap();
+        let anthropic_vertex = language_models.anthropic_vertex.unwrap();
         let bedrock = language_models.bedrock.unwrap();
         let deepseek = language_models.deepseek.unwrap();
         let google = language_models.google.unwrap();
@@ -88,13 +78,13 @@ impl settings::Settings for AllLanguageModelSettings {
                 available_models: google.available_models.unwrap_or_default(),
             },
             google_vertex: GoogleVertexSettings {
-                api_url: google.api_url.unwrap(),
+                api_url: google_vertex.api_url.unwrap(),
                 project_id: google_vertex.project_id,
                 location_id: google_vertex.location_id,
                 available_models: google_vertex.available_models.unwrap_or_default(),
             },
             anthropic_vertex: AnthropicVertexSettings {
-                api_url: google.api_url.unwrap(),
+                api_url: anthropic_vertex.api_url.unwrap(),
                 project_id: anthropic_vertex.project_id,
                 location_id: anthropic_vertex.location_id,
                 available_models: anthropic_vertex.available_models.unwrap_or_default(),

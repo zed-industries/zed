@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use settings::ModelMode;
 
 // MODIFICATION 1: Update API_URL to the correct Vertex AI endpoint.
 pub const API_URL: &str = "https://aiplatform.googleapis.com";
@@ -325,16 +326,6 @@ pub struct ThinkingConfig {
     pub thinking_budget: u32,
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GoogleModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
@@ -551,7 +542,7 @@ pub enum Model {
         display_name: Option<String>,
         max_tokens: u64,
         #[serde(default)]
-        mode: GoogleModelMode,
+        mode: ModelMode,
     },
 }
 
@@ -614,11 +605,11 @@ impl Model {
         true
     }
 
-    pub fn mode(&self) -> GoogleModelMode {
+    pub fn mode(&self) -> ModelMode {
         match self {
-            Self::Gemini20Flash => GoogleModelMode::Default,
+            Self::Gemini20Flash => ModelMode::Default,
             Self::Gemini25Flash | Self::Gemini25Pro => {
-                GoogleModelMode::Thinking {
+                ModelMode::Thinking {
                     // By default these models are set to "auto", so we preserve that behavior
                     // but indicate they are capable of thinking mode
                     budget_tokens: None,

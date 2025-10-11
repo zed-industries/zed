@@ -2,7 +2,7 @@ use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 use anthropic::AnthropicError;
 use anthropic_vertex_ai::{
-    ContentDelta, Event, ModelMode, ResponseContent, ToolResultContent, ToolResultPart, Usage,
+    ContentDelta, Event, ResponseContent, ToolResultContent, ToolResultPart, Usage,
 };
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
@@ -19,9 +19,8 @@ use language_model::{
     LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+pub use settings::AnthropicVertexAvailableModel as AvailableModel;
+use settings::{ModelMode, Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -38,26 +37,6 @@ pub struct AnthropicVertexSettings {
     pub project_id: String,  // ADDED
     pub location_id: String, // ADDED
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The model's context window size.
-    pub max_tokens: u64,
-    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
-    pub tool_override: Option<String>,
-    /// Configuration of Anthropic's caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    #[serde(default)]
-    pub extra_beta_headers: Vec<String>,
-    /// The model's mode (e.g. thinking)
-    pub mode: Option<ModelMode>,
 }
 
 pub struct AnthropicVertexLanguageModelProvider {
@@ -1053,8 +1032,8 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anthropic_vertex_ai::ModelMode;
     use language_model::{LanguageModelRequestMessage, MessageContent};
+    use settings::ModelMode;
 
     #[test]
     fn test_cache_control_only_on_last_segment() {
