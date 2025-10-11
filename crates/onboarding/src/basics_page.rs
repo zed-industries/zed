@@ -410,27 +410,23 @@ fn render_setting_import_button(
     imported: bool,
 ) -> impl IntoElement + 'static {
     let action = action.boxed_clone();
-    h_flex().w_full().child(
-        ButtonLike::new(label.clone())
-            .style(ButtonStyle::OutlinedTransparent)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(imported)
-            .size(ButtonSize::Medium)
-            .tab_index(tab_index)
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .when(imported, |this| {
-                        this.child(Icon::new(IconName::Check).color(Color::Success))
-                    })
-                    .child(Label::new(label.clone()).mx_2().size(LabelSize::Small)),
-            )
-            .on_click(move |_, window, cx| {
-                telemetry::event!("Welcome Import Settings", import_source = label,);
-                window.dispatch_action(action.boxed_clone(), cx);
-            }),
-    )
+
+    Button::new(label.clone(), label.clone())
+        .style(ButtonStyle::OutlinedGhost)
+        .size(ButtonSize::Medium)
+        .label_size(LabelSize::Small)
+        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+        .toggle_state(imported)
+        .tab_index(tab_index)
+        .when(imported, |this| {
+            this.icon(IconName::Check)
+                .icon_size(IconSize::Small)
+                .color(Color::Success)
+        })
+        .on_click(move |_, window, cx| {
+            telemetry::event!("Welcome Import Settings", import_source = label,);
+            window.dispatch_action(action.boxed_clone(), cx);
+        })
 }
 
 fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
