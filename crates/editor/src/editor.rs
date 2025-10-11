@@ -3456,18 +3456,13 @@ impl Editor {
         let buffers_to_unfold: Vec<BufferId> = self
             .selections
             .disjoint_anchor_ranges()
-            .filter_map(|range| {
-                // Check if this selection is in a folded buffer
-                if let Some(buffer_id) = snapshot.buffer_id_for_anchor(range.start) {
-                    if self.is_buffer_folded(buffer_id, cx) {
-                        Some(buffer_id)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            .flat_map(|range| {
+                // Check all buffers that this selection spans
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                snapshot.buffer_ids_for_range(start_offset..end_offset)
             })
+            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx))
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
