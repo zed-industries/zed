@@ -21,7 +21,6 @@ http_client.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

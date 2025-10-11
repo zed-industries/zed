@@ -13,6 +13,7 @@ To configure the Tailwind CSS language server, refer [to the extension settings]
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
+        "classFunctions": ["cva", "cx"],
         "experimental": {
           "classRegex": ["[cls|className]\\s\\:\\=\\s\"([^\"]*)"],
         },

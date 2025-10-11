@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[[bench]]
+name = "sorting"
+harness = false
+
 [lib]
 path = "src/project_panel.rs"
 doctest = false
@@ -20,7 +24,6 @@ db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 git_ui.workspace = true
-indexmap.workspace = true
 git.workspace = true
 gpui.workspace = true
 menu.workspace = true
@@ -33,6 +36,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
+rayon.workspace = true
 ui.workspace = true
 util.workspace = true
 client.workspace = true
@@ -45,6 +49,7 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
+criterion.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

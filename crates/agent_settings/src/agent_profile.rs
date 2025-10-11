@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
+use anyhow::{Result, bail};
 use collections::IndexMap;
 use convert_case::{Case, Casing as _};
 use fs::Fs;
 use gpui::{App, SharedString};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings as _, update_settings_file};
+use settings::{
+    AgentProfileContent, ContextServerPresetContent, Settings as _, SettingsContent,
+    update_settings_file,
+};
 use util::ResultExt as _;
 
-use crate::AgentSettings;
+use crate::{AgentProfileId, AgentSettings};
 
 pub mod builtin_profiles {
     use super::AgentProfileId;
@@ -20,27 +22,6 @@ pub mod builtin_profiles {
 
     pub fn is_builtin(profile_id: &AgentProfileId) -> bool {
         profile_id.as_str() == WRITE || profile_id.as_str() == ASK || profile_id.as_str() == MINIMAL
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AgentProfileId(pub Arc<str>);
-
-impl AgentProfileId {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for AgentProfileId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Default for AgentProfileId {
-    fn default() -> Self {
-        Self("write".into())
     }
 }
 
@@ -87,10 +68,10 @@ impl AgentProfile {
                 .unwrap_or_default(),
         };
 
-        update_settings_file::<AgentSettings>(fs, cx, {
+        update_settings_file(fs, cx, {
             let id = id.clone();
             move |settings, _cx| {
-                settings.create_profile(id, profile_settings).log_err();
+                profile_settings.save_to_settings(id, settings).log_err();
             }
         });
 
@@ -129,9 +110,71 @@ impl AgentProfileSettings {
                 .get(server_id)
                 .is_some_and(|preset| preset.tools.get(tool_name) == Some(&true))
     }
+
+    pub fn save_to_settings(
+        &self,
+        profile_id: AgentProfileId,
+        content: &mut SettingsContent,
+    ) -> Result<()> {
+        let profiles = content
+            .agent
+            .get_or_insert_default()
+            .profiles
+            .get_or_insert_default();
+        if profiles.contains_key(&profile_id.0) {
+            bail!("profile with ID '{profile_id}' already exists");
+        }
+
+        profiles.insert(
+            profile_id.0,
+            AgentProfileContent {
+                name: self.name.clone().into(),
+                tools: self.tools.clone(),
+                enable_all_context_servers: Some(self.enable_all_context_servers),
+                context_servers: self
+                    .context_servers
+                    .clone()
+                    .into_iter()
+                    .map(|(server_id, preset)| {
+                        (
+                            server_id,
+                            ContextServerPresetContent {
+                                tools: preset.tools,
+                            },
+                        )
+                    })
+                    .collect(),
+            },
+        );
+
+        Ok(())
+    }
+}
+
+impl From<AgentProfileContent> for AgentProfileSettings {
+    fn from(content: AgentProfileContent) -> Self {
+        Self {
+            name: content.name.into(),
+            tools: content.tools,
+            enable_all_context_servers: content.enable_all_context_servers.unwrap_or_default(),
+            context_servers: content
+                .context_servers
+                .into_iter()
+                .map(|(server_id, preset)| (server_id, preset.into()))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ContextServerPreset {
     pub tools: IndexMap<Arc<str>, bool>,
+}
+
+impl From<settings::ContextServerPresetContent> for ContextServerPreset {
+    fn from(content: settings::ContextServerPresetContent) -> Self {
+        Self {
+            tools: content.tools,
+        }
+    }
 }

@@ -249,11 +249,14 @@ pub fn background_thread_queue() -> WriteQueueConstructor {
     Box::new(|| {
         let (sender, receiver) = channel::<QueuedWrite>();
 
-        thread::spawn(move || {
-            while let Ok(write) = receiver.recv() {
-                write()
-            }
-        });
+        thread::Builder::new()
+            .name("sqlezWorker".to_string())
+            .spawn(move || {
+                while let Ok(write) = receiver.recv() {
+                    write()
+                }
+            })
+            .unwrap();
 
         let sender = UnboundedSyncSender::new(sender);
         Box::new(move |queued_write| {

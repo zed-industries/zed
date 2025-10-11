@@ -10,7 +10,7 @@ pub struct Disclosure {
     is_open: bool,
     selected: bool,
     disabled: bool,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     cursor_style: CursorStyle,
     opened_icon: IconName,
     closed_icon: IconName,
@@ -24,7 +24,7 @@ impl Disclosure {
             is_open,
             selected: false,
             disabled: false,
-            on_toggle: None,
+            on_toggle_expanded: None,
             cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
@@ -32,11 +32,11 @@ impl Disclosure {
         }
     }
 
-    pub fn on_toggle(
+    pub fn on_toggle_expanded(
         mut self,
         handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>>,
     ) -> Self {
-        self.on_toggle = handler.into();
+        self.on_toggle_expanded = handler.into();
         self
     }
 
@@ -65,7 +65,7 @@ impl Toggleable for Disclosure {
 
 impl Clickable for Disclosure {
     fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle = Some(Arc::new(handler));
+        self.on_toggle_expanded = Some(Arc::new(handler));
         self
     }
 
@@ -99,7 +99,7 @@ impl RenderOnce for Disclosure {
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)
         })
-        .when_some(self.on_toggle, move |this, on_toggle| {
+        .when_some(self.on_toggle_expanded, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
         })
     }

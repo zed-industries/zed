@@ -1,14 +1,11 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use agent_settings::{
-    AgentProfileContent, AgentProfileId, AgentProfileSettings, AgentSettings, AgentSettingsContent,
-    ContextServerPresetContent,
-};
+use agent_settings::{AgentProfileId, AgentProfileSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
+use settings::{AgentProfileContent, ContextServerPresetContent, update_settings_file};
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
 
@@ -266,15 +263,19 @@ impl PickerDelegate for ToolPickerDelegate {
             is_enabled
         };
 
-        update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
+        update_settings_file(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
             let default_profile = self.profile_settings.clone();
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
-            move |settings: &mut AgentSettingsContent, _cx| {
-                let profiles = settings.profiles.get_or_insert_default();
+            move |settings, _cx| {
+                let profiles = settings
+                    .agent
+                    .get_or_insert_default()
+                    .profiles
+                    .get_or_insert_default();
                 let profile = profiles
-                    .entry(profile_id)
+                    .entry(profile_id.0)
                     .or_insert_with(|| AgentProfileContent {
                         name: default_profile.name.into(),
                         tools: default_profile.tools,

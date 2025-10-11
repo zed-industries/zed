@@ -19,7 +19,6 @@ pub struct OutlineItem<T> {
     pub text: String,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
     pub name_ranges: Vec<Range<usize>>,
-    pub signature_range: Option<Range<T>>,
     pub body_range: Option<Range<T>>,
     pub annotation_range: Option<Range<T>>,
 }
@@ -36,10 +35,6 @@ impl<T: ToPoint> OutlineItem<T> {
             text: self.text.clone(),
             highlight_ranges: self.highlight_ranges.clone(),
             name_ranges: self.name_ranges.clone(),
-            signature_range: self
-                .signature_range
-                .as_ref()
-                .map(|r| r.start.to_point(buffer)..r.end.to_point(buffer)),
             body_range: self
                 .body_range
                 .as_ref()
@@ -213,7 +208,6 @@ mod tests {
                 text: "class Foo".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![6..9],
-                signature_range: None,
                 body_range: None,
                 annotation_range: None,
             },
@@ -223,7 +217,6 @@ mod tests {
                 text: "private".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![],
-                signature_range: None,
                 body_range: None,
                 annotation_range: None,
             },
@@ -248,7 +241,6 @@ mod tests {
                 text: "fn process".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![3..10],
-                signature_range: None,
                 body_range: None,
                 annotation_range: None,
             },
@@ -258,7 +250,6 @@ mod tests {
                 text: "struct DataProcessor".to_string(),
                 highlight_ranges: vec![],
                 name_ranges: vec![7..20],
-                signature_range: None,
                 body_range: None,
                 annotation_range: None,
             },

@@ -164,6 +164,7 @@ pub struct BreakpointStore {
 
 impl BreakpointStore {
     pub fn init(client: &AnyProtoClient) {
+        log::error!("breakpoint store init");
         client.add_entity_request_handler(Self::handle_toggle_breakpoint);
         client.add_entity_message_handler(Self::handle_breakpoints_for_file);
     }
@@ -387,7 +388,7 @@ impl BreakpointStore {
 
     pub fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
         worktree::File::from_dyn(buffer.read(cx).file())
-            .and_then(|file| file.worktree.read(cx).absolutize(&file.path).ok())
+            .map(|file| file.worktree.read(cx).absolutize(&file.path))
             .map(Arc::<Path>::from)
     }
 
@@ -794,7 +795,7 @@ impl BreakpointStore {
                         .update(cx, |this, cx| {
                             let path = ProjectPath {
                                 worktree_id: worktree.read(cx).id(),
-                                path: relative_path.into(),
+                                path: relative_path,
                             };
                             this.open_buffer(path, cx)
                         })?

@@ -82,7 +82,7 @@ impl AgentTool for TerminalTool {
                     .into(),
             }
         } else {
-            "Run terminal command".into()
+            "".into()
         }
     }
 

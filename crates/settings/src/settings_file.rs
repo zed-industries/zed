@@ -1,4 +1,4 @@
-use crate::{Settings, settings_store::SettingsStore};
+use crate::{settings_content::SettingsContent, settings_store::SettingsStore};
 use collections::HashSet;
 use fs::{Fs, PathEventKind};
 use futures::{StreamExt, channel::mpsc};
@@ -22,7 +22,7 @@ pub fn test_settings() -> String {
             "buffer_font_family": "Courier",
             "buffer_font_features": {},
             "buffer_font_size": 14,
-            "buffer_font_fallback": [],
+            "buffer_font_fallbacks": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
@@ -37,7 +37,7 @@ pub fn test_settings() -> String {
             "buffer_font_family": "Courier New",
             "buffer_font_features": {},
             "buffer_font_size": 14,
-            "buffer_font_fallback": [],
+            "buffer_font_fallbacks": [],
             "theme": EMPTY_THEME_NAME,
         }),
         &mut value,
@@ -126,10 +126,10 @@ pub fn watch_config_dir(
     rx
 }
 
-pub fn update_settings_file<T: Settings>(
+pub fn update_settings_file(
     fs: Arc<dyn Fs>,
     cx: &App,
-    update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    SettingsStore::global(cx).update_settings_file::<T>(fs, update);
+    SettingsStore::global(cx).update_settings_file(fs, update);
 }

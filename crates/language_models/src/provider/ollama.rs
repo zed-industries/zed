@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Task};
+use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -13,12 +13,10 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
-    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
-    stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
+    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
@@ -48,27 +46,9 @@ pub struct OllamaSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.2:latest")
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: u64,
-    /// The number of seconds to keep the connection open after the last request
-    pub keep_alive: Option<KeepAlive>,
-    /// Whether the model supports tools
-    pub supports_tools: Option<bool>,
-    /// Whether the model supports vision
-    pub supports_images: Option<bool>,
-    /// Whether to enable think mode
-    pub supports_thinking: Option<bool>,
-}
-
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -125,8 +105,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models =
-                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
+            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
 
             let tasks = models
                 .into_iter()
@@ -140,16 +119,16 @@ impl State {
                     let api_key = api_key.clone();
                     async move {
                         let name = model.name.as_str();
-                        let capabilities =
+                        let model =
                             show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
                                 .await?;
                         let ollama_model = ollama::Model::new(
                             name,
                             None,
-                            None,
-                            Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
-                            Some(capabilities.supports_thinking()),
+                            model.context_length,
+                            Some(model.supports_tools()),
+                            Some(model.supports_vision()),
+                            Some(model.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -230,7 +209,7 @@ impl OllamaLanguageModelProvider {
 impl LanguageModelProviderState for OllamaLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -269,19 +248,32 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &OllamaLanguageModelProvider::settings(cx).available_models {
-            models.insert(
-                model.name.clone(),
-                ollama::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    keep_alive: model.keep_alive.clone(),
-                    supports_tools: model.supports_tools,
-                    supports_vision: model.supports_images,
-                    supports_thinking: model.supports_thinking,
-                },
-            );
+        for setting_model in &OllamaLanguageModelProvider::settings(cx).available_models {
+            let setting_base = setting_model.name.split(':').next().unwrap();
+            if let Some(model) = models
+                .values_mut()
+                .find(|m| m.name.split(':').next().unwrap() == setting_base)
+            {
+                model.max_tokens = setting_model.max_tokens;
+                model.display_name = setting_model.display_name.clone();
+                model.keep_alive = setting_model.keep_alive.clone();
+                model.supports_tools = setting_model.supports_tools;
+                model.supports_vision = setting_model.supports_images;
+                model.supports_thinking = setting_model.supports_thinking;
+            } else {
+                models.insert(
+                    setting_model.name.clone(),
+                    ollama::Model {
+                        name: setting_model.name.clone(),
+                        display_name: setting_model.display_name.clone(),
+                        max_tokens: setting_model.max_tokens,
+                        keep_alive: setting_model.keep_alive.clone(),
+                        supports_tools: setting_model.supports_tools,
+                        supports_vision: setting_model.supports_images,
+                        supports_thinking: setting_model.supports_thinking,
+                    },
+                );
+            }
         }
 
         let mut models = models
@@ -330,7 +322,7 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
-    state: gpui::Entity<State>,
+    state: Entity<State>,
 }
 
 impl OllamaLanguageModel {
@@ -631,13 +623,13 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    api_key_editor: gpui::Entity<SingleLineInput>,
-    api_url_editor: gpui::Entity<SingleLineInput>,
-    state: gpui::Entity<State>,
+    api_key_editor: Entity<SingleLineInput>,
+    api_url_editor: Entity<SingleLineInput>,
+    state: Entity<State>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor =
             cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
 
@@ -703,15 +695,13 @@ impl ConfigurationView {
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
             let fs = <dyn Fs>::global(cx);
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                if let Some(settings) = settings.ollama.as_mut() {
-                    settings.api_url = Some(api_url);
-                } else {
-                    settings.ollama = Some(crate::settings::OllamaSettingsContent {
-                        api_url: Some(api_url),
-                        available_models: None,
-                    });
-                }
+            update_settings_file(fs, cx, move |settings, _| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .ollama
+                    .get_or_insert_default()
+                    .api_url = Some(api_url);
             });
         }
     }
@@ -720,8 +710,12 @@ impl ConfigurationView {
         self.api_url_editor
             .update(cx, |input, cx| input.set_text("", window, cx));
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            if let Some(settings) = settings.ollama.as_mut() {
+        update_settings_file(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings
+                .language_models
+                .as_mut()
+                .and_then(|models| models.ollama.as_mut())
+            {
                 settings.api_url = Some(OLLAMA_API_URL.into());
             }
         });
@@ -906,7 +900,7 @@ impl Render for ConfigurationView {
                             this.child(
                                 ButtonLike::new("connected")
                                     .disabled(true)
-                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                    .cursor_style(CursorStyle::Arrow)
                                     .child(
                                         h_flex()
                                             .gap_2()

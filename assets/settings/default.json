@@ -1,5 +1,8 @@
 {
-  "project_name": null,
+  "$schema": "zed://schemas/settings",
+  /// The displayed name of this project. If not set or empty, the root directory name
+  /// will be displayed.
+  "project_name": "",
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -72,8 +75,10 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // The default font size for text in the agent panel. Falls back to the UI font size if unset.
-  "agent_font_size": null,
+  // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
+  "agent_ui_font_size": null,
+  // The default font size for user messages in the agent panel.
+  "agent_buffer_font_size": 12,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -115,6 +120,7 @@
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
   // Whether to enable helix mode and key bindings.
+  // Enabling this mode will automatically enable vim mode.
   "helix_mode": false,
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
@@ -311,7 +317,7 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
-  /// Whether indentation should be adjusted based on the context whilst typing.
+  // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
@@ -391,8 +397,6 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
-    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
-    "show": "always",
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show the branch name button in the titlebar.
@@ -407,6 +411,39 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false
+  },
+  "audio": {
+    // Opt into the new audio system.
+    "experimental.rodio_audio": false,
+    // Requires 'rodio_audio: true'
+    //
+    // Automatically increase or decrease you microphone's volume. This affects how
+    // loud you sound to others.
+    //
+    // Recommended: off (default)
+    // Microphones are too quite in zed, until everyone is on experimental
+    // audio and has auto speaker volume on this will make you very loud
+    // compared to other speakers.
+    "experimental.auto_microphone_volume": false,
+    // Requires 'rodio_audio: true'
+    //
+    // Automatically increate or decrease the volume of other call members.
+    // This only affects how things sound for you.
+    "experimental.auto_speaker_volume": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Remove background noises. Works great for typing, cars, dogs, AC. Does
+    // not work well on music.
+    "experimental.denoise": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Use audio parameters compatible with the previous versions of
+    // experimental audio and non-experimental audio. When this is false you
+    // will sound strange to anyone not on the latest experimental audio. In
+    // the future we will migrate by setting this to false
+    //
+    // You need to rejoin a call for this setting to apply
+    "experimental.legacy_audio_compatible": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -588,6 +625,7 @@
     // Toggle certain types of hints on and off, all switched on by default.
     "show_type_hints": true,
     "show_parameter_hints": true,
+    "show_value_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
     // Whether to show a background for inlay hints.
@@ -796,7 +834,7 @@
   "agent": {
     // Whether the agent is enabled.
     "enabled": true,
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
+    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
     "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
@@ -806,6 +844,8 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // The view to use by default (thread, or text_thread)
+    "default_view": "thread",
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -907,26 +947,22 @@
 
     // Default: false
     "play_sound_when_agent_done": false,
-    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
-    ///
-    /// Default: true
+    // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    //
+    // Default: true
     "expand_edit_card": true,
-    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
-    ///
-    /// Default: true
+    // Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    //
+    // Default: true
     "expand_terminal_card": true,
+    // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
+    //
+    // Default: false
+    "use_modifier_to_send": false,
     // Minimum number of lines to display in the agent message editor.
     //
     // Default: 4
     "message_editor_min_lines": 4
-  },
-  // The settings for slash commands.
-  "slash_commands": {
-    // Settings for the `/project` slash command.
-    "project": {
-      // Whether `/project` is enabled.
-      "enabled": false
-    }
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -939,6 +975,7 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -1065,7 +1102,7 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
-  // Whether or not to perform a buffer format before saving: [on, off, prettier, language_server]
+  // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
   // How to perform a buffer format. This setting can take 4 values:
@@ -1195,6 +1232,10 @@
     // 2. Hide the gutter
     //      "git_gutter": "hide"
     "git_gutter": "tracked_files",
+    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
+    ///
+    /// Default: 0
+    "gutter_debounce": 0,
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
@@ -1209,6 +1250,9 @@
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    "blame": {
+      "show_avatar": true
     },
     // Control which information is shown in the branch picker.
     "branch_picker": {
@@ -1268,6 +1312,15 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
+    "copilot": {
+      "enterprise_uri": null,
+      "proxy": null,
+      "proxy_no_verify": null
+    },
+    "codestral": {
+      "model": null,
+      "max_tokens": null
+    },
     // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
     "enabled_in_text_threads": true
@@ -1284,6 +1337,8 @@
   },
   // Status bar-related settings.
   "status_bar": {
+    // Whether to show the status bar.
+    "experimental.show": true,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1350,8 +1405,8 @@
     //  4. A box drawn around the following character
     //     "hollow"
     //
-    // Default: not set, defaults to "block"
-    "cursor_shape": null,
+    // Default: "block"
+    "cursor_shape": "block",
     // Set whether Alternate Scroll mode (code: ?1007) is active by default.
     // Alternate Scroll mode converts mouse scroll events into up / down key
     // presses when in the alternate screen (e.g. when running applications
@@ -1373,8 +1428,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
-    // Whether to keep the text selection after copying it to the clipboard
-    "keep_selection_on_copy": false,
+    // Whether to keep the text selection after copying it to the clipboard.
+    "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1393,7 +1448,7 @@
     //         "line_height": {
     //           "custom": 2
     //         },
-    "line_height": "comfortable",
+    "line_height": "standard",
     // Activate the python virtual environment, if one is found, in the
     // terminal's working directory (as resolved by the working_directory
     // setting). Set this to "off" to disable this behavior.
@@ -1413,7 +1468,7 @@
       //
       // The shell running in the terminal needs to be configured to emit the title.
       // Example: `echo -e "\e]2;New Title\007";`
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     // Scrollbar-related settings
     "scrollbar": {
@@ -1464,7 +1519,6 @@
     // A value of 45 preserves colorful themes while ensuring legibility.
     "minimum_contrast": 45
   },
-  "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
@@ -1493,7 +1547,7 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json", "tsconfig*.json"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
@@ -1519,6 +1573,14 @@
   "auto_install_extensions": {
     "html": true
   },
+  // The capabilities granted to extensions.
+  //
+  // This list can be customized to restrict what extensions are able to do.
+  "granted_extension_capabilities": [
+    { "kind": "process:exec", "command": "*", "args": ["**"] },
+    { "kind": "download_file", "host": "*", "path": ["**"] },
+    { "kind": "npm:install", "package": "*" }
+  ],
   // Controls how completions are processed for this language.
   "completions": {
     // Controls how words are completed.
@@ -1626,9 +1688,7 @@
       "preferred_line_length": 72
     },
     "Go": {
-      "code_actions_on_format": {
-        "source.organizeImports": true
-      },
+      "formatter": [{ "code_action": "source.organizeImports" }, { "language_server": {} }],
       "debuggers": ["Delve"]
     },
     "GraphQL": {
@@ -1773,6 +1833,7 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com"
     },
+    "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"
     },
@@ -1794,27 +1855,41 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
-    }
+    },
+    "vercel": {
+      "api_url": "https://api.v0.dev/v1"
+    },
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1"
+    },
+    "zed.dev": {}
+  },
+  "session": {
+    // Whether or not to restore unsaved buffers on restart.
+    //
+    // If this is true, user won't be prompted whether to save/discard
+    // dirty files when closing the application.
+    //
+    // Default: true
+    "restore_unsaved_buffers": true
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
-    // // Whether to consider prettier formatter or not when attempting to format a file.
-    // "allowed": false,
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
-    // "plugins": [],
-    //
-    // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
-    // // the project has no other Prettier installed.
+    // Enables or disables formatting with Prettier for any given language.
+    "allowed": false,
+    // Forces Prettier integration to use a specific parser name when formatting files with the language.
+    "plugins": [],
+    // Default Prettier options, in the format as in package.json section for Prettier.
+    // If project installs Prettier via its package.json, these options will be ignored.
     // "trailingComma": "es5",
     // "tabWidth": 4,
     // "semi": false,
     // "singleQuote": true
+    // Forces Prettier integration to use a specific parser name when formatting files with the language
+    // when set to a non-empty string.
+    "parser": ""
   },
   // Settings for auto-closing of JSX tags.
   "jsx_tag_auto_close": {
@@ -1834,6 +1909,10 @@
     //     }
     // }
   },
+  // DAP Specific settings.
+  "dap": {
+    // Specify the DAP name as a key here.
+  },
   // Common language server settings.
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
@@ -1841,7 +1920,8 @@
   },
   // Jupyter settings
   "jupyter": {
-    "enabled": true
+    "enabled": true,
+    "kernel_selections": {}
     // Specify the language name as the key and the kernel name as the value.
     // "kernel_selections": {
     //    "python": "conda-base"
@@ -1959,7 +2039,7 @@
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_font_size": 20.0,
+  //     "agent_ui_font_size": 20.0,
   //     "buffer_font_size": 20.0,
   //     "theme": "One Light",
   //     "ui_font_size": 20.0
@@ -1972,5 +2052,11 @@
   //     }
   //   }
   // }
-  "profiles": []
+  "profiles": {},
+
+  // A map of log scopes to the desired log level.
+  // Useful for filtering out noisy logs or enabling more verbose logging.
+  //
+  // Example: {"log": {"client": "warn"}}
+  "log": {}
 }

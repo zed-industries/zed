@@ -98,13 +98,15 @@ message RenameProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
+    uint64 new_worktree_id = 4;
 }
 
 message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
     string new_path = 3;
-    optional string relative_worktree_source_path = 4;
+    uint64 new_worktree_id = 5;
+    reserved 4;
 }
 
 message DeleteProjectEntry {
