@@ -22,10 +22,7 @@ use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{DEFAULT_CONTEXT_OPTIONS, PredictionDebugInfo, Zeta, ZetaOptions};
 
-use edit_prediction_context::{
-    DeclarationStyle, EditPredictionContextOptions, EditPredictionExcerptOptions,
-    SimilarSnippetOptions,
-};
+use edit_prediction_context::{DeclarationStyle, EditPredictionExcerptOptions};
 
 actions!(
     dev,

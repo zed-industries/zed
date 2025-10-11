@@ -8,7 +8,8 @@ use cloud_llm_client::{
 use cloud_zeta2_prompt::{DEFAULT_MAX_PROMPT_BYTES, PlannedPrompt};
 use edit_prediction_context::{
     DeclarationId, DeclarationStyle, EditPredictionContext, EditPredictionContextOptions,
-    EditPredictionExcerptOptions, EditPredictionScoreOptions, SyntaxIndex, SyntaxIndexState,
+    EditPredictionExcerptOptions, EditPredictionScoreOptions, SimilarSnippetOptions, SyntaxIndex,
+    SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
 use futures::channel::{mpsc, oneshot};

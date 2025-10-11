@@ -132,8 +132,9 @@ pub fn scored_declarations(
                 wildcard_import_occurrences.push(namespace.occurrences())
             }
             Module::SourceExact(path) => wildcard_import_paths.push(path),
-            Module::SourceFuzzy(path) => wildcard_import_occurrences
-                .push(Occurrences::new(IdentifierParts::from_path(&path))),
+            Module::SourceFuzzy(path) => wildcard_import_occurrences.push(Occurrences::new(
+                IdentifierParts::from_path_without_extension(&path),
+            )),
         }
     }
 
@@ -166,9 +167,9 @@ pub fn scored_declarations(
                         import_occurrences.push(namespace.occurrences())
                     }
                     Module::SourceExact(path) => import_paths.push(path),
-                    Module::SourceFuzzy(path) => {
-                        import_occurrences.push(Occurrences::new(IdentifierParts::from_path(&path)))
-                    }
+                    Module::SourceFuzzy(path) => import_occurrences.push(Occurrences::new(
+                        IdentifierParts::from_path_without_extension(&path),
+                    )),
                 }
                 found_external_identifier = Some(&external_identifier);
             } else {
@@ -179,8 +180,9 @@ pub fn scored_declarations(
                                 import_occurrences.push(namespace.occurrences())
                             }
                             Module::SourceExact(path) => import_paths.push(path),
-                            Module::SourceFuzzy(path) => import_occurrences
-                                .push(Occurrences::new(IdentifierParts::from_path(&path))),
+                            Module::SourceFuzzy(path) => import_occurrences.push(Occurrences::new(
+                                IdentifierParts::from_path_without_extension(&path),
+                            )),
                         },
                         Import::Alias { .. } => {}
                     }

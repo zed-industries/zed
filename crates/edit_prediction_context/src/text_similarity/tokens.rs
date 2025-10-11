@@ -37,26 +37,24 @@ impl IdentifierParts {
         rel_path: &RelPath,
     ) -> impl Iterator<Item = HashFrom<Self>> {
         if let Some(worktree_name) = worktree_name {
-            std::iter::once(worktree_name)
-                .chain(iter_path_without_extension(rel_path.as_std_path()))
-                .flat_map(|part| Self::within_str(&part))
+            itertools::Either::Left(
+                Self::within_bytes(cow_str_into_bytes(worktree_name))
+                    .chain(Self::from_path_without_extension(rel_path.as_std_path())),
+            )
         } else {
-            Self::from_path(rel_path.as_std_path())
+            itertools::Either::Right(Self::from_path_without_extension(rel_path.as_std_path()))
         }
     }
 
-    pub fn from_path(path: &Path) -> impl Iterator<Item = HashFrom<Self>> {
-        iter_path_without_extension(path).flat_map(|part| Self::within_str(&part))
+    pub fn from_path_without_extension(path: &Path) -> impl Iterator<Item = HashFrom<Self>> {
+        let path_bytes = path.as_os_str().as_encoded_bytes();
+        let bytes = if let Some(extension) = path.extension() {
+            &path_bytes[0..path_bytes.len() - extension.as_encoded_bytes().len()]
+        } else {
+            path_bytes
+        };
+        Self::within_bytes(bytes.iter().cloned())
     }
-}
-
-fn iter_path_without_extension(path: &Path) -> impl Iterator<Item = Cow<'_, str>> {
-    let last_component: Option<Cow<'_, str>> = path.file_stem().map(|stem| stem.to_string_lossy());
-    let mut path_components = path.components();
-    path_components.next_back();
-    path_components
-        .map(|component| component.as_os_str().to_string_lossy())
-        .chain(last_component)
 }
 
 impl CodeParts {
@@ -216,6 +214,14 @@ impl FxHasher32 {
 
     pub fn finish(self) -> u32 {
         self.0
+    }
+}
+
+/// Converts a `Cow<'_, str>` into an iterator of bytes.
+fn cow_str_into_bytes(text: Cow<'_, str>) -> impl Iterator<Item = u8> {
+    match text {
+        Cow::Borrowed(text) => itertools::Either::Left(text.bytes()),
+        Cow::Owned(text) => itertools::Either::Right(text.into_bytes().into_iter()),
     }
 }
 
