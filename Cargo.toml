@@ -292,6 +292,7 @@ debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable", package = "zed-derive-refineable", version = "0.1.0" }
 diagnostics = { path = "crates/diagnostics" }
+diff_viewer = { path = "crates/diff_viewer" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
