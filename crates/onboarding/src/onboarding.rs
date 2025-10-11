@@ -351,7 +351,7 @@ impl Render for Onboarding {
                                             })
                                     }),
                             )
-                            .child(Divider::horizontal().color(ui::DividerColor::BorderFaded))
+                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                             .child(self.render_page(cx))
                             .track_scroll(&self.scroll_handle),
                     )
