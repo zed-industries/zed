@@ -562,12 +562,18 @@ impl Fs for RealFs {
 
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
-        let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
+        let text = self
+            .executor
+            .spawn(async move { std::fs::read_to_string(path) })
+            .await?;
         Ok(text)
     }
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>> {
         let path = path.to_path_buf();
-        let bytes = smol::unblock(|| std::fs::read(path)).await?;
+        let bytes = self
+            .executor
+            .spawn(async move { std::fs::read(path) })
+            .await?;
         Ok(bytes)
     }
 
@@ -640,25 +646,34 @@ impl Fs for RealFs {
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path)
+        let path = path.to_path_buf();
+        self.executor
+            .spawn(async move {
+                std::fs::canonicalize(&path).with_context(|| format!("canonicalizing {path:?}"))
+            })
             .await
-            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_path_buf();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) })
             .await
-            .is_ok_and(|metadata| metadata.is_file())
     }
 
     async fn is_dir(&self, path: &Path) -> bool {
-        smol::fs::metadata(path)
+        let path = path.to_path_buf();
+        self.executor
+            .spawn(async move { std::fs::metadata(path).is_ok_and(|metadata| metadata.is_dir()) })
             .await
-            .is_ok_and(|metadata| metadata.is_dir())
     }
 
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>> {
-        let symlink_metadata = match smol::fs::symlink_metadata(path).await {
+        let path_ = path.to_path_buf();
+        let meta = self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(path_) });
+        let symlink_metadata = match meta.await {
             Ok(metadata) => metadata,
             Err(err) => {
                 return match (err.kind(), err.raw_os_error()) {
@@ -670,12 +685,14 @@ impl Fs for RealFs {
         };
 
         let path_buf = path.to_path_buf();
-        let path_exists = smol::unblock(move || {
-            path_buf
-                .try_exists()
-                .with_context(|| format!("checking existence for path {path_buf:?}"))
-        })
-        .await?;
+        let path_exists = self
+            .executor
+            .spawn(async move {
+                path_buf
+                    .try_exists()
+                    .with_context(|| format!("checking existence for path {path_buf:?}"))
+            })
+            .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = match (is_symlink, path_exists) {
             (true, true) => smol::fs::metadata(path)
@@ -715,11 +732,17 @@ impl Fs for RealFs {
         &self,
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
-        let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
-            Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
-        });
-        Ok(Box::pin(result))
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                let result = std::fs::read_dir(path)?.map(|entry| match entry {
+                    Ok(entry) => Ok(entry.path()),
+                    Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
+                });
+                Ok(Box::pin(futures::stream::iter(result))
+                    as Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>)
+            })
+            .await
     }
 
     #[cfg(target_os = "macos")]
