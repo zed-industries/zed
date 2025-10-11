@@ -7,10 +7,10 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ReadGlobal as _,
-    ScrollHandle, Stateful, Subscription, Task, TitlebarOptions, UniformListScrollHandle, Window,
-    WindowBounds, WindowHandle, WindowOptions, actions, div, point, prelude::*, px, size,
-    uniform_list,
+    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, KeyContext,
+    ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
+    UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div,
+    point, prelude::*, px, size, uniform_list,
 };
 use heck::ToTitleCase as _;
 use project::WorktreeId;
@@ -1491,6 +1491,15 @@ impl SettingsWindow {
             "Focus Navbar"
         };
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("NavigationMenu");
+        let identifier = if self.search_bar.focus_handle(cx).is_focused(window) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+        key_context.add(identifier);
+
         v_flex()
             .w_64()
             .p_2p5()
@@ -1498,7 +1507,7 @@ impl SettingsWindow {
             .h_full()
             .flex_none()
             .border_r_1()
-            .key_context("NavigationMenu")
+            .key_context(key_context)
             .on_action(cx.listener(|this, _: &CollapseNavEntry, window, cx| {
                 let Some(focused_entry) = this.focused_nav_entry(window, cx) else {
                     return;
