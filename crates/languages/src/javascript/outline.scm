@@ -171,4 +171,17 @@
     )
 ) @item
 
+; Function calls inside arrow functions and function expressions
+(arrow_function
+    body: (statement_block
+        (expression_statement
+            (call_expression
+                function: (identifier) @name) @item)))
+
+(function_expression
+    body: (statement_block
+        (expression_statement
+            (call_expression
+                function: (identifier) @name) @item)))
+
 (comment) @annotation
