@@ -6,7 +6,8 @@ use git::{
     status::{DiffTreeType, FileStatus, TreeDiff},
 };
 use gpui::{
-    AsyncWindowContext, Context, Entity, SharedString, Subscription, Task, WeakEntity, Window,
+    AsyncWindowContext, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity, Window,
 };
 
 use language::Buffer;
@@ -14,14 +15,19 @@ use util::ResultExt;
 
 use crate::{
     Project,
-    git_store::{Repository, RepositoryEvent},
+    git_store::{GitStoreEvent, Repository},
 };
 
+#[derive(Debug, Clone)]
+pub enum DiffBase {
+    Head,
+    Merge { base_ref: SharedString },
+}
+
 pub struct BranchDiff {
-    repo: Entity<Repository>,
+    source: DiffBase,
+    repo: Option<Entity<Repository>>,
     project: Entity<Project>,
-    base_branch: SharedString,
-    head_branch: SharedString,
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
     tree_diff: Option<TreeDiff>,
@@ -30,25 +36,31 @@ pub struct BranchDiff {
     _task: Task<()>,
 }
 
+pub enum BranchDiffEvent {
+    FileListChanged,
+}
+
+impl EventEmitter<BranchDiffEvent> for BranchDiff {}
+
 impl BranchDiff {
     pub fn new(
+        source: DiffBase,
         project: Entity<Project>,
-        repo: Entity<Repository>,
-        base_branch: SharedString,
-        head_branch: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let repo_subscription = cx.subscribe_in(
-            &repo,
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe_in(
+            &git_store,
             window,
-            // todo!() when do we actually need to fire this?
-            move |this, _git_store, event, _window, _cx| match event {
-                RepositoryEvent::MergeHeadsChanged
-                | RepositoryEvent::Updated { .. }
-                | RepositoryEvent::PathsChanged => {
+            move |this, _git_store, event, _window, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, _, true)
+                | GitStoreEvent::ConflictsUpdated => {
+                    cx.emit(BranchDiffEvent::FileListChanged);
                     *this.update_needed.borrow_mut() = ();
                 }
+                _ => {}
             },
         );
 
@@ -57,16 +69,16 @@ impl BranchDiff {
             let this = cx.weak_entity();
             async |cx| Self::handle_status_updates(this, recv, cx).await
         });
+        let repo = git_store.read(cx).active_repository();
 
         Self {
+            source,
             repo,
-            base_branch,
-            head_branch,
             project,
             tree_diff: None,
             base_commit: None,
             head_commit: None,
-            _subscription: repo_subscription,
+            _subscription: git_store_subscription,
             _task: worker,
             update_needed: send,
         }
@@ -77,56 +89,71 @@ impl BranchDiff {
         mut recv: postage::watch::Receiver<()>,
         cx: &mut AsyncWindowContext,
     ) {
-        Self::reload_diff(this.clone(), cx).await.log_err();
+        Self::reload_tree_diff(this.clone(), cx).await.log_err();
         while recv.next().await.is_some() {
             let Ok(needs_update) = this.update(cx, |this, cx| {
-                this.repo.update(cx, |repo, _| {
-                    let mut needs_update = false;
-                    if let Some(branch) = &repo.branch
-                        && (branch.ref_name == this.base_branch
-                            || branch.ref_name == this.head_branch)
-                    {
-                        let most_recent_commit = branch
-                            .most_recent_commit
-                            .as_ref()
-                            .map(|commit| commit.sha.clone());
-
-                        if branch.ref_name == this.base_branch
-                            && most_recent_commit != this.base_commit
+                let mut needs_update = false;
+                let active_repo = this
+                    .project
+                    .read(cx)
+                    .git_store()
+                    .read(cx)
+                    .active_repository();
+                if active_repo != this.repo {
+                    needs_update = true;
+                    this.repo = active_repo;
+                } else if let Some(repo) = this.repo.as_ref() {
+                    repo.update(cx, |repo, _| {
+                        if let Some(branch) = &repo.branch
+                            && let DiffBase::Merge { base_ref } = &this.source
+                            && let Some(commit) = branch.most_recent_commit.as_ref()
+                            && &branch.ref_name == base_ref
+                            && this.base_commit.as_ref() != Some(&commit.sha)
                         {
-                            this.base_commit = most_recent_commit;
-                            needs_update = true;
-                        } else if branch.ref_name == this.head_branch
-                            && most_recent_commit != this.head_commit
-                        {
-                            this.head_commit = most_recent_commit;
+                            this.base_commit = Some(commit.sha.clone());
                             needs_update = true;
                         }
-                    }
-                    needs_update
-                })
+
+                        if repo.head_commit.as_ref().map(|c| &c.sha) != this.head_commit.as_ref() {
+                            this.head_commit = repo.head_commit.as_ref().map(|c| c.sha.clone());
+                            needs_update = true;
+                        }
+                    })
+                }
+                needs_update
             }) else {
                 return;
             };
 
             if needs_update {
-                Self::reload_diff(this.clone(), cx).await.log_err();
+                Self::reload_tree_diff(this.clone(), cx).await.log_err();
             }
         }
     }
 
-    pub async fn reload_diff(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
+    pub async fn reload_tree_diff(
+        this: WeakEntity<Self>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
         let task = this.update(cx, |this, cx| {
-            this.repo.update(cx, |repo, cx| {
-                repo.diff_tree(
+            let DiffBase::Merge { base_ref } = this.source.clone() else {
+                return None;
+            };
+            let Some(repo) = this.repo.as_ref() else {
+                this.tree_diff.take();
+                return None;
+            };
+            repo.update(cx, |repo, cx| {
+                Some(repo.diff_tree(
                     DiffTreeType::MergeBase {
-                        base: this.base_branch.clone(),
-                        head: this.head_branch.clone(),
+                        base: base_ref,
+                        head: "HEAD".into(),
                     },
                     cx,
-                )
+                ))
             })
         })?;
+        let Some(task) = task else { return Ok(()) };
 
         let diff = task.await??;
         this.update(cx, |this, cx| {
@@ -135,10 +162,17 @@ impl BranchDiff {
         })
     }
 
+    pub fn repo(&self) -> Option<&Entity<Repository>> {
+        self.repo.as_ref()
+    }
+
     pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
         let mut output = Vec::default();
+        let Some(repo) = self.repo.clone() else {
+            return output;
+        };
         self.project.update(cx, |_project, cx| {
-            for item in self.repo.read(cx).cached_status() {
+            for item in repo.read(cx).cached_status() {
                 let branch_diff = self
                     .tree_diff
                     .as_ref()
@@ -148,10 +182,8 @@ impl BranchDiff {
                     continue;
                 }
 
-                let Some(project_path) = self
-                    .repo
-                    .read(cx)
-                    .repo_path_to_project_path(&item.repo_path, cx)
+                let Some(project_path) =
+                    repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
                 else {
                     continue;
                 };
