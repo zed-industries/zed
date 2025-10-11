@@ -145,7 +145,7 @@ impl Project {
             project.update(cx, move |this, cx| {
                 let format_to_run = || {
                     if let Some(command) = &spawn_task.command {
-                        let mut command: Option<Cow<str>> = shlex::try_quote(command).ok();
+                        let mut command: Option<Cow<str>> = shell_kind.try_quote(command);
                         if let Some(command) = &mut command
                             && command.starts_with('"')
                             && let Some(prefix) = shell_kind.command_prefix()
@@ -156,7 +156,8 @@ impl Project {
                         let args = spawn_task
                             .args
                             .iter()
-                            .filter_map(|arg| shlex::try_quote(arg).ok());
+                            .filter_map(|arg| shell_kind.try_quote(&arg));
+
                         command.into_iter().chain(args).join(" ")
                     } else {
                         // todo: this breaks for remotes to windows
@@ -200,15 +201,24 @@ impl Project {
                         },
                         None => match activation_script.clone() {
                             activation_script if !activation_script.is_empty() => {
-                                let activation_script = activation_script.join("; ");
+                                let separator = shell_kind.sequential_commands_separator();
+                                let activation_script =
+                                    activation_script.join(&format!("{separator} "));
                                 let to_run = format_to_run();
 
-                                let arg = format!("{activation_script}; {to_run}");
+                                let mut arg = format!("{activation_script}{separator} {to_run}");
+                                if shell_kind == ShellKind::Cmd {
+                                    // We need to put the entire command in quotes since otherwise CMD tries to execute them
+                                    // as separate commands rather than chaining one after another.
+                                    arg = format!("\"{arg}\"");
+                                }
+
+                                let args = shell_kind.args_for_shell(false, arg);
 
                                 (
                                     Shell::WithArguments {
                                         program: shell,
-                                        args: vec!["-c".to_owned(), arg],
+                                        args,
                                         title_override: None,
                                     },
                                     env,
@@ -234,7 +244,7 @@ impl Project {
                     task_state,
                     shell,
                     env,
-                    settings.cursor_shape.unwrap_or_default(),
+                    settings.cursor_shape,
                     settings.alternate_scroll,
                     settings.max_scroll_history_lines,
                     is_via_remote,
@@ -364,7 +374,7 @@ impl Project {
                     None,
                     shell,
                     env,
-                    settings.cursor_shape.unwrap_or_default(),
+                    settings.cursor_shape,
                     settings.alternate_scroll,
                     settings.max_scroll_history_lines,
                     is_via_remote,
@@ -404,31 +414,40 @@ impl Project {
         &mut self,
         terminal: &Entity<Terminal>,
         cx: &mut Context<'_, Project>,
-        cwd: impl FnOnce() -> Option<PathBuf>,
+        cwd: Option<PathBuf>,
     ) -> Result<Entity<Terminal>> {
-        terminal.read(cx).clone_builder(cx, cwd).map(|builder| {
-            let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+        let local_path = if self.is_via_remote_server() {
+            None
+        } else {
+            cwd
+        };
 
-            self.terminals
-                .local_handles
-                .push(terminal_handle.downgrade());
+        terminal
+            .read(cx)
+            .clone_builder(cx, local_path)
+            .map(|builder| {
+                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
 
-            let id = terminal_handle.entity_id();
-            cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
-                let handles = &mut project.terminals.local_handles;
+                self.terminals
+                    .local_handles
+                    .push(terminal_handle.downgrade());
 
-                if let Some(index) = handles
-                    .iter()
-                    .position(|terminal| terminal.entity_id() == id)
-                {
-                    handles.remove(index);
-                    cx.notify();
-                }
+                let id = terminal_handle.entity_id();
+                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                    let handles = &mut project.terminals.local_handles;
+
+                    if let Some(index) = handles
+                        .iter()
+                        .position(|terminal| terminal.entity_id() == id)
+                    {
+                        handles.remove(index);
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                terminal_handle
             })
-            .detach();
-
-            terminal_handle
-        })
     }
 
     pub fn terminal_settings<'a>(
@@ -452,10 +471,12 @@ impl Project {
         let path = self.first_project_directory(cx);
         let remote_client = self.remote_client.as_ref();
         let settings = self.terminal_settings(&path, cx).clone();
-        let remote_shell = remote_client
+        let shell = remote_client
             .as_ref()
-            .and_then(|remote_client| remote_client.read(cx).shell());
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &settings.shell).non_interactive();
+            .and_then(|remote_client| remote_client.read(cx).shell())
+            .map(Shell::Program)
+            .unwrap_or_else(|| settings.shell.clone());
+        let builder = ShellBuilder::new(&shell).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
 
         let mut env = self

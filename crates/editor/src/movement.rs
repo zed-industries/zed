@@ -223,7 +223,7 @@ pub fn indented_line_beginning(
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
     let indent_start = Point::new(
         point.row,
-        map.buffer_snapshot
+        map.buffer_snapshot()
             .indent_size_for_line(MultiBufferRow(point.row))
             .len,
     )
@@ -265,7 +265,7 @@ pub fn line_end(
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
@@ -289,7 +289,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
 pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
@@ -314,23 +314,23 @@ pub fn adjust_greedy_deletion(
     let is_backward = delete_from > delete_until;
     let delete_range = if is_backward {
         map.display_point_to_point(delete_until, Bias::Left)
-            .to_offset(&map.buffer_snapshot)
+            .to_offset(map.buffer_snapshot())
             ..map
                 .display_point_to_point(delete_from, Bias::Right)
-                .to_offset(&map.buffer_snapshot)
+                .to_offset(map.buffer_snapshot())
     } else {
         map.display_point_to_point(delete_from, Bias::Left)
-            .to_offset(&map.buffer_snapshot)
+            .to_offset(map.buffer_snapshot())
             ..map
                 .display_point_to_point(delete_until, Bias::Right)
-                .to_offset(&map.buffer_snapshot)
+                .to_offset(map.buffer_snapshot())
     };
 
     let trimmed_delete_range = if ignore_brackets {
         delete_range
     } else {
         let brackets_in_delete_range = map
-            .buffer_snapshot
+            .buffer_snapshot()
             .bracket_ranges(delete_range.clone())
             .into_iter()
             .flatten()
@@ -361,7 +361,7 @@ pub fn adjust_greedy_deletion(
     let mut whitespace_sequence_length = 0;
     let mut whitespace_sequence_start = 0;
     for ch in map
-        .buffer_snapshot
+        .buffer_snapshot()
         .text_for_range(trimmed_delete_range.clone())
         .flat_map(str::chars)
     {
@@ -405,7 +405,7 @@ pub fn adjust_greedy_deletion(
 /// lowerspace characters and uppercase characters.
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         is_subword_start(left, right, &classifier) || left == '\n'
@@ -424,7 +424,7 @@ pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) ->
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
     let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
@@ -447,7 +447,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
 pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     let mut on_starting_row = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
@@ -466,7 +466,7 @@ pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> D
 /// lowerspace characters and uppercase characters.
 pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+    let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         is_subword_end(left, right, &classifier) || right == '\n'
@@ -496,7 +496,7 @@ pub fn start_of_paragraph(
 
     let mut found_non_blank_line = false;
     for row in (0..point.row + 1).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -519,13 +519,13 @@ pub fn end_of_paragraph(
     mut count: usize,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.buffer_snapshot.max_row().0 {
+    if point.row == map.buffer_snapshot().max_row().0 {
         return map.max_point();
     }
 
     let mut found_non_blank_line = false;
-    for row in point.row..=map.buffer_snapshot.max_row().0 {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+    for row in point.row..=map.buffer_snapshot().max_row().0 {
+        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -546,14 +546,14 @@ pub fn start_of_excerpt(
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
         Direction::Prev => {
             let mut start = excerpt.start_anchor().to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
-                let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
+                let Some(excerpt) = map.buffer_snapshot().excerpt_before(excerpt.id()) else {
                     return display_point;
                 };
                 start = excerpt.start_anchor().to_display_point(map);
@@ -574,7 +574,7 @@ pub fn end_of_excerpt(
     direction: Direction,
 ) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+    let Some(excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
         return display_point;
     };
     match direction {
@@ -593,7 +593,9 @@ pub fn end_of_excerpt(
             if end <= display_point {
                 *end.row_mut() += 1;
                 let point_end = map.display_point_to_point(end, Bias::Right);
-                let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point_end..point_end)
+                let Some(excerpt) = map
+                    .buffer_snapshot()
+                    .excerpt_containing(point_end..point_end)
                 else {
                     return display_point;
                 };
@@ -646,7 +648,7 @@ pub fn find_preceding_boundary_display_point(
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
     let result = find_preceding_boundary_point(
-        &map.buffer_snapshot,
+        map.buffer_snapshot(),
         from.to_point(map),
         find_range,
         is_boundary,
@@ -670,7 +672,7 @@ pub fn find_boundary_point(
     let mut prev_offset = offset;
     let mut prev_ch = None;
 
-    for ch in map.buffer_snapshot.chars_at(offset) {
+    for ch in map.buffer_snapshot().chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
@@ -698,8 +700,8 @@ pub fn find_preceding_boundary_trail(
     let mut offset = head.to_offset(map, Bias::Left);
     let mut trail_offset = None;
 
-    let mut prev_ch = map.buffer_snapshot.chars_at(offset).next();
-    let mut forward = map.buffer_snapshot.reversed_chars_at(offset).peekable();
+    let mut prev_ch = map.buffer_snapshot().chars_at(offset).next();
+    let mut forward = map.buffer_snapshot().reversed_chars_at(offset).peekable();
 
     // Skip newlines
     while let Some(&ch) = forward.peek() {
@@ -746,8 +748,8 @@ pub fn find_boundary_trail(
     let mut offset = head.to_offset(map, Bias::Right);
     let mut trail_offset = None;
 
-    let mut prev_ch = map.buffer_snapshot.reversed_chars_at(offset).next();
-    let mut forward = map.buffer_snapshot.chars_at(offset).peekable();
+    let mut prev_ch = map.buffer_snapshot().reversed_chars_at(offset).next();
+    let mut forward = map.buffer_snapshot().chars_at(offset).peekable();
 
     // Skip newlines
     while let Some(&ch) = forward.peek() {
@@ -810,7 +812,7 @@ pub fn chars_after(
     map: &DisplaySnapshot,
     mut offset: usize,
 ) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
-    map.buffer_snapshot.chars_at(offset).map(move |ch| {
+    map.buffer_snapshot().chars_at(offset).map(move |ch| {
         let before = offset;
         offset += ch.len_utf8();
         (ch, before..offset)
@@ -824,7 +826,7 @@ pub fn chars_before(
     map: &DisplaySnapshot,
     mut offset: usize,
 ) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
-    map.buffer_snapshot
+    map.buffer_snapshot()
         .reversed_chars_at(offset)
         .map(move |ch| {
             let after = offset;
@@ -1055,7 +1057,7 @@ mod tests {
                 |left, _| left == 'e',
             ),
             snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .offset_to_point(5)
                 .to_display_point(&snapshot),
             "Should not stop at inlays when looking for boundaries"

@@ -25,7 +25,7 @@ If you need to troubleshoot, you can check the Zed.log ({#action zed::OpenLog}) 
 
 If you already have a published extension with the same name installed, your dev extension will override it.
 
-After installing the `Extensions` page will indicate that that the upstream extension is "Overridden by dev extension".
+After installing, the `Extensions` page will indicate that the upstream extension is "Overridden by dev extension".
 
 Pre-installed extensions with the same name have to be uninstalled before installing the dev extension. See [#31106](https://github.com/zed-industries/zed/issues/31106) for more.
 

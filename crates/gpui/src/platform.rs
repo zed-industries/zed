@@ -1213,6 +1213,11 @@ impl WindowBounds {
             WindowBounds::Fullscreen(bounds) => *bounds,
         }
     }
+
+    /// Creates a new window bounds that centers the window on the screen.
+    pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
+        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+    }
 }
 
 impl Default for WindowOptions {
@@ -1263,6 +1268,9 @@ pub enum WindowKind {
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
+
+    /// A floating window that appears on top of its parent window
+    Floating,
 }
 
 /// The appearance of the window, as defined by the operating system.

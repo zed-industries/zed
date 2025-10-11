@@ -65,13 +65,22 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     }
 }
 
+/// Runs the provided migrations on the given text.
+/// Will automatically return `Ok(None)` if there's no content to migrate.
 fn run_migrations(text: &str, migrations: &[MigrationType]) -> Result<Option<String>> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+
     let mut current_text = text.to_string();
     let mut result: Option<String> = None;
     for migration in migrations.iter() {
         let migrated_text = match migration {
             MigrationType::TreeSitter(patterns, query) => migrate(&current_text, patterns, query)?,
             MigrationType::Json(callback) => {
+                if current_text.trim().is_empty() {
+                    return Ok(None);
+                }
                 let old_content: serde_json_lenient::Value =
                     settings::parse_json_with_comments(&current_text)?;
                 let old_value = serde_json::to_value(&old_content).unwrap();
@@ -200,6 +209,11 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2025_10_01,
         ),
         MigrationType::Json(migrations::m_2025_10_02::remove_formatters_on_save),
+        MigrationType::TreeSitter(
+            migrations::m_2025_10_03::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_10_03,
+        ),
+        MigrationType::Json(migrations::m_2025_10_10::remove_code_actions_on_format),
     ];
     run_migrations(text, migrations)
 }
@@ -318,6 +332,10 @@ define_query!(
     SETTINGS_QUERY_2025_10_01,
     migrations::m_2025_10_01::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2025_10_03,
+    migrations::m_2025_10_03::SETTINGS_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -361,6 +379,11 @@ mod tests {
     ) {
         let migrated = run_migrations(input, migrations).unwrap();
         assert_migrated_correctly(migrated, output);
+    }
+
+    #[test]
+    fn test_empty_content() {
+        assert_migrate_settings("", None)
     }
 
     #[test]
@@ -1889,6 +1912,304 @@ mod tests {
             }"#
             .unindent(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_basic() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+                "code_actions_on_format": {
+                    "source.organizeImports": true,
+                    "source.fixAll": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [
+                        {
+                            "code_action": "source.organizeImports"
+                        },
+                        {
+                            "code_action": "source.fixAll"
+                        }
+                    ]
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_filters_false_values() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+                "code_actions_on_format": {
+                    "a": true,
+                    "b": false,
+                    "c": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": [
+                        {
+                            "code_action": "a"
+                        },
+                        {
+                            "code_action": "c"
+                        }
+                    ]
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_with_existing_formatter_object() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+              "formatter": "prettier",
+              "code_actions_on_format": {
+                "source.organizeImports": true
+              }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                  "formatter": [
+                    {
+                      "code_action": "source.organizeImports"
+                    },
+                    "prettier"
+                  ]
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_with_existing_formatter_array() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+              "formatter": ["prettier", {"language_server": "eslint"}],
+              "code_actions_on_format": {
+                "source.organizeImports": true,
+                "source.fixAll": true
+              }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                  "formatter": [
+                    {
+                      "code_action": "source.organizeImports"
+                    },
+                    {
+                      "code_action": "source.fixAll"
+                    },
+                    "prettier",
+                    {
+                      "language_server": "eslint"
+                    }
+                  ]
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_in_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+                "languages": {
+                    "JavaScript": {
+                        "code_actions_on_format": {
+                            "source.fixAll.eslint": true
+                        }
+                    },
+                    "Go": {
+                        "code_actions_on_format": {
+                            "source.organizeImports": true
+                        }
+                    }
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "languages": {
+                        "JavaScript": {
+                            "formatter": [
+                                {
+                                    "code_action": "source.fixAll.eslint"
+                                }
+                            ]
+                        },
+                        "Go": {
+                            "formatter": [
+                                {
+                                    "code_action": "source.organizeImports"
+                                }
+                            ]
+                        }
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_in_languages_with_existing_formatter() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+              "languages": {
+                "JavaScript": {
+                  "formatter": "prettier",
+                  "code_actions_on_format": {
+                    "source.fixAll.eslint": true,
+                    "source.organizeImports": false
+                  }
+                }
+              }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                  "languages": {
+                    "JavaScript": {
+                      "formatter": [
+                        {
+                          "code_action": "source.fixAll.eslint"
+                        },
+                        "prettier"
+                      ]
+                    }
+                  }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_mixed_global_and_languages() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+              "formatter": "prettier",
+              "code_actions_on_format": {
+                "source.fixAll": true
+              },
+              "languages": {
+                "Rust": {
+                  "formatter": "rust-analyzer",
+                  "code_actions_on_format": {
+                    "source.organizeImports": true
+                  }
+                },
+                "Python": {
+                  "code_actions_on_format": {
+                    "source.organizeImports": true,
+                    "source.fixAll": false
+                  }
+                }
+              }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                  "formatter": [
+                    {
+                      "code_action": "source.fixAll"
+                    },
+                    "prettier"
+                  ],
+                  "languages": {
+                    "Rust": {
+                      "formatter": [
+                        {
+                          "code_action": "source.organizeImports"
+                        },
+                        "rust-analyzer"
+                      ]
+                    },
+                    "Python": {
+                            "formatter": [
+                                {
+                                    "code_action": "source.organizeImports"
+                                }
+                            ]
+                        }
+                  }
+                }"#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_no_migration_when_not_present() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+              "formatter": ["prettier"]
+            }"#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_code_actions_on_format_migration_all_false_values() {
+        assert_migrate_settings_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2025_10_10::remove_code_actions_on_format,
+            )],
+            &r#"{
+                "code_actions_on_format": {
+                    "a": false,
+                    "b": false
+                },
+                "formatter": "prettier"
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "formatter": "prettier"
+                }"#
+                .unindent(),
+            ),
         );
     }
 }

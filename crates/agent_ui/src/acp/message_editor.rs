@@ -290,18 +290,18 @@ impl MessageEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot.as_singleton() else {
+        let Some((excerpt_id, _, _)) = snapshot.buffer_snapshot().as_singleton() else {
             return Task::ready(());
         };
         let Some(start_anchor) = snapshot
-            .buffer_snapshot
+            .buffer_snapshot()
             .anchor_in_excerpt(*excerpt_id, start)
         else {
             return Task::ready(());
         };
         let end_anchor = snapshot
-            .buffer_snapshot
-            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot) + content_len + 1);
+            .buffer_snapshot()
+            .anchor_before(start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1);
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
             && let Some(extension) = abs_path.extension()
@@ -718,7 +718,7 @@ impl MessageEditor {
                             continue;
                         };
 
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
                         if crease_range.start > ix {
                             //todo(): Custom slash command ContentBlock?
                             // let chunk = if prevent_slash_commands
@@ -865,11 +865,11 @@ impl MessageEditor {
                 self.editor.update(cx, |message_editor, cx| {
                     let snapshot = message_editor.snapshot(window, cx);
                     let (excerpt_id, _, buffer_snapshot) =
-                        snapshot.buffer_snapshot.as_singleton().unwrap();
+                        snapshot.buffer_snapshot().as_singleton().unwrap();
 
                     let text_anchor = buffer_snapshot.anchor_before(buffer_snapshot.len());
                     let multibuffer_anchor = snapshot
-                        .buffer_snapshot
+                        .buffer_snapshot()
                         .anchor_in_excerpt(*excerpt_id, text_anchor);
                     message_editor.edit(
                         [(
@@ -1030,6 +1030,7 @@ impl MessageEditor {
         ) else {
             return;
         };
+
         self.editor.update(cx, |message_editor, cx| {
             message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
         });
@@ -1299,7 +1300,7 @@ impl Render for MessageEditor {
                     font_family: settings.buffer_font.family.clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
-                    font_size: settings.buffer_font_size(cx).into(),
+                    font_size: settings.agent_buffer_font_size(cx).into(),
                     line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
@@ -1550,7 +1551,7 @@ impl MentionSet {
 
     fn remove_invalid(&mut self, snapshot: EditorSnapshot) {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-            if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+            if !crease.range().start.is_valid(&snapshot.buffer_snapshot()) {
                 self.mentions.remove(&crease_id);
             }
         }

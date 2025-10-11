@@ -1,5 +1,6 @@
 use crate::{Capslock, xcb_flush};
 use anyhow::{Context as _, anyhow};
+use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle, RegistrationToken,
     generic::{FdWrapper, Generic},
@@ -1315,17 +1316,9 @@ impl X11Client {
             return None;
         };
         let mut state = self.0.borrow_mut();
-        let keystroke = state.pre_key_char_down.take();
         state.composing = false;
         drop(state);
-        if let Some(mut keystroke) = keystroke {
-            keystroke.key_char = Some(text);
-            window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
-                keystroke,
-                is_held: false,
-            }));
-        }
-
+        window.handle_ime_commit(text);
         Some(())
     }
 
@@ -1455,6 +1448,10 @@ impl LinuxClient for X11Client {
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         let mut state = self.0.borrow_mut();
+        let parent_window = state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window);
         let x_window = state
             .xcb_connection
             .generate_id()
@@ -1473,6 +1470,7 @@ impl LinuxClient for X11Client {
             &state.atoms,
             state.scale_factor,
             state.common.appearance,
+            parent_window,
         )?;
         check_reply(
             || "Failed to set XdndAware property",
@@ -1659,6 +1657,16 @@ impl LinuxClient for X11Client {
         }
 
         Some(handles)
+    }
+
+    fn window_identifier(&self) -> impl Future<Output = Option<WindowIdentifier>> + Send + 'static {
+        let state = self.0.borrow();
+        state
+            .keyboard_focused_window
+            .and_then(|focused_window| state.windows.get(&focused_window))
+            .map(|window| window.window.x_window as u64)
+            .map(|x_window| std::future::ready(Some(WindowIdentifier::from_xid(x_window))))
+            .unwrap_or(std::future::ready(None))
     }
 }
 

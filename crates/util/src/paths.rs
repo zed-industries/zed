@@ -1,8 +1,10 @@
+use anyhow::Context;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::mem;
 use std::path::StripPrefixError;
@@ -35,8 +37,19 @@ pub fn home_dir() -> &'static PathBuf {
 }
 
 pub trait PathExt {
+    /// Compacts a given file path by replacing the user's home directory
+    /// prefix with a tilde (`~`).
+    ///
+    /// # Returns
+    ///
+    /// * A `PathBuf` containing the compacted file path. If the input path
+    ///   does not have the user's home directory prefix, or if we are not on
+    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf;
+
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -48,7 +61,6 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
-            use anyhow::Context as _;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
@@ -60,19 +72,24 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf>;
+
+    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
+    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
+    ///
+    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
     fn multiple_extensions(&self) -> Option<String>;
+
+    /// Try to make a shell-safe representation of the path.
+    ///
+    /// For Unix, the path is escaped to be safe for POSIX shells
+    fn try_shell_safe(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
-    /// Compacts a given file path by replacing the user's home directory
-    /// prefix with a tilde (`~`).
-    ///
-    /// # Returns
-    ///
-    /// * A `PathBuf` containing the compacted file path. If the input path
-    ///   does not have the user's home directory prefix, or if we are not on
-    ///   Linux or macOS, the original path is returned unchanged.
     fn compact(&self) -> PathBuf {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) || cfg!(target_os = "macos") {
             match self.as_ref().strip_prefix(home_dir().as_path()) {
@@ -89,7 +106,6 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
@@ -102,8 +118,6 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Converts a local path to one that can be used inside of WSL.
-    /// Returns `None` if the path cannot be converted into a WSL one (network share).
     fn local_to_wsl(&self) -> Option<PathBuf> {
         // quite sketchy to convert this back to path at the end, but a lot of functions only accept paths
         // todo: ideally rework them..?
@@ -133,10 +147,6 @@ impl<T: AsRef<Path>> PathExt for T {
         Some(new_path.into())
     }
 
-    /// Returns a file's "full" joined collection of extensions, in the case where a file does not
-    /// just have a singular extension but instead has multiple (e.g File.tar.gz, Component.stories.tsx)
-    ///
-    /// Will provide back the extensions joined together such as tar.gz or stories.tsx
     fn multiple_extensions(&self) -> Option<String> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
@@ -153,6 +163,51 @@ impl<T: AsRef<Path>> PathExt for T {
 
         Some(parts.into_iter().join("."))
     }
+
+    fn try_shell_safe(&self) -> anyhow::Result<String> {
+        #[cfg(target_os = "windows")]
+        {
+            Ok(self.as_ref().to_string_lossy().to_string())
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let path_str = self
+                .as_ref()
+                .to_str()
+                .with_context(|| "Path contains invalid UTF-8")?;
+
+            // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
+            // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
+            // errors are introduced in the future :(
+            Ok(shlex::try_quote(path_str)?.into_owned())
+        }
+    }
+}
+
+pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
+    strip_path_suffix(base, suffix).is_some()
+}
+
+pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
+    if let Some(remainder) = base
+        .as_os_str()
+        .as_encoded_bytes()
+        .strip_suffix(suffix.as_os_str().as_encoded_bytes())
+    {
+        if remainder
+            .last()
+            .is_none_or(|last_byte| std::path::is_separator(*last_byte as char))
+        {
+            let os_str = unsafe {
+                OsStr::from_encoded_bytes_unchecked(
+                    &remainder[0..remainder.len().saturating_sub(1)],
+                )
+            };
+            return Some(Path::new(os_str));
+        }
+    }
+    None
 }
 
 /// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
@@ -372,6 +427,82 @@ pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
                         .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
+#[derive(Debug, PartialEq)]
+#[non_exhaustive]
+pub struct NormalizeError;
+
+impl Error for NormalizeError {}
+
+impl std::fmt::Display for NormalizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("parent reference `..` points outside of base directory")
+    }
+}
+
+/// Copied from stdlib where it's unstable.
+///
+/// Normalize a path, including `..` without traversing the filesystem.
+///
+/// Returns an error if normalization would leave leading `..` components.
+///
+/// <div class="warning">
+///
+/// This function always resolves `..` to the "lexical" parent.
+/// That is "a/b/../c" will always resolve to `a/c` which can change the meaning of the path.
+/// In particular, `a/c` and `a/b/../c` are distinct on many systems because `b` may be a symbolic link, so its parent isn't `a`.
+///
+/// </div>
+///
+/// [`path::absolute`](absolute) is an alternative that preserves `..`.
+/// Or [`Path::canonicalize`] can be used to resolve any `..` by querying the filesystem.
+pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
+    use std::path::Component;
+
+    let mut lexical = PathBuf::new();
+    let mut iter = path.components().peekable();
+
+    // Find the root, if any, and add it to the lexical path.
+    // Here we treat the Windows path "C:\" as a single "root" even though
+    // `components` splits it into two: (Prefix, RootDir).
+    let root = match iter.peek() {
+        Some(Component::ParentDir) => return Err(NormalizeError),
+        Some(p @ Component::RootDir) | Some(p @ Component::CurDir) => {
+            lexical.push(p);
+            iter.next();
+            lexical.as_os_str().len()
+        }
+        Some(Component::Prefix(prefix)) => {
+            lexical.push(prefix.as_os_str());
+            iter.next();
+            if let Some(p @ Component::RootDir) = iter.peek() {
+                lexical.push(p);
+                iter.next();
+            }
+            lexical.as_os_str().len()
+        }
+        None => return Ok(PathBuf::new()),
+        Some(Component::Normal(_)) => 0,
+    };
+
+    for component in iter {
+        match component {
+            Component::RootDir => unreachable!(),
+            Component::Prefix(_) => return Err(NormalizeError),
+            Component::CurDir => continue,
+            Component::ParentDir => {
+                // It's an error if ParentDir causes us to go above the "root".
+                if lexical.as_os_str().len() == root {
+                    return Err(NormalizeError);
+                } else {
+                    lexical.pop();
+                }
+            }
+            Component::Normal(path) => lexical.push(path),
+        }
+    }
+    Ok(lexical)
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -427,7 +558,7 @@ impl PathWithPosition {
     /// # Examples
     ///
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file"), PathWithPosition {
     ///     path: PathBuf::from("test_file"),
@@ -458,7 +589,7 @@ impl PathWithPosition {
     ///
     /// # Expected parsing results when encounter ill-formatted inputs.
     /// ```
-    /// # use util::paths::PathWithPosition;
+    /// # use zed_util::paths::PathWithPosition;
     /// # use std::path::PathBuf;
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs:a"), PathWithPosition {
     ///     path: PathBuf::from("test_file.rs:a"),
@@ -1768,5 +1899,36 @@ mod tests {
         // Longer sample extension
         let path = Path::new("/a/b/c/long.app.tar.gz");
         assert_eq!(path.multiple_extensions(), Some("app.tar.gz".to_string()));
+    }
+
+    #[test]
+    fn test_strip_path_suffix() {
+        let base = Path::new("/a/b/c/file_name");
+        let suffix = Path::new("file_name");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.tsx");
+        let suffix = Path::new("file_name.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b/c")));
+
+        let base = Path::new("/a/b/c/file_name.stories.tsx");
+        let suffix = Path::new("c/file_name.stories.tsx");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a/b")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("/a")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/long.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), Some(Path::new("")));
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("/a/b/c/no_match.app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
+
+        let base = Path::new("/a/b/c/long.app.tar.gz");
+        let suffix = Path::new("app.tar.gz");
+        assert_eq!(strip_path_suffix(base, suffix), None);
     }
 }

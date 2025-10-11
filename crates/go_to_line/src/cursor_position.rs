@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings, MultiBufferSnapshot};
+use editor::{Editor, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use settings::Settings;
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
@@ -8,7 +8,7 @@ use ui::{
     Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{StatusBarSettings, StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -113,7 +113,9 @@ impl CursorPosition {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all_adjusted(cx) {
+                                    for selection in
+                                        editor.selections.all_adjusted_with_snapshot(&snapshot)
+                                    {
                                         let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
@@ -205,10 +207,7 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !EditorSettings::get_global(cx)
-            .status_bar
-            .cursor_position_button
-        {
+        if !StatusBarSettings::get_global(cx).cursor_position_button {
             return div();
         }
 
@@ -307,7 +306,7 @@ impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
 }
 
 impl Settings for LineIndicatorFormat {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         content.line_indicator_format.unwrap().into()
     }
 }

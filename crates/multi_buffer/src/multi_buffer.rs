@@ -49,7 +49,7 @@ use text::{
     subscription::{Subscription, Topic},
 };
 use theme::SyntaxTheme;
-use util::post_inc;
+use util::{post_inc, rel_path::RelPath};
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -161,24 +161,34 @@ impl MultiBufferDiffHunk {
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
-    namespace: u32,
-    path: Arc<str>,
+    // Used by the derived PartialOrd & Ord
+    sort_prefix: Option<u64>,
+    path: Arc<RelPath>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u32, path: Arc<str>) -> Self {
-        Self { namespace, path }
+    pub fn with_sort_prefix(sort_prefix: u64, path: Arc<RelPath>) -> Self {
+        Self {
+            sort_prefix: Some(sort_prefix),
+            path,
+        }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, file.full_path(cx).to_string_lossy().into_owned().into())
+            Self::with_sort_prefix(file.worktree_id(cx).to_proto(), file.path().clone())
         } else {
-            Self::namespaced(0, buffer.entity_id().to_string().into())
+            Self {
+                sort_prefix: None,
+                path: RelPath::unix(&buffer.entity_id().to_string())
+                    .unwrap()
+                    .into_arc(),
+            }
         }
     }
 
-    pub fn path(&self) -> &Arc<str> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn path(&self) -> &Arc<RelPath> {
         &self.path
     }
 }
@@ -6375,6 +6385,17 @@ impl MultiBufferSnapshot {
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
             debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
+    }
+
+    // used by line_mode selections and tries to match vim behavior
+    pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(range.end.row, self.line_len(MultiBufferRow(range.end.row)))
+        } else {
+            range.end
+        };
+        new_start..new_end
     }
 }
 

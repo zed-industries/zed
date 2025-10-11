@@ -127,7 +127,6 @@ pub struct DeclarationScoreComponents {
     pub declaration_count: usize,
     pub reference_line_distance: u32,
     pub declaration_line_distance: u32,
-    pub declaration_line_distance_rank: usize,
     pub excerpt_vs_item_jaccard: f32,
     pub excerpt_vs_signature_jaccard: f32,
     pub adjacent_vs_item_jaccard: f32,
@@ -136,6 +135,15 @@ pub struct DeclarationScoreComponents {
     pub excerpt_vs_signature_weighted_overlap: f32,
     pub adjacent_vs_item_weighted_overlap: f32,
     pub adjacent_vs_signature_weighted_overlap: f32,
+    pub path_import_match_count: usize,
+    pub wildcard_path_import_match_count: usize,
+    pub import_similarity: f32,
+    pub max_import_similarity: f32,
+    pub normalized_import_similarity: f32,
+    pub wildcard_import_similarity: f32,
+    pub normalized_wildcard_import_similarity: f32,
+    pub included_by_others: usize,
+    pub includes_others: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

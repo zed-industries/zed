@@ -4,9 +4,9 @@ use crate::{
     WorkspaceItemBuilder,
     invalid_buffer_view::InvalidBufferView,
     item::{
-        ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics, TabContentParams,
-        TabTooltipContent, WeakItemHandle,
+        ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
+        PreviewTabsSettings, ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics,
+        TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -119,6 +119,17 @@ pub struct CloseActiveItem {
 #[serde(deny_unknown_fields)]
 #[action(deprecated_aliases = ["pane::CloseInactiveItems"])]
 pub struct CloseOtherItems {
+    #[serde(default)]
+    pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
+}
+
+/// Closes all multibuffers in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields)]
+pub struct CloseMultibufferItems {
     #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -900,7 +911,7 @@ impl Pane {
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
             for (index, item) in self.items.iter().enumerate() {
-                if item.is_singleton(cx)
+                if item.buffer_kind(cx) == ItemBufferKind::Singleton
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
                     let item = item.boxed_clone();
@@ -910,7 +921,9 @@ impl Pane {
             }
         } else {
             for (index, item) in self.items.iter().enumerate() {
-                if item.is_singleton(cx) && item.project_path(cx).as_ref() == Some(&project_path) {
+                if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                    && item.project_path(cx).as_ref() == Some(&project_path)
+                {
                     let item = item.boxed_clone();
                     existing_item = Some((index, item));
                     break;
@@ -1046,7 +1059,7 @@ impl Pane {
             self.close_items_on_item_open(window, cx);
         }
 
-        if item.is_singleton(cx)
+        if item.buffer_kind(cx) == ItemBufferKind::Singleton
             && let Some(&entry_id) = item.project_entry_ids(cx).first()
         {
             let Some(project) = self.project.upgrade() else {
@@ -1077,7 +1090,7 @@ impl Pane {
         };
 
         // Does the item already exist?
-        let project_entry_id = if item.is_singleton(cx) {
+        let project_entry_id = if item.buffer_kind(cx) == ItemBufferKind::Singleton {
             item.project_entry_ids(cx).first().copied()
         } else {
             None
@@ -1086,7 +1099,7 @@ impl Pane {
         let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.item_id() == item.item_id() {
                 true
-            } else if existing_item.is_singleton(cx) {
+            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
                 existing_item
                     .project_entry_ids(cx)
                     .first()
@@ -1202,7 +1215,9 @@ impl Pane {
         cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
-            if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && (item.project_entry_ids(cx).as_slice() == [entry_id])
+            {
                 Some(item.boxed_clone())
             } else {
                 None
@@ -1216,7 +1231,8 @@ impl Pane {
         cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(move |item| {
-            if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && (item.project_path(cx).as_slice() == [project_path.clone()])
             {
                 Some(item.boxed_clone())
             } else {
@@ -1475,6 +1491,30 @@ impl Pane {
         )
     }
 
+    pub fn close_multibuffer_items(
+        &mut self,
+        action: &CloseMultibufferItems,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.items.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let pinned_item_ids = self.pinned_item_ids();
+        let multibuffer_items = self.multibuffer_item_ids(cx);
+
+        self.close_items(
+            window,
+            cx,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            move |item_id| {
+                (action.close_pinned || !pinned_item_ids.contains(&item_id))
+                    && multibuffer_items.contains(&item_id)
+            },
+        )
+    }
+
     pub fn close_clean_items(
         &mut self,
         action: &CloseCleanItems,
@@ -1637,14 +1677,14 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
-            return !(item.is_singleton(cx) && item.is_dirty(cx));
+            return !(item.buffer_kind(cx) == ItemBufferKind::Singleton && item.is_dirty(cx));
         }
 
         for open_item in workspace.items(cx) {
             if open_item.item_id() == item.item_id() {
                 continue;
             }
-            if !open_item.is_singleton(cx) {
+            if open_item.buffer_kind(cx) != ItemBufferKind::Singleton {
                 continue;
             }
             let other_project_item_ids = open_item.project_item_model_ids(cx);
@@ -1999,7 +2039,7 @@ impl Pane {
                 item.is_dirty(cx),
                 item.can_save(cx),
                 item.can_save_as(cx),
-                item.is_singleton(cx),
+                item.buffer_kind(cx) == ItemBufferKind::Singleton,
                 item.has_deleted_file(cx),
             )
         })?;
@@ -2281,7 +2321,9 @@ impl Pane {
         cx: &mut Context<Pane>,
     ) -> Option<()> {
         let item_id = self.items().find_map(|item| {
-            if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
+            if item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && item.project_entry_ids(cx).as_slice() == [entry_id]
+            {
                 Some(item.item_id())
             } else {
                 None
@@ -2701,12 +2743,15 @@ impl Pane {
                     .child(label),
             );
 
-        let single_entry_to_resolve = self.items[ix]
-            .is_singleton(cx)
+        let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
             .then(|| self.items[ix].project_entry_ids(cx).get(0).copied())
             .flatten();
 
         let total_items = self.items.len();
+        let has_multibuffer_items = self
+            .items
+            .iter()
+            .any(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer);
         let has_items_to_left = ix > 0;
         let has_items_to_right = ix < total_items - 1;
         let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
@@ -2724,6 +2769,10 @@ impl Pane {
                         close_pinned: true,
                     };
                     let close_inactive_items_action = CloseOtherItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+                    let close_multibuffers_action = CloseMultibufferItems {
                         save_intent: None,
                         close_pinned: false,
                     };
@@ -2764,6 +2813,24 @@ impl Pane {
                                         .detach_and_log_err(cx);
                                     })),
                             ))
+                            // We make this optional, instead of using disabled as to not overwhelm the context menu unnecessarily
+                            .extend(has_multibuffer_items.then(|| {
+                                ContextMenuItem::Entry(
+                                    ContextMenuEntry::new("Close Multibuffers")
+                                        .action(Box::new(close_multibuffers_action.clone()))
+                                        .handler(window.handler_for(
+                                            &pane,
+                                            move |pane, window, cx| {
+                                                pane.close_multibuffer_items(
+                                                    &close_multibuffers_action,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                            },
+                                        )),
+                                )
+                            }))
                             .separator()
                             .item(ContextMenuItem::Entry(
                                 ContextMenuEntry::new("Close Left")
@@ -3485,6 +3552,13 @@ impl Pane {
         }
     }
 
+    fn multibuffer_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
+        self.items()
+            .filter(|item| item.buffer_kind(cx) == ItemBufferKind::Multibuffer)
+            .map(|item| item.item_id())
+            .collect()
+    }
+
     pub fn drag_split_direction(&self) -> Option<SplitDirection> {
         self.drag_split_direction
     }
@@ -3706,6 +3780,12 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 }),
             )
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &CloseMultibufferItems, window, cx| {
+                    pane.close_multibuffer_items(action, window, cx)
+                        .detach_and_log_err(cx)
+                },
+            ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
                     let entry_id = action
@@ -5655,7 +5735,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
                 })),
@@ -5673,7 +5753,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -5691,7 +5771,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(true)
+                        .with_buffer_kind(ItemBufferKind::Singleton)
                         .with_label("buffer 2")
                         .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
                 })),
@@ -5709,7 +5789,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(false)
+                        .with_buffer_kind(ItemBufferKind::Multibuffer)
                         .with_label("multibuffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -5727,7 +5807,7 @@ mod tests {
             pane.add_item(
                 Box::new(cx.new(|cx| {
                     TestItem::new(cx)
-                        .with_singleton(false)
+                        .with_buffer_kind(ItemBufferKind::Multibuffer)
                         .with_label("multibuffer 1b")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 })),
@@ -6282,6 +6362,139 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_multibuffer_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let add_labeled_item = |pane: &Entity<Pane>,
+                                label,
+                                is_dirty,
+                                kind: ItemBufferKind,
+                                cx: &mut VisualTestContext| {
+            pane.update_in(cx, |pane, window, cx| {
+                let labeled_item = Box::new(cx.new(|cx| {
+                    TestItem::new(cx)
+                        .with_label(label)
+                        .with_dirty(is_dirty)
+                        .with_buffer_kind(kind)
+                }));
+                pane.add_item(labeled_item.clone(), false, false, None, window, cx);
+                labeled_item
+            })
+        };
+
+        let item_a = add_labeled_item(&pane, "A", false, ItemBufferKind::Multibuffer, cx);
+        add_labeled_item(&pane, "B", false, ItemBufferKind::Multibuffer, cx);
+        add_labeled_item(&pane, "C", false, ItemBufferKind::Singleton, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_item_labels(&pane, ["C*"], cx);
+
+        add_labeled_item(&pane, "A", true, ItemBufferKind::Singleton, cx).update(cx, |item, cx| {
+            item.project_items
+                .push(TestProjectItem::new_dirty(1, "A.txt", cx))
+        });
+        add_labeled_item(&pane, "B", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(2, "B.txt", cx))
+            },
+        );
+        add_labeled_item(&pane, "D", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(3, "D.txt", cx))
+            },
+        );
+        assert_item_labels(&pane, ["C", "A^", "B^", "D*^"], cx);
+
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Save all");
+        save.await.unwrap();
+        assert_item_labels(&pane, ["C", "A*^"], cx);
+
+        add_labeled_item(&pane, "B", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(2, "B.txt", cx))
+            },
+        );
+        add_labeled_item(&pane, "D", true, ItemBufferKind::Multibuffer, cx).update(
+            cx,
+            |item, cx| {
+                item.project_items
+                    .push(TestProjectItem::new_dirty(3, "D.txt", cx))
+            },
+        );
+        assert_item_labels(&pane, ["C", "A^", "B^", "D*^"], cx);
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_multibuffer_items(
+                &CloseMultibufferItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_prompt_answer("Discard all");
+        save.await.unwrap();
+        assert_item_labels(&pane, ["C", "A*^"], cx);
+    }
+
+    #[gpui::test]
     async fn test_close_with_save_intent(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -6352,8 +6565,8 @@ mod tests {
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
         assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
-        // -39.75 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.75));
+        // -39.5 is the magic number for this setup
+        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

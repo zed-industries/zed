@@ -30,7 +30,7 @@ use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
-    git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
 use project_panel_settings::ProjectPanelSettings;
@@ -500,7 +500,7 @@ impl ProjectPanel {
                 &git_store,
                 window,
                 |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, _, _)
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
                     | GitStoreEvent::RepositoryAdded(_)
                     | GitStoreEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
@@ -643,9 +643,17 @@ impl ProjectPanel {
                             .as_ref()
                             .is_some_and(|state| state.processing_filename.is_none())
                         {
-                            project_panel.state.edit_state = None;
-                            project_panel.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
+                            match project_panel.confirm_edit(window, cx) {
+                                Some(task) => {
+                                    task.detach_and_notify_err(window, cx);
+                                }
+                                None => {
+                                    project_panel.state.edit_state = None;
+                                    project_panel
+                                        .update_visible_entries(None, false, false, window, cx);
+                                    cx.notify();
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -3418,17 +3426,20 @@ impl ProjectPanel {
                             new_state.max_width_item_index = Some(visited_worktrees_length + index);
                         }
                     }
-                    if let Some((worktree_id, entry_id)) = new_selected_entry {
-                        new_state.selection = Some(SelectedEntry {
-                            worktree_id,
-                            entry_id,
-                        });
-                    }
                     new_state
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
+                let current_selection = this.state.selection;
                 this.state = new_state;
+                if let Some((worktree_id, entry_id)) = new_selected_entry {
+                    this.state.selection = Some(SelectedEntry {
+                        worktree_id,
+                        entry_id,
+                    });
+                } else {
+                    this.state.selection = current_selection;
+                }
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
                     telemetry::event!(
@@ -4613,7 +4624,7 @@ impl ProjectPanel {
                         project_panel.marked_entries.clear();
                         if is_sticky
                             && let Some((_, _, index)) = project_panel.index_for_entry(entry_id, worktree_id) {
-                                project_panel.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
+                                project_panel.scroll_handle.scroll_to_item_strict_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
@@ -5771,13 +5782,14 @@ impl Render for ProjectPanel {
                                         cx.stop_propagation();
                                     },
                                 ))
-                                .on_click(cx.listener(|this, event, _, cx| {
+                                .on_click(cx.listener(|this, event, window, cx| {
                                     if matches!(event, gpui::ClickEvent::Keyboard(_)) {
                                         return;
                                     }
                                     cx.stop_propagation();
                                     this.state.selection = None;
                                     this.marked_entries.clear();
+                                    this.focus_handle(cx).focus(window);
                                 }))
                                 .on_mouse_down(
                                     MouseButton::Right,

@@ -60,7 +60,10 @@ use notifications::{
     simple_message_notification::MessageNotification,
 };
 pub use pane::*;
-pub use pane_group::*;
+pub use pane_group::{
+    ActivePaneDecorator, HANDLE_HITBOX_SIZE, Member, PaneAxis, PaneGroup, PaneRenderContext,
+    SplitDirection,
+};
 use persistence::{DB, SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
@@ -100,7 +103,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext};
-use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
+use theme::{ActiveTheme, GlobalTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
@@ -112,15 +115,16 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport};
 
-use crate::notifications::NotificationId;
 use crate::persistence::{
     SerializedAxis,
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
+use crate::{item::ItemBufferKind, notifications::NotificationId};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -506,6 +510,7 @@ pub fn init_settings(cx: &mut App) {
     ItemSettings::register(cx);
     PreviewTabsSettings::register(cx);
     TabBarSettings::register(cx);
+    StatusBarSettings::register(cx);
 }
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
@@ -1430,8 +1435,8 @@ impl Workspace {
 
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
-                ThemeSettings::reload_current_theme(cx);
-                ThemeSettings::reload_current_icon_theme(cx);
+                GlobalTheme::reload_theme(cx);
+                GlobalTheme::reload_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
@@ -1743,8 +1748,25 @@ impl Workspace {
         });
     }
 
+    pub fn remove_panel<T: Panel>(
+        &mut self,
+        panel: &Entity<T>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            dock.update(cx, |dock, cx| {
+                dock.remove_panel(panel, window, cx);
+            })
+        }
+    }
+
     pub fn status_bar(&self) -> &Entity<StatusBar> {
         &self.status_bar
+    }
+
+    pub fn status_bar_visible(&self, cx: &App) -> bool {
+        StatusBarSettings::get_global(cx).show
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -2515,8 +2537,12 @@ impl Workspace {
             };
 
             for (pane, item) in dirty_items {
-                let (singleton, project_entry_ids) =
-                    cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
+                let (singleton, project_entry_ids) = cx.update(|_, cx| {
+                    (
+                        item.buffer_kind(cx) == ItemBufferKind::Singleton,
+                        item.project_entry_ids(cx),
+                    )
+                })?;
                 if (singleton || !project_entry_ids.is_empty())
                     && !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await?
                 {
@@ -4093,11 +4119,11 @@ impl Workspace {
                     pane.add_item(clone, true, true, None, window, cx)
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
+                cx.notify();
                 Some(new_pane)
             } else {
                 None
             };
-        cx.notify();
         maybe_pane_handle
     }
 
@@ -4799,7 +4825,7 @@ impl Workspace {
                             .items()
                             .find_map(|item| {
                                 let item = item.to_followable_item_handle(cx)?;
-                                if item.is_singleton(cx)
+                                if item.buffer_kind(cx) == ItemBufferKind::Singleton
                                     && item.project_item_model_ids(cx).as_slice()
                                         == [buffer_entity_id]
                                 {
@@ -6729,7 +6755,9 @@ impl Render for Workspace {
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
-                        .child(self.status_bar.clone())
+                        .when(self.status_bar_visible(cx), |parent| {
+                            parent.child(self.status_bar.clone())
+                        })
                         .child(self.modal_layer.clone())
                         .child(self.toast_layer.clone()),
                 ),
@@ -8184,7 +8212,7 @@ mod tests {
     use crate::{
         dock::{PanelEvent, test::TestPanel},
         item::{
-            ItemEvent,
+            ItemBufferKind, ItemEvent,
             test::{TestItem, TestProjectItem},
         },
     };
@@ -8545,7 +8573,7 @@ mod tests {
         let item_2_3 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_project_items(&[
                     single_entry_items[2].read(cx).project_items[0].clone(),
                     single_entry_items[3].read(cx).project_items[0].clone(),
@@ -8554,7 +8582,7 @@ mod tests {
         let item_3_4 = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_project_items(&[
                     single_entry_items[3].read(cx).project_items[0].clone(),
                     single_entry_items[4].read(cx).project_items[0].clone(),
@@ -9575,7 +9603,7 @@ mod tests {
         let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
@@ -9726,7 +9754,7 @@ mod tests {
         let dirty_multi_buffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
@@ -10140,7 +10168,7 @@ mod tests {
         let dirty_multi_buffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
-                .with_singleton(false)
+                .with_buffer_kind(ItemBufferKind::Multibuffer)
                 .with_label("Fake Project Search")
                 .with_project_items(&[
                     dirty_regular_buffer.read(cx).project_items[0].clone(),
@@ -10770,6 +10798,46 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    #[gpui::test]
+    async fn test_status_bar_visibility(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, _cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Test with status bar shown (default)
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible by default");
+        });
+
+        // Test with status bar hidden
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(false);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(!visible, "Status bar should be hidden when show is false");
+        });
+
+        // Test with status bar shown explicitly
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.status_bar.get_or_insert_default().show = Some(true);
+            });
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            let visible = workspace.status_bar_visible(cx);
+            assert!(visible, "Status bar should be visible when show is true");
+        });
     }
 
     fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {

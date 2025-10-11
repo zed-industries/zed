@@ -20,7 +20,9 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
+use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
+use fs::Fs;
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
@@ -46,7 +48,7 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, ProjectItem};
+use project::{DirectoryLister, DisableAiSettings, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
@@ -68,7 +70,10 @@ use std::{
     sync::atomic::{self, AtomicBool},
 };
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::{
+    ActiveTheme, GlobalTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError,
+    ThemeRegistry, ThemeSettings,
+};
 use ui::{PopoverMenuHandle, prelude::*};
 use util::markdown::MarkdownString;
 use util::rel_path::RelPath;
@@ -88,7 +93,8 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile, OpenZedUrl,
+    Quit,
 };
 
 actions!(
@@ -191,7 +197,7 @@ pub fn init(cx: &mut App) {
             open_telemetry_log_file(workspace, window, cx);
         });
     });
-    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+    cx.on_action(|&zed_actions::OpenKeymapFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::keymap_file(),
@@ -201,7 +207,7 @@ pub fn init(cx: &mut App) {
             );
         });
     });
-    cx.on_action(|_: &OpenSettings, cx| {
+    cx.on_action(|_: &OpenSettingsFile, cx| {
         with_active_or_new_workspace(cx, |_, window, cx| {
             open_settings_file(
                 paths::settings_file(),
@@ -604,21 +610,55 @@ fn initialize_panels(
             workspace.add_panel(debug_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = !cfg!(test);
-        let agent_panel = if is_assistant2_enabled {
-            let agent_panel =
-                agent_ui::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
-                    .await?;
+        fn setup_or_teardown_agent_panel(
+            workspace: &mut Workspace,
+            prompt_builder: Arc<PromptBuilder>,
+            window: &mut Window,
+            cx: &mut Context<Workspace>,
+        ) -> Task<anyhow::Result<()>> {
+            let disable_ai = SettingsStore::global(cx)
+                .get::<DisableAiSettings>(None)
+                .disable_ai
+                || cfg!(test);
+            let existing_panel = workspace.panel::<agent_ui::AgentPanel>(cx);
+            match (disable_ai, existing_panel) {
+                (false, None) => cx.spawn_in(window, async move |workspace, cx| {
+                    let panel =
+                        agent_ui::AgentPanel::load(workspace.clone(), prompt_builder, cx.clone())
+                            .await?;
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let disable_ai = SettingsStore::global(cx)
+                            .get::<DisableAiSettings>(None)
+                            .disable_ai;
+                        let have_panel = workspace.panel::<agent_ui::AgentPanel>(cx).is_some();
+                        if !disable_ai && !have_panel {
+                            workspace.add_panel(panel, window, cx);
+                        }
+                    })
+                }),
+                (true, Some(existing_panel)) => {
+                    workspace.remove_panel::<agent_ui::AgentPanel>(&existing_panel, window, cx);
+                    Task::ready(Ok(()))
+                }
+                _ => Task::ready(Ok(())),
+            }
+        }
 
-            Some(agent_panel)
-        } else {
-            None
-        };
+        workspace_handle
+            .update_in(cx, |workspace, window, cx| {
+                setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+            })?
+            .await?;
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(agent_panel) = agent_panel {
-                workspace.add_panel(agent_panel, window, cx);
-            }
+            cx.observe_global_in::<SettingsStore>(window, {
+                let prompt_builder = prompt_builder.clone();
+                move |workspace, window, cx| {
+                    setup_or_teardown_agent_panel(workspace, prompt_builder.clone(), window, cx)
+                        .detach_and_log_err(cx);
+                }
+            })
+            .detach();
 
             // Register the actions that are shared between `assistant` and `assistant2`.
             //
@@ -626,7 +666,7 @@ fn initialize_panels(
             // functions so that we only register the actions once.
             //
             // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
-            if is_assistant2_enabled {
+            if !cfg!(test) {
                 <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent_ui::ConcreteAssistantPanelDelegate),
                     cx,
@@ -1250,13 +1290,19 @@ pub fn handle_settings_file_changes(
             Err(err) => {
                 show_app_notification(id, cx, move |cx| {
                     cx.new(|cx| {
-                        MessageNotification::new(format!("Failed to migrate settings\n{err}"), cx)
-                            .primary_message("Open Settings File")
-                            .primary_icon(IconName::Settings)
-                            .primary_on_click(|window, cx| {
-                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
-                                cx.emit(DismissEvent);
-                            })
+                        MessageNotification::new(
+                            format!(
+                                "Failed to migrate settings\n\
+                                    {err}"
+                            ),
+                            cx,
+                        )
+                        .primary_message("Open Settings File")
+                        .primary_icon(IconName::Settings)
+                        .primary_on_click(|window, cx| {
+                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        })
                     })
                 });
                 // notify user here
@@ -1457,7 +1503,7 @@ fn show_keymap_file_json_error(
             MessageNotification::new(message.clone(), cx)
                 .primary_message("Open Keymap File")
                 .primary_on_click(|window, cx| {
-                    window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+                    window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
                     cx.emit(DismissEvent);
                 })
         })
@@ -1474,7 +1520,7 @@ fn show_keymap_file_load_error(
         error_message,
         "Open Keymap File".into(),
         |window, cx| {
-            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx);
             cx.emit(DismissEvent);
         },
         cx,
@@ -1542,7 +1588,8 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     }
     cx.bind_keys(user_key_bindings);
 
-    cx.set_menus(app_menus());
+    let menus = app_menus(cx);
+    cx.set_menus(menus);
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
     cx.set_dock_menu(vec![gpui::MenuItem::action(
@@ -1592,7 +1639,7 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                         .primary_message("Open Settings File")
                         .primary_icon(IconName::Settings)
                         .primary_on_click(|window, cx| {
-                            window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            window.dispatch_action(zed_actions::OpenSettingsFile.boxed_clone(), cx);
                             cx.emit(DismissEvent);
                         })
                 })
@@ -1974,6 +2021,55 @@ fn capture_recent_audio(workspace: &mut Workspace, _: &mut Window, cx: &mut Cont
     );
 }
 
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = SystemAppearance::global(cx).0;
+
+    let theme_name = theme_settings.theme.name(appearance);
+    if matches!(
+        theme_registry.get(&theme_name.0),
+        Err(ThemeNotFoundError(_))
+    ) && let Some(theme_path) = extension_store
+        .read(cx)
+        .path_to_extension_theme(&theme_name.0)
+    {
+        if cx
+            .background_executor()
+            .block(theme_registry.load_user_theme(&theme_path, fs.clone()))
+            .log_err()
+            .is_some()
+        {
+            GlobalTheme::reload_theme(cx);
+        }
+    }
+
+    let theme_settings = ThemeSettings::get_global(cx);
+    let icon_theme_name = theme_settings.icon_theme.name(appearance);
+    if matches!(
+        theme_registry.get_icon_theme(&icon_theme_name.0),
+        Err(IconThemeNotFoundError(_))
+    ) && let Some((icon_theme_path, icons_root_path)) = extension_store
+        .read(cx)
+        .path_to_extension_icon_theme(&icon_theme_name.0)
+    {
+        if cx
+            .background_executor()
+            .block(theme_registry.load_icon_theme(&icon_theme_path, &icons_root_path, fs))
+            .log_err()
+            .is_some()
+        {
+            GlobalTheme::reload_icon_theme(cx);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1993,8 +2089,11 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
-    use util::{path, rel_path::rel_path};
+    use theme::ThemeRegistry;
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
         WorkspaceHandle,
@@ -4423,7 +4522,8 @@ mod tests {
                     | "agent::NewNativeAgentThreadFromSummary"
                     | "action::Sequence"
                     | "zed::OpenBrowser"
-                    | "zed::OpenZedUrl" => {}
+                    | "zed::OpenZedUrl"
+                    | "settings_editor::FocusFile" => {}
                     _ => {
                         let result = cx.build_action(action, None);
                         match &result {
@@ -4538,6 +4638,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "settings_editor",
                 "settings_profile_selector",
                 "snippets",
                 "stash_picker",
@@ -4556,6 +4657,7 @@ mod tests {
                 "window",
                 "workspace",
                 "zed",
+                "zed_actions",
                 "zed_predict_onboarding",
                 "zeta",
             ];
@@ -4592,7 +4694,7 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+            if theme.name.as_ref() == "One Dark" {
                 has_default_theme = true;
             }
         }

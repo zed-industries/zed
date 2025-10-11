@@ -1,6 +1,6 @@
 use documented::Documented;
 use gpui::{
-    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
+    AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, FocusHandle, Hsla, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
     transparent_black,
 };
@@ -41,6 +41,8 @@ pub trait ButtonCommon: Clickable + Disableable {
     fn tab_index(self, tab_index: impl Into<isize>) -> Self;
 
     fn layer(self, elevation: ElevationIndex) -> Self;
+
+    fn track_focus(self, focus_handle: &FocusHandle) -> Self;
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
@@ -133,6 +135,12 @@ pub enum ButtonStyle {
     /// a fully transparent button.
     Outlined,
 
+    /// Transparent button that always has an outline.
+    OutlinedTransparent,
+
+    /// A more de-emphasized version of the outlined button.
+    OutlinedGhost,
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
@@ -144,11 +152,38 @@ pub enum ButtonStyle {
     Transparent,
 }
 
+/// Rounding for a button that may have straight edges.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) enum ButtonLikeRounding {
-    All,
-    Left,
-    Right,
+pub(crate) struct ButtonLikeRounding {
+    /// Top-left corner rounding
+    pub top_left: bool,
+    /// Top-right corner rounding
+    pub top_right: bool,
+    /// Bottom-right corner rounding
+    pub bottom_right: bool,
+    /// Bottom-left corner rounding
+    pub bottom_left: bool,
+}
+
+impl ButtonLikeRounding {
+    pub const ALL: Self = Self {
+        top_left: true,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: true,
+    };
+    pub const LEFT: Self = Self {
+        top_left: true,
+        top_right: false,
+        bottom_right: false,
+        bottom_left: true,
+    };
+    pub const RIGHT: Self = Self {
+        top_left: false,
+        top_right: true,
+        bottom_right: true,
+        bottom_left: false,
+    };
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +224,18 @@ impl ButtonStyle {
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, cx),
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedGhost => ButtonLikeStyles {
+                background: transparent_black(),
                 border_color: cx.theme().colors().border_variant,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -238,6 +285,18 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_hover,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedGhost => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -276,6 +335,18 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_active,
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedGhost => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color: cx.theme().colors().border_variant,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
@@ -305,6 +376,18 @@ impl ButtonStyle {
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedGhost => ButtonLikeStyles {
+                background: transparent_black(),
                 border_color: cx.theme().colors().border,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -341,6 +424,18 @@ impl ButtonStyle {
             },
             ButtonStyle::Outlined => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedTransparent => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_disabled,
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedGhost => ButtonLikeStyles {
+                background: transparent_black(),
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -405,6 +500,7 @@ pub struct ButtonLike {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
+    focus_handle: Option<FocusHandle>,
 }
 
 impl ButtonLike {
@@ -419,7 +515,7 @@ impl ButtonLike {
             width: None,
             height: None,
             size: ButtonSize::Default,
-            rounding: Some(ButtonLikeRounding::All),
+            rounding: Some(ButtonLikeRounding::ALL),
             tooltip: None,
             hoverable_tooltip: None,
             children: SmallVec::new(),
@@ -428,19 +524,20 @@ impl ButtonLike {
             on_right_click: None,
             layer: None,
             tab_index: None,
+            focus_handle: None,
         }
     }
 
     pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Left)
+        Self::new(id).rounding(ButtonLikeRounding::LEFT)
     }
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::Right)
+        Self::new(id).rounding(ButtonLikeRounding::RIGHT)
     }
 
     pub fn new_rounded_all(id: impl Into<ElementId>) -> Self {
-        Self::new(id).rounding(ButtonLikeRounding::All)
+        Self::new(id).rounding(ButtonLikeRounding::ALL)
     }
 
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -549,6 +646,11 @@ impl ButtonCommon for ButtonLike {
         self.layer = Some(elevation);
         self
     }
+
+    fn track_focus(mut self, focus_handle: &gpui::FocusHandle) -> Self {
+        self.focus_handle = Some(focus_handle.clone());
+        self
+    }
 }
 
 impl VisibleOnHover for ButtonLike {
@@ -575,6 +677,9 @@ impl RenderOnce for ButtonLike {
             .h_flex()
             .id(self.id.clone())
             .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
+            .when_some(self.focus_handle, |this, focus_handle| {
+                this.track_focus(&focus_handle)
+            })
             .font_ui(cx)
             .group("")
             .flex_none()
@@ -582,13 +687,20 @@ impl RenderOnce for ButtonLike {
             .when_some(self.width, |this, width| {
                 this.w(width).justify_center().text_center()
             })
-            .when(matches!(self.style, ButtonStyle::Outlined), |this| {
-                this.border_1()
-            })
-            .when_some(self.rounding, |this, rounding| match rounding {
-                ButtonLikeRounding::All => this.rounded_sm(),
-                ButtonLikeRounding::Left => this.rounded_l_sm(),
-                ButtonLikeRounding::Right => this.rounded_r_sm(),
+            .when(
+                matches!(
+                    self.style,
+                    ButtonStyle::Outlined
+                        | ButtonStyle::OutlinedTransparent
+                        | ButtonStyle::OutlinedGhost
+                ),
+                |this| this.border_1(),
+            )
+            .when_some(self.rounding, |this, rounding| {
+                this.when(rounding.top_left, |this| this.rounded_tl_sm())
+                    .when(rounding.top_right, |this| this.rounded_tr_sm())
+                    .when(rounding.bottom_right, |this| this.rounded_br_sm())
+                    .when(rounding.bottom_left, |this| this.rounded_bl_sm())
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
@@ -613,7 +725,13 @@ impl RenderOnce for ButtonLike {
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
                 this.cursor(self.cursor_style)
                     .hover(focus_color)
-                    .focus(focus_color)
+                    .map(|this| {
+                        if matches!(self.style, ButtonStyle::Outlined) {
+                            this.focus(|s| s.border_color(cx.theme().colors().border_focused))
+                        } else {
+                            this.focus(focus_color)
+                        }
+                    })
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(

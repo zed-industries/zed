@@ -4,6 +4,8 @@ use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Arc};
 
+use crate::FontFamilyName;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
     VsCode,
@@ -125,6 +127,12 @@ impl VsCodeSettings {
         }
     }
 
+    pub fn from_f32_setting<T: From<f32>>(&self, key: &str, setting: &mut Option<T>) {
+        if let Some(s) = self.content.get(key).and_then(Value::as_f64) {
+            *setting = Some(T::from(s as f32))
+        }
+    }
+
     pub fn enum_setting<T>(
         &self,
         key: &str,
@@ -138,5 +146,54 @@ impl VsCodeSettings {
 
     pub fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
         self.content.get(key).and_then(Value::as_str).and_then(f)
+    }
+
+    pub fn font_family_setting(
+        &self,
+        key: &str,
+        font_family: &mut Option<FontFamilyName>,
+        font_fallbacks: &mut Option<Vec<FontFamilyName>>,
+    ) {
+        let Some(css_name) = self.content.get(key).and_then(Value::as_str) else {
+            return;
+        };
+
+        let mut name_buffer = String::new();
+        let mut quote_char: Option<char> = None;
+        let mut fonts = Vec::new();
+        let mut add_font = |buffer: &mut String| {
+            let trimmed = buffer.trim();
+            if !trimmed.is_empty() {
+                fonts.push(trimmed.to_string().into());
+            }
+
+            buffer.clear();
+        };
+
+        for ch in css_name.chars() {
+            match (ch, quote_char) {
+                ('"' | '\'', None) => {
+                    quote_char = Some(ch);
+                }
+                (_, Some(q)) if ch == q => {
+                    quote_char = None;
+                }
+                (',', None) => {
+                    add_font(&mut name_buffer);
+                }
+                _ => {
+                    name_buffer.push(ch);
+                }
+            }
+        }
+
+        add_font(&mut name_buffer);
+
+        let mut iter = fonts.into_iter();
+        *font_family = iter.next();
+        let fallbacks: Vec<_> = iter.collect();
+        if !fallbacks.is_empty() {
+            *font_fallbacks = Some(fallbacks);
+        }
     }
 }

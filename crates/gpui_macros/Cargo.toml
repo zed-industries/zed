@@ -1,9 +1,10 @@
 [package]
-name = "gpui_macros"
+name = "gpui-macros"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "Macros used by gpui"
 
 [lints]
 workspace = true

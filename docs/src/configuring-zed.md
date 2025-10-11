@@ -1502,6 +1502,14 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 },
 ```
 
+There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
+
+```json
+"status_bar": {
+  "experimental.show": false
+}
+```
+
 ## LSP
 
 - Description: Configuration for language servers.
@@ -3504,7 +3512,7 @@ List of `integer` column numbers
     "alternate_scroll": "off",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
-    "keep_selection_on_copy": false,
+    "keep_selection_on_copy": true,
     "dock": "bottom",
     "default_width": 640,
     "default_height": 320,
@@ -3683,7 +3691,7 @@ List of `integer` column numbers
 
 - Description: Whether or not to keep the selection in the terminal after copying text.
 - Setting: `keep_selection_on_copy`
-- Default: `false`
+- Default: `true`
 
 **Options**
 
@@ -3694,7 +3702,7 @@ List of `integer` column numbers
 ```json
 {
   "terminal": {
-    "keep_selection_on_copy": true
+    "keep_selection_on_copy": false
   }
 }
 ```
