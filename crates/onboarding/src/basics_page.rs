@@ -9,9 +9,8 @@ use theme::{
     ThemeSettings,
 };
 use ui::{
-    ButtonLike, ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor,
-    ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*,
-    rems_from_px,
+    ParentElement as _, StatefulInteractiveElement, SwitchField, TintColor, ToggleButtonGroup,
+    ToggleButtonGroupSize, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
@@ -450,6 +449,9 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
     });
 
     h_flex()
+        .gap_2()
+        .flex_wrap()
+        .justify_between()
         .child(
             v_flex()
                 .gap_0p5()
@@ -460,7 +462,6 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
                         .color(Color::Muted),
                 ),
         )
-        .child(div().w_full())
         .child(h_flex().gap_1().child(vscode).child(cursor))
 }
 
