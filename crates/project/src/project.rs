@@ -2039,6 +2039,16 @@ impl Project {
         self.worktree_store.read(cx).visible_worktrees(cx)
     }
 
+    /// Collect all user-visible worktrees (the ones that appear in the project panel) and single files.
+    pub fn visible_worktrees_and_single_files<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
+        self.worktree_store
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
+    }
+
     pub fn worktree_for_root_name(&self, root_name: &str, cx: &App) -> Option<Entity<Worktree>> {
         self.visible_worktrees(cx)
             .find(|tree| tree.read(cx).root_name() == root_name)
