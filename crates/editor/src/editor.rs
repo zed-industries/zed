@@ -20834,7 +20834,9 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
 
                 if let Some(buffer) = edited_buffer {
-                    self.update_lsp_data(false, Some(buffer.read(cx).remote_id()), window, cx);
+                    // Only pull diagnostics on buffer edits, not colors
+                    // Colors are refreshed on scroll/open/settings change to avoid flicker
+                    self.pull_diagnostics(Some(buffer.read(cx).remote_id()), window, cx);
                 }
 
                 if *singleton_buffer_edited {
@@ -22007,6 +22009,8 @@ impl Editor {
         cx: &mut Context<'_, Self>,
     ) {
         self.pull_diagnostics(for_buffer, window, cx);
+        // Refresh colors when a new buffer is registered or excerpts are added
+        // NOT on every buffer edit to avoid flicker
         self.refresh_colors(ignore_cache, for_buffer, window, cx);
     }
 }
