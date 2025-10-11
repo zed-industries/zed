@@ -9,7 +9,10 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{
+    Appearance, Theme, ThemeAppearanceMode, ThemeMeta, ThemeName, ThemeRegistry, ThemeSelection,
+    ThemeSettings,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
@@ -30,6 +33,11 @@ pub fn init(cx: &mut App) {
         let action = action.clone();
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             toggle_theme_selector(workspace, &action, window, cx);
+        });
+    });
+    cx.on_action(|_action: &zed_actions::theme_selector::SwitchMode, cx| {
+        with_active_or_new_workspace(cx, move |_workspace, _window, cx| {
+            switch_theme_mode(cx);
         });
     });
     cx.on_action(|action: &zed_actions::icon_theme_selector::Toggle, cx| {
@@ -55,6 +63,77 @@ fn toggle_theme_selector(
             cx,
         );
         ThemeSelector::new(delegate, window, cx)
+    });
+}
+
+/// Switches between light and dark theme modes.
+///
+/// For static themes, converts to dynamic theme selection with (potentially???) sensible defaults.
+/// For dynamic themes, toggles between light and dark modes.
+fn switch_theme_mode(cx: &mut Context<Workspace>) {
+    let current_theme_is_light = cx.theme().appearance().is_light();
+
+    // TODO(connor): Verify that these default themes are available before using them as fallbacks.
+    // Currently using assertions to ensure "One Dark" and "One Light" exist, but this
+    // could fail if those themes are removed or renamed.
+    // Is there a better way to get the defaults?
+    let theme_registry = ThemeRegistry::global(cx);
+    assert!(
+        theme_registry
+            .get("One Dark")
+            .is_ok_and(|theme| theme.name == "One Dark")
+    );
+    assert!(
+        theme_registry
+            .get("One Light")
+            .is_ok_and(|theme| theme.name == "One Light")
+    );
+
+    SettingsStore::update_global(cx, |store, _| {
+        let mut theme_settings = store.get::<ThemeSettings>(None).clone();
+
+        use ThemeAppearanceMode::*;
+        let new_theme_selection = match &theme_settings.theme {
+            ThemeSelection::Static(theme_name) => {
+                // If we have a static theme, then turn it into a dynamic theme selection with the
+                // given current theme set as the dynamic default.
+                if current_theme_is_light {
+                    // TODO(connor): THIS IS HACKY!
+                    let one_dark = ThemeName(Arc::from("One Dark"));
+                    ThemeSelection::Dynamic {
+                        mode: Dark,
+                        light: theme_name.clone(),
+                        dark: one_dark,
+                    }
+                } else {
+                    // TODO(connor): THIS IS HACKY!
+                    let one_light = ThemeName(Arc::from("One Light"));
+                    ThemeSelection::Dynamic {
+                        mode: Light,
+                        light: one_light,
+                        dark: theme_name.clone(),
+                    }
+                }
+            }
+            ThemeSelection::Dynamic { mode, light, dark } => {
+                let new_mode = if current_theme_is_light {
+                    debug_assert!(matches!(mode, Light | System));
+                    Dark
+                } else {
+                    debug_assert!(matches!(mode, Dark | System));
+                    Light
+                };
+
+                ThemeSelection::Dynamic {
+                    mode: new_mode,
+                    light: light.clone(),
+                    dark: dark.clone(),
+                }
+            }
+        };
+
+        theme_settings.theme = new_theme_selection;
+        store.override_global(theme_settings);
     });
 }
 
