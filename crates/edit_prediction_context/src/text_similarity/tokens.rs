@@ -1,5 +1,6 @@
 use crate::text_similarity::occurrences::HashFrom;
-use std::iter::Peekable;
+use std::{borrow::Cow, iter::Peekable, path::Path};
+use util::rel_path::RelPath;
 
 /// This occurrences source is useful for finding code that may be relevant since it matches parts
 /// of identifiers.
@@ -27,9 +28,35 @@ impl IdentifierParts {
         HashedIdentifierParts::new(str_bytes.into_iter())
     }
 
-    pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
+    pub fn within_str(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
         Self::within_bytes(text.bytes())
     }
+
+    pub fn from_worktree_path(
+        worktree_name: Option<Cow<'_, str>>,
+        rel_path: &RelPath,
+    ) -> impl Iterator<Item = HashFrom<Self>> {
+        if let Some(worktree_name) = worktree_name {
+            std::iter::once(worktree_name)
+                .chain(iter_path_without_extension(rel_path.as_std_path()))
+                .flat_map(|part| Self::within_str(&part))
+        } else {
+            Self::from_path(rel_path.as_std_path())
+        }
+    }
+
+    pub fn from_path(path: &Path) -> impl Iterator<Item = HashFrom<Self>> {
+        iter_path_without_extension(path).flat_map(|part| Self::within_str(&part))
+    }
+}
+
+fn iter_path_without_extension(path: &Path) -> impl Iterator<Item = Cow<'_, str>> {
+    let last_component: Option<Cow<'_, str>> = path.file_stem().map(|stem| stem.to_string_lossy());
+    let mut path_components = path.components();
+    path_components.next_back();
+    path_components
+        .map(|component| component.as_os_str().to_string_lossy())
+        .chain(last_component)
 }
 
 impl CodeParts {
@@ -39,7 +66,7 @@ impl CodeParts {
         HashedCodeParts::new(str_bytes.into_iter())
     }
 
-    pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
+    pub fn within_str(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
         Self::within_bytes(text.bytes())
     }
 }
@@ -206,7 +233,7 @@ mod test {
         #[track_caller]
         fn check(text: &str, expected: &[&str]) {
             assert_eq!(
-                IdentifierParts::within_string(text).collect::<Vec<_>>(),
+                IdentifierParts::within_str(text).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| string_fxhash32(part).into())
@@ -243,7 +270,7 @@ mod test {
         #[track_caller]
         fn check(text: &str, expected: &[&str]) {
             assert_eq!(
-                CodeParts::within_string(text).collect::<Vec<_>>(),
+                CodeParts::within_str(text).collect::<Vec<_>>(),
                 expected
                     .iter()
                     .map(|part| string_fxhash32(part).into())
@@ -279,15 +306,15 @@ mod test {
     fn test_similarity_functions() {
         // 10 identifier parts, 8 unique
         // Repeats: 2 "outline", 2 "items"
-        let multiset_a = Occurrences::new(IdentifierParts::within_string(
+        let multiset_a = Occurrences::new(IdentifierParts::within_str(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         ));
-        let set_a = SmallOccurrences::<8, IdentifierParts>::new(IdentifierParts::within_string(
+        let set_a = SmallOccurrences::<8, IdentifierParts>::new(IdentifierParts::within_str(
             "let mut outline_items = query_outline_items(&language, &tree, &source);",
         ));
         // 14 identifier parts, 11 unique
         // Repeats: 2 "outline", 2 "language", 2 "tree"
-        let set_b = Occurrences::new(IdentifierParts::within_string(
+        let set_b = Occurrences::new(IdentifierParts::within_str(
             "pub fn query_outline_items(language: &Language, tree: &Tree, source: &str) -> Vec<OutlineItem> {",
         ));
 

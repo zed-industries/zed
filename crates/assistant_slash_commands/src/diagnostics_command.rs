@@ -6,7 +6,7 @@ use assistant_slash_command::{
 use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{
-    Anchor, BufferSnapshot, DiagnosticEntry, DiagnosticSeverity, LspAdapterDelegate,
+    Anchor, BufferSnapshot, DiagnosticEntryRef, DiagnosticSeverity, LspAdapterDelegate,
     OffsetRangeExt, ToOffset,
 };
 use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
@@ -367,7 +367,7 @@ pub fn collect_buffer_diagnostics(
 
 fn collect_diagnostic(
     output: &mut SlashCommandOutput,
-    entry: &DiagnosticEntry<Anchor>,
+    entry: &DiagnosticEntryRef<'_, Anchor>,
     snapshot: &BufferSnapshot,
     include_warnings: bool,
 ) {

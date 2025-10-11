@@ -10,14 +10,14 @@ fn generate_random_text(mut rng: StdRng, text_len: usize) -> String {
 
 fn text_similarity_benchmark(c: &mut Criterion) {
     let rng = StdRng::seed_from_u64(42);
-    let sizes = [4, 16, 24, 32, 1024];
+    let sizes = [4, 16, 32, 1024];
 
     let mut group = c.benchmark_group("hashed_identifier_parts");
     for size in sizes.iter() {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let text = generate_random_text(rng.clone(), *size);
-            b.iter(|| IdentifierParts::within_string(text.as_str()).collect::<Vec<_>>());
+            b.iter(|| IdentifierParts::within_str(text.as_str()).collect::<Vec<_>>());
         });
     }
     group.finish();
@@ -27,7 +27,7 @@ fn text_similarity_benchmark(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let text = generate_random_text(rng.clone(), *size);
-            b.iter(|| CodeParts::within_string(text.as_str()).collect::<Vec<_>>());
+            b.iter(|| CodeParts::within_str(text.as_str()).collect::<Vec<_>>());
         });
     }
     group.finish();

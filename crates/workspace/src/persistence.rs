@@ -252,7 +252,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.0 as i32;
+        let this: i32 = u32::from(self.0) as _;
         this.bind(statement, start_index)
     }
 }
@@ -997,6 +997,13 @@ impl WorkspaceDb {
                         }
                     }
                 }
+
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM user_toolchains WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old user toolchains")?;
+
                 for (scope, toolchains) in workspace.user_toolchains {
                     for toolchain in toolchains {
                         let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));

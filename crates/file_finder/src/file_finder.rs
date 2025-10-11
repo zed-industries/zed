@@ -355,9 +355,9 @@ impl FileFinder {
         match width_setting {
             FileFinderWidth::Small => small_width,
             FileFinderWidth::Full => window_width,
-            FileFinderWidth::XLarge => (window_width - Pixels(512.)).max(small_width),
-            FileFinderWidth::Large => (window_width - Pixels(768.)).max(small_width),
-            FileFinderWidth::Medium => (window_width - Pixels(1024.)).max(small_width),
+            FileFinderWidth::XLarge => (window_width - px(512.)).max(small_width),
+            FileFinderWidth::Large => (window_width - px(768.)).max(small_width),
+            FileFinderWidth::Medium => (window_width - px(1024.)).max(small_width),
         }
     }
 }
@@ -559,7 +559,12 @@ impl Matches {
 
         let new_history_matches = matching_history_items(history_items, currently_opened, query);
         let new_search_matches: Vec<Match> = new_search_matches
-            .filter(|path_match| !new_history_matches.contains_key(&path_match.0.path))
+            .filter(|path_match| {
+                !new_history_matches.contains_key(&ProjectPath {
+                    path: path_match.0.path.clone(),
+                    worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
+                })
+            })
             .map(Match::Search)
             .collect();
 
@@ -690,7 +695,7 @@ fn matching_history_items<'a>(
     history_items: impl IntoIterator<Item = &'a FoundPath>,
     currently_opened: Option<&'a FoundPath>,
     query: &FileSearchQuery,
-) -> HashMap<Arc<RelPath>, Match> {
+) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
     let history_items_by_worktrees = history_items
@@ -744,9 +749,9 @@ fn matching_history_items<'a>(
                         worktree_id: WorktreeId::from_usize(path_match.worktree_id),
                         path: Arc::clone(&path_match.path),
                     })
-                    .map(|(_, found_path)| {
+                    .map(|(project_path, found_path)| {
                         (
-                            Arc::clone(&path_match.path),
+                            project_path.clone(),
                             Match::History {
                                 path: found_path.clone(),
                                 panel_match: Some(ProjectPanelOrdMatch(path_match)),
@@ -1167,18 +1172,25 @@ impl FileFinderDelegate {
         )
     }
 
+    /// Attempts to resolve an absolute file path and update the search matches if found.
+    ///
+    /// If the query path resolves to an absolute file that exists in the project,
+    /// this method will find the corresponding worktree and relative path, create a
+    /// match for it, and update the picker's search results.
+    ///
+    /// Returns `true` if the absolute path exists, otherwise returns `false`.
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
-    ) -> Task<()> {
+    ) -> Task<bool> {
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
                 .read_with(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
-                return;
+                return false;
             };
 
             let query_path = Path::new(query.path_query());
@@ -1211,7 +1223,7 @@ impl FileFinderDelegate {
                     })
                     .log_err();
                 if update_result.is_none() {
-                    return;
+                    return abs_file_exists;
                 }
             }
 
@@ -1224,6 +1236,7 @@ impl FileFinderDelegate {
                     anyhow::Ok(())
                 })
                 .log_err();
+            abs_file_exists
         })
     }
 
@@ -1372,13 +1385,14 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(raw_query);
             let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
-            let path = path_position.path.to_str();
-            let path_trimmed = path.unwrap_or(&raw_query).trim_end_matches(':');
+            let path = path_position.path.clone();
+            let path_str = path_position.path.to_str();
+            let path_trimmed = path_str.unwrap_or(&raw_query).trim_end_matches(':');
             let file_query_end = if path_trimmed == raw_query {
                 None
             } else {
                 // Safe to unwrap as we won't get here when the unwrap in if fails
-                Some(path.unwrap().len())
+                Some(path_str.unwrap().len())
             };
 
             let query = FileSearchQuery {
@@ -1387,11 +1401,29 @@ impl PickerDelegate for FileFinderDelegate {
                 path_position,
             };
 
-            if Path::new(query.path_query()).is_absolute() {
-                self.lookup_absolute_path(query, window, cx)
-            } else {
-                self.spawn_search(query, window, cx)
-            }
+            cx.spawn_in(window, async move |this, cx| {
+                let _ = maybe!(async move {
+                    let is_absolute_path = path.is_absolute();
+                    let did_resolve_abs_path = is_absolute_path
+                        && this
+                            .update_in(cx, |this, window, cx| {
+                                this.delegate
+                                    .lookup_absolute_path(query.clone(), window, cx)
+                            })?
+                            .await;
+
+                    // Only check for relative paths if no absolute paths were
+                    // found.
+                    if !did_resolve_abs_path {
+                        this.update_in(cx, |this, window, cx| {
+                            this.delegate.spawn_search(query, window, cx)
+                        })?
+                        .await;
+                    }
+                    anyhow::Ok(())
+                })
+                .await;
+            })
         }
     }
 

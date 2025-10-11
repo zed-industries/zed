@@ -8,6 +8,7 @@ use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
 use util::RandomCharIter;
+use util::rel_path::rel_path;
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -1524,7 +1525,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, "/".into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1619,7 +1620,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced(0, "/".into());
+    let path1: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1638,7 +1639,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced(1, "/".into());
+    let path2 = PathKey::with_sort_prefix(1, rel_path("root").into_arc());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1815,7 +1816,7 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path: PathKey = PathKey::namespaced(0, "/".into());
+    let path: PathKey = PathKey::with_sort_prefix(0, rel_path("root").into_arc());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {

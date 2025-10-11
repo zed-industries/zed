@@ -16,7 +16,7 @@ use editor::{
 use futures::StreamExt;
 use git::{
     Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    repository::{Branch, RepoPath, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
 };
 use gpui::{
@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    git_store::{GitStore, GitStoreEvent, Repository},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -73,9 +73,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 1;
-const TRACKED_NAMESPACE: u32 = 2;
-const NEW_NAMESPACE: u32 = 3;
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -177,7 +177,7 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::RepositoryUpdated(_, _, true)
                 | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
@@ -234,16 +234,8 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-
-        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-            CONFLICT_NAMESPACE
-        } else if entry.status.is_created() {
-            NEW_NAMESPACE
-        } else {
-            TRACKED_NAMESPACE
-        };
-
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -388,16 +380,8 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
-                    TRACKED_NAMESPACE
-                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
-                    CONFLICT_NAMESPACE
-                } else if entry.status.is_created() {
-                    NEW_NAMESPACE
-                } else {
-                    TRACKED_NAMESPACE
-                };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
+                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
+                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -531,12 +515,25 @@ impl ProjectDiff {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn excerpt_paths(&self, cx: &App) -> Vec<String> {
+    pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string())
+            .map(|key| key.path())
+            .cloned()
             .collect()
+    }
+}
+
+fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
+    if GitPanelSettings::get_global(cx).sort_by_path {
+        TRACKED_SORT_PREFIX
+    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
+        CONFLICT_SORT_PREFIX
+    } else if status.is_created() {
+        NEW_SORT_PREFIX
+    } else {
+        TRACKED_SORT_PREFIX
     }
 }
 
@@ -610,10 +607,6 @@ impl Item for ProjectDiff {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
-    }
-
-    fn is_singleton(&self, _: &App) -> bool {
-        false
     }
 
     fn set_nav_history(
@@ -1349,7 +1342,6 @@ fn merge_anchor_ranges<'a>(
     })
 }
 
-#[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use db::indoc;
@@ -1361,7 +1353,7 @@ mod tests {
     use settings::SettingsStore;
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use super::*;
 
@@ -1467,7 +1459,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "foo".into()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -1488,7 +1480,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, "bar".into()),
+                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -1560,7 +1552,7 @@ mod tests {
         let prev_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>();
@@ -1573,7 +1565,7 @@ mod tests {
         let new_buffer_hunks =
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
-                let snapshot = &snapshot.buffer_snapshot;
+                let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
                     .collect::<Vec<_>>()
@@ -1627,6 +1619,7 @@ mod tests {
         project_diff::{self, ProjectDiff},
     };
 
+    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1714,6 +1707,7 @@ mod tests {
         ));
     }
 
+    #[cfg_attr(windows, ignore = "currently fails on windows")]
     #[gpui::test]
     async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1871,5 +1865,129 @@ mod tests {
         let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
         let contents = String::from_utf8(contents).unwrap();
         assert_eq!(contents, "ours\n");
+    }
+
+    #[gpui::test]
+    async fn test_new_hunk_in_modified_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                ".unindent()
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "foo.txt",
+                "
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    eleven
+                    twelve
+                "
+                .unindent(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/foo.txt"), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit_via_marked_text(
+                &"
+                    one
+                    «TWO»
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    eight
+                    nine
+                    ten
+                    ELEVEN
+                    twelve
+                "
+                .unindent(),
+                None,
+                cx,
+            );
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                  one
+                - two
+                + TWO
+                  three
+                  four
+                  five
+                  ˇnine
+                  ten
+                - eleven
+                + ELEVEN
+                  twelve
+            "
+            .unindent(),
+        );
     }
 }

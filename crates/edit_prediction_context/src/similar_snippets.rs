@@ -85,7 +85,7 @@ pub fn similar_snippets(
         }
         window.push_back(
             line.len(),
-            NGram::iterator(IdentifierParts::within_string(line)),
+            NGram::iterator(IdentifierParts::within_str(line)),
         );
         while bytes > options.max_bytes {
             let popped_bytes = window.pop_front();

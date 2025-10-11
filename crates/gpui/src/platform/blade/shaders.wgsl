@@ -172,6 +172,12 @@ fn distance_from_clip_rect(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: 
     return distance_from_clip_rect_impl(position, clip_bounds);
 }
 
+fn distance_from_clip_rect_transformed(unit_vertex: vec2<f32>, bounds: Bounds, clip_bounds: Bounds, transform: TransformationMatrix) -> vec4<f32> {
+    let position = unit_vertex * vec2<f32>(bounds.size) + bounds.origin;
+    let transformed = transpose(transform.rotation_scale) * position + transform.translation;
+    return distance_from_clip_rect_impl(transformed, clip_bounds);
+}
+
 // https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
 fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     let cutoff = srgb < vec3<f32>(0.04045);
@@ -677,7 +683,24 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
-                let border_width = select(border.y, border.x, is_horizontal);
+
+                // When applying dashed borders to just some, not all, the sides.
+                // The way we chose border widths above sometimes comes with a 0 width value.
+                // So we choose again to avoid division by zero.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
+                let dashed_border = vec2<f32>(
+                        max(
+                            quad.border_widths.bottom,
+                            quad.border_widths.top,
+                        ),
+                        max(
+                            quad.border_widths.right,
+                            quad.border_widths.left,
+                        )
+                   );
+
+                let border_width = select(dashed_border.y, dashed_border.x, is_horizontal);
                 dash_velocity = dv_numerator / border_width;
                 t = select(point.y, point.x, is_horizontal) * dash_velocity;
                 max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
@@ -1150,7 +1173,7 @@ fn vs_mono_sprite(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index
 
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
     out.color = hsla_to_rgba(sprite.color);
-    out.clip_distances = distance_from_clip_rect(unit_vertex, sprite.bounds, sprite.content_mask);
+    out.clip_distances = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
     return out;
 }
 

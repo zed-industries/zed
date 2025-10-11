@@ -104,7 +104,7 @@ impl From<WslConnection> for Connection {
 }
 
 impl Settings for SshSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let remote = &content.remote;
         Self {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
@@ -369,7 +369,7 @@ impl RenderOnce for SshConnectionHeader {
                     )
                     .child(div().overflow_x_hidden().text_ellipsis().children(
                         self.paths.into_iter().map(|path| {
-                            Label::new(path.to_string_lossy().to_string())
+                            Label::new(path.to_string_lossy().into_owned())
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                         }),

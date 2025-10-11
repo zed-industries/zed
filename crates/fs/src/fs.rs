@@ -134,7 +134,11 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
@@ -247,7 +251,7 @@ impl From<MTime> for proto::Timestamp {
 }
 
 pub struct RealFs {
-    git_binary_path: Option<PathBuf>,
+    bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
 }
 
@@ -325,7 +329,7 @@ pub struct RealWatcher {}
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
-            git_binary_path,
+            bundled_git_binary_path: git_binary_path,
             executor,
         }
     }
@@ -749,7 +753,9 @@ impl Fs for RealFs {
                                     Some(PathEventKind::Removed)
                                 } else if event.flags.contains(StreamFlags::ITEM_CREATED) {
                                     Some(PathEventKind::Created)
-                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED) {
+                                } else if event.flags.contains(StreamFlags::ITEM_MODIFIED)
+                                    | event.flags.contains(StreamFlags::ITEM_RENAMED)
+                                {
                                     Some(PathEventKind::Changed)
                                 } else {
                                     None
@@ -787,11 +793,15 @@ impl Fs for RealFs {
         let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if watcher.add(path).is_err()
+        if let Err(e) = watcher.add(path)
             && let Some(parent) = path.parent()
-            && let Err(e) = watcher.add(parent)
+            && let Err(parent_e) = watcher.add(parent)
         {
-            log::warn!("Failed to watch: {e}");
+            log::warn!(
+                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
+                path.display(),
+                parent.display()
+            );
         }
 
         // Check if path is a symlink and follow the target parent
@@ -828,10 +838,15 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        dotgit_path: &Path,
+        system_git_binary_path: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
-            self.git_binary_path.clone(),
+            self.bundled_git_binary_path.clone(),
+            system_git_binary_path.map(|path| path.to_path_buf()),
             self.executor.clone(),
         )?))
     }
@@ -1248,7 +1263,7 @@ impl FakeFs {
             async move {
                 while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, None)]);
+                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
                     } else {
                         panic!("Failed to lock file system state, this execution would have caused a test hang");
                     }
@@ -1295,7 +1310,7 @@ impl FakeFs {
                 Ok(())
             })
             .unwrap();
-        state.emit_event([(path.to_path_buf(), None)]);
+        state.emit_event([(path.to_path_buf(), Some(PathEventKind::Changed))]);
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1318,7 +1333,7 @@ impl FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
     }
 
     fn write_file_internal(
@@ -1509,7 +1524,7 @@ impl FakeFs {
 
             drop(repo_state);
             if emit_git_event {
-                state.emit_event([(dot_git, None)]);
+                state.emit_event([(dot_git, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -1560,7 +1575,7 @@ impl FakeFs {
 
             if emit_git_event {
                 drop(repo_state);
-                state.emit_event([(canonical_path, None)]);
+                state.emit_event([(canonical_path, Some(PathEventKind::Changed))]);
             }
 
             Ok(result)
@@ -1873,6 +1888,10 @@ impl FakeFs {
             .unwrap_or(0)
     }
 
+    pub fn emit_fs_event(&self, path: impl Into<PathBuf>, event: Option<PathEventKind>) {
+        self.state.lock().emit_event(std::iter::once((path, event)));
+    }
+
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
     }
@@ -2040,7 +2059,7 @@ impl Fs for FakeFs {
                 }
             })
             .unwrap();
-        state.emit_event([(path, None)]);
+        state.emit_event([(path, Some(PathEventKind::Created))]);
 
         Ok(())
     }
@@ -2425,7 +2444,11 @@ impl Fs for FakeFs {
         )
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        _system_git_binary: Option<&Path>,
+    ) -> Option<Arc<dyn GitRepository>> {
         use util::ResultExt as _;
 
         self.with_git_state_and_paths(
@@ -2642,8 +2665,8 @@ fn atomic_replace<P: AsRef<Path>>(
 
     unsafe {
         ReplaceFileW(
-            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
-            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().into_owned()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().into_owned()),
             None,
             REPLACE_FILE_FLAGS::default(),
             None,
@@ -3077,7 +3100,7 @@ mod tests {
         // With the file handle still open, the file should be replaced
         // https://github.com/zed-industries/zed/issues/30054
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();
@@ -3095,7 +3118,7 @@ mod tests {
     #[gpui::test]
     async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
         let fs = RealFs {
-            git_binary_path: None,
+            bundled_git_binary_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();

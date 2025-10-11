@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
-    Bias, Editor, SelectionEffects, ToPoint,
+    Bias, Editor, EditorSettings, SelectionEffects, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
@@ -16,6 +16,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
+use settings::{Settings, SettingsStore};
 use std::{
     iter::Peekable,
     ops::{Deref, Range},
@@ -80,6 +81,7 @@ pub enum VimOption {
     Wrap(bool),
     Number(bool),
     RelativeNumber(bool),
+    IgnoreCase(bool),
 }
 
 impl VimOption {
@@ -122,6 +124,10 @@ impl VimOption {
             (None, VimOption::RelativeNumber(false)),
             (Some("rnu"), VimOption::RelativeNumber(true)),
             (Some("nornu"), VimOption::RelativeNumber(false)),
+            (None, VimOption::IgnoreCase(true)),
+            (None, VimOption::IgnoreCase(false)),
+            (Some("ic"), VimOption::IgnoreCase(true)),
+            (Some("noic"), VimOption::IgnoreCase(false)),
         ]
         .into_iter()
         .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
@@ -143,6 +149,11 @@ impl VimOption {
             "norelativenumber" => Some(Self::RelativeNumber(false)),
             "nornu" => Some(Self::RelativeNumber(false)),
 
+            "ignorecase" => Some(Self::IgnoreCase(true)),
+            "ic" => Some(Self::IgnoreCase(true)),
+            "noignorecase" => Some(Self::IgnoreCase(false)),
+            "noic" => Some(Self::IgnoreCase(false)),
+
             _ => None,
         }
     }
@@ -155,6 +166,8 @@ impl VimOption {
             VimOption::Number(false) => "nonumber",
             VimOption::RelativeNumber(true) => "relativenumber",
             VimOption::RelativeNumber(false) => "norelativenumber",
+            VimOption::IgnoreCase(true) => "ignorecase",
+            VimOption::IgnoreCase(false) => "noignorecase",
         }
     }
 }
@@ -256,6 +269,13 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 }
                 VimOption::RelativeNumber(enabled) => {
                     editor.set_relative_line_number(Some(*enabled), cx);
+                }
+                VimOption::IgnoreCase(enabled) => {
+                    let mut settings = EditorSettings::get_global(cx).clone();
+                    settings.search.case_sensitive = !*enabled;
+                    SettingsStore::update(cx, |store, _| {
+                        store.override_global(settings);
+                    });
                 }
             });
         }
@@ -582,7 +602,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
             let current = editor.selections.newest::<Point>(cx);
             let target = snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.select_ranges([target..target]);
@@ -604,10 +624,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
-                let end = if range.end < snapshot.buffer_snapshot.max_row() {
+                let end = if range.end < snapshot.buffer_snapshot().max_row() {
                     Point::new(range.end.0 + 1, 0)
                 } else {
-                    snapshot.buffer_snapshot.max_point()
+                    snapshot.buffer_snapshot().max_point()
                 };
                 vim.copy_ranges(
                     editor,
@@ -943,7 +963,7 @@ impl Position {
                     )
                 }) {
                     anchor
-                        .to_point(&snapshot.buffer_snapshot)
+                        .to_point(&snapshot.buffer_snapshot())
                         .row
                         .saturating_add_signed(*offset)
                 } else {
@@ -959,12 +979,12 @@ impl Position {
                 let Some(mark) = anchors.last() else {
                     anyhow::bail!("mark {name} contains empty anchors");
                 };
-                mark.to_point(&snapshot.buffer_snapshot)
+                mark.to_point(&snapshot.buffer_snapshot())
                     .row
                     .saturating_add_signed(*offset)
             }
             Position::LastLine { offset } => snapshot
-                .buffer_snapshot
+                .buffer_snapshot()
                 .max_row()
                 .0
                 .saturating_add_signed(*offset),
@@ -972,12 +992,12 @@ impl Position {
                 .selections
                 .newest_anchor()
                 .head()
-                .to_point(&snapshot.buffer_snapshot)
+                .to_point(&snapshot.buffer_snapshot())
                 .row
                 .saturating_add_signed(*offset),
         };
 
-        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot.max_row()))
+        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot().max_row()))
     }
 }
 
@@ -1632,7 +1652,7 @@ impl OnMatchingLines {
 
             let point_range = Point::new(range.start.0, 0)
                 ..snapshot
-                    .buffer_snapshot
+                    .buffer_snapshot()
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
             cx.spawn_in(window, async move |editor, cx| {
                 let new_selections = cx
@@ -1640,7 +1660,7 @@ impl OnMatchingLines {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
-                            .buffer_snapshot
+                            .buffer_snapshot()
                             .text_for_range(point_range)
                             .chain(["\n"]);
 
@@ -2045,9 +2065,10 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::Editor;
+    use editor::{Editor, EditorSettings};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use settings::Settings;
     use util::path;
     use workspace::Workspace;
 
@@ -2603,6 +2624,54 @@ mod test {
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_ignorecase_command(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should be `false` by default."
+            );
+        });
+        cx.simulate_keystrokes(": set space noignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ignorecase");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ignorecase`."
+            );
+        });
+        cx.simulate_keystrokes(": set space noic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                true,
+                "The `case_sensitive` setting should have been enabled with `:set noic`."
+            );
+        });
+        cx.simulate_keystrokes(": set space ic");
+        cx.simulate_keystrokes("enter");
+        cx.read(|cx| {
+            assert_eq!(
+                EditorSettings::get_global(cx).search.case_sensitive,
+                false,
+                "The `case_sensitive` setting should have been disabled with `:set ic`."
+            );
         });
     }
 }

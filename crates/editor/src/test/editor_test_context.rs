@@ -275,7 +275,8 @@ impl EditorTestContext {
             let details = editor.text_layout_details(window);
 
             let y = pixel_position.y
-                + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
+                + f32::from(line_height)
+                    * Pixels::from(display_point.row().as_f64() - newest_point.row().as_f64());
             let x = pixel_position.x + snapshot.x_for_display_point(display_point, &details)
                 - snapshot.x_for_display_point(newest_point, &details);
             Point::new(x, y)
@@ -503,7 +504,7 @@ impl EditorTestContext {
                 .map(|h| h.1.clone())
                 .unwrap_or_default()
                 .iter()
-                .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+                .map(|range| range.to_offset(&snapshot.buffer_snapshot()))
                 .collect()
         });
         assert_set_eq!(actual_ranges, expected_ranges);
@@ -518,7 +519,7 @@ impl EditorTestContext {
             .map(|ranges| ranges.as_ref().clone().1)
             .unwrap_or_default()
             .into_iter()
-            .map(|range| range.to_offset(&snapshot.buffer_snapshot))
+            .map(|range| range.to_offset(&snapshot.buffer_snapshot()))
             .collect();
         assert_set_eq!(actual_ranges, expected_ranges);
     }
@@ -578,7 +579,7 @@ pub fn assert_state_with_diff(
 ) {
     let (snapshot, selections) = editor.update_in(cx, |editor, window, cx| {
         (
-            editor.snapshot(window, cx).buffer_snapshot.clone(),
+            editor.snapshot(window, cx).buffer_snapshot().clone(),
             editor.selections.ranges::<usize>(cx),
         )
     });

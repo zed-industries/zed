@@ -273,7 +273,7 @@ impl Render for TerminalOutput {
         let cell_width = text_system
             .advance(font_id, font_pixels, 'w')
             .map(|advance| advance.width)
-            .unwrap_or(Pixels(0.0));
+            .unwrap_or(Pixels::ZERO);
 
         canvas(
             // prepaint

@@ -15,7 +15,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window, actions, div,
 };
-use language::{Buffer, DiagnosticEntry, Point};
+use language::{Buffer, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
     DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
@@ -350,7 +350,7 @@ impl BufferDiagnosticsEditor {
                 grouped
                     .entry(entry.diagnostic.group_id)
                     .or_default()
-                    .push(DiagnosticEntry {
+                    .push(DiagnosticEntryRef {
                         range: entry.range.to_point(&buffer_snapshot),
                         diagnostic: entry.diagnostic,
                     })
@@ -560,13 +560,16 @@ impl BufferDiagnosticsEditor {
         })
     }
 
-    fn set_diagnostics(&mut self, diagnostics: &Vec<DiagnosticEntry<Anchor>>) {
-        self.diagnostics = diagnostics.clone();
+    fn set_diagnostics(&mut self, diagnostics: &[DiagnosticEntryRef<'_, Anchor>]) {
+        self.diagnostics = diagnostics
+            .iter()
+            .map(DiagnosticEntryRef::to_owned)
+            .collect();
     }
 
     fn diagnostics_are_unchanged(
         &self,
-        diagnostics: &Vec<DiagnosticEntry<Anchor>>,
+        diagnostics: &Vec<DiagnosticEntryRef<'_, Anchor>>,
         snapshot: &BufferSnapshot,
     ) -> bool {
         if self.diagnostics.len() != diagnostics.len() {
@@ -725,10 +728,6 @@ impl Item for BufferDiagnosticsEditor {
 
     fn is_dirty(&self, cx: &App) -> bool {
         self.multibuffer.read(cx).is_dirty(cx)
-    }
-
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
     }
 
     fn navigate(

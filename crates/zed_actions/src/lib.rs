@@ -30,20 +30,26 @@ pub struct OpenZedUrl {
 actions!(
     zed,
     [
-        /// Opens the settings editor.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettingsEditor"])]
         OpenSettings,
+        /// Opens the settings JSON file.
+        #[action(deprecated_aliases = ["zed_actions::OpenSettings"])]
+        OpenSettingsFile,
+        /// Opens the settings editor.
         /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Opens the user keymap file.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymap"])]
+        OpenKeymapFile,
+        /// Opens the keymap editor.
+        #[action(deprecated_aliases = ["zed_actions::OpenKeymapEditor"])]
+        OpenKeymap,
         /// Opens account settings.
         OpenAccountSettings,
-        /// Opens the keymap editor.
-        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
         Quit,
-        /// Opens the user keymap file.
-        OpenKeymap,
         /// Shows information about Zed.
         About,
         /// Opens the documentation website.
@@ -217,10 +223,12 @@ pub mod feedback {
     actions!(
         feedback,
         [
+            /// Opens email client to send feedback to Zed support.
+            EmailZed,
             /// Opens the bug report form.
             FileBugReport,
-            /// Opens the feedback form.
-            GiveFeedback
+            /// Opens the feature request form.
+            RequestFeature
         ]
     );
 }

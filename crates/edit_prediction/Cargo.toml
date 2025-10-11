@@ -15,5 +15,4 @@ path = "src/edit_prediction.rs"
 client.workspace = true
 gpui.workspace = true
 language.workspace = true
-project.workspace = true
 workspace-hack.workspace = true

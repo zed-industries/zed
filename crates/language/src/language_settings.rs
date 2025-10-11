@@ -142,8 +142,6 @@ pub struct LanguageSettings {
     pub auto_indent_on_paste: bool,
     /// Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
-    /// Which code actions to run on save
-    pub code_actions_on_format: HashMap<String, bool>,
     /// Whether to perform linked edits
     pub linked_edits: bool,
     /// Task configuration for this language.
@@ -377,6 +375,8 @@ pub struct EditPredictionSettings {
     pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
+    /// Settings specific to Codestral.
+    pub codestral: CodestralSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_text_threads: bool,
@@ -410,6 +410,14 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CodestralSettings {
+    /// Model to use for completions.
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    pub max_tokens: Option<u32>,
 }
 
 impl AllLanguageSettings {
@@ -500,7 +508,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let all_languages = &content.project.all_languages;
 
         fn load_from_content(settings: LanguageSettingsContent) -> LanguageSettings {
@@ -533,9 +541,9 @@ impl settings::Settings for AllLanguageSettings {
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
-                    parser: prettier.parser,
-                    plugins: prettier.plugins,
-                    options: prettier.options,
+                    parser: prettier.parser.filter(|parser| !parser.is_empty()),
+                    plugins: prettier.plugins.unwrap_or_default(),
+                    options: prettier.options.unwrap_or_default(),
                 },
                 jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
                 enable_language_server: settings.enable_language_server.unwrap(),
@@ -568,10 +576,9 @@ impl settings::Settings for AllLanguageSettings {
                 always_treat_brackets_as_autoclosed: settings
                     .always_treat_brackets_as_autoclosed
                     .unwrap(),
-                code_actions_on_format: settings.code_actions_on_format.unwrap(),
                 linked_edits: settings.linked_edits.unwrap(),
                 tasks: LanguageTaskSettings {
-                    variables: tasks.variables,
+                    variables: tasks.variables.unwrap_or_default(),
                     enabled: tasks.enabled.unwrap(),
                     prefer_lsp: tasks.prefer_lsp.unwrap(),
                 },
@@ -579,7 +586,7 @@ impl settings::Settings for AllLanguageSettings {
                 show_completion_documentation: settings.show_completion_documentation.unwrap(),
                 completions: CompletionSettings {
                     words: completions.words.unwrap(),
-                    words_min_length: completions.words_min_length.unwrap(),
+                    words_min_length: completions.words_min_length.unwrap() as usize,
                     lsp: completions.lsp.unwrap(),
                     lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
                     lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
@@ -622,6 +629,12 @@ impl settings::Settings for AllLanguageSettings {
             enterprise_uri: copilot.enterprise_uri,
         };
 
+        let codestral = edit_predictions.codestral.unwrap();
+        let codestral_settings = CodestralSettings {
+            model: codestral.model,
+            max_tokens: codestral.max_tokens,
+        };
+
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
@@ -655,6 +668,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
+                codestral: codestral_settings,
                 enabled_in_text_threads,
             },
             defaults: default_language_settings,

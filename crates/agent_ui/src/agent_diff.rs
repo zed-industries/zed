@@ -562,10 +562,6 @@ impl Item for AgentDiffPane {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &App) -> bool {
-        false
-    }
-
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -850,7 +846,7 @@ fn render_diff_hunk_controls(
                                 editor.update(cx, |editor, cx| {
                                     let snapshot = editor.snapshot(window, cx);
                                     let position =
-                                        hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                                        hunk_range.end.to_point(&snapshot.buffer_snapshot());
                                     editor.go_to_hunk_before_or_after_position(
                                         &snapshot,
                                         position,
@@ -886,7 +882,7 @@ fn render_diff_hunk_controls(
                                 editor.update(cx, |editor, cx| {
                                     let snapshot = editor.snapshot(window, cx);
                                     let point =
-                                        hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                        hunk_range.start.to_point(&snapshot.buffer_snapshot());
                                     editor.go_to_hunk_before_or_after_position(
                                         &snapshot,
                                         point,
@@ -1818,7 +1814,6 @@ mod tests {
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::{path::Path, rc::Rc};
-    use theme::ThemeSettings;
     use util::path;
 
     #[gpui::test]
@@ -1831,7 +1826,7 @@ mod tests {
             AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
         });
@@ -1983,7 +1978,7 @@ mod tests {
             AgentSettings::register(cx);
             prompt_store::init(cx);
             workspace::init_settings(cx);
-            ThemeSettings::register(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);

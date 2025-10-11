@@ -155,7 +155,7 @@ impl HistoryStore {
             .iter()
             .filter_map(|entry| match entry {
                 HistoryEntryId::Context(path) => path.file_name().map(|file| {
-                    SerializedRecentOpen::ContextName(file.to_string_lossy().to_string())
+                    SerializedRecentOpen::ContextName(file.to_string_lossy().into_owned())
                 }),
                 HistoryEntryId::Thread(id) => Some(SerializedRecentOpen::Thread(id.to_string())),
             })
