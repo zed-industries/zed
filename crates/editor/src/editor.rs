@@ -2715,6 +2715,12 @@ impl Editor {
         self.workspace.as_ref()?.0.upgrade()
     }
 
+    fn workspace_id(&self) -> Option<WorkspaceId> {
+        self.serialize_dirty_buffers
+            .then(|| self.workspace.as_ref().and_then(|workspace| workspace.1))
+            .flatten()
+    }
+
     pub fn title<'a>(&self, cx: &'a App) -> Cow<'a, str> {
         self.buffer().read(cx).title(cx)
     }
@@ -3195,56 +3201,46 @@ impl Editor {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
         if local && let Some((_, _, buffer_snapshot)) = buffer.as_singleton() {
-            let is_default = self
-                .buffer
-                .read(cx)
-                .paths()
-                .next()
-                .map_or(false, |p| p.path().starts_with("zed://"));
-            if !is_default {
-                let inmemory_selections = selections
-                    .iter()
-                    .map(|s| {
-                        text::ToPoint::to_point(&s.range().start.text_anchor, buffer_snapshot)
-                            ..text::ToPoint::to_point(&s.range().end.text_anchor, buffer_snapshot)
-                    })
-                    .collect();
-                self.update_restoration_data(cx, |data| {
-                    data.selections = inmemory_selections;
+            let inmemory_selections = selections
+                .iter()
+                .map(|s| {
+                    text::ToPoint::to_point(&s.range().start.text_anchor, buffer_snapshot)
+                        ..text::ToPoint::to_point(&s.range().end.text_anchor, buffer_snapshot)
+                })
+                .collect();
+            self.update_restoration_data(cx, |data| {
+                data.selections = inmemory_selections;
+            });
+
+            if WorkspaceSettings::get(None, cx).restore_on_startup
+                != RestoreOnStartupBehavior::None
+                && let Some(workspace_id) = self.workspace_id()
+            {
+                let snapshot = self.buffer().read(cx).snapshot(cx);
+                let selections = selections.clone();
+                let background_executor = cx.background_executor().clone();
+                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                self.serialize_selections = cx.background_spawn(async move {
+                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+                    let db_selections = selections
+                        .iter()
+                        .map(|selection| {
+                            (
+                                selection.start.to_offset(&snapshot),
+                                selection.end.to_offset(&snapshot),
+                            )
+                        })
+                        .collect();
+
+                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"
+                            )
+                        })
+                        .log_err();
                 });
-
-                if self.serialize_dirty_buffers
-                    && WorkspaceSettings::get(None, cx).restore_on_startup
-                        != RestoreOnStartupBehavior::None
-                    && let Some(workspace_id) =
-                        self.workspace.as_ref().and_then(|workspace| workspace.1)
-                {
-                    let snapshot = self.buffer().read(cx).snapshot(cx);
-                    let selections = selections.clone();
-                    let background_executor = cx.background_executor().clone();
-                    let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                    self.serialize_selections = cx.background_spawn(async move {
-                        background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                        let db_selections = selections
-                            .iter()
-                            .map(|selection| {
-                                (
-                                    selection.start.to_offset(&snapshot),
-                                    selection.end.to_offset(&snapshot),
-                                )
-                            })
-                            .collect();
-
-                        DB.save_editor_selections(editor_id, workspace_id, db_selections)
-                            .await
-                            .with_context(|| {
-                                format!(
-                                    "persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"
-                                )
-                            })
-                            .log_err();
-                    });
-                }
             }
         }
 
@@ -3255,8 +3251,7 @@ impl Editor {
         use text::ToOffset as _;
         use text::ToPoint as _;
 
-        if !self.serialize_dirty_buffers
-            || self.mode.is_minimap()
+        if self.mode.is_minimap()
             || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
         {
             return;
@@ -3282,7 +3277,7 @@ impl Editor {
             data.folds = inmemory_folds;
         });
 
-        let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
+        let Some(workspace_id) = self.workspace_id() else {
             return;
         };
         let background_executor = cx.background_executor().clone();

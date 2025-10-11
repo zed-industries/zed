@@ -1296,9 +1296,7 @@ impl SerializableItem for Editor {
 
         let snapshot = buffer.read(cx).snapshot();
 
-        let serialize_dirty_buffers = self.serialize_dirty_buffers;
-
-        if abs_path.is_none() && !(serialize_dirty_buffers && is_dirty) {
+        if abs_path.is_none() && !is_dirty {
             return None;
         }
 
