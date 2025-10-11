@@ -675,7 +675,22 @@ impl EditAgent {
         if let Some(last_message) = messages_iter.next_back()
             && last_message.role == Role::Assistant
         {
+            // Collect IDs of tool uses that will be removed
+            let removed_tool_use_ids: Vec<_> = last_message
+                .content
+                .iter()
+                .filter_map(|content| {
+                    if let MessageContent::ToolUse(tool_use) = content {
+                        Some(tool_use.id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             let old_content_len = last_message.content.len();
+
+            // Remove tool uses from the last assistant message
             last_message
                 .content
                 .retain(|content| !matches!(content, MessageContent::ToolUse(_)));
@@ -694,8 +709,27 @@ impl EditAgent {
                 prev_message.cache = true;
             }
 
+            // Drop the last message if it became empty
             if last_message.content.is_empty() {
                 conversation.messages.pop();
+            }
+
+            // Remove tool results corresponding to the removed tool uses
+            if !removed_tool_use_ids.is_empty() {
+                // Drop any ToolResult that references the removed ToolUse IDs
+                conversation.messages.iter_mut().for_each(|message| {
+                    message.content.retain(|content| match content {
+                        MessageContent::ToolResult(tool_result) => !removed_tool_use_ids
+                            .iter()
+                            .any(|id| &tool_result.tool_use_id == id),
+                        _ => true,
+                    });
+                });
+
+                // Drop any messages that became empty due to removal
+                conversation
+                    .messages
+                    .retain(|message| !message.content.is_empty());
             }
         }
 
@@ -705,16 +739,35 @@ impl EditAgent {
             cache: false,
         });
 
-        // Include tools in the request so that we can take advantage of
-        // caching when ToolChoice::None is supported.
+        // Include tools whenever there is tool history, so providers like Bedrock (via LiteLLM) can build toolConfig.
+        // If the model supports ToolChoice::None, set it to gain caching benefits without forcing tool calls.
         let mut tool_choice = None;
         let mut tools = Vec::new();
+
+        // Detect any tool content (ToolUse or ToolResult) in the conversation history
+        let has_tool_history = conversation.messages.iter().any(|m| {
+            m.content.iter().any(|c| {
+                matches!(
+                    c,
+                    MessageContent::ToolUse(_) | MessageContent::ToolResult(_)
+                )
+            })
+        });
+
+        // If there are tools configured and either the history contains tool content
+        // or the model supports ToolChoice::None, include tools definitions.
         if !conversation.tools.is_empty()
-            && self
+            && (has_tool_history
+                || self
+                    .model
+                    .supports_tool_choice(LanguageModelToolChoice::None))
+        {
+            if self
                 .model
                 .supports_tool_choice(LanguageModelToolChoice::None)
-        {
-            tool_choice = Some(LanguageModelToolChoice::None);
+            {
+                tool_choice = Some(LanguageModelToolChoice::None);
+            }
             tools = conversation.tools.clone();
         }
 

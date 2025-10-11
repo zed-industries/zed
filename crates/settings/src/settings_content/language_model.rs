@@ -240,6 +240,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub images: bool,
     pub parallel_tool_calls: bool,
     pub prompt_cache_key: bool,
+    #[serde(default)]
+    pub tool_choice_none: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -249,6 +251,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             images: false,
             parallel_tool_calls: false,
             prompt_cache_key: false,
+            tool_choice_none: false,
         }
     }
 }
