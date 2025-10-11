@@ -2569,8 +2569,21 @@ impl BufferSnapshot {
         false
     }
 
+    pub fn offset_to_version(&self, offset: usize, version: &clock::Global) -> usize {
+        self.offsets_to_version([offset], version).next().unwrap()
+    }
+
     pub fn range_to_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
         let mut offsets = self.offsets_to_version([range.start, range.end], version);
+        offsets.next().unwrap()..offsets.next().unwrap()
+    }
+
+    pub fn offset_from_version(&self, offset: usize, version: &clock::Global) -> usize {
+        self.offsets_from_version([offset], version).next().unwrap()
+    }
+
+    pub fn range_from_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
+        let mut offsets = self.offsets_from_version([range.start, range.end], version);
         offsets.next().unwrap()..offsets.next().unwrap()
     }
 
@@ -2602,6 +2615,38 @@ impl BufferSnapshot {
             }
 
             last_old_end + new_offset.saturating_sub(last_new_end)
+        })
+    }
+
+    /// Converts the given sequence of offsets in a prior version of this
+    /// buffer into their corresponding offsets in the current version of
+    /// this buffer.
+    pub fn offsets_from_version<'a>(
+        &'a self,
+        offsets: impl 'a + IntoIterator<Item = usize>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = usize> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = 0;
+        let mut last_new_end = 0;
+        offsets.into_iter().map(move |old_offset| {
+            while let Some(edit) = edits.peek() {
+                if edit.old.start > old_offset {
+                    break;
+                }
+
+                if edit.old.end <= old_offset {
+                    last_new_end = edit.new.end;
+                    last_old_end = edit.old.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = old_offset - edit.old.start;
+                return (edit.new.start + overshoot).min(edit.new.end);
+            }
+
+            last_new_end + old_offset.saturating_sub(last_old_end)
         })
     }
 

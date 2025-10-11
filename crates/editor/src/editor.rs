@@ -157,7 +157,10 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    lsp_store::{
+        CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle,
+        semantic_tokens::SemanticTokens,
+    },
     project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
@@ -1191,6 +1194,7 @@ pub struct Editor {
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
     pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
+    pub(crate) update_semantic_tokens_task: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2271,6 +2275,7 @@ impl Editor {
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
             lookup_key: None,
+            update_semantic_tokens_task: Task::ready(()),
         };
 
         if is_minimap {
@@ -6673,6 +6678,63 @@ impl Editor {
                 cx.notify();
             })
         }));
+    }
+
+    pub(crate) fn update_semantic_tokens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(sema) = self.semantics_provider.as_ref() {
+            let buffer_id = buffer.read(cx).remote_id();
+            let task = sema
+                .semantic_tokens(buffer.clone(), cx)
+                .map(move |task| task.map(move |tokens| (tokens, buffer_id)));
+
+            self.update_semantic_tokens_task = cx.spawn_in(window, async move |this, cx| {
+                if let Some(t) = task {
+                    let (tokens, buffer_id) = t.await;
+
+                    this.update(cx, |this, cx| {
+                        if let (Some(tokens), Some(project)) = (tokens.log_err(), this.project()) {
+                            let lsp_store = project.read(cx).lsp_store().read(cx);
+                            let Some(semantic_token_provider) = tokens
+                                .server_id
+                                .and_then(|id| lsp_store.lsp_server_capabilities.get(&id))
+                                .and_then(|caps| caps.semantic_tokens_provider.as_ref())
+                            else {
+                                return;
+                            };
+
+                            let legend = match semantic_token_provider {
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => &opts.legend,
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(opts) => &opts.semantic_tokens_options.legend,
+                            };
+
+                            let legend = legend.clone();
+
+                            this.display_map.update(cx, |display_map, cx| {
+                                let view = SemanticTokenView::new(
+                                    buffer_id,
+                                    this.buffer.read(cx),
+                                    &tokens,
+                                    &legend,
+                                    cx,
+                                );
+                                if let Some(view) = view {
+                                    display_map
+                                        .semantic_tokens
+                                        .insert(buffer_id, Arc::new(view));
+                                }
+                            });
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            });
+        }
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -20819,6 +20881,9 @@ impl Editor {
                 if self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
+                if let Some(edited_buffer) = edited_buffer {
+                    self.update_semantic_tokens(edited_buffer, window, cx);
+                }
                 if let Some(project) = self.project.as_ref()
                     && let Some(edited_buffer) = edited_buffer
                 {
@@ -22716,6 +22781,12 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>>;
 
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Arc<SemanticTokens>>>>;
+
     fn resolve_inlay_hint(
         &self,
         hint: InlayHint,
@@ -23228,6 +23299,14 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.inlay_hints(buffer_handle, range, cx)
         }))
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Arc<SemanticTokens>>>> {
+        Some(self.update(cx, |project, cx| project.semantic_tokens(buffer_handle, cx)))
     }
 
     fn resolve_inlay_hint(

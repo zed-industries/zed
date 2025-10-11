@@ -35,6 +35,7 @@ pub use block_map::{
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
+use clock::Global;
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 use fold_map::FoldSnapshot;
@@ -53,8 +54,9 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
     MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
-use project::project_settings::DiagnosticSeverity;
+use project::{lsp_store::semantic_tokens::SemanticTokens, project_settings::DiagnosticSeverity};
 use serde::Deserialize;
+use theme::SyntaxTheme;
 
 use std::{
     any::TypeId,
@@ -68,7 +70,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::TabSnapshot;
 use text::{BufferId, LineIndent};
-use ui::{SharedString, px};
+use ui::{ActiveTheme, SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -115,12 +117,31 @@ pub struct DisplayMap {
     text_highlights: TextHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
+    /// The semantic tokens from the language server.
+    pub semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
     pub(crate) diagnostics_max_severity: DiagnosticSeverity,
+}
+
+#[derive(Debug, Default)]
+pub struct SemanticTokenView {
+    pub tokens: Vec<MultibufferSemanticToken>,
+    pub version: Global,
+}
+
+/// A `SemanticToken`, but attached to a `MultiBuffer`.
+#[derive(Debug)]
+pub struct MultibufferSemanticToken {
+    pub range: Range<usize>,
+    pub style: HighlightStyle,
+
+    // These are only used in the debug syntax tree.
+    pub lsp_type: u32,
+    pub lsp_modifiers: u32,
 }
 
 impl DisplayMap {
@@ -161,6 +182,7 @@ impl DisplayMap {
             diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
+            semantic_tokens: Default::default(),
             clip_at_line_ends: false,
             masked: false,
         }
@@ -184,6 +206,7 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
+            semantic_tokens: self.semantic_tokens.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -628,6 +651,7 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub semantic_tokens: Option<&'a HashMap<BufferId, Arc<SemanticTokenView>>>,
     pub styles: HighlightStyles,
 }
 
@@ -761,6 +785,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    semantic_tokens: HashMap<BufferId, Arc<SemanticTokenView>>,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -962,6 +987,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                semantic_tokens: Some(&self.semantic_tokens),
                 styles: highlight_styles,
             },
         )
@@ -1532,6 +1558,228 @@ impl ToDisplayPoint for Point {
 impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(map.buffer_snapshot()).to_display_point(map)
+    }
+}
+
+impl SemanticTokenView {
+    pub fn new(
+        buffer_id: BufferId,
+        multibuffer: &MultiBuffer,
+        lsp: &SemanticTokens,
+        legend: &lsp::SemanticTokensLegend,
+        cx: &App,
+    ) -> Option<SemanticTokenView> {
+        let Some(buffer) = multibuffer.buffer(buffer_id) else {
+            return None;
+        };
+        let buffer = buffer.read(cx);
+
+        let stylizer = SemanticTokenStylizer::new(legend);
+
+        let mut tokens = lsp
+            .tokens()
+            .filter_map(|token| {
+                let start = text::Unclipped(text::PointUtf16::new(token.line, token.start));
+                let (start_offset, end_offset) = point_offset_to_offsets(
+                    buffer.clip_point_utf16(start, Bias::Left),
+                    text::OffsetUtf16(token.length as usize),
+                    &buffer,
+                );
+
+                Some(MultibufferSemanticToken {
+                    range: start_offset..end_offset,
+                    style: stylizer.convert(
+                        cx.theme().syntax(),
+                        token.token_type,
+                        token.token_modifiers,
+                    )?,
+                    lsp_type: token.token_type,
+                    lsp_modifiers: token.token_modifiers,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // These should be sorted, but we rely on it for binary searching, so let's be sure.
+        tokens.sort_by_key(|token| token.range.start);
+
+        Some(SemanticTokenView {
+            tokens,
+            version: buffer.version(),
+        })
+    }
+
+    pub fn tokens_in_range(&self, range: Range<usize>) -> &[MultibufferSemanticToken] {
+        let start = self
+            .tokens
+            .binary_search_by_key(&range.start, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        let end = self
+            .tokens
+            .binary_search_by_key(&range.end, |token| token.range.start)
+            .unwrap_or_else(|next_ix| next_ix);
+
+        &self.tokens[start..end]
+    }
+}
+
+fn point_offset_to_offsets(
+    point: text::PointUtf16,
+    length: text::OffsetUtf16,
+    buffer: &text::Buffer,
+) -> (usize, usize) {
+    let start = buffer.as_rope().point_utf16_to_offset(point);
+    let start_offset = buffer.as_rope().offset_to_offset_utf16(start);
+    let end_offset = start_offset + length;
+    let end = buffer.as_rope().offset_utf16_to_offset(end_offset);
+
+    (start, end)
+}
+
+struct SemanticTokenStylizer<'a> {
+    token_types: Vec<&'a str>,
+    modifier_mask: HashMap<&'a str, u32>,
+}
+
+impl<'a> SemanticTokenStylizer<'a> {
+    pub fn new(legend: &'a lsp::SemanticTokensLegend) -> Self {
+        let token_types = legend.token_types.iter().map(|s| s.as_str()).collect();
+        let modifier_mask = legend
+            .token_modifiers
+            .iter()
+            .enumerate()
+            .map(|(i, modifier)| (modifier.as_str(), 1 << i))
+            .collect();
+        SemanticTokenStylizer {
+            token_types,
+            modifier_mask,
+        }
+    }
+
+    pub fn token_type(&self, token_type: u32) -> Option<&'a str> {
+        self.token_types.get(token_type as usize).copied()
+    }
+
+    pub fn has_modifier(&self, token_modifiers: u32, modifier: &str) -> bool {
+        let Some(mask) = self.modifier_mask.get(modifier) else {
+            return false;
+        };
+        (token_modifiers & mask) != 0
+    }
+
+    pub fn convert(
+        &self,
+        theme: &'a SyntaxTheme,
+        token_type: u32,
+        modifiers: u32,
+    ) -> Option<HighlightStyle> {
+        let has_modifier = |modifier| self.has_modifier(modifiers, modifier);
+
+        // See the VSCode docs [1] and the LSP Spec [2]
+        //
+        // [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
+        // [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+        let choices: &[&str] = match self.token_type(token_type)? {
+            // Types
+            "namespace" => &["namespace", "module", "type"],
+            "class" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.class.definition",
+                "type.definition",
+                "type.class",
+                "class",
+                "type",
+            ],
+            "class" => &["type.class", "class", "type"],
+            "enum" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.enum.definition",
+                "type.definition",
+                "type.enum",
+                "enum",
+                "type",
+            ],
+            "enum" => &["type.enum", "enum", "type"],
+            "interface" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.interface.definition",
+                "type.definition",
+                "type.interface",
+                "interface",
+                "type",
+            ],
+            "interface" => &["type.interface", "interface", "type"],
+            "struct" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.struct.definition",
+                "type.definition",
+                "type.struct",
+                "struct",
+                "type",
+            ],
+            "struct" => &["type.struct", "struct", "type"],
+            "typeParameter" if has_modifier("declaration") || has_modifier("definition") => &[
+                "type.parameter.definition",
+                "type.definition",
+                "type.parameter",
+                "type",
+            ],
+            "typeParameter" => &["type.parameter", "type"],
+            "type" if has_modifier("declaration") || has_modifier("definition") => {
+                &["type.definition", "type"]
+            }
+            "type" => &["type"],
+
+            // References
+            "parameter" => &["parameter"],
+            "variable" if has_modifier("defaultLibrary") && has_modifier("constant") => {
+                &["constant.builtin", "constant"]
+            }
+            "variable" if has_modifier("defaultLibrary") => &["variable.builtin", "variable"],
+            "variable" if has_modifier("constant") => &["constant"],
+            "variable" => &["variable"],
+            "property" => &["property"],
+            "enumMember" => &["type.enum.member", "type.enum", "variant"],
+            "decorator" => &["function.decorator", "function.annotation"],
+
+            // Declarations in the docs, but in practice, also references
+            "function" if has_modifier("defaultLibrary") => &["function.builtin", "function"],
+            "function" => &["function"],
+            "method" if has_modifier("defaultLibrary") => {
+                &["function.builtin", "function.method", "function"]
+            }
+            "method" => &["function.method", "function"],
+            "macro" => &["function.macro", "function"],
+            "label" => &["label"],
+
+            // Tokens
+            "comment" if has_modifier("documentation") => {
+                &["comment.documentation", "comment.doc", "comment"]
+            }
+            "comment" => &["comment"],
+            "string" => &["string"],
+            "keyword" => &["keyword"],
+            "number" => &["number"],
+            "regexp" => &["string.regexp", "string"],
+            "operator" => &["operator"],
+
+            // Not in the VS Code docs, but in the LSP spec.
+            "modifier" => &["keyword.modifier"],
+
+            // Language specific bits.
+
+            // C#. This is part of the spec, but not used elsewhere.
+            "event" => &["type.event", "type"],
+
+            // Rust
+            "lifetime" => &["symbol", "type.parameter", "type"],
+
+            _ => return None,
+        };
+
+        for choice in choices {
+            if let Some(style) = theme.get_opt(choice) {
+                return Some(style);
+            }
+        }
+
+        None
     }
 }
 
