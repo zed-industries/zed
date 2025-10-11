@@ -269,7 +269,8 @@ fn compare_profiles(args: &[String]) {
                     .read(true)
                     .open(entry.path())
                     .unwrap()
-                    .read_to_end(&mut buffer);
+                    .read_to_end(&mut buffer)
+                    .unwrap();
                 let o_other: Output = serde_json::from_slice(&buffer).unwrap();
                 output.merge(o_other, prefix);
             };
