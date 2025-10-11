@@ -1,6 +1,6 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{GitStatus, StatusCode};
+use crate::status::{GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
@@ -379,6 +379,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
+    fn diff_tree(&self, from: String, to: String) -> Task<Result<TreeDiff>>;
 
     fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
@@ -1048,6 +1049,37 @@ impl GitRepository for RealGitRepository {
             let output = new_smol_command(&git_binary_path)
                 .current_dir(working_directory)
                 .args(args)
+                .output()
+                .await?;
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.parse()
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("git status failed: {stderr}");
+            }
+        })
+    }
+
+    fn diff_tree(&self, from: String, to: String) -> Task<Result<TreeDiff>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = match self.working_directory() {
+            Ok(working_directory) => working_directory,
+            Err(e) => return Task::ready(Err(e)),
+        };
+
+        self.executor.spawn(async move {
+            let output = new_smol_command(&git_binary_path)
+                .current_dir(working_directory)
+                .args([
+                    "--no-optional-locks",
+                    "diff-tree",
+                    "-r",
+                    "-z",
+                    "--no-renames",
+                    &from,
+                    &to,
+                ])
                 .output()
                 .await?;
             if output.status.success() {

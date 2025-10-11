@@ -138,6 +138,10 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
+    fn diff_tree(&self, from: String, to: String) -> Task<Result<GitStatus>> {
+        unimplemented!()
+    }
+
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
         self.with_state_async(false, |state| {
             Ok(revs
