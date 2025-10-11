@@ -242,7 +242,7 @@ To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your
 
 ## Setting up Herb
 
-`Herb` is enabled by default for the `HTML/ERB` language.
+`Herb` is enabled by default for the `HTML+ERB` language.
 
 ## Using the Tailwind CSS Language Server with Ruby
 
@@ -261,7 +261,7 @@ In order to do that, you need to configure the language server so that it knows 
     "tailwindcss-language-server": {
       "settings": {
         "includeLanguages": {
-          "html/erb": "html",
+          "html+erb": "html",
           "ruby": "html"
         },
         "experimental": {
@@ -396,7 +396,7 @@ To format ERB templates, you can use the `erb-formatter` formatter. This formatt
 
 ```jsonc
 {
-  "HTML/ERB": {
+  "HTML+ERB": {
     "formatter": {
       "external": {
         "command": "erb-formatter",
