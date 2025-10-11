@@ -134,7 +134,7 @@ pub enum ThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The theme to use for light mode.
         light: ThemeName,
         /// The theme to use for dark mode.
@@ -152,7 +152,7 @@ pub enum IconThemeSelection {
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
-        mode: ThemeMode,
+        mode: ThemeAppearanceMode,
         /// The icon theme to use for light mode.
         light: IconThemeName,
         /// The icon theme to use for dark mode.
@@ -160,7 +160,6 @@ pub enum IconThemeSelection {
     },
 }
 
-// TODO: Rename ThemeMode -> ThemeAppearanceMode
 /// The mode use to select a theme.
 ///
 /// `Light` and `Dark` will select their respective themes.
@@ -170,7 +169,7 @@ pub enum IconThemeSelection {
     Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum ThemeMode {
+pub enum ThemeAppearanceMode {
     /// Use the specified `light` theme.
     Light,
 
