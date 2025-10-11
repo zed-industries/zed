@@ -27,7 +27,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
-    git_store::{GitStore, GitStoreEvent, Repository},
+    git_store::{GitStore, GitStoreEvent, Repository, branch_diff::BranchDiff},
 };
 use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
@@ -55,6 +55,7 @@ actions!(
 pub struct ProjectDiff {
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
+    branch_diff: Entity<BranchDiff>,
     editor: Entity<Editor>,
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
@@ -63,14 +64,6 @@ pub struct ProjectDiff {
     pending_scroll: Option<PathKey>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
-}
-
-#[derive(Debug)]
-struct DiffBuffer {
-    path_key: PathKey,
-    buffer: Entity<Buffer>,
-    diff: Entity<BufferDiff>,
-    file_status: FileStatus,
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -209,11 +202,25 @@ impl ProjectDiff {
         });
         // Kick off a refresh immediately
         *send.borrow_mut() = ();
+        // todo!() don't unwrap...
+        let repo = git_store.read(cx).active_repository().unwrap();
+
+        let branch_diff = cx.new(|cx| {
+            BranchDiff::new(
+                project.clone(),
+                repo,
+                "todo!()".into(),
+                "todo!()".into(),
+                window,
+                cx,
+            )
+        });
 
         Self {
             project,
             git_store: git_store.clone(),
             workspace: workspace.downgrade(),
+            branch_diff,
             focus_handle,
             editor,
             multibuffer,
@@ -360,69 +367,15 @@ impl ProjectDiff {
         }
     }
 
-    fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
-        let Some(repo) = self.git_store.read(cx).active_repository() else {
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.clear(cx);
-            });
-            return vec![];
-        };
-
-        let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
-
-        let mut result = vec![];
-        repo.update(cx, |repo, cx| {
-            for entry in repo.cached_status() {
-                if !entry.status.has_changes() {
-                    continue;
-                }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
-                else {
-                    continue;
-                };
-                let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
-                let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
-
-                previous_paths.remove(&path_key);
-                let load_buffer = self
-                    .project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-                let project = self.project.clone();
-                result.push(cx.spawn(async move |_, cx| {
-                    let buffer = load_buffer.await?;
-                    let changes = project
-                        .update(cx, |project, cx| {
-                            project.open_uncommitted_diff(buffer.clone(), cx)
-                        })?
-                        .await?;
-                    Ok(DiffBuffer {
-                        path_key,
-                        buffer,
-                        diff: changes,
-                        file_status: entry.status,
-                    })
-                }));
-            }
-        });
-        self.multibuffer.update(cx, |multibuffer, cx| {
-            for path in previous_paths {
-                multibuffer.remove_excerpts_for_path(path, cx);
-            }
-        });
-        result
-    }
-
     fn register_buffer(
         &mut self,
-        diff_buffer: DiffBuffer,
+        path_key: PathKey,
+        file_status: FileStatus,
+        buffer: Entity<Buffer>,
+        diff: Entity<BufferDiff>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path_key = diff_buffer.path_key;
-        let buffer = diff_buffer.buffer;
-        let diff = diff_buffer.diff;
-
         let conflict_addon = self
             .editor
             .read(cx)
@@ -464,8 +417,8 @@ impl ProjectDiff {
                 });
             }
             if is_excerpt_newly_added
-                && (diff_buffer.file_status.is_deleted()
-                    || (diff_buffer.file_status.is_untracked()
+                && (file_status.is_deleted()
+                    || (file_status.is_untracked()
                         && GitPanelSettings::get_global(cx).collapse_untracked_diff))
             {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
@@ -496,12 +449,51 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while (recv.next().await).is_some() {
-            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
-            for buffer_to_load in buffers_to_load {
-                if let Some(buffer) = buffer_to_load.await.log_err() {
+            let mut path_keys = Vec::new();
+            let buffers_to_load = this.update(cx, |this, cx| {
+                let buffers_to_load = this
+                    .branch_diff
+                    .update(cx, |branch_diff, cx| branch_diff.load_buffers(cx));
+                let mut previous_paths = this.multibuffer.read(cx).paths().collect::<HashSet<_>>();
+                let repo = this
+                    .git_store
+                    .read(cx)
+                    .active_repository()
+                    // todo!()
+                    .unwrap()
+                    .read(cx);
+
+                path_keys = Vec::with_capacity(buffers_to_load.len());
+                for entry in buffers_to_load.iter() {
+                    let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
+                    let path_key =
+                        PathKey::with_sort_prefix(sort_prefix, entry.repo_path.0.clone());
+                    previous_paths.remove(&path_key);
+                    path_keys.push(path_key)
+                }
+
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    for path in previous_paths {
+                        multibuffer.remove_excerpts_for_path(path, cx);
+                    }
+                });
+                buffers_to_load
+            })?;
+
+            for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+                if let Some((buffer, diff)) = entry.load.await.log_err() {
                     cx.update(|window, cx| {
-                        this.update(cx, |this, cx| this.register_buffer(buffer, window, cx))
-                            .ok();
+                        this.update(cx, |this, cx| {
+                            this.register_buffer(
+                                path_key,
+                                entry.file_status,
+                                buffer,
+                                diff,
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
                     })?;
                 }
             }

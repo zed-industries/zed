@@ -4310,7 +4310,7 @@ impl Repository {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => backend.diff_tree(diff_type).await,
-                RepositoryState::Remote { project_id, client } => {
+                RepositoryState::Remote { .. } => {
                     todo!()
                     // let response = client
                     //     .request(proto::GitDiff {

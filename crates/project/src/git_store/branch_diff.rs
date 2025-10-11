@@ -1,59 +1,54 @@
 use anyhow::Result;
-use collections::{HashMap, HashSet};
-use futures::future::Shared;
+use buffer_diff::BufferDiff;
+use futures::StreamExt;
 use git::{
     repository::RepoPath,
-    status::{DiffTreeType, TreeDiff, TreeDiffStatus},
+    status::{DiffTreeType, FileStatus, TreeDiff},
 };
 use gpui::{
     AsyncWindowContext, Context, Entity, SharedString, Subscription, Task, WeakEntity, Window,
 };
+
 use language::Buffer;
-use smol::stream::StreamExt;
 use util::ResultExt;
 
-use crate::git_store::{GitStore, GitStoreEvent, Repository};
+use crate::{
+    Project,
+    git_store::{Repository, RepositoryEvent},
+};
 
 pub struct BranchDiff {
     repo: Entity<Repository>,
+    project: Entity<Project>,
     base_branch: SharedString,
     head_branch: SharedString,
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
     tree_diff: Option<TreeDiff>,
-    base_buffers: HashMap<RepoPath, BaseBuffer>,
     _subscription: Subscription,
     update_needed: postage::watch::Sender<()>,
     _task: Task<()>,
 }
 
-enum BaseBuffer {
-    None,
-    Loading {
-        oid: git::Oid,
-        task: Shared<Task<Entity<Buffer>>>,
-    },
-}
-
 impl BranchDiff {
     pub fn new(
-        git_store: &Entity<GitStore>,
+        project: Entity<Project>,
         repo: Entity<Repository>,
         base_branch: SharedString,
         head_branch: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_store_subscription = cx.subscribe_in(
-            &git_store,
+        let repo_subscription = cx.subscribe_in(
+            &repo,
             window,
+            // todo!() when do we actually need to fire this?
             move |this, _git_store, event, _window, _cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true)
-                | GitStoreEvent::ConflictsUpdated => {
+                RepositoryEvent::MergeHeadsChanged
+                | RepositoryEvent::Updated { .. }
+                | RepositoryEvent::PathsChanged => {
                     *this.update_needed.borrow_mut() = ();
                 }
-                _ => {}
             },
         );
 
@@ -67,11 +62,11 @@ impl BranchDiff {
             repo,
             base_branch,
             head_branch,
+            project,
             tree_diff: None,
-            base_buffers: HashMap::default(),
             base_commit: None,
             head_commit: None,
-            _subscription: git_store_subscription,
+            _subscription: repo_subscription,
             _task: worker,
             update_needed: send,
         }
@@ -135,33 +130,58 @@ impl BranchDiff {
 
         let diff = task.await??;
         this.update(cx, |this, cx| {
-            this.tree_diff = Some(diff.clone());
-            let mut new_paths = HashSet::default();
-            for (path, status) in diff.entries.as_ref() {
-                new_paths.insert(path.clone());
-                let existing = this.base_buffers.get(&path);
-                let old_sha = match status {
-                    TreeDiffStatus::Modified { old, .. } | TreeDiffStatus::Deleted { old } => {
-                        if let Some(BaseBuffer::Loading { oid, .. }) = this.base_buffers.get(&path)
-                            && old == oid
-                        {
-                            continue;
-                        }
-                        this.base_buffers.insert(
-                            path.clone(),
-                            BaseBuffer::Loading {
-                                oid: *old,
-                                task: todo!(),
-                            },
-                        )
-                    }
-                    TreeDiffStatus::Added { .. } => {
-                        this.base_buffers.insert(path.clone(), BaseBuffer::None)
-                    }
-                    TreeDiffStatus::TypeChanged {} => continue,
-                };
-            }
-            this.base_buffers.retain(|path, _| new_paths.contains(path))
+            this.tree_diff = Some(diff);
+            cx.notify();
         })
     }
+
+    pub fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<DiffBuffer> {
+        let mut output = Vec::default();
+        self.project.update(cx, |_project, cx| {
+            for item in self.repo.read(cx).cached_status() {
+                let branch_diff = self
+                    .tree_diff
+                    .as_ref()
+                    .and_then(|t| t.entries.get(&item.repo_path));
+                // todo! exclude mode change?
+                if !item.status.has_changes() && branch_diff.is_none() {
+                    continue;
+                }
+
+                let Some(project_path) = self
+                    .repo
+                    .read(cx)
+                    .repo_path_to_project_path(&item.repo_path, cx)
+                else {
+                    continue;
+                };
+                let task = cx.spawn(async move |project, cx| {
+                    let buffer = project
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                        .await?;
+                    let changes = project
+                        .update(cx, |project, cx| {
+                            project.open_uncommitted_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+
+                    Ok((buffer, changes))
+                });
+
+                output.push(DiffBuffer {
+                    repo_path: item.repo_path.clone(),
+                    load: task,
+                    file_status: item.status,
+                });
+            }
+        });
+        output
+    }
+}
+
+#[derive(Debug)]
+pub struct DiffBuffer {
+    pub repo_path: RepoPath,
+    pub file_status: FileStatus,
+    pub load: Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>>,
 }

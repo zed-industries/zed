@@ -1,5 +1,6 @@
 use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc};
@@ -499,9 +500,9 @@ pub enum DiffTreeType {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct TreeDiff {
-    pub entries: Arc<[(RepoPath, TreeDiffStatus)]>,
+    pub entries: HashMap<RepoPath, TreeDiffStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -517,15 +518,13 @@ impl FromStr for TreeDiff {
 
     fn from_str(s: &str) -> Result<Self> {
         let mut fields = s.split('\0');
-        let mut parsed = Vec::new();
+        let mut parsed = HashMap::default();
         while let Some((status, path)) = fields.next().zip(fields.next()) {
             let path = RepoPath(RelPath::unix(path)?.into());
-            parsed.push((path, status.parse()?));
+            parsed.insert(path, status.parse()?);
         }
 
-        Ok(Self {
-            entries: Arc::from(parsed.as_slice()),
-        })
+        Ok(Self { entries: parsed })
     }
 }
 
@@ -562,6 +561,7 @@ impl FromStr for TreeDiffStatus {
             },
             StatusCode::Added => TreeDiffStatus::Added { new: new_sha },
             StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
+            // todo! what if something is modified and the type changed?
             StatusCode::TypeChanged => TreeDiffStatus::TypeChanged {},
             status => {
                 anyhow::bail!("unexpected status: {:?}", status)
@@ -574,7 +574,6 @@ impl FromStr for TreeDiffStatus {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
 
     use crate::{
         repository::RepoPath,
@@ -591,7 +590,7 @@ mod tests {
         assert_eq!(
             output,
             TreeDiff {
-                entries: Arc::new([
+                entries: [
                     (
                         RepoPath::new(".zed/settings.json").unwrap(),
                         TreeDiffStatus::Added {
@@ -611,7 +610,9 @@ mod tests {
                             new: "a437d85f63bb8c62bd78f83f40c506631fabf005".parse().unwrap()
                         }
                     ),
-                ])
+                ]
+                .into_iter()
+                .collect()
             }
         )
     }

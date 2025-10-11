@@ -145,7 +145,9 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn diff_tree(&self, _: DiffTreeType) -> Task<Result<TreeDiff>> {
-        unimplemented!()
+        Task::ready(Ok(TreeDiff {
+            entries: Default::default(),
+        }))
     }
 
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
