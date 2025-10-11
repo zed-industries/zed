@@ -191,20 +191,58 @@ pub enum ContextServerSettingsContent {
         /// are supported.
         settings: serde_json::Value,
     },
+    Remote {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+        /// Optional authentication configuration for the remote server.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        auth: Option<ContextServerAuth>,
+    },
+}
+
+/// Authentication configuration for remote context servers
+#[skip_serializing_none]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextServerAuth {
+    /// Bearer token authentication
+    Bearer {
+        /// The bearer token to use for authentication
+        token: String,
+    },
+    /// API key with custom header
+    ApiKey {
+        /// The name of the header to use
+        header: String,
+        /// The API key value
+        value: String,
+    },
+    /// Custom headers
+    Custom {
+        /// Map of header names to values
+        headers: HashMap<String, String>,
+    },
 }
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Custom {
                 enabled: custom_enabled,
-                command: _,
+                ..
             } => {
                 *custom_enabled = enabled;
             }
             ContextServerSettingsContent::Extension {
                 enabled: ext_enabled,
-                settings: _,
+                ..
             } => *ext_enabled = enabled,
+            ContextServerSettingsContent::Remote {
+                enabled: remote_enabled,
+                ..
+            } => *remote_enabled = enabled,
         }
     }
 }

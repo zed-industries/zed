@@ -135,6 +135,16 @@ pub enum ContextServerSettings {
         /// are supported.
         settings: serde_json::Value,
     },
+    Remote {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+        /// Optional authentication configuration for the remote server.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        auth: Option<settings::ContextServerAuth>,
+    },
 }
 
 impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
@@ -145,6 +155,9 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
             }
             settings::ContextServerSettingsContent::Extension { enabled, settings } => {
                 ContextServerSettings::Extension { enabled, settings }
+            }
+            settings::ContextServerSettingsContent::Remote { enabled, url, auth } => {
+                ContextServerSettings::Remote { enabled, url, auth }
             }
         }
     }
@@ -157,6 +170,9 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
             }
             ContextServerSettings::Extension { enabled, settings } => {
                 settings::ContextServerSettingsContent::Extension { enabled, settings }
+            }
+            ContextServerSettings::Remote { enabled, url, auth } => {
+                settings::ContextServerSettingsContent::Remote { enabled, url, auth }
             }
         }
     }
@@ -174,6 +190,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled, .. } => *enabled,
             ContextServerSettings::Extension { enabled, .. } => *enabled,
+            ContextServerSettings::Remote { enabled, .. } => *enabled,
         }
     }
 
@@ -181,6 +198,7 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Remote { enabled: e, .. } => *e = enabled,
         }
     }
 }
