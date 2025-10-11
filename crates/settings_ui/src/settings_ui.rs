@@ -527,7 +527,7 @@ impl SettingsPageItem {
     fn render(
         &self,
         settings_window: &SettingsWindow,
-        section_header: &'static str,
+        item_index: usize,
         is_last: bool,
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
@@ -632,7 +632,23 @@ impl SettingsPageItem {
                 .on_click({
                     let sub_page_link = sub_page_link.clone();
                     cx.listener(move |this, _, _, cx| {
-                        this.push_sub_page(sub_page_link.clone(), section_header, cx)
+                        let mut section_index = item_index;
+                        let current_page = this.current_page();
+
+                        while !matches!(
+                            current_page.items[section_index],
+                            SettingsPageItem::SectionHeader(_)
+                        ) {
+                            section_index -= 1;
+                        }
+
+                        let SettingsPageItem::SectionHeader(header) =
+                            current_page.items[section_index]
+                        else {
+                            unreachable!("All items always have a section header above them")
+                        };
+
+                        this.push_sub_page(sub_page_link.clone(), header, cx)
                     })
                 })
                 .into_any_element(),
@@ -1830,7 +1846,7 @@ impl SettingsWindow {
                             })
                             .child(item.render(
                                 self,
-                                section_header.expect("All items rendered after a section header"),
+                                actual_item_index,
                                 no_bottom_border || is_last,
                                 window,
                                 cx,
