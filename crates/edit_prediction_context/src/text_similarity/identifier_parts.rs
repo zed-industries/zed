@@ -1,5 +1,10 @@
+use collections::FxHasher;
+
 use crate::text_similarity::occurrences::HashFrom;
-use std::hash::{Hash, Hasher as _};
+use std::{
+    hash::{Hash, Hasher as _},
+    iter::Peekable,
+};
 
 /// Occurrence source which splits the input into alphanumeric characters, and further splits these
 /// when cases change to handle PascalCase and camelCase.
@@ -8,109 +13,77 @@ pub struct IdentifierParts;
 
 impl IdentifierParts {
     pub fn within_string(text: &str) -> impl Iterator<Item = HashFrom<Self>> {
-        IdentifierPartsIterator::new(text).map(|part| fx_hash_ascii_lowercase(part).into())
+        IdentifierHashedParts::new(text.chars())
     }
 
     pub fn within_strings<'a>(
         strings: impl IntoIterator<Item = &'a str>,
     ) -> impl Iterator<Item = HashFrom<Self>> {
-        strings.into_iter().flat_map(|text| {
-            IdentifierPartsIterator::new(text).map(|part| fx_hash_ascii_lowercase(part).into())
-        })
+        strings
+            .into_iter()
+            .flat_map(|text| IdentifierHashedParts::new(text.chars()))
     }
-}
-
-fn fx_hash_ascii_lowercase(text: &str) -> u32 {
-    // Hash lowercased text without allocating. May be possible to do this more efficiently by using
-    // bit manipulation to lowercase and hash 4 bytes at a time (or 8 bytes at a time with
-    // FxHasher64).
-    let mut hasher = collections::FxHasher::default();
-    for ch in text.chars() {
-        ch.to_ascii_lowercase().hash(&mut hasher);
-    }
-    // TODO: Ideally should directly compute a u32 hash.
-    hasher.finish() as u32
 }
 
 /// Splits alphanumeric runs on camelCase, PascalCase, snake_case, and kebab-case.
-struct IdentifierPartsIterator<'a> {
-    text: &'a str,
-    chars: std::str::CharIndices<'a>,
-    start: Option<usize>,
-    prev_char_is_alphanumeric: bool,
+struct IdentifierHashedParts<I: Iterator<Item = char>> {
+    chars: Peekable<I>,
+    hasher: Option<FxHasher>,
     prev_char_is_uppercase: bool,
 }
 
-impl<'a> IdentifierPartsIterator<'a> {
-    fn new(text: &'a str) -> Self {
+impl<I: Iterator<Item = char>> IdentifierHashedParts<I> {
+    fn new(chars: I) -> Self {
         Self {
-            text,
-            chars: text.char_indices(),
-            start: None,
-            prev_char_is_alphanumeric: false,
+            chars: chars.peekable(),
+            hasher: None,
             prev_char_is_uppercase: false,
         }
     }
 }
 
-impl<'a> Iterator for IdentifierPartsIterator<'a> {
-    type Item = &'a str;
+impl<I: Iterator<Item = char>> Iterator for IdentifierHashedParts<I> {
+    type Item = HashFrom<IdentifierParts>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((byte_index, ch)) = self.chars.next() {
-            let is_alphanumeric = ch.is_alphanumeric();
-
-            if !is_alphanumeric {
-                if let Some(start) = self.start {
-                    if byte_index > start {
-                        let part = &self.text[start..byte_index];
-                        self.start = None;
-                        return Some(part);
-                    }
+        while let Some(ch) = self.chars.next() {
+            let included = !ch.is_ascii() || ch.is_ascii_alphanumeric();
+            if let Some(mut hasher) = self.hasher.take() {
+                if !included {
+                    return Some((hasher.finish() as u32).into());
                 }
-                self.start = None;
-                continue;
-            }
 
-            // camelCase and PascalCase
-            let is_uppercase = ch.is_uppercase();
-            let case_split_start = if is_uppercase && let Some(start) = self.start {
-                let should_split = if self.prev_char_is_alphanumeric && !self.prev_char_is_uppercase
-                {
-                    true
-                } else if self.prev_char_is_uppercase {
-                    // sequences like "XMLParser" -> ["XML", "Parser"]
-                    self.text[byte_index..]
-                        .chars()
-                        .nth(1)
-                        .map_or(false, |c| c.is_ascii_lowercase())
+                // camelCase and PascalCase
+                let is_uppercase = ch.is_ascii_uppercase();
+                let should_split = is_uppercase
+                    && (!self.prev_char_is_uppercase ||
+                        // sequences like "XMLParser" -> ["XML", "Parser"]
+                        self.chars
+                            .peek()
+                            .map_or(false, |c| c.is_ascii_lowercase()));
+
+                self.prev_char_is_uppercase = is_uppercase;
+
+                if should_split {
+                    let result = (hasher.finish() as u32).into();
+                    let mut hasher = FxHasher::default();
+                    ch.to_ascii_lowercase().hash(&mut hasher);
+                    self.hasher = Some(hasher);
+                    return Some(result);
                 } else {
-                    false
-                };
-
-                if should_split { Some(start) } else { None }
-            } else {
-                None
-            };
-
-            if let Some(start) = case_split_start {
-                let part = &self.text[start..byte_index];
-                self.start = Some(byte_index);
-                self.prev_char_is_alphanumeric = is_alphanumeric;
-                self.prev_char_is_uppercase = is_uppercase;
-                return Some(part);
-            } else if self.start.is_none() && is_alphanumeric {
-                self.start = Some(byte_index);
-                self.prev_char_is_alphanumeric = is_alphanumeric;
-                self.prev_char_is_uppercase = is_uppercase;
+                    ch.to_ascii_lowercase().hash(&mut hasher);
+                    self.hasher = Some(hasher);
+                }
+            } else if included {
+                let mut hasher = FxHasher::default();
+                ch.to_ascii_lowercase().hash(&mut hasher);
+                self.hasher = Some(hasher);
+                self.prev_char_is_uppercase = ch.is_uppercase();
             }
         }
 
-        if let Some(start) = self.start
-            && start < self.text.len()
-        {
-            self.start = None;
-            return Some(&self.text[start..]);
+        if let Some(hasher) = self.hasher.take() {
+            return Some((hasher.finish() as u32).into());
         }
 
         None
@@ -127,41 +100,39 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_split_identifier() {
-        fn identifier_parts<'a>(text: &'a str) -> Vec<&'a str> {
-            IdentifierPartsIterator::new(text).collect()
+    fn test_identifier_text_parts() {
+        #[track_caller]
+        fn check_identifier_parts(text: &str, expected: &[&str]) {
+            assert_eq!(
+                IdentifierHashedParts::new(text.chars()).collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|part| fx_hash_ascii_lowercase(part).into())
+                    .collect::<Vec<_>>()
+            );
         }
 
-        assert_eq!(
-            identifier_parts("snake_case kebab-case PascalCase camelCase XMLParser"),
-            vec![
+        check_identifier_parts("snake_case", &["snake", "case"]);
+        check_identifier_parts("kebab-case", &["kebab", "case"]);
+        check_identifier_parts("PascalCase", &["Pascal", "Case"]);
+        check_identifier_parts("camelCase", &["camel", "Case"]);
+        check_identifier_parts("XMLParser", &["XML", "Parser"]);
+        check_identifier_parts("", &[]);
+        check_identifier_parts("a", &["a"]);
+        check_identifier_parts("ABC", &["ABC"]);
+        check_identifier_parts("abc", &["abc"]);
+        check_identifier_parts("123", &["123"]);
+        check_identifier_parts("a1B2c3", &["a1", "B2c3"]);
+        check_identifier_parts("HTML5Parser", &["HTML5", "Parser"]);
+        check_identifier_parts("_leading_underscore", &["leading", "underscore"]);
+        check_identifier_parts("trailing_underscore_", &["trailing", "underscore"]);
+        check_identifier_parts("--multiple--delimiters--", &["multiple", "delimiters"]);
+        check_identifier_parts(
+            "snake_case kebab-case PascalCase camelCase XMLParser",
+            &[
                 "snake", "case", "kebab", "case", "Pascal", "Case", "camel", "Case", "XML",
-                "Parser"
-            ]
-        );
-        assert_eq!(identifier_parts("snake_case"), vec!["snake", "case"]);
-        assert_eq!(identifier_parts("kebab-case"), vec!["kebab", "case"]);
-        assert_eq!(identifier_parts("PascalCase"), vec!["Pascal", "Case"]);
-        assert_eq!(identifier_parts("camelCase"), vec!["camel", "Case"]);
-        assert_eq!(identifier_parts("XMLParser"), vec!["XML", "Parser"]);
-        assert_eq!(identifier_parts(""), Vec::<&str>::new());
-        assert_eq!(identifier_parts("a"), vec!["a"]);
-        assert_eq!(identifier_parts("ABC"), vec!["ABC"]);
-        assert_eq!(identifier_parts("abc"), vec!["abc"]);
-        assert_eq!(identifier_parts("123"), vec!["123"]);
-        assert_eq!(identifier_parts("a1B2c3"), vec!["a1", "B2c3"]);
-        assert_eq!(identifier_parts("HTML5Parser"), vec!["HTML5", "Parser"]);
-        assert_eq!(
-            identifier_parts("_leading_underscore"),
-            vec!["leading", "underscore"]
-        );
-        assert_eq!(
-            identifier_parts("trailing_underscore_"),
-            vec!["trailing", "underscore"]
-        );
-        assert_eq!(
-            identifier_parts("--multiple--delimiters--"),
-            vec!["multiple", "delimiters"]
+                "Parser",
+            ],
         );
     }
 
@@ -200,5 +171,13 @@ mod test {
         // Numerator is the same as weighted_jaccard_similarity. Denominator is the total weight of
         // the smaller set, 10.
         assert_eq!(multiset_a.weighted_overlap_coefficient(&set_b), 7.0 / 10.0);
+    }
+
+    fn fx_hash_ascii_lowercase(text: &str) -> u32 {
+        let mut hasher = collections::FxHasher::default();
+        for ch in text.chars() {
+            ch.to_ascii_lowercase().hash(&mut hasher);
+        }
+        hasher.finish() as u32
     }
 }
