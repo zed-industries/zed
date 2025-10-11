@@ -15,13 +15,11 @@ use util::ResultExt;
 use crate::git_store::{GitStore, GitStoreEvent, Repository};
 
 pub struct BranchDiff {
-    git_store: WeakEntity<GitStore>,
     repo: Entity<Repository>,
     base_branch: SharedString,
     head_branch: SharedString,
     base_commit: Option<SharedString>,
     head_commit: Option<SharedString>,
-    merge_base: Option<SharedString>,
     tree_diff: Option<TreeDiff>,
     base_buffers: HashMap<RepoPath, BaseBuffer>,
     _subscription: Subscription,
@@ -66,7 +64,6 @@ impl BranchDiff {
         });
 
         Self {
-            git_store: git_store.downgrade(),
             repo,
             base_branch,
             head_branch,
@@ -74,7 +71,6 @@ impl BranchDiff {
             base_buffers: HashMap::default(),
             base_commit: None,
             head_commit: None,
-            merge_base: None,
             _subscription: git_store_subscription,
             _task: worker,
             update_needed: send,
@@ -140,8 +136,7 @@ impl BranchDiff {
         let diff = task.await??;
         this.update(cx, |this, cx| {
             this.tree_diff = Some(diff.clone());
-            let to_fetch = Vec::new();
-            let new_paths = HashSet::default();
+            let mut new_paths = HashSet::default();
             for (path, status) in diff.entries.as_ref() {
                 new_paths.insert(path.clone());
                 let existing = this.base_buffers.get(&path);
@@ -155,7 +150,7 @@ impl BranchDiff {
                         this.base_buffers.insert(
                             path.clone(),
                             BaseBuffer::Loading {
-                                oid: old,
+                                oid: *old,
                                 task: todo!(),
                             },
                         )
@@ -167,8 +162,6 @@ impl BranchDiff {
                 };
             }
             this.base_buffers.retain(|path, _| new_paths.contains(path))
-        });
-
-        Ok(())
+        })
     }
 }
