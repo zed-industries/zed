@@ -7,7 +7,7 @@ use editor::{Editor, EditorEvent};
 use feature_flags::FeatureFlag;
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ListOffset, ListState,
+    Action, App, Div, Entity, FocusHandle, Focusable, FontWeight, Global, ListState,
     ReadGlobal as _, ScrollHandle, Stateful, Subscription, Task, TitlebarOptions,
     UniformListScrollHandle, Window, WindowBounds, WindowHandle, WindowOptions, actions, div, list,
     point, prelude::*, px, size, uniform_list,
@@ -1350,8 +1350,22 @@ impl SettingsWindow {
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
+
+        let is_new_page = self.navbar_entries[self.navbar_entry].page_index
+            != self.navbar_entries[navbar_entry].page_index;
         self.navbar_entry = navbar_entry;
-        self.list_state.reset(0);
+
+        // We only need to reset visible items when updating matches
+        // and selecting a new page
+        if is_new_page {
+            self.visible_items = self
+                .visible_page_items()
+                .into_iter()
+                .map(|(index, _)| index)
+                .collect();
+            self.list_state.reset(self.visible_items.len());
+        }
+
         sub_page_stack_mut().clear();
     }
 
@@ -1976,16 +1990,6 @@ impl SettingsWindow {
 
         if sub_page_stack().is_empty() {
             page_header = self.render_files_header(window, cx).into_any_element();
-
-            self.visible_items = self
-                .visible_page_items()
-                .into_iter()
-                .map(|(index, _)| index)
-                .collect();
-            // todo! change list state when selecting a new page index
-            if self.list_state.item_count() != self.visible_items.len() {
-                self.list_state.reset(self.visible_items.len());
-            }
 
             page_content = self
                 .render_page_items(Some(self.current_page_index()), window, cx)
