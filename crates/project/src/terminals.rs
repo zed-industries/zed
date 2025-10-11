@@ -98,7 +98,11 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => settings.shell.program(),
+            None => match &spawn_task.shell {
+                Shell::System => settings.shell.program(),
+                Shell::Program(program) => program.clone(),
+                Shell::WithArguments { program, .. } => program.clone(),
+            },
         };
 
         let project_path_contexts = self
@@ -213,7 +217,13 @@ impl Project {
                                     arg = format!("\"{arg}\"");
                                 }
 
-                                let args = shell_kind.args_for_shell(false, arg);
+                                let mut args = match &spawn_task.shell {
+                                    Shell::WithArguments {
+                                        args: shell_args, ..
+                                    } => shell_args.clone(),
+                                    _ => Vec::new(),
+                                };
+                                args.extend(shell_kind.args_for_shell(false, arg));
 
                                 (
                                     Shell::WithArguments {
@@ -224,18 +234,34 @@ impl Project {
                                     env,
                                 )
                             }
-                            _ => (
-                                if let Some(program) = spawn_task.command {
-                                    Shell::WithArguments {
-                                        program,
-                                        args: spawn_task.args,
-                                        title_override: None,
-                                    }
-                                } else {
-                                    Shell::System
-                                },
-                                env,
-                            ),
+                            _ => match &spawn_task.shell {
+                                Shell::System => (
+                                    if let Some(program) = spawn_task.command {
+                                        Shell::WithArguments {
+                                            program,
+                                            args: spawn_task.args,
+                                            title_override: None,
+                                        }
+                                    } else {
+                                        Shell::System
+                                    },
+                                    env,
+                                ),
+                                Shell::Program(_) | Shell::WithArguments { .. } => {
+                                    use task::ShellBuilder;
+                                    let (task_command, task_args) =
+                                        ShellBuilder::new(&spawn_task.shell)
+                                            .build(spawn_task.command.clone(), &spawn_task.args);
+                                    (
+                                        Shell::WithArguments {
+                                            program: task_command,
+                                            args: task_args,
+                                            title_override: None,
+                                        },
+                                        env,
+                                    )
+                                }
+                            },
                         },
                     }
                 };
