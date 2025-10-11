@@ -322,7 +322,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             let has_selection = editor
                 .selections
-                .all_adjusted(cx)
+                .all_adjusted(&editor.display_snapshot(cx))
                 .iter()
                 .any(|selection| !selection.is_empty());
 
@@ -455,19 +455,20 @@ impl Vim {
     pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (map, selections) = editor.selections.all_display(cx);
+                let display_map = editor.display_snapshot(cx);
+                let selections = editor.selections.all_display(&display_map);
 
                 // Store selection info for positioning after edit
                 let selection_info: Vec<_> = selections
                     .iter()
                     .map(|selection| {
                         let range = selection.range();
-                        let start_offset = range.start.to_offset(&map, Bias::Left);
-                        let end_offset = range.end.to_offset(&map, Bias::Left);
+                        let start_offset = range.start.to_offset(&display_map, Bias::Left);
+                        let end_offset = range.end.to_offset(&display_map, Bias::Left);
                         let was_empty = range.is_empty();
                         let was_reversed = selection.reversed;
                         (
-                            map.buffer_snapshot().anchor_before(start_offset),
+                            display_map.buffer_snapshot().anchor_before(start_offset),
                             end_offset - start_offset,
                             was_empty,
                             was_reversed,
@@ -481,11 +482,11 @@ impl Vim {
 
                     // For empty selections, extend to replace one character
                     if range.is_empty() {
-                        range.end = movement::saturating_right(&map, range.start);
+                        range.end = movement::saturating_right(&display_map, range.start);
                     }
 
-                    let byte_range = range.start.to_offset(&map, Bias::Left)
-                        ..range.end.to_offset(&map, Bias::Left);
+                    let byte_range = range.start.to_offset(&display_map, Bias::Left)
+                        ..range.end.to_offset(&display_map, Bias::Left);
 
                     if !byte_range.is_empty() {
                         let replacement_text = text.repeat(byte_range.len());
@@ -545,7 +546,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut selections = editor.selections.all::<Point>(cx);
+            let mut selections = editor.selections.all::<Point>(&display_map);
             let max_point = display_map.buffer_snapshot().max_point();
             let buffer_snapshot = &display_map.buffer_snapshot();
 

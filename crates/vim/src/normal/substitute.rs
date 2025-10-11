@@ -94,7 +94,10 @@ impl Vim {
                     MotionKind::Exclusive
                 };
                 vim.copy_selections_content(editor, kind, window, cx);
-                let selections = editor.selections.all::<Point>(cx).into_iter();
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.display_snapshot(cx))
+                    .into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);
             });

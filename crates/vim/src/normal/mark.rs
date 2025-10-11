@@ -50,16 +50,19 @@ impl Vim {
         let mut reversed = vec![];
 
         self.update_editor(cx, |vim, editor, cx| {
-            let (map, selections) = editor.selections.all_display(cx);
+            let display_map = editor.display_snapshot(cx);
+            let selections = editor.selections.all_display(&display_map);
             for selection in selections {
-                let end = movement::saturating_left(&map, selection.end);
+                let end = movement::saturating_left(&display_map, selection.end);
                 ends.push(
-                    map.buffer_snapshot()
-                        .anchor_before(end.to_offset(&map, Bias::Left)),
+                    display_map
+                        .buffer_snapshot()
+                        .anchor_before(end.to_offset(&display_map, Bias::Left)),
                 );
                 starts.push(
-                    map.buffer_snapshot()
-                        .anchor_before(selection.start.to_offset(&map, Bias::Left)),
+                    display_map
+                        .buffer_snapshot()
+                        .anchor_before(selection.start.to_offset(&display_map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
             }
@@ -301,19 +304,21 @@ impl Vim {
             name = "'";
         }
         if matches!(name, "{" | "}" | "(" | ")") {
-            let (map, selections) = editor.selections.all_display(cx);
+            let display_map = editor.display_snapshot(cx);
+            let selections = editor.selections.all_display(&display_map);
             let anchors = selections
                 .into_iter()
                 .map(|selection| {
                     let point = match name {
-                        "{" => movement::start_of_paragraph(&map, selection.head(), 1),
-                        "}" => movement::end_of_paragraph(&map, selection.head(), 1),
-                        "(" => motion::sentence_backwards(&map, selection.head(), 1),
-                        ")" => motion::sentence_forwards(&map, selection.head(), 1),
+                        "{" => movement::start_of_paragraph(&display_map, selection.head(), 1),
+                        "}" => movement::end_of_paragraph(&display_map, selection.head(), 1),
+                        "(" => motion::sentence_backwards(&display_map, selection.head(), 1),
+                        ")" => motion::sentence_forwards(&display_map, selection.head(), 1),
                         _ => unreachable!(),
                     };
-                    map.buffer_snapshot()
-                        .anchor_before(point.to_offset(&map, Bias::Left))
+                    display_map
+                        .buffer_snapshot()
+                        .anchor_before(point.to_offset(&display_map, Bias::Left))
                 })
                 .collect::<Vec<Anchor>>();
             return Some(Mark::Local(anchors));
