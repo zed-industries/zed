@@ -65,7 +65,7 @@ pub struct PreviewTabsSettings {
 }
 
 impl Settings for ItemSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
             git_status: tabs.git_status.unwrap(),
@@ -113,7 +113,7 @@ impl Settings for ItemSettings {
 }
 
 impl Settings for PreviewTabsSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
@@ -196,6 +196,13 @@ pub enum TabTooltipContent {
     Custom(Box<dyn Fn(&mut Window, &mut App) -> AnyView>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ItemBufferKind {
+    Multibuffer,
+    Singleton,
+    None,
+}
+
 pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
@@ -260,8 +267,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
     }
-    fn is_singleton(&self, _cx: &App) -> bool {
-        false
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::None
     }
     fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
     fn clone_on_split(
@@ -467,7 +474,7 @@ pub trait ItemHandle: 'static + Send {
         _: &App,
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     );
-    fn is_singleton(&self, cx: &App) -> bool;
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
@@ -616,7 +623,7 @@ impl<T: Item> ItemHandle for Entity<T> {
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         let this = self.read(cx);
         let mut result = None;
-        if this.is_singleton(cx) {
+        if this.buffer_kind(cx) == ItemBufferKind::Singleton {
             this.for_each_project_item(cx, &mut |_, item| {
                 result = item.project_path(cx);
             });
@@ -674,8 +681,8 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, cx: &App) -> bool {
-        self.read(cx).is_singleton(cx)
+    fn buffer_kind(&self, cx: &App) -> ItemBufferKind {
+        self.read(cx).buffer_kind(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -1292,7 +1299,10 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId, item::SaveOptions};
+    use crate::{
+        ItemId, ItemNavHistory, Workspace, WorkspaceId,
+        item::{ItemBufferKind, SaveOptions},
+    };
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
@@ -1315,7 +1325,7 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
-        pub is_singleton: bool,
+        pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
         pub project_items: Vec<Entity<TestProjectItem>>,
@@ -1399,7 +1409,7 @@ pub mod test {
                 has_conflict: false,
                 has_deleted_file: false,
                 project_items: Vec::new(),
-                is_singleton: true,
+                buffer_kind: ItemBufferKind::Singleton,
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
@@ -1420,8 +1430,8 @@ pub mod test {
             self
         }
 
-        pub fn with_singleton(mut self, singleton: bool) -> Self {
-            self.is_singleton = singleton;
+        pub fn with_buffer_kind(mut self, buffer_kind: ItemBufferKind) -> Self {
+            self.buffer_kind = buffer_kind;
             self
         }
 
@@ -1516,8 +1526,8 @@ pub mod test {
                 .for_each(|item| f(item.entity_id(), item.read(cx)))
         }
 
-        fn is_singleton(&self, _: &App) -> bool {
-            self.is_singleton
+        fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+            self.buffer_kind
         }
 
         fn set_nav_history(
@@ -1564,7 +1574,7 @@ pub mod test {
                 save_as_count: self.save_as_count,
                 reload_count: self.reload_count,
                 is_dirty: self.is_dirty,
-                is_singleton: self.is_singleton,
+                buffer_kind: self.buffer_kind,
                 has_conflict: self.has_conflict,
                 has_deleted_file: self.has_deleted_file,
                 project_items: self.project_items.clone(),
@@ -1598,7 +1608,7 @@ pub mod test {
         }
 
         fn can_save_as(&self, _cx: &App) -> bool {
-            self.is_singleton
+            self.buffer_kind == ItemBufferKind::Singleton
         }
 
         fn save(

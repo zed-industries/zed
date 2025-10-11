@@ -619,10 +619,10 @@ mod tests {
         cx.update(|_window, cx| {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.register_provider(
-                    FakeLanguageModelProvider::new(
+                    Arc::new(FakeLanguageModelProvider::new(
                         LanguageModelProviderId::new("someprovider"),
                         LanguageModelProviderName::new("Some Provider"),
-                    ),
+                    )),
                     cx,
                 );
             });

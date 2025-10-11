@@ -1,9 +1,11 @@
 [package]
-name = "util"
+name = "zed-util"
 version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+publish = true
 license = "Apache-2.0"
+description = "A collection of utility structs and functions used by Zed and GPUI"
+
 
 [lints]
 workspace = true
@@ -42,6 +44,7 @@ tempfile.workspace = true
 unicase.workspace = true
 util_macros = { workspace = true, optional = true }
 walkdir.workspace = true
+which.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]

@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use ui::{Pixels, px};
+use ui::Pixels;
 
 #[derive(Debug)]
 pub enum ScrollDirection {
@@ -28,41 +28,41 @@ pub enum ScrollAmount {
 }
 
 impl ScrollAmount {
-    pub fn lines(&self, mut visible_line_count: f32) -> f32 {
+    pub fn lines(&self, mut visible_line_count: f64) -> f64 {
         match self {
-            Self::Line(count) => *count,
+            Self::Line(count) => *count as f64,
             Self::Page(count) => {
                 // for full pages subtract one to leave an anchor line
                 if self.is_full_page() {
                     visible_line_count -= 1.0
                 }
-                (visible_line_count * count).trunc()
+                (visible_line_count * (*count as f64)).trunc()
             }
             Self::Column(_count) => 0.0,
             Self::PageWidth(_count) => 0.0,
         }
     }
 
-    pub fn columns(&self, visible_column_count: f32) -> f32 {
+    pub fn columns(&self, visible_column_count: f64) -> f64 {
         match self {
             Self::Line(_count) => 0.0,
             Self::Page(_count) => 0.0,
-            Self::Column(count) => *count,
-            Self::PageWidth(count) => (visible_column_count * count).trunc(),
+            Self::Column(count) => *count as f64,
+            Self::PageWidth(count) => (visible_column_count * *count as f64).trunc(),
         }
     }
 
     pub fn pixels(&self, line_height: Pixels, height: Pixels) -> Pixels {
         match self {
-            ScrollAmount::Line(x) => px(line_height.0 * x),
-            ScrollAmount::Page(x) => px(height.0 * x),
+            ScrollAmount::Line(x) => line_height * *x,
+            ScrollAmount::Page(x) => height * *x,
             // This function seems to only be leveraged by the popover that is
             // displayed by the editor when, for example, viewing a function's
             // documentation. Right now that only supports vertical scrolling,
             // so I'm leaving this at 0.0 for now to try and make it clear that
             // this should not have an impact on that?
-            ScrollAmount::Column(_) => px(0.0),
-            ScrollAmount::PageWidth(_) => px(0.0),
+            ScrollAmount::Column(_) => Pixels::ZERO,
+            ScrollAmount::PageWidth(_) => Pixels::ZERO,
         }
     }
 

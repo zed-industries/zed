@@ -85,6 +85,41 @@ pub struct CandidateWithRanges {
     close_range: Range<usize>,
 }
 
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct Parentheses {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct SquareBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct AngleBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct CurlyBrackets {
+    #[serde(default)]
+    opening: bool,
+}
+
 fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     candidates: Option<I>,
     caret: DisplayPoint,
@@ -94,7 +129,7 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     let caret_offset = caret.to_offset(map, Bias::Left);
     let mut covering = vec![];
     let mut next_ones = vec![];
-    let snapshot = &map.buffer_snapshot;
+    let snapshot = &map.buffer_snapshot();
 
     if let Some(ranges) = candidates {
         for (open_range, close_range) in ranges {
@@ -173,12 +208,12 @@ fn find_mini_delimiters(
     is_valid_delimiter: &DelimiterPredicate,
 ) -> Option<Range<DisplayPoint>> {
     let point = map.clip_at_line_end(display_point).to_point(map);
-    let offset = point.to_offset(&map.buffer_snapshot);
+    let offset = point.to_offset(&map.buffer_snapshot());
 
     let line_range = get_line_range(map, point);
     let visible_line_range = get_visible_line_range(&line_range);
 
-    let snapshot = &map.buffer_snapshot;
+    let snapshot = &map.buffer_snapshot();
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
@@ -187,7 +222,7 @@ fn find_mini_delimiters(
     };
 
     // Try to find delimiters in visible range first
-    let ranges = map.buffer_snapshot.bracket_ranges(visible_line_range);
+    let ranges = map.buffer_snapshot().bracket_ranges(visible_line_range);
     if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
         return Some(
             DelimiterRange {
@@ -275,18 +310,10 @@ actions!(
         DoubleQuotes,
         /// Selects text within vertical bars (pipes).
         VerticalBars,
-        /// Selects text within parentheses.
-        Parentheses,
         /// Selects text within the nearest brackets.
         MiniBrackets,
         /// Selects text within any type of brackets.
         AnyBrackets,
-        /// Selects text within square brackets.
-        SquareBrackets,
-        /// Selects text within curly brackets.
-        CurlyBrackets,
-        /// Selects text within angle brackets.
-        AngleBrackets,
         /// Selects a function argument.
         Argument,
         /// Selects an HTML/XML tag.
@@ -350,17 +377,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &Parentheses, window, cx| {
-        vim.object(Object::Parentheses, window, cx)
+    Vim::action(editor, cx, |vim, action: &Parentheses, window, cx| {
+        vim.object_impl(Object::Parentheses, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &SquareBrackets, window, cx| {
-        vim.object(Object::SquareBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &SquareBrackets, window, cx| {
+        vim.object_impl(Object::SquareBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &CurlyBrackets, window, cx| {
-        vim.object(Object::CurlyBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &CurlyBrackets, window, cx| {
+        vim.object_impl(Object::CurlyBrackets, action.opening, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &AngleBrackets, window, cx| {
-        vim.object(Object::AngleBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &AngleBrackets, window, cx| {
+        vim.object_impl(Object::AngleBrackets, action.opening, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &VerticalBars, window, cx| {
         vim.object(Object::VerticalBars, window, cx)
@@ -394,10 +421,22 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        self.object_impl(object, false, window, cx);
+    }
+
+    fn object_impl(
+        &mut self,
+        object: Object,
+        opening: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
+            Mode::Normal | Mode::HelixNormal => {
+                self.normal_object(object, count, opening, window, cx)
+            }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_object(object, count, window, cx)
             }
@@ -740,7 +779,7 @@ fn in_word(
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
@@ -765,7 +804,7 @@ fn in_subword(
     let offset = relative_to.to_offset(map, Bias::Left);
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     let in_subword = map
@@ -838,7 +877,7 @@ pub fn surrounding_html_tag(
         Some(read_tag(chars))
     }
 
-    let snapshot = &map.buffer_snapshot;
+    let snapshot = &map.buffer_snapshot();
     let offset = head.to_offset(map, Bias::Left);
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
@@ -909,7 +948,7 @@ fn around_word(
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(offset)
         .ignore_punctuation(ignore_punctuation);
     let in_word = map
@@ -932,7 +971,7 @@ fn around_subword(
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
@@ -991,7 +1030,7 @@ fn around_next_word(
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
     let classifier = map
-        .buffer_snapshot
+        .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     // Get the start of the word
@@ -1028,7 +1067,7 @@ fn text_object(
     relative_to: DisplayPoint,
     target: TextObject,
 ) -> Option<Range<DisplayPoint>> {
-    let snapshot = &map.buffer_snapshot;
+    let snapshot = &map.buffer_snapshot();
     let offset = relative_to.to_offset(map, Bias::Left);
 
     let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
@@ -1073,7 +1112,7 @@ fn argument(
     relative_to: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    let snapshot = &map.buffer_snapshot;
+    let snapshot = &map.buffer_snapshot();
     let offset = relative_to.to_offset(map, Bias::Left);
 
     // The `argument` vim text object uses the syntax tree, so we operate at the buffer level and map back to the display level
@@ -1247,7 +1286,7 @@ fn indent(
 
     // Loop forwards until we find a non-blank line with less indent
     let mut end_row = row;
-    let max_rows = map.buffer_snapshot.max_row().0;
+    let max_rows = map.buffer_snapshot().max_row().0;
     for next_row in (row + 1)..=max_rows {
         let indent = map.line_indent_for_buffer_row(MultiBufferRow(next_row));
         if indent.is_line_empty() {
@@ -1263,7 +1302,7 @@ fn indent(
         end_row = next_row;
     }
 
-    let end_len = map.buffer_snapshot.line_len(MultiBufferRow(end_row));
+    let end_len = map.buffer_snapshot().line_len(MultiBufferRow(end_row));
     let start = map.point_to_display_point(Point::new(start_row, 0), Bias::Right);
     let end = map.point_to_display_point(Point::new(end_row, end_len), Bias::Left);
     Some(start..end)
@@ -1434,7 +1473,9 @@ fn paragraph(
         let paragraph_end_row = paragraph_end.row();
         let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
         let point = relative_to.to_point(map);
-        let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+        let current_line_is_empty = map
+            .buffer_snapshot()
+            .is_line_blank(MultiBufferRow(point.row));
 
         if around {
             if paragraph_ends_with_eof {
@@ -1472,10 +1513,12 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
         return DisplayPoint::zero();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    let is_current_line_blank = map
+        .buffer_snapshot()
+        .is_line_blank(MultiBufferRow(point.row));
 
     for row in (0..point.row).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             return Point::new(row + 1, 0).to_display_point(map);
         }
@@ -1489,19 +1532,21 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
 /// The trailing newline is excluded from the paragraph.
 pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     let point = display_point.to_point(map);
-    if point.row == map.buffer_snapshot.max_row().0 {
+    if point.row == map.buffer_snapshot().max_row().0 {
         return map.max_point();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    let is_current_line_blank = map
+        .buffer_snapshot()
+        .is_line_blank(MultiBufferRow(point.row));
 
-    for row in point.row + 1..map.buffer_snapshot.max_row().0 + 1 {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+    for row in point.row + 1..map.buffer_snapshot().max_row().0 + 1 {
+        let blank = map.buffer_snapshot().is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;
             return Point::new(
                 previous_row,
-                map.buffer_snapshot.line_len(MultiBufferRow(previous_row)),
+                map.buffer_snapshot().line_len(MultiBufferRow(previous_row)),
             )
             .to_display_point(map);
         }

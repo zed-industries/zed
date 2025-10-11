@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::div;
+use gpui::{Focusable, div};
 use ui::{
     ActiveTheme as _, App, FluentBuilder as _, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Styled as _, Window,
@@ -10,6 +10,7 @@ pub struct SettingsEditor {
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Box<dyn Fn(Option<String>, &mut App)>>,
+    tab_index: Option<isize>,
 }
 
 impl SettingsEditor {
@@ -18,6 +19,7 @@ impl SettingsEditor {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            tab_index: None,
         }
     }
 
@@ -35,6 +37,11 @@ impl SettingsEditor {
         self.confirm = Some(Box::new(confirm));
         self
     }
+
+    pub(crate) fn tab_index(mut self, arg: isize) -> Self {
+        self.tab_index = Some(arg);
+        self
+    }
 }
 
 impl RenderOnce for SettingsEditor {
@@ -49,19 +56,29 @@ impl RenderOnce for SettingsEditor {
                 if let Some(placeholder) = self.placeholder {
                     editor.set_placeholder_text(placeholder, window, cx);
                 }
+                // todo(settings_ui): We should have an observe global use for settings store
+                // so whenever a settings file is updated, the settings ui updates too
                 editor
             }
         });
 
+        if let Some(tab_index) = self.tab_index {
+            editor.focus_handle(cx).tab_index(tab_index);
+        }
+
         let weak_editor = editor.downgrade();
+
         let theme_colors = cx.theme().colors();
 
         div()
-            .child(editor)
-            .bg(theme_colors.editor_background)
+            .py_1()
+            .px_2()
+            .min_w_64()
+            .rounded_md()
             .border_1()
-            .rounded_lg()
             .border_color(theme_colors.border)
+            .bg(theme_colors.editor_background)
+            .child(editor)
             .when_some(self.confirm, |this, confirm| {
                 this.on_action::<menu::Confirm>({
                     move |_, _, cx| {

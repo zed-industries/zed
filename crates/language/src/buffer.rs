@@ -1,7 +1,7 @@
 use crate::{
     DebuggerTextObject, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
     TextObject, TreeSitterOptions,
-    diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
     syntax_map::{
@@ -581,7 +581,7 @@ pub struct HighlightedText {
 #[derive(Default, Debug)]
 struct HighlightedTextBuilder {
     pub text: String,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl HighlightedText {
@@ -624,10 +624,11 @@ impl HighlightedText {
         let preview_highlights = self
             .highlights
             .into_iter()
+            .skip_while(|(range, _)| range.end <= preview_start_ix)
             .take_while(|(range, _)| range.start < newline_ix)
             .filter_map(|(mut range, highlight)| {
                 range.start = range.start.saturating_sub(preview_start_ix);
-                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                range.end = range.end.min(newline_ix).saturating_sub(preview_start_ix);
                 if range.is_empty() {
                     None
                 } else {
@@ -1312,9 +1313,8 @@ impl Buffer {
         mtime: Option<MTime>,
         cx: &mut Context<Self>,
     ) {
-        self.saved_version = version;
-        self.has_unsaved_edits
-            .set((self.saved_version().clone(), false));
+        self.saved_version = version.clone();
+        self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();
@@ -4519,7 +4519,7 @@ impl BufferSnapshot {
         &'a self,
         search_range: Range<T>,
         reversed: bool,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntryRef<'a, O>>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
@@ -4552,11 +4552,13 @@ impl BufferSnapshot {
                 })?;
             iterators[next_ix]
                 .next()
-                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
-                    diagnostic,
-                    range: FromAnchor::from_anchor(&range.start, self)
-                        ..FromAnchor::from_anchor(&range.end, self),
-                })
+                .map(
+                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
+                        diagnostic,
+                        range: FromAnchor::from_anchor(&range.start, self)
+                            ..FromAnchor::from_anchor(&range.end, self),
+                    },
+                )
         })
     }
 
@@ -4572,7 +4574,7 @@ impl BufferSnapshot {
     pub fn diagnostic_groups(
         &self,
         language_server_id: Option<LanguageServerId>,
-    ) -> Vec<(LanguageServerId, DiagnosticGroup<Anchor>)> {
+    ) -> Vec<(LanguageServerId, DiagnosticGroup<'_, Anchor>)> {
         let mut groups = Vec::new();
 
         if let Some(language_server_id) = language_server_id {
@@ -4603,7 +4605,7 @@ impl BufferSnapshot {
     pub fn diagnostic_group<O>(
         &self,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'_, O>> + use<'_, O>
     where
         O: FromAnchor + 'static,
     {

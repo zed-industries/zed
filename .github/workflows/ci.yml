@@ -826,8 +826,9 @@ jobs:
     timeout-minutes: 120
     name: Create a Windows installer
     runs-on: [self-32vcpu-windows-2022]
-    if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
-    # if: (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    if: |
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
@@ -865,13 +866,12 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: ZedEditorUserSetup-x64-${{ github.event.pull_request.head.sha || github.sha }}.exe
+          name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.exe
           path: ${{ env.SETUP_PATH }}
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
-        # Re-enable when we are ready to publish windows preview releases
-        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
         with:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}

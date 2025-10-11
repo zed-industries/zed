@@ -25,3 +25,7 @@ Once the spend limit is hit, we’ll stop any further usage until your token spe
 ## Business Usage {#business-usage}
 
 Email [sales@zed.dev](mailto:sales@zed.dev) with any questions on business plans.
+
+## Trials {#trials}
+
+Note that trials will automatically convert to Zed Free plans on termination, and no cancellation is needed to prevent conversion to Zed Pro.

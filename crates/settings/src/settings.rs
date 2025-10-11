@@ -30,6 +30,8 @@ pub use settings_store::{
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
+pub use keymap_file::ActionSequence;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);
 

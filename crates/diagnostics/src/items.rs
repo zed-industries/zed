@@ -14,12 +14,14 @@ use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
+/// The status bar item that displays diagnostic counts.
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
-    active_editor: Option<WeakEntity<Editor>>,
     workspace: WeakEntity<Workspace>,
     current_diagnostic: Option<Diagnostic>,
+    active_editor: Option<WeakEntity<Editor>>,
     _observe_active_editor: Option<Subscription>,
+
     diagnostics_update: Task<()>,
     diagnostic_summary_update: Task<()>,
 }
@@ -73,10 +75,9 @@ impl Render for DiagnosticIndicator {
                             cx,
                         )
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.go_to_next_diagnostic(window, cx);
-                    }))
-                    .into_any_element(),
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.go_to_next_diagnostic(window, cx)),
+                    ),
             )
         } else {
             None
@@ -177,7 +178,8 @@ impl DiagnosticIndicator {
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
-        if new_diagnostic != self.current_diagnostic {
+        if new_diagnostic != self.current_diagnostic.as_ref() {
+            let new_diagnostic = new_diagnostic.cloned();
             self.diagnostics_update =
                 cx.spawn_in(window, async move |diagnostics_indicator, cx| {
                     cx.background_executor()

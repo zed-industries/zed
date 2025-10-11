@@ -26,7 +26,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PEER_ID, REMOTE_SERVER_PROJECT_ID},
 };
 
-use settings::initial_server_settings_content;
+use settings::{Settings as _, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -69,6 +69,7 @@ impl HeadlessProject {
         settings::init(cx);
         language::init(cx);
         project::Project::init_settings(cx);
+        extension_host::ExtensionSettings::register(cx);
         log_store::init(true, cx);
     }
 
@@ -122,6 +123,7 @@ impl HeadlessProject {
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 worktree_store.clone(),
                 breakpoint_store.clone(),
+                true,
                 cx,
             );
             dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -194,8 +196,13 @@ impl HeadlessProject {
         });
 
         let agent_server_store = cx.new(|cx| {
-            let mut agent_server_store =
-                AgentServerStore::local(node_runtime.clone(), fs.clone(), environment, cx);
+            let mut agent_server_store = AgentServerStore::local(
+                node_runtime.clone(),
+                fs.clone(),
+                environment,
+                http_client.clone(),
+                cx,
+            );
             agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             agent_server_store
         });

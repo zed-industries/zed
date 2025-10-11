@@ -22,7 +22,7 @@ use futures::{
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, Global, SemanticVersion, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, SemanticVersion, Task, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -356,8 +356,43 @@ impl RemoteClient {
                     cx,
                 );
 
+                let ready = client
+                    .wait_for_remote_started()
+                    .with_timeout(HEARTBEAT_TIMEOUT, cx.background_executor())
+                    .await;
+                match ready {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        let mut error = "remote client exited before becoming ready".to_owned();
+                        if let Some(status) = io_task.now_or_never() {
+                            match status {
+                                Ok(exit_code) => {
+                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                }
+                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                            }
+                        }
+                        let error = anyhow::anyhow!("{error}");
+                        log::error!("failed to establish connection: {}", error);
+                        return Err(error);
+                    }
+                    Err(_) => {
+                        let mut error =
+                            "remote client did not become ready within the timeout".to_owned();
+                        if let Some(status) = io_task.now_or_never() {
+                            match status {
+                                Ok(exit_code) => {
+                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                }
+                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                            }
+                        }
+                        let error = anyhow::anyhow!("{error}");
+                        log::error!("failed to establish connection: {}", error);
+                        return Err(error);
+                    }
+                }
                 let multiplex_task = Self::monitor(this.downgrade(), io_task, cx);
-
                 if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                     log::error!("failed to establish connection: {}", error);
                     return Err(error);
@@ -801,6 +836,18 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward)
     }
 
+    pub fn build_forward_port_command(
+        &self,
+        local_port: u16,
+        host: String,
+        remote_port: u16,
+    ) -> Result<CommandTemplate> {
+        let Some(connection) = self.remote_connection() else {
+            return Err(anyhow!("no ssh connection"));
+        };
+        connection.build_forward_port_command(local_port, host, remote_port)
+    }
+
     pub fn upload_directory(
         &self,
         src_path: PathBuf,
@@ -1069,6 +1116,12 @@ pub(crate) trait RemoteConnection: Send + Sync {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
+    fn build_forward_port_command(
+        &self,
+        local_port: u16,
+        remote: String,
+        remote_port: u16,
+    ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
@@ -1080,6 +1133,37 @@ pub(crate) trait RemoteConnection: Send + Sync {
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 
+struct Signal<T> {
+    tx: Mutex<Option<oneshot::Sender<T>>>,
+    rx: Shared<Task<Option<T>>>,
+}
+
+impl<T: Send + Clone + 'static> Signal<T> {
+    pub fn new(cx: &App) -> Self {
+        let (tx, rx) = oneshot::channel();
+
+        let task = cx
+            .background_executor()
+            .spawn(async move { rx.await.ok() })
+            .shared();
+
+        Self {
+            tx: Mutex::new(Some(tx)),
+            rx: task,
+        }
+    }
+
+    fn set(&self, value: T) {
+        if let Some(tx) = self.tx.lock().take() {
+            let _ = tx.send(value);
+        }
+    }
+
+    fn wait(&self) -> Shared<Task<Option<T>>> {
+        self.rx.clone()
+    }
+}
+
 struct ChannelClient {
     next_message_id: AtomicU32,
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
@@ -1089,6 +1173,7 @@ struct ChannelClient {
     max_received: AtomicU32,
     name: &'static str,
     task: Mutex<Task<Result<()>>>,
+    remote_started: Signal<()>,
 }
 
 impl ChannelClient {
@@ -1111,7 +1196,12 @@ impl ChannelClient {
                 incoming_rx,
                 &cx.to_async(),
             )),
+            remote_started: Signal::new(cx),
         })
+    }
+
+    fn wait_for_remote_started(&self) -> Shared<Task<Option<()>>> {
+        self.remote_started.wait()
     }
 
     fn start_handling_messages(
@@ -1120,6 +1210,11 @@ impl ChannelClient {
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
+            if let Some(this) = this.upgrade() {
+                let envelope = proto::RemoteStarted {}.into_envelope(0, None, None);
+                this.outgoing_tx.lock().unbounded_send(envelope).ok();
+            };
+
             let peer_id = PeerId { owner_id: 0, id: 0 };
             while let Some(incoming) = incoming_rx.next().await {
                 let Some(this) = this.upgrade() else {
@@ -1146,6 +1241,14 @@ impl ChannelClient {
                                 .ok();
                         }
                     }
+                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
+                    continue;
+                }
+
+                if let Some(proto::envelope::Payload::RemoteStarted(_)) = &incoming.payload {
+                    this.remote_started.set(());
                     let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
                     envelope.id = this.next_message_id.fetch_add(1, SeqCst);
                     this.outgoing_tx.lock().unbounded_send(envelope).ok();
@@ -1445,6 +1548,23 @@ mod fake {
                 program: "ssh".into(),
                 args: ssh_args,
                 env: env.clone(),
+            })
+        }
+
+        fn build_forward_port_command(
+            &self,
+            local_port: u16,
+            host: String,
+            remote_port: u16,
+        ) -> anyhow::Result<CommandTemplate> {
+            Ok(CommandTemplate {
+                program: "ssh".into(),
+                args: vec![
+                    "-N".into(),
+                    "-L".into(),
+                    format!("{local_port}:{host}:{remote_port}"),
+                ],
+                env: Default::default(),
             })
         }
 

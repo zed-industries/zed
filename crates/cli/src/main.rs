@@ -116,6 +116,11 @@ struct Args {
     ))]
     #[arg(long)]
     uninstall: bool,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -202,6 +207,12 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return Ok(());
+    }
 
     // Set custom data directory before any path operations
     let user_data_dir = args.user_data_dir.clone();
@@ -720,15 +731,15 @@ mod windows {
             Storage::FileSystem::{
                 CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, WriteFile,
             },
-            System::Threading::{CREATE_NEW_PROCESS_GROUP, CreateMutexW},
+            System::Threading::CreateMutexW,
         },
         core::HSTRING,
     };
 
     use crate::{Detect, InstalledApp};
+    use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::{io, os::windows::process::CommandExt};
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
@@ -767,7 +778,6 @@ mod windows {
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
             if check_single_instance() {
                 std::process::Command::new(self.0.clone())
-                    .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
                     .arg(ipc_url)
                     .spawn()?;
             } else {
