@@ -1,3 +1,4 @@
+pub mod branch_diff;
 mod conflict_set;
 pub mod git_traversal;
 
@@ -30,7 +31,8 @@ use git::{
     },
     stash::{GitStash, StashEntry},
     status::{
-        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+        DiffTreeType, FileStatus, GitSummary, StatusCode, TrackedStatus, TreeDiff, UnmergedStatus,
+        UnmergedStatusCode,
     },
 };
 use gpui::{
@@ -4294,6 +4296,38 @@ impl Repository {
                         .await?;
 
                     anyhow::Ok(response.branch.map(SharedString::from))
+                }
+            }
+        })
+    }
+
+    pub fn diff_tree(
+        &mut self,
+        diff_type: DiffTreeType,
+        _cx: &App,
+    ) -> oneshot::Receiver<Result<TreeDiff>> {
+        let _id = self.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.diff_tree(diff_type).await,
+                RepositoryState::Remote { project_id, client } => {
+                    todo!()
+                    // let response = client
+                    //     .request(proto::GitDiff {
+                    //         project_id: project_id.0,
+                    //         repository_id: id.to_proto(),
+                    //         diff_type: match diff_type {
+                    //             DiffType::HeadToIndex => {
+                    //                 proto::git_diff::DiffType::HeadToIndex.into()
+                    //             }
+                    //             DiffType::HeadToWorktree => {
+                    //                 proto::git_diff::DiffType::HeadToWorktree.into()
+                    //             }
+                    //         },
+                    //     })
+                    //     .await?;
+
+                    // Ok(response.diff)
                 }
             }
         })

@@ -1,4 +1,4 @@
-use crate::repository::RepoPath;
+use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
@@ -488,6 +488,17 @@ impl Default for GitStatus {
     }
 }
 
+pub enum DiffTreeType {
+    MergeBase {
+        base: SharedString,
+        head: SharedString,
+    },
+    Since {
+        base: SharedString,
+        head: SharedString,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TreeDiff {
     pub entries: Arc<[(RepoPath, TreeDiffStatus)]>,
@@ -495,16 +506,9 @@ pub struct TreeDiff {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TreeDiffStatus {
-    Added {
-        new_sha: SharedString,
-    },
-    Modified {
-        old_sha: SharedString,
-        new_sha: SharedString,
-    },
-    Deleted {
-        old_sha: SharedString,
-    },
+    Added { new: Oid },
+    Modified { old: Oid, new: Oid },
+    Deleted { old: Oid },
     TypeChanged {},
 }
 
@@ -534,12 +538,12 @@ impl FromStr for TreeDiffStatus {
             .next()
             .ok_or_else(|| anyhow!("expected to find before hash"))?
             .to_owned()
-            .into();
+            .parse()?;
         let new_sha = fields
             .next()
             .ok_or_else(|| anyhow!("expected to find after hash"))?
             .to_owned()
-            .into();
+            .parse()?;
         let status = fields
             .next()
             .and_then(|s| {
@@ -552,9 +556,12 @@ impl FromStr for TreeDiffStatus {
             .ok_or_else(|| anyhow!("expected to find status"))?;
 
         let result = match StatusCode::from_byte(*status)? {
-            StatusCode::Modified => TreeDiffStatus::Modified { old_sha, new_sha },
-            StatusCode::Added => TreeDiffStatus::Added { new_sha },
-            StatusCode::Deleted => TreeDiffStatus::Deleted { old_sha },
+            StatusCode::Modified => TreeDiffStatus::Modified {
+                old: old_sha,
+                new: new_sha,
+            },
+            StatusCode::Added => TreeDiffStatus::Added { new: new_sha },
+            StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
             StatusCode::TypeChanged => TreeDiffStatus::TypeChanged {},
             status => {
                 anyhow::bail!("unexpected status: {:?}", status)
@@ -588,20 +595,20 @@ mod tests {
                     (
                         RepoPath::new(".zed/settings.json").unwrap(),
                         TreeDiffStatus::Added {
-                            new_sha: "0062c311b8727c3a2e3cd7a41bc9904feacf8f98".into()
+                            new: "0062c311b8727c3a2e3cd7a41bc9904feacf8f98".parse().unwrap()
                         }
                     ),
                     (
                         RepoPath::new("README.md").unwrap(),
                         TreeDiffStatus::Deleted {
-                            old_sha: "bb3e9ed2e97a8c02545bae243264d342c069afb3".into()
+                            old: "bb3e9ed2e97a8c02545bae243264d342c069afb3".parse().unwrap()
                         }
                     ),
                     (
                         RepoPath::new("parallel.go").unwrap(),
                         TreeDiffStatus::Modified {
-                            old_sha: "42f097005a1f21eb2260fad02ec8c991282beee8".into(),
-                            new_sha: "a437d85f63bb8c62bd78f83f40c506631fabf005".into()
+                            old: "42f097005a1f21eb2260fad02ec8c991282beee8".parse().unwrap(),
+                            new: "a437d85f63bb8c62bd78f83f40c506631fabf005".parse().unwrap()
                         }
                     ),
                 ])
