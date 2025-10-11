@@ -59,6 +59,17 @@ struct MarkdownParser<'a> {
     language_registry: Option<Arc<LanguageRegistry>>,
 }
 
+#[derive(Debug)]
+struct ParseHtmlNodeContext {
+    list_item_depth: u16,
+}
+
+impl Default for ParseHtmlNodeContext {
+    fn default() -> Self {
+        Self { list_item_depth: 1 }
+    }
+}
+
 struct MarkdownListItem {
     content: Vec<ParsedMarkdownElement>,
     item_type: ParsedMarkdownListItemType,
@@ -637,6 +648,7 @@ impl<'a> MarkdownParser<'a> {
                             content: list_item.content,
                             depth,
                             item_type: list_item.item_type,
+                            nested: false,
                         });
 
                         if let Some(index) = insertion_indices.get(&depth) {
@@ -819,7 +831,12 @@ impl<'a> MarkdownParser<'a> {
             .read_from(&mut cursor)
             && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
         {
-            self.parse_html_node(start..end, &dom.document, &mut elements);
+            self.parse_html_node(
+                start..end,
+                &dom.document,
+                &mut elements,
+                &ParseHtmlNodeContext::default(),
+            );
         }
 
         elements
@@ -830,10 +847,11 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
+        context: &ParseHtmlNodeContext,
     ) {
         match &node.data {
             markup5ever_rcdom::NodeData::Document => {
-                self.consume_children(source_range, node, elements);
+                self.consume_children(source_range, node, elements, context);
             }
             markup5ever_rcdom::NodeData::Text { contents } => {
                 elements.push(ParsedMarkdownElement::Paragraph(vec![
@@ -886,6 +904,15 @@ impl<'a> MarkdownParser<'a> {
                             contents: paragraph,
                         }));
                     }
+                } else if local_name!("ul") == name.local || local_name!("ol") == name.local {
+                    if let Some(list_items) = self.extract_html_list(
+                        node,
+                        local_name!("ol") == name.local,
+                        context.list_item_depth,
+                        source_range,
+                    ) {
+                        elements.extend(list_items);
+                    }
                 } else if local_name!("blockquote") == name.local {
                     if let Some(blockquote) = self.extract_html_blockquote(node, source_range) {
                         elements.push(ParsedMarkdownElement::BlockQuote(blockquote));
@@ -895,7 +922,7 @@ impl<'a> MarkdownParser<'a> {
                         elements.push(ParsedMarkdownElement::Table(table));
                     }
                 } else {
-                    self.consume_children(source_range, node, elements);
+                    self.consume_children(source_range, node, elements, context);
                 }
             }
             _ => {}
@@ -947,9 +974,10 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
         node: &Rc<markup5ever_rcdom::Node>,
         elements: &mut Vec<ParsedMarkdownElement>,
+        context: &ParseHtmlNodeContext,
     ) {
         for node in node.children.borrow().iter() {
-            self.parse_html_node(source_range.clone(), node, elements);
+            self.parse_html_node(source_range.clone(), node, elements, context);
         }
     }
 
@@ -1018,6 +1046,57 @@ impl<'a> MarkdownParser<'a> {
         Some(image)
     }
 
+    fn extract_html_list(
+        &self,
+        node: &Rc<markup5ever_rcdom::Node>,
+        ordered: bool,
+        depth: u16,
+        source_range: Range<usize>,
+    ) -> Option<Vec<ParsedMarkdownElement>> {
+        let mut list_items = Vec::with_capacity(node.children.borrow().len());
+
+        for (index, node) in node.children.borrow().iter().enumerate() {
+            match &node.data {
+                markup5ever_rcdom::NodeData::Element { name, .. } => {
+                    if local_name!("li") != name.local {
+                        continue;
+                    }
+
+                    let mut content = Vec::new();
+                    self.consume_children(
+                        source_range.clone(),
+                        node,
+                        &mut content,
+                        &ParseHtmlNodeContext {
+                            list_item_depth: depth + 1,
+                        },
+                    );
+
+                    if !content.is_empty() {
+                        list_items.push(ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
+                            depth,
+                            source_range: source_range.clone(),
+                            item_type: if ordered {
+                                ParsedMarkdownListItemType::Ordered(index as u64 + 1)
+                            } else {
+                                ParsedMarkdownListItemType::Unordered
+                            },
+                            content,
+                            nested: true,
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if list_items.is_empty() {
+            None
+        } else {
+            Some(list_items)
+        }
+    }
+
     fn parse_html_element_dimension(value: &str) -> Option<DefiniteLength> {
         if value.ends_with("%") {
             value
@@ -1040,7 +1119,12 @@ impl<'a> MarkdownParser<'a> {
         source_range: Range<usize>,
     ) -> Option<ParsedMarkdownBlockQuote> {
         let mut children = Vec::new();
-        self.consume_children(source_range.clone(), node, &mut children);
+        self.consume_children(
+            source_range.clone(),
+            node,
+            &mut children,
+            &ParseHtmlNodeContext::default(),
+        );
 
         if children.is_empty() {
             None
@@ -1447,6 +1531,168 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_html_unordered_list() {
+        let parsed = parse(
+            "<ul>
+              <li>Item 1</li>
+              <li>Item 2</li>
+            </ul>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
+                    ),
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 2", 0..82))]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_ordered_list() {
+        let parsed = parse(
+            "<ol>
+              <li>Item 1</li>
+              <li>Item 2</li>
+            </ol>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(1),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..82))]
+                    ),
+                    nested_list_item(
+                        0..82,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(2),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 2", 0..82))]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_ordered_list() {
+        let parsed = parse(
+            "<ol>
+              <li>Item 1</li>
+              <li>Item 2
+                <ol>
+                  <li>Sub-Item 1</li>
+                  <li>Sub-Item 2</li>
+                </ol>
+              </li>
+            </ol>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(1),
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
+                    ),
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Ordered(2),
+                        vec![
+                            ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Ordered(1),
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
+                            ),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Ordered(2),
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 2", 0..216))]
+                            ),
+                        ]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_nested_unordered_list() {
+        let parsed = parse(
+            "<ul>
+              <li>Item 1</li>
+              <li>Item 2
+                <ul>
+                  <li>Sub-Item 1</li>
+                  <li>Sub-Item 2</li>
+                </ul>
+              </li>
+            </ul>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![ParsedMarkdownElement::Paragraph(text("Item 1", 0..216))]
+                    ),
+                    nested_list_item(
+                        0..216,
+                        1,
+                        ParsedMarkdownListItemType::Unordered,
+                        vec![
+                            ParsedMarkdownElement::Paragraph(text("Item 2", 0..216)),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Unordered,
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 1", 0..216))]
+                            ),
+                            nested_list_item(
+                                0..216,
+                                2,
+                                ParsedMarkdownListItemType::Unordered,
+                                vec![ParsedMarkdownElement::Paragraph(text("Sub-Item 2", 0..216))]
+                            ),
+                        ]
+                    ),
+                ]
+            },
+            parsed
+        );
+    }
+
+    #[gpui::test]
     async fn test_inline_html_image_tag() {
         let parsed =
             parse("<p>Some text<img src=\"http://example.com/foo.png\" /> some more text</p>")
@@ -1488,7 +1734,7 @@ mod tests {
     async fn test_html_block_quote() {
         let parsed = parse(
             "<blockquote>
-              <p>some description</p>
+                <p>some description</p>
             </blockquote>",
         )
         .await;
@@ -1498,9 +1744,9 @@ mod tests {
                 children: vec![block_quote(
                     vec![ParsedMarkdownElement::Paragraph(text(
                         "some description",
-                        0..76
+                        0..78
                     ))],
-                    0..76,
+                    0..78,
                 )]
             },
             parsed
@@ -1511,10 +1757,10 @@ mod tests {
     async fn test_html_nested_block_quote() {
         let parsed = parse(
             "<blockquote>
-              <p>some description</p>
-              <blockquote>
+                <p>some description</p>
+                <blockquote>
                 <p>second description</p>
-              </blockquote>
+                </blockquote>
             </blockquote>",
         )
         .await;
@@ -1523,16 +1769,16 @@ mod tests {
             ParsedMarkdown {
                 children: vec![block_quote(
                     vec![
-                        ParsedMarkdownElement::Paragraph(text("some description", 0..173)),
+                        ParsedMarkdownElement::Paragraph(text("some description", 0..179)),
                         block_quote(
                             vec![ParsedMarkdownElement::Paragraph(text(
                                 "second description",
-                                0..173
+                                0..179
                             ))],
-                            0..173,
+                            0..179,
                         )
                     ],
-                    0..173,
+                    0..179,
                 )]
             },
             parsed
@@ -2286,6 +2532,22 @@ fn main() {
             item_type,
             depth,
             content,
+            nested: false,
+        })
+    }
+
+    fn nested_list_item(
+        source_range: Range<usize>,
+        depth: u16,
+        item_type: ParsedMarkdownListItemType,
+        content: Vec<ParsedMarkdownElement>,
+    ) -> ParsedMarkdownElement {
+        ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
+            source_range,
+            item_type,
+            depth,
+            content,
+            nested: true,
         })
     }
 

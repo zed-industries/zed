@@ -6,10 +6,10 @@ use crate::markdown_elements::{
 };
 use fs::normalize_path;
 use gpui::{
-    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
-    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
-    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
-    StyledText, TextStyle, WeakEntity, Window, div, img, rems,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, Div, Element,
+    ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
+    Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
+    TextStyle, WeakEntity, Window, div, img, rems,
 };
 use settings::Settings;
 use std::{
@@ -217,8 +217,6 @@ fn render_markdown_list_item(
 ) -> AnyElement {
     use ParsedMarkdownListItemType::*;
 
-    let padding = cx.scaled_rems((parsed.depth - 1) as f32);
-
     let bullet = match &parsed.item_type {
         Ordered(order) => format!("{}.", order).into_any_element(),
         Unordered => "•".into_any_element(),
@@ -277,13 +275,16 @@ fn render_markdown_list_item(
         .collect();
 
     let item = h_flex()
-        .pl(DefiniteLength::Absolute(AbsoluteLength::Rems(padding)))
+        .when(!parsed.nested, |this| {
+            this.pl(cx.scaled_rems(parsed.depth.saturating_sub(1) as f32))
+        })
+        .when(parsed.nested && parsed.depth > 1, |this| this.ml_neg_1p5())
         .items_start()
         .children(vec![
             bullet,
             v_flex()
                 .children(contents)
-                .gap(cx.scaled_rems(1.0))
+                .when(!parsed.nested, |this| this.gap(cx.scaled_rems(1.0)))
                 .pr(cx.scaled_rems(1.0))
                 .w_full(),
         ]);
